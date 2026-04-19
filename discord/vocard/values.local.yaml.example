@@ -1,0 +1,16 @@
+# Copy to values.local.yaml (gitignored) and fill in.
+#
+#   cp discord/vocard/values.local.yaml.example discord/vocard/values.local.yaml
+#
+# Generate the passwords with:
+#   openssl rand -base64 24
+#
+# Discord token + client_id come from the Developer Portal —
+# see discord/vocard/README.md for the walkthrough.
+
+secrets:
+  discordToken: "PASTE_BOT_TOKEN_HERE"
+  discordClientId: "PASTE_APPLICATION_CLIENT_ID_HERE"
+  geniusToken: ""   # optional — leave empty to skip /lyrics via Genius
+  mongoRootPassword: "PASTE_RANDOM_PASSWORD_HERE"
+  lavalinkPassword: "PASTE_RANDOM_PASSWORD_HERE"

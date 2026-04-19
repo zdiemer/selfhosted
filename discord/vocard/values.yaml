@@ -1,0 +1,158 @@
+# ============================================================================
+# Vocard Discord music bot
+# ----------------------------------------------------------------------------
+# Four pods, all ClusterIP, all in the `discord` namespace:
+#   - vocard            — Discord gateway client (outbound WebSocket only)
+#   - vocard-lavalink   — audio processing backend (port 2333 in-cluster)
+#   - vocard-mongo      — settings / queue persistence (port 27017 in-cluster)
+#   - vocard-spotify-tokener — anonymous Spotify token provider for LavaSrc
+#
+# Secrets (bot token, mongo/lavalink passwords, Discord client_id) live in
+# values.local.yaml — see values.local.yaml.example for the schema.
+#
+# First install (fresh cluster):
+#   kubectl create namespace discord
+#   cp discord/vocard/values.local.yaml.example discord/vocard/values.local.yaml
+#   # ...then edit values.local.yaml with your bot token + generated passwords
+#   helm install vocard ./discord/vocard -n discord \
+#     -f discord/vocard/values.yaml -f discord/vocard/values.local.yaml
+#
+# Upgrade:
+#   ./discord/vocard/upgrade.sh
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Images — pinned tags, not :latest, so upgrades are deliberate.
+# Bumping the bot usually needs a matching Lavalink minor bump too; check the
+# Vocard release notes (https://github.com/ChocoMeow/Vocard/releases).
+# ----------------------------------------------------------------------------
+images:
+  bot:
+    repository: ghcr.io/chocomeow/vocard
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  lavalink:
+    repository: ghcr.io/lavalink-devs/lavalink
+    tag: "4"
+    pullPolicy: IfNotPresent
+  mongo:
+    repository: mongo
+    tag: "8"
+    pullPolicy: IfNotPresent
+  spotifyTokener:
+    repository: ghcr.io/topi314/spotify-tokener
+    tag: "master"
+    pullPolicy: IfNotPresent
+
+# ----------------------------------------------------------------------------
+# Pod placement — matches the minecraft chart pattern. zachd-ubuntu is the
+# only cluster node with real headroom; Override in values.local.yaml if you
+# add capacity elsewhere.
+# ----------------------------------------------------------------------------
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu
+
+# ----------------------------------------------------------------------------
+# Bot (Vocard)
+# ----------------------------------------------------------------------------
+bot:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 1000m
+
+# ----------------------------------------------------------------------------
+# Lavalink — audio backend. Plugin versions are declared here; bump them when
+# upstream lavalink-devs/youtube-source or topi314/LavaSrc release fixes.
+# ----------------------------------------------------------------------------
+lavalink:
+  plugins:
+    youtube: "1.13.5"     # dev.lavalink.youtube:youtube-plugin
+    lavasrc: "4.7.3"      # com.github.topi314.lavasrc:lavasrc-plugin
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 200m
+    limits:
+      memory: 1Gi
+      cpu: 2000m
+  # JVM heap — keep ~200Mi headroom under the limit for off-heap + metaspace.
+  javaOpts: "-Xmx800m -Xms256m"
+
+# ----------------------------------------------------------------------------
+# MongoDB — single-pod StatefulSet with a PVC. Holds player settings,
+# playlists, and queue state. Losing it is annoying but not catastrophic.
+# Revisit offsite backup (mongodump cronjob) if usage grows.
+# ----------------------------------------------------------------------------
+mongo:
+  storage:
+    size: 5Gi
+    # storageClass: ""   # unset = cluster default (k3s local-path)
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 1000m
+
+# ----------------------------------------------------------------------------
+# Spotify tokener — anonymous-token provider for LavaSrc's Spotify source.
+# Tiny; always-on. Disable only if you don't care about Spotify URL support.
+# ----------------------------------------------------------------------------
+spotifyTokener:
+  enabled: true
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 20m
+    limits:
+      memory: 128Mi
+      cpu: 500m
+
+# ----------------------------------------------------------------------------
+# Bot behavior — non-secret Vocard settings.json fields. Token, client_id,
+# mongodb_password, lavalink_password go in values.local.yaml; the template
+# composes them into the final settings.json mounted at /app/settings.json.
+# ----------------------------------------------------------------------------
+settings:
+  prefix: "?"
+  embedColor: "0xb3b3b3"
+  defaultMaxQueue: 1000
+  lyricsPlatform: "lrclib"
+  activity:
+    - {type: "listening", name: "/help", status: "online"}
+  aliases:
+    connect: ["join"]
+    leave: ["stop", "bye"]
+    play: ["p"]
+    view: ["v"]
+  cooldowns:
+    connect: [2, 30]
+    playlist_view: [1, 30]
+
+# ----------------------------------------------------------------------------
+# Dashboard — not deployed. When you're ready for the web UI, see
+# README.md ("Adding the dashboard later"). This stub is here so the bool
+# exists for a future templates/dashboard-*.yaml to key off.
+# ----------------------------------------------------------------------------
+dashboard:
+  enabled: false
+
+# ============================================================================
+# SECRETS — filled by values.local.yaml (gitignored). Listed here only to
+# document the schema; leave these null/empty in the tracked values.yaml.
+# ============================================================================
+secrets:
+  # Discord bot token (Developer Portal → Bot → Reset Token).
+  discordToken: ""
+  # Discord application client_id (Developer Portal → General Information).
+  discordClientId: ""
+  # Optional — genius.com API token for /lyrics. Bot works without it.
+  geniusToken: ""
+  # Random strings; use `openssl rand -base64 24` for each.
+  mongoRootPassword: ""
+  lavalinkPassword: ""

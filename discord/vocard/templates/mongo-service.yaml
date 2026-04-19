@@ -1,0 +1,19 @@
+{{- $ctx := merge (dict "componentName" "mongo") . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  # Headless for stable DNS. Single-pod StatefulSet, but this keeps the
+  # pod DNS name predictable if we ever scale to a replica set.
+  clusterIP: None
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo
+      protocol: TCP
+  selector:
+    {{- include "vocard.selectorLabels" $ctx | nindent 4 }}

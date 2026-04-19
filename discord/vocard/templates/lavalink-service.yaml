@@ -1,0 +1,16 @@
+{{- $ctx := merge (dict "componentName" "lavalink") . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 2333
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "vocard.selectorLabels" $ctx | nindent 4 }}

@@ -1,0 +1,76 @@
+{{- $ctx := merge (dict "componentName" "lavalink") . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  # One pod only — multiple Lavalink nodes would need sticky routing from the
+  # bot, which Vocard's single-node config doesn't do. Recreate avoids two
+  # pods briefly listening on 2333 during rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vocard.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vocard.labels" $ctx | nindent 8 }}
+      annotations:
+        # Restart the pod when application.yml changes. Lavalink doesn't hot-reload.
+        checksum/config: {{ include (print $.Template.BasePath "/lavalink-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: lavalink
+          image: "{{ .Values.images.lavalink.repository }}:{{ .Values.images.lavalink.tag }}"
+          imagePullPolicy: {{ .Values.images.lavalink.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 2333
+              protocol: TCP
+          env:
+            - name: _JAVA_OPTIONS
+              value: {{ .Values.lavalink.javaOpts | quote }}
+            - name: SERVER_PORT
+              value: "2333"
+            - name: LAVALINK_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-bot-settings" .Release.Name }}
+                  key: lavalink-password
+          volumeMounts:
+            - name: config
+              mountPath: /opt/Lavalink/application.yml
+              subPath: application.yml
+              readOnly: true
+          resources:
+            {{- toYaml .Values.lavalink.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /version
+              port: http
+              httpHeaders:
+                - name: Authorization
+                  value: unused
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /version
+              port: http
+              httpHeaders:
+                - name: Authorization
+                  value: unused
+            initialDelaySeconds: 60
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "vocard.fullname" $ctx }}

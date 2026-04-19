@@ -1,0 +1,57 @@
+{{- $ctx := merge (dict "componentName" "bot") . -}}
+{{- $mongoHost := printf "%s-mongo" .Release.Name -}}
+{{- $lavalinkHost := printf "%s-lavalink" .Release.Name -}}
+{{- $mongoPw := required "secrets.mongoRootPassword is required" .Values.secrets.mongoRootPassword -}}
+{{- $lavalinkPw := required "secrets.lavalinkPassword is required" .Values.secrets.lavalinkPassword -}}
+{{- $token := required "secrets.discordToken is required" .Values.secrets.discordToken | toString -}}
+{{- /* Force client_id to string — Discord snowflakes are 18-19 digits and YAML would otherwise parse as int, which some libs reject. */ -}}
+{{- $clientId := required "secrets.discordClientId is required" .Values.secrets.discordClientId | toString -}}
+{{- $mongoUrl := printf "mongodb://admin:%s@%s:27017/vocard?authSource=admin" $mongoPw $mongoHost -}}
+{{- $settings := dict
+  "token" $token
+  "client_id" $clientId
+  "genius_token" .Values.secrets.geniusToken
+  "mongodb_url" $mongoUrl
+  "mongodb_name" "vocard"
+  "nodes" (dict "DEFAULT" (dict
+    "host" $lavalinkHost
+    "port" 2333
+    "password" $lavalinkPw
+    "secure" false
+    "identifier" "DEFAULT"
+    "yt_ratelimit" (dict
+      "tokens" list
+      "config" (dict "retry_time" 10800 "max_requests" 30)
+      "strategy" "LoadBalance")))
+  "prefix" .Values.settings.prefix
+  "activity" .Values.settings.activity
+  "logging" (dict
+    "file" (dict "path" "./logs" "enable" true)
+    "level" (dict "discord" "INFO" "vocard" "INFO" "ipc_client" "INFO")
+    "max-history" 30)
+  "bot_access_user" list
+  "embed_color" .Values.settings.embedColor
+  "default_max_queue" (int .Values.settings.defaultMaxQueue)
+  "lyrics_platform" .Values.settings.lyricsPlatform
+  "ipc_client" (dict
+    "host" "127.0.0.1"
+    "port" 8000
+    "password" ""
+    "secure" false
+    "enable" .Values.dashboard.enabled)
+  "aliases" .Values.settings.aliases
+  "cooldowns" .Values.settings.cooldowns
+-}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-bot-settings
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+type: Opaque
+stringData:
+  # Lavalink reads this via LAVALINK_SERVER_PASSWORD env var (see deployment).
+  # Bot reads it indirectly via the nodes.DEFAULT.password field in settings.json.
+  lavalink-password: {{ $lavalinkPw | quote }}
+  settings.json: |
+    {{- $settings | toPrettyJson | nindent 4 }}

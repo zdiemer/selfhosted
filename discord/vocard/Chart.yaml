@@ -1,0 +1,13 @@
+apiVersion: v2
+name: vocard
+description: Vocard Discord music bot (Lavalink + MongoDB + optional Spotify tokener)
+type: application
+version: 0.1.0
+# appVersion tracks the Vocard bot image tag in values.yaml (images.bot.tag).
+appVersion: "2.7.0"
+home: https://github.com/ChocoMeow/Vocard
+sources:
+  - https://github.com/ChocoMeow/Vocard
+  - https://github.com/lavalink-devs/Lavalink
+maintainers:
+  - name: zachd

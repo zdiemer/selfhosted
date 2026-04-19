@@ -1,0 +1,50 @@
+{{- $ctx := merge (dict "componentName" "bot") . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  # Single instance — Vocard's state is held in MongoDB + Discord gateway
+  # sessions; two bots on the same token would fight.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vocard.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vocard.labels" $ctx | nindent 8 }}
+      annotations:
+        # Re-roll the pod when settings.json contents change (token rotation,
+        # prefix change, etc.). Secret mounts auto-refresh but the bot only
+        # reads settings.json at startup.
+        checksum/settings: {{ include (print $.Template.BasePath "/vocard-settings.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: vocard
+          image: "{{ .Values.images.bot.repository }}:{{ .Values.images.bot.tag }}"
+          imagePullPolicy: {{ .Values.images.bot.pullPolicy }}
+          # No inbound ports — the bot is a Discord gateway client (outbound
+          # WebSocket to gateway.discord.gg).
+          volumeMounts:
+            - name: settings
+              mountPath: /app/settings.json
+              subPath: settings.json
+              readOnly: true
+          resources:
+            {{- toYaml .Values.bot.resources | nindent 12 }}
+      volumes:
+        - name: settings
+          secret:
+            secretName: {{ .Release.Name }}-bot-settings
+            items:
+              - key: settings.json
+                path: settings.json

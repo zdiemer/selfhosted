@@ -1,0 +1,36 @@
+{{- if .Values.spotifyTokener.enabled }}
+{{- $ctx := merge (dict "componentName" "spotify-tokener") . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vocard.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vocard.labels" $ctx | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: spotify-tokener
+          image: "{{ .Values.images.spotifyTokener.repository }}:{{ .Values.images.spotifyTokener.tag }}"
+          imagePullPolicy: {{ .Values.images.spotifyTokener.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 49152
+              protocol: TCP
+          env:
+            - name: SPOTIFY_TOKENER_ADDR
+              value: "0.0.0.0:49152"
+          resources:
+            {{- toYaml .Values.spotifyTokener.resources | nindent 12 }}
+{{- end }}

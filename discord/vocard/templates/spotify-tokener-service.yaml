@@ -1,0 +1,18 @@
+{{- if .Values.spotifyTokener.enabled }}
+{{- $ctx := merge (dict "componentName" "spotify-tokener") . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vocard.fullname" $ctx }}
+  labels:
+    {{- include "vocard.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 49152
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "vocard.selectorLabels" $ctx | nindent 4 }}
+{{- end }}
