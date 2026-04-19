@@ -1,21 +1,24 @@
 # ============================================================================
-# Prominence II: Hasturian Era  |  10 players  |  itzg/minecraft Helm chart
+# Hasturian Era  |  10 players  |  PaperMC + plugins (no client mods needed)
 # ----------------------------------------------------------------------------
+# Vanilla 1.21.x clients connect directly — no launcher, no mods. All content
+# comes from server-side plugins. Plugins auto-install on pod start via
+# Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
+#
 # Install:
 #   helm repo add itzg https://itzg.github.io/minecraft-server-charts/
 #   helm repo update
 #   helm install mc itzg/minecraft -f values.yaml
 #
-# Upgrade (new modpack version, resource changes, etc.):
-#   helm upgrade mc itzg/minecraft -f values.yaml
+# Upgrade (plugin bumps, resource changes, etc.):
+#   ./upgrade.sh         # flush, backup, helm upgrade, tail logs
 #
 # Console access:
 #   kubectl exec -it mc-minecraft-0 -- rcon-cli
 # ============================================================================
 
 image: itzg/minecraft-server
-# The itzg image auto-selects Java based on MC version, but pin for reproducibility.
-# java21 covers 1.21.x; java17 is fine for 1.20.1 but java21 also works.
+# java21 covers 1.21.x (Paper's current line).
 imageTag: java21
 
 # Critical: never run two pods against the same world. Recreate = old pod dies
@@ -29,22 +32,16 @@ strategy:
 minecraftServer:
   eula: "TRUE"
 
-  # Modrinth Fabric edition (public, no API key). A NeoForge build exists on
-  # CurseForge (slug: prominence-2-hasturian-era) if you ever want to switch.
-  type: "MODRINTH"
-  version: "1.20.1"
-  modrinthModpack:
-    projectId: "prominence-2-fabric"
-    # Pinned for reproducibility. Bump via ./upgrade.sh <versionId>.
-    # List versions: curl -s 'https://api.modrinth.com/v2/project/prominence-2-fabric/version' | jq -r '.[0:5][] | "\(.id) \(.version_number)"'
-    versionId: "GoepRBzX"  # 3.9.26
+  # PaperMC — Bukkit-API fork with strong performance and full plugin support.
+  type: "PAPER"
+  version: "1.21.4"
 
   serverName: "Hasturian Era"
-  motd: "§6Prominence II §7| §fHasturian Era"
+  motd: "§6Hasturian Era §7| §fRPG + Magic"
   difficulty: "normal"
   maxPlayers: 10
 
-  # Keep these modest — modded + 10 players gets expensive fast.
+  # Paper is lean; 10/8 is comfortable for 10 players.
   viewDistance: 10
   simulationDistance: 8
 
@@ -53,12 +50,11 @@ minecraftServer:
   enforceWhitelist: true
   ops: "starfoxa"
 
-  # JVM heap. Pod memory limit below is higher to leave room for off-heap
-  # overhead (mods routinely allocate 1-2GB outside the heap) plus the
-  # mc-backup sidecar. Sized for ~8GB of node headroom.
-  memory: "5G"
+  # Paper + this plugin stack is light compared to modded. 3G heap covers
+  # 10 players with room for Slimefun/MythicMobs; bump if TPS drops.
+  memory: "3G"
 
-  # Aikar's G1GC flags — battle-tested defaults for modded Minecraft.
+  # Aikar's G1GC flags — Paper team's documented defaults.
   # See https://docs.papermc.io/paper/aikars-flags
   jvmXXOpts: >-
     -XX:+UseG1GC
@@ -91,27 +87,43 @@ minecraftServer:
     secretKey: "password"
     password: ""
 
-  # Auto-pause suspends the JVM when no players are online. Big win for
-  # modded servers — Prominence II idles around 3-4GB otherwise.
+  # Auto-pause suspends the JVM when no players are online. Modest win on a
+  # plugin server (~1GB idle) but still worth enabling.
   autoPause:
     enabled: true
-    # Prominence II downloads ~2GB of mods on first boot; the default 10min
-    # can fire before the server is even accepting connections. 30min is safe.
-    timeoutInit: 1800
+    timeoutInit: 600           # wait 10min after start for first player
     timeoutEstablished: 3600   # pause after 1h idle
     period: 10
 
 # ----------------------------------------------------------------------------
+# Plugins
+# ----------------------------------------------------------------------------
+# itzg's image downloads plugins on every container start:
+#   MODRINTH_PROJECTS — auto-pulls latest compatible version from Modrinth
+#   PLUGINS           — direct URLs for plugins not on Modrinth
+# Plugin config persists on the data PVC under /data/plugins/<name>/.
+#
+# To pin a plugin version, change `plugin:<slug>` to `plugin:<slug>:<versionId>`
+# (find version IDs via the Modrinth page or API).
+extraEnv:
+  # The itzg parser splits on comma without trimming, so keep this on one line
+  # with no spaces. `quests.classic` is PikaMug's Quests (in-game GUI creator);
+  # plain `quests` is LMBishop's simpler YAML-config alternative.
+  MODRINTH_PROJECTS: "plugin:luckperms,plugin:essentialsx,plugin:vaultunlocked,plugin:auraskills,plugin:mythicmobs,plugin:magicspells,plugin:quests.classic,plugin:worldedit,plugin:worldguard"
+  # Slimefun and Citizens aren't on Modrinth. "latest" URLs are fine for a
+  # private server; pin to specific builds for reproducibility across restarts.
+  PLUGINS: "https://blob.build/dl/Slimefun4/Stable/LATEST,https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/artifact/dist/target/Citizens.jar"
+
+# ----------------------------------------------------------------------------
 # Resources
 # ----------------------------------------------------------------------------
-# Limit leaves ~2G above the 5G heap for JVM metaspace, direct buffers, and
-# mod off-heap allocations. If you see OOMKills, raise the limit.
+# 3G heap + ~1G off-heap (direct buffers, plugin allocations, mc-backup).
 resources:
   requests:
-    memory: 4Gi
+    memory: 2Gi
     cpu: 1000m
   limits:
-    memory: 7Gi
+    memory: 5Gi
     cpu: 4000m
 
 # ----------------------------------------------------------------------------
@@ -149,8 +161,7 @@ mcbackup:
   # Pair this with offsite (rclone) for longer retention.
   backupInterval: "1h"
   pruneBackupsDays: 2
-  # First boot pulls the modpack + generates chunks; don't race the server.
-  initialDelay: "15m"
+  initialDelay: "5m"
 
   # tar  = local tar.gz files on a PVC
   # rclone = push to S3/B2/R2/GCS/etc. (set envs below)
@@ -172,7 +183,7 @@ mcbackup:
 # Scheduling & reliability
 # ----------------------------------------------------------------------------
 # Prevent the cluster autoscaler from evicting the pod to consolidate nodes.
-# A 10-player modded server taking 60s to restart is worth pinning.
+# A restart drops every player; worth pinning.
 podAnnotations:
   cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
 
