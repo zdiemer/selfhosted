@@ -12,7 +12,11 @@ release is named `mc` in namespace `minecraft`.
 ```bash
 export POD=$(kubectl -n minecraft get pod -l app=mc-minecraft \
   -o jsonpath='{.items[0].metadata.name}')
+echo "$POD"   # should print e.g. mc-minecraft-5bd694b444-9t8rj
 ```
+
+(The first line is silent on success — assignment doesn't print. The
+`echo` is just to confirm `$POD` got set.)
 
 ## 1 · Discord Integration (dcintegration)
 
@@ -26,40 +30,50 @@ export POD=$(kubectl -n minecraft get pod -l app=mc-minecraft \
    - Presence Intent
    - Server Members Intent
    - Message Content Intent
-4. **OAuth2** tab → **URL Generator**:
-   - Scope: `bot`
-   - Bot permissions: `View Channels`, `Send Messages`, `Read Message
-     History`, `Manage Webhooks`.
-5. Open the generated URL in a browser, invite the bot to your Discord
-   server.
+4. **OAuth2** tab → **URL Generator**. This page has two lists:
+   - **Scopes** (top, `resource.verb` style) — tick **only** `bot`. Ignore
+     `guilds.messages.read` and friends; those are for user-level OAuth
+     apps, not server bots.
+   - **Bot Permissions** (appears *below* Scopes once `bot` is ticked,
+     plain-English checkboxes — same set as the Bot tab) — tick
+     `View Channels`, `Send Messages`, `Read Message History`,
+     `Manage Webhooks`.
+5. Copy the generated URL from the bottom of the page, open it in a
+   browser, and invite the bot to your Discord server.
 6. In Discord: **User Settings** → **Advanced** → **Developer Mode** on.
    Right-click the target channel → **Copy Channel ID**. Save that too.
 
 ### 1b. Paste token + channel ID into server config
 
-The mod generates `/data/config/dcintegration/Config.toml` (and
-`botConfig.toml`) on first boot. Edit them in place:
+The mod generates a single `/data/config/Discord-Integration.toml` on
+first boot. The relevant defaults are:
+
+```toml
+[general]
+  botToken = "INSERT BOT TOKEN HERE"
+  botChannel = "000000000"
+```
+
+Edit them in place:
 
 ```bash
-# Inspect generated configs
+# Confirm the file exists and inspect defaults
 kubectl -n minecraft exec "$POD" -c mc-minecraft -- \
-  ls /data/config/dcintegration/
+  head -8 /data/config/Discord-Integration.toml
 
-# Paste bot token (double-check the exact key name in your build —
-# it's usually `general.botToken` or `bot_token` in Config.toml)
+# Paste bot token
 kubectl -n minecraft exec "$POD" -c mc-minecraft -- \
-  sed -i 's|botToken = ""|botToken = "PASTE_TOKEN"|' \
-  /data/config/dcintegration/Config.toml
+  sed -i 's|botToken = "INSERT BOT TOKEN HERE"|botToken = "PASTE_TOKEN"|' \
+  /data/config/Discord-Integration.toml
 
 # Paste the bridge channel ID
 kubectl -n minecraft exec "$POD" -c mc-minecraft -- \
-  sed -i 's|channel = ""|channel = "PASTE_CHANNEL_ID"|' \
-  /data/config/dcintegration/Config.toml
+  sed -i 's|botChannel = "000000000"|botChannel = "PASTE_CHANNEL_ID"|' \
+  /data/config/Discord-Integration.toml
 ```
 
-If the `sed` commands don't match (config field names drift across
-versions), `kubectl cp` the file out, edit locally, and `kubectl cp` it
-back.
+If the `sed` commands don't match (defaults drift across mod versions),
+`kubectl cp` the file out, edit locally, and `kubectl cp` it back.
 
 Restart the pod to pick up the new token:
 
