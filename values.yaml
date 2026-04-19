@@ -1,33 +1,44 @@
 # ============================================================================
-# Hasturian Era  |  10 players  |  PaperMC + plugins (no client mods needed)
+# Prominence II: Hasturian Era  |  10 players  |  Fabric modpack (clients MUST
+# install the modpack — vanilla clients can no longer connect)
 # ----------------------------------------------------------------------------
-# Vanilla clients connect directly — no launcher, no mods. Players must pick
-# "release 1.21.8" in their launcher Installations tab (vanilla MC is now
-# on calendar versioning 26.x, but Paper/plugins are still on the 1.21.x line).
-# All content comes from server-side plugins, auto-installed on pod start
-# via Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
+# Server uses itzg's Modrinth modpack auto-installer: on boot it pulls the
+# latest Prominence II: Hasturian Era .mrpack from Modrinth, fetches every
+# server-side mod listed inside it, and launches Fabric on the MC version the
+# modpack declares (currently 1.20.1). Player configuration (whitelist, ops,
+# serverName, motd) lives in values.local.yaml (gitignored).
 #
-# All resources live in the `minecraft` namespace.
+# Players need matching client mods — see CLIENT_SETUP.md.
 #
-# Install:
+# First install (fresh cluster):
 #   kubectl create namespace minecraft
 #   kubectl -n minecraft create secret generic mc-rcon \
 #     --from-literal=password="$(openssl rand -base64 24)"
 #   helm repo add itzg https://itzg.github.io/minecraft-server-charts/
 #   helm repo update
-#   helm install mc itzg/minecraft -n minecraft -f values.yaml
+#   helm install mc itzg/minecraft -n minecraft -f values.yaml -f values.local.yaml
 #
-# Upgrade (plugin bumps, resource changes, etc.):
+# Migrating an existing Paper/plugin install to this modpack:
+#   The old 1.21.8 Paper world is NOT forward-compatible with 1.20.1 Fabric.
+#   The mc-backup sidecar has hourly tarballs if you ever want to roll back.
+#   Fastest clean cut — wipe the data PVC and let Helm regenerate it:
+#     helm uninstall mc -n minecraft
+#     kubectl -n minecraft delete pvc -l app=mc-minecraft
+#     helm install mc itzg/minecraft -n minecraft -f values.yaml -f values.local.yaml
+#   (The mc-rcon secret survives uninstall; no need to recreate it.)
+#
+# Upgrade (modpack version bumps, resource changes, etc.):
 #   ./upgrade.sh         # flush, backup, helm upgrade, tail logs
 #
 # Console access:
 #   kubectl -n minecraft exec -it deploy/mc-minecraft -- rcon-cli
 # ============================================================================
 
-# java21 covers 1.21.x (Paper's current line).
+# java17 covers MC 1.20.1 (Prominence II's current line). Do NOT bump to
+# java21 until the modpack itself moves to a 1.21.x Fabric build.
 image:
   repository: itzg/minecraft-server
-  tag: java21
+  tag: java17
   pullPolicy: IfNotPresent
 
 # Critical: never run two pods against the same world. Recreate = old pod dies
@@ -41,32 +52,34 @@ strategy:
 minecraftServer:
   eula: "TRUE"
 
-  # PaperMC — Bukkit-API fork with strong performance and full plugin support.
-  # Pinned to 1.21.8 — the newest version where ALL plugins in our stack have
-  # a compatible Modrinth release (EssentialsX is the tightest constraint and
-  # only ships for 1.21.4, 1.21.5, 1.21.8). Players must create an installation
-  # for "release 1.21.8" in their launcher.
-  type: "PAPER"
-  version: "1.21.8"
+  # TYPE=MODRINTH + MODRINTH_MODPACK below tells itzg's startup scripts to
+  # download the .mrpack, install Fabric Loader at the version declared in
+  # the pack, and install every server-side mod it lists. `version` here
+  # must match what the modpack targets — 1.20.1 for current Hasturian Era.
+  # Bumping the modpack past a MC line means bumping this AND image.tag.
+  type: "MODRINTH"
+  version: "1.20.1"
 
   # serverName / motd live in values.local.yaml — server identity is per-operator.
   difficulty: "normal"
   maxPlayers: 10
 
-  # Paper is lean; 10/8 is comfortable for 10 players.
-  viewDistance: 10
-  simulationDistance: 8
+  # Modded chunks are heavy (more block entities, more mob AI). 8/6 is a
+  # comfortable starting point; drop to 6/4 if TPS dips below 19.
+  viewDistance: 8
+  simulationDistance: 6
 
   # Comma-separated usernames; the container resolves UUIDs. Player identities
   # live in values.local.yaml (gitignored) so forks start with an empty roster.
   enforceWhitelist: true
 
-  # Paper + this plugin stack is light compared to modded. 3G heap covers
-  # 10 players with room for Slimefun/MythicMobs; bump if TPS drops.
-  memory: "3G"
+  # Prominence II is a large modpack (~400 mods). 6G heap is the minimum the
+  # pack authors recommend for a small server; bump if you see GC storms in
+  # the logs or lag-spikes in-game.
+  memory: "6G"
 
-  # Aikar's G1GC flags — Paper team's documented defaults.
-  # See https://docs.papermc.io/paper/aikars-flags
+  # Aikar's G1GC flags — widely used across modded and vanilla alike.
+  # See https://docs.papermc.io/paper/aikars-flags (applies equally to Fabric)
   jvmXXOpts: >-
     -XX:+UseG1GC
     -XX:+ParallelRefProcEnabled
@@ -105,62 +118,89 @@ minecraftServer:
   serviceType: LoadBalancer
   externalTrafficPolicy: Local
 
-  # Auto-pause suspends the JVM when no players are online. Modest win on a
-  # plugin server (~1GB idle) but still worth enabling.
+  # Auto-pause suspends the JVM when no players are online. Bigger win on a
+  # modded server than on Paper (~3-4GB idle vs 6G active).
   autoPause:
     enabled: true
     timeoutInit: 600           # wait 10min after start for first player
     timeoutEstablished: 3600   # pause after 1h idle
     period: 10
 
+  # BlueMap binds a webserver on 8100 inside the pod. klipper-lb publishes it
+  # on node IPs; the talaria sibling project can front it with DuckDNS+TLS.
+  # Both add-ons need one-time manual config after first boot — see
+  # ADDON_SETUP.md for Discord bot token + BlueMap accept-download steps.
+  extraPorts:
+    - name: bluemap
+      containerPort: 8100
+      protocol: TCP
+      service:
+        enabled: true
+        embedded: false
+        type: LoadBalancer
+        port: 8100
+      ingress:
+        enabled: false
+
 # ----------------------------------------------------------------------------
-# Plugins
+# Modpack + add-on mods
 # ----------------------------------------------------------------------------
-# itzg's image downloads plugins on every container start:
-#   MODRINTH_PROJECTS — auto-pulls latest compatible version from Modrinth
-#   PLUGINS           — direct URLs for plugins not on Modrinth
-# Plugin config persists on the data PVC under /data/plugins/<name>/.
+# itzg's MODRINTH_MODPACK installer runs on every container start:
+#   - Resolves the modpack's latest release on Modrinth
+#   - Downloads the .mrpack and extracts server-side mods into /data/mods
+#   - Installs Fabric Loader at the version the modpack declares
+#   - Leaves client-only mods (MODRINTH_EXCLUDE_FILES) out of the server
 #
-# To pin a plugin version, change `plugin:<slug>` to `plugin:<slug>:<versionId>`
-# (find version IDs via the Modrinth page or API).
+# MODRINTH_PROJECTS layers extra individual mods on top of the modpack. Keep
+# this list to server-side mods that DON'T need a matching client install
+# (players don't get a modpack rebuild just because we add one here).
+#   bluemap       — live web map on :8100 (mod is server-side only)
+#   dcintegration — DiscordIntegration-Fabric chat+events bridge
+#
+# To pin a specific modpack version (recommended once players have joined,
+# so a surprise Modrinth release can't break the world):
+#   MODRINTH_MODPACK_VERSION: "<version-id>"
+# Find version IDs on https://modrinth.com/modpack/prominence-2-fabric/versions
+# (the ID shown in the URL after clicking a version, e.g. `xYz12ABC`).
 extraEnv:
-  # The itzg parser splits on comma without trimming, so keep this on one line
-  # with no spaces. `quests.classic` is PikaMug's Quests (in-game GUI creator);
-  # plain `quests` is LMBishop's simpler YAML-config alternative.
-  # MagicSpells is pinned to versionId JCEG42U7 (4.0-Beta-17, MC 1.21.4-1.21.8).
-  # All its Modrinth uploads are tagged beta; the default installer filters
-  # those out unless a version is pinned. Re-check when bumping MC version:
-  # https://modrinth.com/plugin/magicspells/versions
-  MODRINTH_PROJECTS: "luckperms,essentialsx,vaultunlocked,auraskills,mythicmobs,magicspells:JCEG42U7,quests.classic,worldedit,worldguard"
-  # Citizens isn't on Modrinth; pinned to a specific CI build (URL is version-
-  # stable, so no "latest" redirect problems). Bump when you want a new build:
-  #   curl -s 'https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/' \
-  #     | grep -Eo 'Citizens-[0-9.-]+b[0-9]+\.jar' | head -1
-  PLUGINS: "https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/artifact/dist/target/Citizens-2.0.42-b4162.jar"
-  #
-  # Slimefun is NOT auto-installable: blob.build's /dl/ endpoint returns 200
-  # on GET but 404 on HEAD, which breaks itzg's plugin fetcher. One-time
-  # manual install (survives pod restarts; lives on the data PVC):
-  #   POD=$(kubectl -n minecraft get pod -l app=mc-minecraft -o jsonpath='{.items[0].metadata.name}')
-  #   curl -L -o /tmp/Slimefun.jar https://blob.build/dl/Slimefun4/Dev/latest
-  #   kubectl -n minecraft cp /tmp/Slimefun.jar "$POD:/data/plugins/Slimefun.jar" -c mc-minecraft
-  #   kubectl -n minecraft exec deploy/mc-minecraft -- rcon-cli reload confirm
+  MODRINTH_MODPACK: "prominence-2-fabric"
+  MODRINTH_MODPACK_VERSION_TYPE: "release"
+  # Redundant with the modpack's own metadata, but explicit-is-better.
+  MODRINTH_LOADER: "fabric"
+  # Single-line, no spaces — itzg's parser splits naively on comma.
+  MODRINTH_PROJECTS: "bluemap,dcintegration"
+
+# ----------------------------------------------------------------------------
+# Health probes
+# ----------------------------------------------------------------------------
+# Prominence II takes 4-6min to load ~400 mods before it binds 25565. The
+# chart's default liveness probe starts pinging at 30s with a 130s total
+# budget — which kills the pod before Fabric ever finishes boot, creating a
+# restart loop. Enable the startup probe to give Fabric up to ~12min before
+# liveness kicks in; once startup succeeds, liveness/readiness use defaults.
+startupProbe:
+  enabled: true
+  failureThreshold: 60        # 60 * periodSeconds = 600s after initial delay
+  periodSeconds: 10
+  initialDelaySeconds: 120    # Fabric hasn't even started mod init by now
 
 # ----------------------------------------------------------------------------
 # Resources
 # ----------------------------------------------------------------------------
-# 3G heap + ~1G off-heap (direct buffers, plugin allocations, mc-backup).
+# 6G heap + ~2G off-heap (direct buffers, mod native libs, mc-backup sidecar).
 resources:
   requests:
-    memory: 2Gi
+    memory: 4Gi
     cpu: 1000m
   limits:
-    memory: 5Gi
+    memory: 8Gi
     cpu: 4000m
 
 # ----------------------------------------------------------------------------
 # Persistent storage
 # ----------------------------------------------------------------------------
+# Modpacks eat more disk than plugins — /data/mods alone is ~1GB, and worlds
+# generate bigger region files. 30Gi still has headroom for Hasturian Era.
 persistence:
   dataDir:
     enabled: true
