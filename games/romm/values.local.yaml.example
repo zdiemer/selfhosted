@@ -1,0 +1,23 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored.
+
+smb:
+  host: "192.168.1.50"           # NAS LAN IP
+  share: "Games/ROMs"            # share name, no leading slash
+  username: "roms-reader"        # dedicated read-only SMB user (see README)
+  password: "CHANGE-ME"
+
+romm:
+  # Generate: openssl rand -hex 32
+  authSecretKey: "CHANGE-ME-64-hex-chars"
+
+  # Optional — leave commented to skip. Unlocks metadata/cover scraping.
+  # igdb:
+  #   clientId:     "..."
+  #   clientSecret: "..."
+  # screenscraper:
+  #   username: "..."
+  #   password: "..."
+  # mobygames:
+  #   apiKey: "..."
+  # steamgriddb:
+  #   apiKey: "..."

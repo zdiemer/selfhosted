@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "romm.fullname" . }}-env
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  ROMM_AUTH_SECRET_KEY: {{ required "romm.authSecretKey required in values.local.yaml" .Values.romm.authSecretKey | quote }}
+  DB_DRIVER: "sqlite"
+  {{- with .Values.romm.igdb }}
+  {{- if .clientId }}
+  IGDB_CLIENT_ID: {{ .clientId | quote }}
+  {{- end }}
+  {{- if .clientSecret }}
+  IGDB_CLIENT_SECRET: {{ .clientSecret | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.romm.screenscraper }}
+  {{- if .username }}
+  SCREENSCRAPER_USER: {{ .username | quote }}
+  {{- end }}
+  {{- if .password }}
+  SCREENSCRAPER_PASSWORD: {{ .password | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.romm.mobygames }}
+  {{- if .apiKey }}
+  MOBYGAMES_API_KEY: {{ .apiKey | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.romm.steamgriddb }}
+  {{- if .apiKey }}
+  STEAMGRIDDB_API_KEY: {{ .apiKey | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.romm.oidc }}
+  {{- if .enabled }}
+  OIDC_ENABLED: "true"
+  OIDC_PROVIDER: {{ .serverName | quote }}
+  OIDC_SERVER_APPLICATION_URL: {{ .issuer | quote }}
+  OIDC_CLIENT_ID: {{ .clientId | quote }}
+  OIDC_CLIENT_SECRET: {{ .clientSecret | quote }}
+  {{- end }}
+  {{- end }}

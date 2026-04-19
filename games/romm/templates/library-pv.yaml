@@ -1,0 +1,31 @@
+{{/*
+SMB-backed PV for the ROM library. Read-only to protect the share from
+accidental writes. Wired via the csi-driver-smb cluster add-on (see README
+§Prerequisites). The volumeHandle is cluster-unique; prefixing with the
+release name lets multiple RomM installs coexist.
+*/}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "romm.fullname" . }}-library
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    {{- toYaml .Values.smb.mountOptions | nindent 4 }}
+    - vers={{ .Values.smb.vers }}
+  csi:
+    driver: smb.csi.k8s.io
+    readOnly: true
+    volumeHandle: {{ include "romm.fullname" . }}-library
+    volumeAttributes:
+      source: {{ printf "//%s/%s" (required "smb.host required" .Values.smb.host) (required "smb.share required" .Values.smb.share) | quote }}
+    nodeStageSecretRef:
+      name: {{ include "romm.fullname" . }}-smb-creds
+      namespace: {{ .Release.Namespace }}

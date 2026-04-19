@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "romm.fullname" . }}-library
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: {{ include "romm.fullname" . }}-library
+  resources:
+    requests:
+      storage: 1Ti

@@ -1,0 +1,80 @@
+image:
+  repository: rommapp/romm
+  tag: "3.11.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# SMB share mounted read-only into the container. Point this at the share
+# that already serves ROMs to your Steam Deck — we just add a k8s consumer.
+smb:
+  host: ""                  # NAS host or IP (e.g. 192.168.1.50)
+  share: ""                 # Share name, no leading slash (e.g. Games/ROMs)
+  vers: "3.0"               # Pin SMB protocol; Windows 10/11 speak 3.x
+  # Extra mount options. Read-only perms by default (0555 dirs, 0444 files).
+  mountOptions:
+    - dir_mode=0555
+    - file_mode=0444
+    - noserverino
+  # Where the share's contents land inside the container. RomM's default
+  # layout expects /romm/library/roms/<platform>/<file>. If your share's root
+  # *is* the per-platform folders, mount it at /romm/library/roms (default).
+  # If your share's root contains roms/ and bios/ already, use /romm/library.
+  mountPath: /romm/library/roms
+  # Subpath under the share to mount (""="mount the whole share").
+  sharePath: ""
+  # SMB username/password live in values.local.yaml.
+
+persistence:
+  data:
+    # One PVC, subPathed into /romm/resources, /romm/assets, /romm/config.
+    size: 20Gi
+    storageClass: ""        # "" → cluster default StorageClass
+    accessMode: ReadWriteOnce
+
+romm:
+  # REQUIRED — set in values.local.yaml. Generate with:
+  #   openssl rand -hex 32
+  authSecretKey: ""
+
+  # Optional scrapers (all set in values.local.yaml).
+  igdb:
+    clientId: ""
+    clientSecret: ""
+  screenscraper:
+    username: ""
+    password: ""
+  mobygames:
+    apiKey: ""
+  steamgriddb:
+    apiKey: ""
+
+  # OIDC — follow-up. Leave disabled until DuckDNS + Ingress + IdP are up.
+  oidc:
+    enabled: false
+    serverName: ""          # Display name, e.g. "Authelia"
+    issuer: ""              # https://auth.zachd.duckdns.org
+    clientId: ""
+    clientSecret: ""        # values.local.yaml
+
+ingress:
+  # Disabled for LAN-only v1. Flip on after the DuckDNS follow-up — see README.
+  enabled: false
+  className: traefik
+  host: romm.zachd.duckdns.org
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
+    # certs must ride a wildcard SAN. See README §DuckDNS follow-up.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

@@ -1,0 +1,20 @@
+{{/*
+One local PVC for RomM's state. SubPathed in the Deployment into
+/romm/resources (metadata/covers), /romm/assets (saves/states), and
+/romm/config (SQLite db + app config).
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "romm.fullname" . }}-data
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

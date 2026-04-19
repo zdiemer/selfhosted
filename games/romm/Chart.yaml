@@ -1,0 +1,12 @@
+apiVersion: v2
+name: romm
+description: RomM — self-hosted ROM manager with EmulatorJS, backed by an SMB-mounted library
+type: application
+version: 0.1.0
+# appVersion tracks the RomM image tag in values.yaml (image.tag).
+appVersion: "3.11.0"
+home: https://romm.app
+sources:
+  - https://github.com/rommapp/romm
+maintainers:
+  - name: zachd

@@ -14,6 +14,7 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 |---|---|---|
 | [`minecraft/`](minecraft/) | Prominence II: Hasturian Era (Fabric 1.20.1) via the `itzg/minecraft` chart. BlueMap + Discord Integration add-ons, mc-backup sidecar. | [README bootstrap in values.yaml](minecraft/values.yaml), [ADDON_SETUP](minecraft/ADDON_SETUP.md), [CLIENT_SETUP](minecraft/CLIENT_SETUP.md) |
 | [`discord/vocard/`](discord/vocard/) | Vocard music bot + Lavalink + MongoDB — slash-command music player for voice channels. Bot-only (no dashboard). | [discord/vocard/README](discord/vocard/README.md) |
+| [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
 
 ## Conventions
 
