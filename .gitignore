@@ -15,6 +15,7 @@ Chart.lock
 *.secret.yaml
 secrets/
 
-# Local-only overlays (player identities, personal tool config).
-values.local.yaml
+# Local-only overlays (per-project secrets: tokens, passwords, identities).
+# The ** glob covers every subproject's values.local.yaml.
+**/values.local.yaml
 .claude/settings.local.json

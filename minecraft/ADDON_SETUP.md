@@ -36,8 +36,9 @@ echo "$POD"   # should print e.g. mc-minecraft-5bd694b444-9t8rj
      apps, not server bots.
    - **Bot Permissions** (appears *below* Scopes once `bot` is ticked,
      plain-English checkboxes — same set as the Bot tab) — tick
-     `View Channels`, `Send Messages`, `Read Message History`,
-     `Manage Webhooks`.
+     `View Channels`, `Send Messages`, `Embed Links`, `Manage Messages`.
+     dcintegration's init will `PermissionException` and kill the bot
+     if any of those four are missing (verified against v3.0.7).
 5. Copy the generated URL from the bottom of the page, open it in a
    browser, and invite the bot to your Discord server.
 6. In Discord: **User Settings** → **Advanced** → **Developer Mode** on.
