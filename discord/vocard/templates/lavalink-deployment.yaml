@@ -48,22 +48,18 @@ spec:
               readOnly: true
           resources:
             {{- toYaml .Values.lavalink.resources | nindent 12 }}
+          # Lavalink 4 requires Authorization on every endpoint including
+          # /version, and k8s probe httpHeaders can't reference Secrets — so
+          # use a TCP probe. Lavalink only opens 2333 once Spring + plugins
+          # finish booting, so port-listening is a reliable readiness signal.
           readinessProbe:
-            httpGet:
-              path: /version
+            tcpSocket:
               port: http
-              httpHeaders:
-                - name: Authorization
-                  value: unused
             initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /version
+            tcpSocket:
               port: http
-              httpHeaders:
-                - name: Authorization
-                  value: unused
             initialDelaySeconds: 60
             periodSeconds: 30
       volumes:

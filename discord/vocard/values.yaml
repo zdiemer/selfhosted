@@ -33,7 +33,11 @@ images:
     pullPolicy: IfNotPresent
   lavalink:
     repository: ghcr.io/lavalink-devs/lavalink
-    tag: "4"
+    # Pin to 4.0.x — Lavalink 4.2+ added a required `channelId` field to the
+    # voice-state payload that Vocard's bundled Voicelink (1.4 in Vocard
+    # 2.7.2) doesn't send, which 400s every /play. Bump only after Vocard
+    # ships a Voicelink update that includes channelId.
+    tag: "4.0.8"
     pullPolicy: IfNotPresent
   mongo:
     repository: mongo

@@ -41,6 +41,42 @@
     "enable" .Values.dashboard.enabled)
   "aliases" .Values.settings.aliases
   "cooldowns" .Values.settings.cooldowns
+  "sources_settings" (dict
+    "youtube"      (dict "emoji" "▶️" "color" "0xFF0000")
+    "youtubemusic" (dict "emoji" "▶️" "color" "0xFF0000")
+    "spotify"      (dict "emoji" "🟢" "color" "0x1DB954")
+    "soundcloud"   (dict "emoji" "🟧" "color" "0xFF7700")
+    "twitch"       (dict "emoji" "🟣" "color" "0x9000FF")
+    "bandcamp"     (dict "emoji" "🎵" "color" "0x6F98A7")
+    "vimeo"        (dict "emoji" "🎬" "color" "0x1ABCEA")
+    "applemusic"   (dict "emoji" "🍎" "color" "0xE298C4")
+    "reddit"       (dict "emoji" "🟠" "color" "0xFF4500")
+    "tiktok"       (dict "emoji" "🎶" "color" "0x74ECE9")
+    "others"       (dict "emoji" "🔗" "color" "0xb3b3b3"))
+  "default_voice_status_template" "{{@@track_name@@ != 'None' ?? @@track_source_emoji@@ Now Playing: @@track_name@@ // Waiting for song requests}}"
+  "default_controller" (dict
+    "embeds" (dict
+      "active" (dict
+        "description" "**Now Playing: ```[@@track_name@@]```\nLink: [Click Me](@@track_url@@) | Requester: @@track_requester_mention@@ | DJ: @@dj@@**"
+        "footer" (dict "text" "Queue Length: @@queue_length@@ | Duration: @@track_duration@@ | Volume: @@volume@@% {{loop_mode != 'Off' ?? | Repeat: @@loop_mode@@}}")
+        "image" "@@track_thumbnail@@"
+        "author" (dict "name" "Music Controller | @@channel_name@@" "icon_url" "@@bot_icon@@")
+        "color" "@@track_color@@")
+      "inactive" (dict
+        "title" (dict "name" "There are no songs playing right now")
+        "description" "Queue something with `/play`."
+        "color" "@@default_embed_color@@"))
+    "buttons" (list
+      (dict
+        "back"       (dict "emoji" "⏮️" "label" "@@t_buttonBack@@")
+        "play-pause" (dict "states" (dict
+          "pause"  (dict "emoji" "⏸️" "label" "@@t_buttonPause@@")
+          "resume" (dict "emoji" "▶️" "label" "@@t_buttonResume@@")))
+        "skip"       (dict "emoji" "⏭️" "label" "@@t_buttonSkip@@")
+        "stop"       (dict "emoji" "⏹️" "label" "@@t_buttonLeave@@" "style" "red")
+        "add-fav"    (dict "emoji" "❤️" "label" ""))
+      (dict
+        "tracks"     (dict "label" "@@t_playerDropdown@@" "max_options" 10))))
 -}}
 apiVersion: v1
 kind: Secret

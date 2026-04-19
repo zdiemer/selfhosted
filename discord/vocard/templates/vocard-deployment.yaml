@@ -24,6 +24,42 @@ spec:
         # reads settings.json at startup.
         checksum/settings: {{ include (print $.Template.BasePath "/vocard-settings.yaml") . | sha256sum }}
     spec:
+      # Init container does two things:
+      #   1. Vocard rewrites settings.json on startup (updates the version
+      #      field), so it can't be mounted directly from the Secret
+      #      (read-only). Copy it into a writable emptyDir.
+      #   2. Vocard does NOT retry the Lavalink node connection at startup —
+      #      if Lavalink isn't reachable when the bot boots, it stays online
+      #      but every /play fails until the bot is restarted manually. So
+      #      block here until Lavalink's TCP port answers. Mongo gets the
+      #      same treatment to avoid the bot crashing on a cold cluster boot
+      #      where DNS for the Mongo Service hasn't published yet.
+      initContainers:
+        - name: init-settings
+          image: "{{ .Values.images.bot.repository }}:{{ .Values.images.bot.tag }}"
+          imagePullPolicy: {{ .Values.images.bot.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              cp /src/settings.json /dst/settings.json
+              wait_for() {
+                host=$1; port=$2
+                until python -c "import socket,sys; socket.create_connection(('$host',$port),timeout=2)" 2>/dev/null; do
+                  echo "waiting for $host:$port..."
+                  sleep 2
+                done
+                echo "$host:$port is up"
+              }
+              wait_for {{ printf "%s-mongo" .Release.Name }} 27017
+              wait_for {{ printf "%s-lavalink" .Release.Name }} 2333
+          volumeMounts:
+            - name: settings-src
+              mountPath: /src
+              readOnly: true
+            - name: settings
+              mountPath: /dst
       containers:
         - name: vocard
           image: "{{ .Values.images.bot.repository }}:{{ .Values.images.bot.tag }}"
@@ -34,13 +70,14 @@ spec:
             - name: settings
               mountPath: /app/settings.json
               subPath: settings.json
-              readOnly: true
           resources:
             {{- toYaml .Values.bot.resources | nindent 12 }}
       volumes:
-        - name: settings
+        - name: settings-src
           secret:
             secretName: {{ .Release.Name }}-bot-settings
             items:
               - key: settings.json
                 path: settings.json
+        - name: settings
+          emptyDir: {}
