@@ -1,0 +1,182 @@
+# ============================================================================
+# Prominence II: Hasturian Era  |  10 players  |  itzg/minecraft Helm chart
+# ----------------------------------------------------------------------------
+# Install:
+#   helm repo add itzg https://itzg.github.io/minecraft-server-charts/
+#   helm repo update
+#   helm install mc itzg/minecraft -f values.yaml
+#
+# Upgrade (new modpack version, resource changes, etc.):
+#   helm upgrade mc itzg/minecraft -f values.yaml
+#
+# Console access:
+#   kubectl exec -it mc-minecraft-0 -- rcon-cli
+# ============================================================================
+
+image: itzg/minecraft-server
+# The itzg image auto-selects Java based on MC version, but pin for reproducibility.
+# java21 covers 1.21.x; java17 is fine for 1.20.1 but java21 also works.
+imageTag: java21
+
+# Critical: never run two pods against the same world. Recreate = old pod dies
+# completely before new pod starts. RollingUpdate WILL corrupt your world.
+strategy:
+  type: Recreate
+
+# ----------------------------------------------------------------------------
+# Minecraft server configuration
+# ----------------------------------------------------------------------------
+minecraftServer:
+  eula: "TRUE"
+
+  # Modrinth Fabric edition (public, no API key). A NeoForge build exists on
+  # CurseForge (slug: prominence-2-hasturian-era) if you ever want to switch.
+  type: "MODRINTH"
+  version: "1.20.1"
+  modrinthModpack:
+    projectId: "prominence-2-fabric"
+    # Pinned for reproducibility. Bump via ./upgrade.sh <versionId>.
+    # List versions: curl -s 'https://api.modrinth.com/v2/project/prominence-2-fabric/version' | jq -r '.[0:5][] | "\(.id) \(.version_number)"'
+    versionId: "GoepRBzX"  # 3.9.26
+
+  serverName: "Hasturian Era"
+  motd: "§6Prominence II §7| §fHasturian Era"
+  difficulty: "normal"
+  maxPlayers: 10
+
+  # Keep these modest — modded + 10 players gets expensive fast.
+  viewDistance: 10
+  simulationDistance: 8
+
+  # Comma-separated usernames; the container resolves UUIDs.
+  whitelist: "starfoxa"
+  enforceWhitelist: true
+  ops: "starfoxa"
+
+  # JVM heap. Pod memory limit below is higher to leave room for off-heap
+  # overhead (mods routinely allocate 1-2GB outside the heap) plus the
+  # mc-backup sidecar. Sized for ~8GB of node headroom.
+  memory: "5G"
+
+  # Aikar's G1GC flags — battle-tested defaults for modded Minecraft.
+  # See https://docs.papermc.io/paper/aikars-flags
+  jvmXXOpts: >-
+    -XX:+UseG1GC
+    -XX:+ParallelRefProcEnabled
+    -XX:MaxGCPauseMillis=200
+    -XX:+UnlockExperimentalVMOptions
+    -XX:+DisableExplicitGC
+    -XX:+AlwaysPreTouch
+    -XX:G1NewSizePercent=30
+    -XX:G1MaxNewSizePercent=40
+    -XX:G1HeapRegionSize=8M
+    -XX:G1ReservePercent=20
+    -XX:G1HeapWastePercent=5
+    -XX:G1MixedGCCountTarget=4
+    -XX:InitiatingHeapOccupancyPercent=15
+    -XX:G1MixedGCLiveThresholdPercent=90
+    -XX:G1RSetUpdatingPauseTimePercent=5
+    -XX:SurvivorRatio=32
+    -XX:+PerfDisableSharedMem
+    -XX:MaxTenuringThreshold=1
+
+  # RCON for admin console access. Do NOT expose this port publicly.
+  # Access via: kubectl exec -it mc-minecraft-0 -- rcon-cli
+  rcon:
+    enabled: true
+    port: 25575
+    # Create:   kubectl create secret generic mc-rcon --from-literal=password="$(openssl rand -base64 24)"
+    # Retrieve: kubectl get secret mc-rcon -o jsonpath='{.data.password}' | base64 -d
+    existingSecret: "mc-rcon"
+    secretKey: "password"
+    password: ""
+
+  # Auto-pause suspends the JVM when no players are online. Big win for
+  # modded servers — Prominence II idles around 3-4GB otherwise.
+  autoPause:
+    enabled: true
+    # Prominence II downloads ~2GB of mods on first boot; the default 10min
+    # can fire before the server is even accepting connections. 30min is safe.
+    timeoutInit: 1800
+    timeoutEstablished: 3600   # pause after 1h idle
+    period: 10
+
+# ----------------------------------------------------------------------------
+# Resources
+# ----------------------------------------------------------------------------
+# Limit leaves ~2G above the 5G heap for JVM metaspace, direct buffers, and
+# mod off-heap allocations. If you see OOMKills, raise the limit.
+resources:
+  requests:
+    memory: 4Gi
+    cpu: 1000m
+  limits:
+    memory: 7Gi
+    cpu: 4000m
+
+# ----------------------------------------------------------------------------
+# Persistent storage
+# ----------------------------------------------------------------------------
+persistence:
+  dataDir:
+    enabled: true
+    Size: 30Gi
+    # storageClass: ""  # unset = cluster default
+
+# ----------------------------------------------------------------------------
+# Networking
+# ----------------------------------------------------------------------------
+# k3s ships klipper-lb, so LoadBalancer binds port 25565 directly on node IPs.
+serviceType: LoadBalancer
+externalTrafficPolicy: Local
+
+# Never expose RCON externally.
+rconServiceType: ClusterIP
+
+# ----------------------------------------------------------------------------
+# Backups via itzg/mc-backup sidecar
+# ----------------------------------------------------------------------------
+# The sidecar runs `save-off` → `save-all flush` → tar → `save-on` via RCON,
+# which is the only way to get a consistent backup of a running world.
+mcbackup:
+  enabled: true
+  image:
+    repository: itzg/mc-backup
+    tag: latest
+  pullPolicy: IfNotPresent
+
+  # Hourly backups; prune anything older than 2 days locally.
+  # Pair this with offsite (rclone) for longer retention.
+  backupInterval: "1h"
+  pruneBackupsDays: 2
+  # First boot pulls the modpack + generates chunks; don't race the server.
+  initialDelay: "15m"
+
+  # tar  = local tar.gz files on a PVC
+  # rclone = push to S3/B2/R2/GCS/etc. (set envs below)
+  backupMethod: tar
+
+  # Graceful shutdown hooks — ensures backup runs before pod termination.
+  pauseIfNoPlayers: "true"
+  playersOnlineCheckInterval: "5m"
+
+  persistence:
+    backupDir:
+      enabled: true
+      Size: 50Gi
+
+  # Local backups die with the PVC. For offsite, switch backupMethod to "rclone"
+  # and mount a secret with rclone.conf. See itzg/mc-backup README for envs.
+
+# ----------------------------------------------------------------------------
+# Scheduling & reliability
+# ----------------------------------------------------------------------------
+# Prevent the cluster autoscaler from evicting the pod to consolidate nodes.
+# A 10-player modded server taking 60s to restart is worth pinning.
+podAnnotations:
+  cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+
+# Pin to zachd-ubuntu — most RAM headroom, and it carries a PreferNoSchedule
+# taint for talaria workloads.
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu

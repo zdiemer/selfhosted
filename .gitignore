@@ -1,0 +1,16 @@
+# Local Helm state
+charts/
+Chart.lock
+*.tgz
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Secrets — never commit. Use kubectl create secret or sealed-secrets instead.
+*-secret.yaml
+*.secret.yaml
+secrets/
