@@ -14,3 +14,7 @@ Chart.lock
 *-secret.yaml
 *.secret.yaml
 secrets/
+
+# Local-only overlays (player identities, personal tool config).
+values.local.yaml
+.claude/settings.local.json

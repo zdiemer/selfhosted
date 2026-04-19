@@ -49,8 +49,7 @@ minecraftServer:
   type: "PAPER"
   version: "1.21.8"
 
-  serverName: "Hasturian Era"
-  motd: "§6Hasturian Era §7| §fRPG + Magic"
+  # serverName / motd live in values.local.yaml — server identity is per-operator.
   difficulty: "normal"
   maxPlayers: 10
 
@@ -58,10 +57,9 @@ minecraftServer:
   viewDistance: 10
   simulationDistance: 8
 
-  # Comma-separated usernames; the container resolves UUIDs.
-  whitelist: "starfoxa"
+  # Comma-separated usernames; the container resolves UUIDs. Player identities
+  # live in values.local.yaml (gitignored) so forks start with an empty roster.
   enforceWhitelist: true
-  ops: "starfoxa"
 
   # Paper + this plugin stack is light compared to modded. 3G heap covers
   # 10 players with room for Slimefun/MythicMobs; bump if TPS drops.

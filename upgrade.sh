@@ -16,7 +16,11 @@ set -euo pipefail
 
 RELEASE="${RELEASE:-mc}"
 NAMESPACE="${NAMESPACE:-minecraft}"
-VALUES="$(cd "$(dirname "$0")" && pwd)/values.yaml"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+VALUES="${HERE}/values.yaml"
+LOCAL_VALUES="${HERE}/values.local.yaml"
+VALUE_ARGS=(-f "$VALUES")
+[[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
 K="kubectl -n ${NAMESPACE}"
 
@@ -46,8 +50,8 @@ if [[ -n "${BACKUP_CTR:-}" ]]; then
   sleep 15
 fi
 
-echo "==> helm upgrade ${RELEASE} itzg/minecraft -n ${NAMESPACE} -f values.yaml"
-helm upgrade "$RELEASE" itzg/minecraft -n "$NAMESPACE" -f "$VALUES"
+echo "==> helm upgrade ${RELEASE} itzg/minecraft -n ${NAMESPACE} ${VALUE_ARGS[*]}"
+helm upgrade "$RELEASE" itzg/minecraft -n "$NAMESPACE" "${VALUE_ARGS[@]}"
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}-minecraft" --timeout=600s
