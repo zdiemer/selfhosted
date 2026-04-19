@@ -7,21 +7,28 @@
 # All content comes from server-side plugins, auto-installed on pod start
 # via Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
 #
+# All resources live in the `minecraft` namespace.
+#
 # Install:
+#   kubectl create namespace minecraft
+#   kubectl -n minecraft create secret generic mc-rcon \
+#     --from-literal=password="$(openssl rand -base64 24)"
 #   helm repo add itzg https://itzg.github.io/minecraft-server-charts/
 #   helm repo update
-#   helm install mc itzg/minecraft -f values.yaml
+#   helm install mc itzg/minecraft -n minecraft -f values.yaml
 #
 # Upgrade (plugin bumps, resource changes, etc.):
 #   ./upgrade.sh         # flush, backup, helm upgrade, tail logs
 #
 # Console access:
-#   kubectl exec -it mc-minecraft-0 -- rcon-cli
+#   kubectl -n minecraft exec -it deploy/mc-minecraft -- rcon-cli
 # ============================================================================
 
-image: itzg/minecraft-server
 # java21 covers 1.21.x (Paper's current line).
-imageTag: java21
+image:
+  repository: itzg/minecraft-server
+  tag: java21
+  pullPolicy: IfNotPresent
 
 # Critical: never run two pods against the same world. Recreate = old pod dies
 # completely before new pod starts. RollingUpdate WILL corrupt your world.
@@ -86,8 +93,8 @@ minecraftServer:
   rcon:
     enabled: true
     port: 25575
-    # Create:   kubectl create secret generic mc-rcon --from-literal=password="$(openssl rand -base64 24)"
-    # Retrieve: kubectl get secret mc-rcon -o jsonpath='{.data.password}' | base64 -d
+    # Create:   kubectl -n minecraft create secret generic mc-rcon --from-literal=password="$(openssl rand -base64 24)"
+    # Retrieve: kubectl -n minecraft get secret mc-rcon -o jsonpath='{.data.password}' | base64 -d
     existingSecret: "mc-rcon"
     secretKey: "password"
     password: ""
@@ -115,9 +122,19 @@ extraEnv:
   # with no spaces. `quests.classic` is PikaMug's Quests (in-game GUI creator);
   # plain `quests` is LMBishop's simpler YAML-config alternative.
   MODRINTH_PROJECTS: "plugin:luckperms,plugin:essentialsx,plugin:vaultunlocked,plugin:auraskills,plugin:mythicmobs,plugin:magicspells,plugin:quests.classic,plugin:worldedit,plugin:worldguard"
-  # Slimefun and Citizens aren't on Modrinth. "latest" URLs are fine for a
-  # private server; pin to specific builds for reproducibility across restarts.
-  PLUGINS: "https://blob.build/dl/Slimefun4/Stable/LATEST,https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/artifact/dist/target/Citizens.jar"
+  # Citizens isn't on Modrinth; pinned to a specific CI build (URL is version-
+  # stable, so no "latest" redirect problems). Bump when you want a new build:
+  #   curl -s 'https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/' \
+  #     | grep -Eo 'Citizens-[0-9.-]+b[0-9]+\.jar' | head -1
+  PLUGINS: "https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/artifact/dist/target/Citizens-2.0.42-b4162.jar"
+  #
+  # Slimefun is NOT auto-installable: blob.build's /dl/ endpoint returns 200
+  # on GET but 404 on HEAD, which breaks itzg's plugin fetcher. One-time
+  # manual install (survives pod restarts; lives on the data PVC):
+  #   POD=$(kubectl -n minecraft get pod -l app=mc-minecraft -o jsonpath='{.items[0].metadata.name}')
+  #   curl -L -o /tmp/Slimefun.jar https://blob.build/dl/Slimefun4/Dev/latest
+  #   kubectl -n minecraft cp /tmp/Slimefun.jar "$POD:/data/plugins/Slimefun.jar" -c mc-minecraft
+  #   kubectl -n minecraft exec deploy/mc-minecraft -- rcon-cli reload confirm
 
 # ----------------------------------------------------------------------------
 # Resources
