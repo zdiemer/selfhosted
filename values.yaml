@@ -1,9 +1,11 @@
 # ============================================================================
 # Hasturian Era  |  10 players  |  PaperMC + plugins (no client mods needed)
 # ----------------------------------------------------------------------------
-# Vanilla 1.21.x clients connect directly — no launcher, no mods. All content
-# comes from server-side plugins. Plugins auto-install on pod start via
-# Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
+# Vanilla clients connect directly — no launcher, no mods. Players must pick
+# "release 1.21.11" in their launcher Installations tab (vanilla MC is now
+# on calendar versioning 26.x, but Paper is still on the 1.21.x line).
+# All content comes from server-side plugins, auto-installed on pod start
+# via Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
 #
 # Install:
 #   helm repo add itzg https://itzg.github.io/minecraft-server-charts/
@@ -33,8 +35,11 @@ minecraftServer:
   eula: "TRUE"
 
   # PaperMC — Bukkit-API fork with strong performance and full plugin support.
+  # Pinned to 1.21.11 (Paper's current stable). Vanilla MC has moved to
+  # calendar versioning (26.x); Paper hasn't caught up yet, so players must
+  # select "release 1.21.11" in their launcher installations.
   type: "PAPER"
-  version: "1.21.4"
+  version: "1.21.11"
 
   serverName: "Hasturian Era"
   motd: "§6Hasturian Era §7| §fRPG + Magic"
