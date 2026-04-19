@@ -16,10 +16,6 @@ spec:
       labels:
         {{- include "vocard.labels" $ctx | nindent 8 }}
     spec:
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: spotify-tokener
           image: "{{ .Values.images.spotifyTokener.repository }}:{{ .Values.images.spotifyTokener.tag }}"

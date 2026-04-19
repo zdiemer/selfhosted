@@ -23,10 +23,6 @@ spec:
         # Restart the pod when application.yml changes. Lavalink doesn't hot-reload.
         checksum/config: {{ include (print $.Template.BasePath "/lavalink-configmap.yaml") . | sha256sum }}
     spec:
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: lavalink
           image: "{{ .Values.images.lavalink.repository }}:{{ .Values.images.lavalink.tag }}"

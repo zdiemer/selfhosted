@@ -25,5 +25,3 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.
-- **Node pinning** to `zachd-ubuntu` via `nodeSelector` — it's the box with
-  headroom and the PreferNoSchedule taint for talaria workloads.

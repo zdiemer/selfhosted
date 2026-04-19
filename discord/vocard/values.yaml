@@ -45,14 +45,6 @@ images:
     pullPolicy: IfNotPresent
 
 # ----------------------------------------------------------------------------
-# Pod placement — matches the minecraft chart pattern. zachd-ubuntu is the
-# only cluster node with real headroom; Override in values.local.yaml if you
-# add capacity elsewhere.
-# ----------------------------------------------------------------------------
-nodeSelector:
-  kubernetes.io/hostname: zachd-ubuntu
-
-# ----------------------------------------------------------------------------
 # Bot (Vocard)
 # ----------------------------------------------------------------------------
 bot:

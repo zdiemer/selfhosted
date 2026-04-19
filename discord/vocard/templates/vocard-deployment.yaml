@@ -24,10 +24,6 @@ spec:
         # reads settings.json at startup.
         checksum/settings: {{ include (print $.Template.BasePath "/vocard-settings.yaml") . | sha256sum }}
     spec:
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: vocard
           image: "{{ .Values.images.bot.repository }}:{{ .Values.images.bot.tag }}"
