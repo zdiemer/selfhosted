@@ -187,13 +187,16 @@ startupProbe:
 # ----------------------------------------------------------------------------
 # Resources
 # ----------------------------------------------------------------------------
-# 6G heap + ~2G off-heap (direct buffers, mod native libs, mc-backup sidecar).
+# 6G heap + ~4G off-heap headroom. Prominence II's off-heap (Metaspace, direct
+# buffers, mod native libs, mc-backup sidecar) runs ~1.6G idle — an 8Gi limit
+# had the pod at ~95% before a single player joined, one worldgen spike away
+# from OOMKill. 10Gi gives ~2.4G of headroom on top of observed idle.
 resources:
   requests:
-    memory: 4Gi
+    memory: 5Gi
     cpu: 1000m
   limits:
-    memory: 8Gi
+    memory: 10Gi
     cpu: 4000m
 
 # ----------------------------------------------------------------------------
