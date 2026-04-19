@@ -2,8 +2,8 @@
 # Hasturian Era  |  10 players  |  PaperMC + plugins (no client mods needed)
 # ----------------------------------------------------------------------------
 # Vanilla clients connect directly — no launcher, no mods. Players must pick
-# "release 1.21.11" in their launcher Installations tab (vanilla MC is now
-# on calendar versioning 26.x, but Paper is still on the 1.21.x line).
+# "release 1.21.8" in their launcher Installations tab (vanilla MC is now
+# on calendar versioning 26.x, but Paper/plugins are still on the 1.21.x line).
 # All content comes from server-side plugins, auto-installed on pod start
 # via Modrinth (MODRINTH_PROJECTS) and direct URLs (PLUGINS).
 #
@@ -42,11 +42,12 @@ minecraftServer:
   eula: "TRUE"
 
   # PaperMC — Bukkit-API fork with strong performance and full plugin support.
-  # Pinned to 1.21.11 (Paper's current stable). Vanilla MC has moved to
-  # calendar versioning (26.x); Paper hasn't caught up yet, so players must
-  # select "release 1.21.11" in their launcher installations.
+  # Pinned to 1.21.8 — the newest version where ALL plugins in our stack have
+  # a compatible Modrinth release (EssentialsX is the tightest constraint and
+  # only ships for 1.21.4, 1.21.5, 1.21.8). Players must create an installation
+  # for "release 1.21.8" in their launcher.
   type: "PAPER"
-  version: "1.21.11"
+  version: "1.21.8"
 
   serverName: "Hasturian Era"
   motd: "§6Hasturian Era §7| §fRPG + Magic"
@@ -93,11 +94,18 @@ minecraftServer:
   rcon:
     enabled: true
     port: 25575
+    # Never expose RCON externally.
+    serviceType: ClusterIP
     # Create:   kubectl -n minecraft create secret generic mc-rcon --from-literal=password="$(openssl rand -base64 24)"
     # Retrieve: kubectl -n minecraft get secret mc-rcon -o jsonpath='{.data.password}' | base64 -d
     existingSecret: "mc-rcon"
     secretKey: "password"
     password: ""
+
+  # Service — expose 25565 via LoadBalancer. k3s's klipper-lb binds this port
+  # directly on node IPs, so the "external IP" column will show the node IPs.
+  serviceType: LoadBalancer
+  externalTrafficPolicy: Local
 
   # Auto-pause suspends the JVM when no players are online. Modest win on a
   # plugin server (~1GB idle) but still worth enabling.
@@ -121,7 +129,11 @@ extraEnv:
   # The itzg parser splits on comma without trimming, so keep this on one line
   # with no spaces. `quests.classic` is PikaMug's Quests (in-game GUI creator);
   # plain `quests` is LMBishop's simpler YAML-config alternative.
-  MODRINTH_PROJECTS: "plugin:luckperms,plugin:essentialsx,plugin:vaultunlocked,plugin:auraskills,plugin:mythicmobs,plugin:magicspells,plugin:quests.classic,plugin:worldedit,plugin:worldguard"
+  # MagicSpells is pinned to versionId JCEG42U7 (4.0-Beta-17, MC 1.21.4-1.21.8).
+  # All its Modrinth uploads are tagged beta; the default installer filters
+  # those out unless a version is pinned. Re-check when bumping MC version:
+  # https://modrinth.com/plugin/magicspells/versions
+  MODRINTH_PROJECTS: "luckperms,essentialsx,vaultunlocked,auraskills,mythicmobs,magicspells:JCEG42U7,quests.classic,worldedit,worldguard"
   # Citizens isn't on Modrinth; pinned to a specific CI build (URL is version-
   # stable, so no "latest" redirect problems). Bump when you want a new build:
   #   curl -s 'https://ci.citizensnpcs.co/job/Citizens2/lastStableBuild/' \
@@ -156,16 +168,6 @@ persistence:
     enabled: true
     Size: 30Gi
     # storageClass: ""  # unset = cluster default
-
-# ----------------------------------------------------------------------------
-# Networking
-# ----------------------------------------------------------------------------
-# k3s ships klipper-lb, so LoadBalancer binds port 25565 directly on node IPs.
-serviceType: LoadBalancer
-externalTrafficPolicy: Local
-
-# Never expose RCON externally.
-rconServiceType: ClusterIP
 
 # ----------------------------------------------------------------------------
 # Backups via itzg/mc-backup sidecar
