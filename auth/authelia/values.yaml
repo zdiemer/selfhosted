@@ -1,0 +1,109 @@
+image:
+  repository: authelia/authelia
+  tag: "4.38.17"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9091
+
+# Public URL where Authelia answers. Must be HTTPS — RomM and every other
+# modern OIDC client refuses HTTP issuers. Points at the same wildcard cert
+# the other services use (see README §Prerequisites).
+externalUrl: "https://auth.zachd.duckdns.org"
+
+# Cookie domain for SSO across services. All protected apps must live under
+# this domain so the session cookie is sent to them.
+sessionDomain: "zachd.duckdns.org"
+
+persistence:
+  # Holds the SQLite storage database (user 2FA registrations, OIDC consent
+  # history). Tiny; a few MB after years of use.
+  size: 1Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+# The file-based user backend. Suitable for a small friend group; skip the
+# LDAP song-and-dance. Actual user entries come from values.local.yaml.
+# Each entry needs a password hashed with:
+#   docker run --rm authelia/authelia:latest \
+#     authelia crypto hash generate argon2 --password 'plaintext'
+users: {}
+# Example (in values.local.yaml):
+#   users:
+#     zachd:
+#       displayname: "Zach"
+#       email: "zach.diemer@gmail.com"
+#       groups: [admins]
+#       password: "$argon2id$v=19$m=65536,t=3,p=4$..."
+
+# Access control. "bypass" for the Authelia portal itself; anything else is
+# two-factor by default. Tighten per-rule below.
+accessControl:
+  default_policy: "two_factor"
+  rules:
+    # RomM — friends sign in with TOTP; admins with any 2nd factor.
+    - domain: "romm.zachd.duckdns.org"
+      policy: "two_factor"
+
+# OIDC clients (values.local.yaml holds the real secrets). Each entry is a
+# client app that delegates auth to Authelia. Client secrets are stored
+# *hashed* here; the plaintext lives in the consuming app's config.
+oidc:
+  enabled: true
+  # HMAC secret for signing OIDC tokens — generate once with:
+  #   openssl rand -hex 64
+  # Stored in values.local.yaml as oidc.hmacSecret.
+  hmacSecret: ""
+  # RSA private key for signing id_tokens. Generate once with:
+  #   openssl genrsa -out issuer.key 4096
+  # Paste the PEM into values.local.yaml as oidc.issuerPrivateKey.
+  issuerPrivateKey: ""
+  clients: []
+  # Example (in values.local.yaml):
+  #   oidc:
+  #     clients:
+  #       - id: romm
+  #         description: RomM
+  #         secret: "$pbkdf2-sha512$310000$..."   # see README for hashing
+  #         public: false
+  #         authorization_policy: two_factor
+  #         redirect_uris:
+  #           - https://romm.zachd.duckdns.org/api/oauth/openid
+  #         scopes: [openid, profile, email, groups]
+  #         userinfo_signing_algorithm: none
+
+# App-level secrets. All of these must be set in values.local.yaml.
+secrets:
+  # openssl rand -hex 64
+  jwtSecret: ""
+  # openssl rand -hex 64
+  sessionSecret: ""
+  # openssl rand -hex 64
+  storageEncryptionKey: ""
+  # SMTP for password reset + 2FA enrollment notifications. Any relay works
+  # (Gmail app password, Fastmail, SendGrid, Mailgun, etc).
+  smtp:
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    sender: "Authelia <noreply@zachd.duckdns.org>"
+
+ingress:
+  enabled: false                      # flip on after DuckDNS follow-up
+  className: traefik
+  host: auth.zachd.duckdns.org
+  tls:
+    enabled: true
+    certResolver: duckdns
+    # See RomM README §DuckDNS follow-up for why the wildcard SAN is needed.
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

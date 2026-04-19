@@ -1,0 +1,80 @@
+{{/*
+Authelia's main configuration.yml. Rendered as a Secret (not a ConfigMap)
+because it contains the OIDC HMAC secret and the RSA issuer private key.
+
+All app-level secret *values* (jwt, session, storage key, SMTP password) are
+referenced by file path; Kubernetes mounts them from a separate Secret at
+/secrets/. The config file itself only names the files.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "authelia.fullname" . }}-config
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  configuration.yml: |
+    theme: dark
+    default_redirection_url: {{ .Values.externalUrl | quote }}
+
+    server:
+      address: "tcp://0.0.0.0:9091/"
+
+    log:
+      level: info
+
+    totp:
+      issuer: {{ .Values.sessionDomain | quote }}
+      period: 30
+      skew: 1
+
+    authentication_backend:
+      file:
+        path: /config/users_database.yml
+        password:
+          algorithm: argon2
+          argon2:
+            variant: argon2id
+
+    access_control:
+      default_policy: {{ .Values.accessControl.default_policy | quote }}
+      rules:
+        {{- toYaml .Values.accessControl.rules | nindent 8 }}
+
+    session:
+      name: authelia_session
+      domain: {{ .Values.sessionDomain | quote }}
+      same_site: lax
+      expiration: 1h
+      inactivity: 15m
+      remember_me_duration: 1M
+
+    regulation:
+      max_retries: 3
+      find_time: 2m
+      ban_time: 5m
+
+    storage:
+      local:
+        path: /data/db.sqlite3
+
+    notifier:
+      smtp:
+        address: "submission://{{ .Values.secrets.smtp.host }}:{{ .Values.secrets.smtp.port }}"
+        username: {{ .Values.secrets.smtp.username | quote }}
+        sender: {{ .Values.secrets.smtp.sender | quote }}
+        password_file: /secrets/smtp_password
+
+    {{- if .Values.oidc.enabled }}
+    identity_providers:
+      oidc:
+        hmac_secret_file: /secrets/oidc_hmac
+        jwks:
+          - key_id: default
+            algorithm: RS256
+            use: sig
+            key_file: /secrets/oidc_issuer_key
+        clients:
+          {{- toYaml .Values.oidc.clients | nindent 10 }}
+    {{- end }}

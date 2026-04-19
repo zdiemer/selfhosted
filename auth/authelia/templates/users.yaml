@@ -1,0 +1,26 @@
+{{/*
+File-based user database. Kept as a Secret (not a ConfigMap) because even
+though passwords are argon2 hashes, email addresses + group membership
+still shouldn't land in a ConfigMap that anyone with read on the namespace
+can dump.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "authelia.fullname" . }}-users
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  users_database.yml: |
+    users:
+      {{- range $username, $user := .Values.users }}
+      {{ $username }}:
+        displayname: {{ $user.displayname | quote }}
+        email: {{ $user.email | quote }}
+        groups:
+          {{- range $user.groups }}
+          - {{ . | quote }}
+          {{- end }}
+        password: {{ $user.password | quote }}
+      {{- end }}

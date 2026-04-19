@@ -1,0 +1,12 @@
+apiVersion: v2
+name: authelia
+description: Authelia — self-hosted auth server (OIDC provider + Traefik forward-auth) for the home cluster
+type: application
+version: 0.1.0
+# appVersion tracks the Authelia image tag in values.yaml (image.tag).
+appVersion: "4.38.17"
+home: https://www.authelia.com
+sources:
+  - https://github.com/authelia/authelia
+maintainers:
+  - name: zachd

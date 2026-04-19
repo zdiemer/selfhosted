@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "authelia.fullname" . }}
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate         # SQLite + single RWO PVC → never two pods at once
+  selector:
+    matchLabels:
+      {{- include "authelia.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configuration.yaml") . | sha256sum }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        checksum/users: {{ include (print $.Template.BasePath "/users.yaml") . | sha256sum }}
+      labels:
+        {{- include "authelia.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: authelia
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--config=/config/configuration.yml"
+          ports:
+            - name: http
+              containerPort: 9091
+          env:
+            # Authelia reads these file paths for values that mustn't land
+            # in env vars (session key, storage encryption, OIDC JWT HMAC).
+            - name: AUTHELIA_JWT_SECRET_FILE
+              value: /secrets/jwt_secret
+            - name: AUTHELIA_SESSION_SECRET_FILE
+              value: /secrets/session_secret
+            - name: AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE
+              value: /secrets/storage_encryption_key
+          volumeMounts:
+            - name: config
+              mountPath: /config/configuration.yml
+              subPath: configuration.yml
+              readOnly: true
+            - name: users
+              mountPath: /config/users_database.yml
+              subPath: users_database.yml
+              readOnly: true
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "authelia.fullname" . }}-config
+        - name: users
+          secret:
+            secretName: {{ include "authelia.fullname" . }}-users
+        - name: secrets
+          secret:
+            secretName: {{ include "authelia.fullname" . }}-secrets
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "authelia.fullname" . }}-data

@@ -1,0 +1,43 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored.
+# Every placeholder below is required for the chart to install.
+
+secrets:
+  jwtSecret: "CHANGE-ME"                   # openssl rand -hex 64
+  sessionSecret: "CHANGE-ME"               # openssl rand -hex 64
+  storageEncryptionKey: "CHANGE-ME"        # openssl rand -hex 64
+  smtp:
+    host: "smtp.gmail.com"
+    port: 587
+    username: "you@gmail.com"
+    password: "CHANGE-ME"                  # Gmail app password (not account pw)
+    sender: "Authelia <you@gmail.com>"
+
+oidc:
+  hmacSecret: "CHANGE-ME"                  # openssl rand -hex 64
+  issuerPrivateKey: |                      # openssl genrsa 4096
+    -----BEGIN PRIVATE KEY-----
+    ...
+    -----END PRIVATE KEY-----
+  clients:
+    # Paste after Authelia is up and RomM is ready for OIDC (follow-up C).
+    # See README §Wiring RomM.
+    # - id: romm
+    #   description: RomM
+    #   secret: "$pbkdf2-sha512$310000$..."
+    #   public: false
+    #   authorization_policy: two_factor
+    #   redirect_uris:
+    #     - https://romm.zachd.duckdns.org/api/oauth/openid
+    #   scopes: [openid, profile, email, groups]
+    #   userinfo_signing_algorithm: none
+
+users:
+  zachd:
+    displayname: "Zach"
+    email: "zach.diemer@gmail.com"
+    groups: [admins]
+    # Hash with:
+    #   docker run --rm authelia/authelia:latest \
+    #     authelia crypto hash generate argon2 --password 'your-password'
+    password: "$argon2id$v=19$m=65536,t=3,p=4$CHANGE-ME"
+  # Add friends as you invite them. Group `users` is fine for non-admins.
