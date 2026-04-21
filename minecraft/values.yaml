@@ -69,6 +69,12 @@ minecraftServer:
   difficulty: "normal"
   maxPlayers: 10
 
+  # Required for any modded MP server: vanilla's anti-cheat kicks players for
+  # "flying is not enabled" when modded items (jetpacks, spellbooks, mid-fall
+  # elytra) trigger flight detection. This flag only disables the kick — it
+  # doesn't grant flight; that's still gated on creative/spectator or /fly.
+  allowFlight: true
+
   # Modded chunks are heavy (more block entities, more mob AI). 8/6 is a
   # comfortable starting point; drop to 6/4 if TPS dips below 19.
   viewDistance: 8
@@ -162,6 +168,12 @@ minecraftServer:
 #   bluemap       — live web map on :8100 (mod is server-side only)
 #   dcintegration — DiscordIntegration-Fabric chat+events bridge
 #
+# FTB Quests stack is NOT on Modrinth for 1.20.1 Fabric — the FTB team only
+# publishes those to CurseForge, and Prominence II's .mrpack marks them
+# server:unsupported so itzg's modpack installer skips them. We sideload
+# the jars via the MODS env var below (direct CurseForge CDN URLs), which
+# itzg downloads into /data/mods on every boot.
+#
 # To pin a specific modpack version (recommended once players have joined,
 # so a surprise Modrinth release can't break the world):
 #   MODRINTH_MODPACK_VERSION: "<version-id>"
@@ -174,6 +186,10 @@ extraEnv:
   MODRINTH_LOADER: "fabric"
   # Single-line, no spaces — itzg's parser splits naively on comma.
   MODRINTH_PROJECTS: "bluemap,dcintegration"
+  # FTB Quests + deps — see comment block above. Versions must match what
+  # the client modpack ships; bump in lockstep when the pack updates.
+  MODS: >-
+    https://mediafilez.forgecdn.net/files/6164/52/ftb-library-fabric-2001.2.9.jar,https://mediafilez.forgecdn.net/files/6130/783/ftb-teams-fabric-2001.3.1.jar,https://mediafilez.forgecdn.net/files/6431/736/ftb-quests-fabric-2001.4.13.jar,https://mediafilez.forgecdn.net/files/6402/485/ftb-xmod-compat-fabric-2.1.3.jar
 
 # ----------------------------------------------------------------------------
 # Health probes

@@ -1,0 +1,42 @@
+# BlueMap public ingress — fronts the in-pod webserver (port 8100) at
+# https://map.zachd.duckdns.org via Traefik (k3s default ingress controller).
+#
+# DNS:  DuckDNS auto-routes *.zachd.duckdns.org to the same A record as the
+#       base domain, kept current by the talaria duckdns-updater CronJob —
+#       no DNS changes needed for new subdomains.
+# TLS:  Traefik's built-in ACME resolver `duckdns` does DNS-01 against
+#       DuckDNS (configured in talaria/helm/traefik-config.yaml). Cert is
+#       issued on the first request to this host (~30-60s pause), then
+#       cached for 90 days in Traefik's acme.json.
+#
+# Prereq: BlueMap must be enabled in the pod first (accept-download: true
+# in /data/config/bluemap/core.conf + pod restart) — see ADDON_SETUP.md §2.
+# Without that, the in-pod webserver isn't running and this ingress 502s.
+#
+# Apply:    kubectl apply -f minecraft/bluemap-ingress.yaml
+# Remove:   kubectl delete -f minecraft/bluemap-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bluemap
+  namespace: minecraft
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: duckdns
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: map.zachd.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mc-minecraft-bluemap
+                port:
+                  number: 8100
+  tls:
+    - hosts:
+        - map.zachd.duckdns.org
