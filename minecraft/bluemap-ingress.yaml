@@ -9,6 +9,12 @@
 #       issued on the first request to this host (~30-60s pause), then
 #       cached for 90 days in Traefik's acme.json.
 #
+#       We request a wildcard SAN (`*.zachd.duckdns.org`) because DuckDNS
+#       only stores one TXT at `_acme-challenge.<account>.duckdns.org` —
+#       per-subdomain DNS-01 (e.g. `_acme-challenge.map.zachd…`) fails
+#       propagation. The wildcard challenge lives at the base `_acme-
+#       challenge.zachd.duckdns.org`, which DuckDNS handles natively.
+#
 # Prereq: BlueMap must be enabled in the pod first (accept-download: true
 # in /data/config/bluemap/core.conf + pod restart) — see ADDON_SETUP.md §2.
 # Without that, the in-pod webserver isn't running and this ingress 502s.
@@ -24,6 +30,8 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     traefik.ingress.kubernetes.io/router.tls.certresolver: duckdns
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: zachd.duckdns.org
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: "*.zachd.duckdns.org"
 spec:
   ingressClassName: traefik
   rules:
