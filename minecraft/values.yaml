@@ -257,7 +257,13 @@ mcbackup:
 podAnnotations:
   cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
 
-# Pin to zachd-ubuntu — most RAM headroom, and it carries a PreferNoSchedule
-# taint for talaria workloads.
+# Pin to zachd-ubuntu — most RAM headroom. Node carries a control-plane
+# NoSchedule taint to keep talaria workloads off, so an explicit toleration
+# is required here.
 nodeSelector:
   kubernetes.io/hostname: zachd-ubuntu
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
