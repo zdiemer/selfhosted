@@ -69,11 +69,10 @@ minecraftServer:
   difficulty: "normal"
   maxPlayers: 10
 
-  # Required for any modded MP server: vanilla's anti-cheat kicks players for
-  # "flying is not enabled" when modded items (jetpacks, spellbooks, mid-fall
-  # elytra) trigger flight detection. This flag only disables the kick — it
-  # doesn't grant flight; that's still gated on creative/spectator or /fly.
-  allowFlight: true
+  # NOTE: allow-flight is set via ALLOW_FLIGHT in extraEnv below — the itzg
+  # chart only surfaces a curated subset of minecraftServer.* keys, and
+  # `allowFlight` here is silently ignored (verified with `helm show values
+  # itzg/minecraft`). All env-var-based itzg knobs go through extraEnv.
 
   # Modded chunks are heavy (more block entities, more mob AI). 8/6 is a
   # comfortable starting point; drop to 6/4 if TPS dips below 19.
@@ -165,8 +164,15 @@ minecraftServer:
 # MODRINTH_PROJECTS layers extra individual mods on top of the modpack. Keep
 # this list to server-side mods that DON'T need a matching client install
 # (players don't get a modpack rebuild just because we add one here).
-#   bluemap       — live web map on :8100 (mod is server-side only)
-#   dcintegration — DiscordIntegration-Fabric chat+events bridge
+#   bluemap                — live web map on :8100 (mod is server-side only)
+#   dcintegration          — DiscordIntegration-Fabric chat+events bridge
+#   luckperms              — granular permissions, used to grant /tp etc.
+#                            to a "trusted" group without full op. Configure
+#                            via RCON: `lp creategroup trusted` then
+#                            `lp group trusted permission set minecraft.command.teleport true`,
+#                            then `lp user <name> parent add trusted`.
+#   fabric-permissions-api — required hook lib that LuckPerms uses to
+#                            intercept Brigadier command perm checks
 #
 # FTB Quests stack is NOT on Modrinth for 1.20.1 Fabric — the FTB team only
 # publishes those to CurseForge, and Prominence II's .mrpack marks them
@@ -184,8 +190,13 @@ extraEnv:
   MODRINTH_MODPACK_VERSION_TYPE: "release"
   # Redundant with the modpack's own metadata, but explicit-is-better.
   MODRINTH_LOADER: "fabric"
+  # Required for modded MP — vanilla's anti-cheat kicks players when modded
+  # items (jetpacks, spellbooks, mid-fall elytra) trigger flight detection.
+  # Doesn't grant flight; just disables the kick. Still gated on creative
+  # or /fly. Quoted because itzg expects "TRUE"/"FALSE" string env values.
+  ALLOW_FLIGHT: "TRUE"
   # Single-line, no spaces — itzg's parser splits naively on comma.
-  MODRINTH_PROJECTS: "bluemap,dcintegration"
+  MODRINTH_PROJECTS: "bluemap,dcintegration,luckperms,fabric-permissions-api"
   # FTB Quests + deps — see comment block above. Versions must match what
   # the client modpack ships; bump in lockstep when the pack updates.
   MODS: >-
