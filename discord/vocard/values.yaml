@@ -33,11 +33,15 @@ images:
     pullPolicy: IfNotPresent
   lavalink:
     repository: ghcr.io/lavalink-devs/lavalink
-    # Pin to 4.0.x — Lavalink 4.2+ added a required `channelId` field to the
-    # voice-state payload that Vocard's bundled Voicelink (1.4 in Vocard
-    # 2.7.2) doesn't send, which 400s every /play. Bump only after Vocard
-    # ships a Voicelink update that includes channelId.
-    tag: "4.0.8"
+    # Lavalink 4.2.x is required because Discord has rolled out the DAVE
+    # (E2EE) voice protocol to our voice endpoints; older Lavalink versions
+    # get close-code 4017 "E2EE/DAVE protocol required" on the voice WS and
+    # silently play to an audience of nobody. 4.2.0 also added a required
+    # `channelId` field to the voice-state PATCH — Vocard 2.7.2's bundled
+    # Voicelink 1.4 doesn't send it, so the bot deployment template runs a
+    # startup patch (vocard-deployment.yaml) to inject channelId before
+    # launching the bot. Revisit the patch on every Vocard upgrade.
+    tag: "4.2.2"
     pullPolicy: IfNotPresent
   mongo:
     repository: mongo
@@ -66,7 +70,7 @@ bot:
 # ----------------------------------------------------------------------------
 lavalink:
   plugins:
-    youtube: "1.13.5"     # dev.lavalink.youtube:youtube-plugin
+    youtube: "1.18.0"     # dev.lavalink.youtube:youtube-plugin
     lavasrc: "4.7.3"      # com.github.topi314.lavasrc:lavasrc-plugin
   resources:
     requests:
@@ -103,10 +107,13 @@ spotifyTokener:
   enabled: true
   resources:
     requests:
-      memory: 64Mi
+      memory: 128Mi
       cpu: 20m
     limits:
-      memory: 128Mi
+      # Bumped from 128Mi → 256Mi after the 2026-04-19 OOM eviction
+      # (pod was at 104Mi used / 128Mi limit when the kubelet killed it
+      # under node memory pressure). Steady-state is ~120Mi.
+      memory: 256Mi
       cpu: 500m
 
 # ----------------------------------------------------------------------------

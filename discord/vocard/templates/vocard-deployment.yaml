@@ -66,6 +66,34 @@ spec:
           imagePullPolicy: {{ .Values.images.bot.pullPolicy }}
           # No inbound ports — the bot is a Discord gateway client (outbound
           # WebSocket to gateway.discord.gg).
+          #
+          # Startup patch: Lavalink 4.2+ requires `channelId` in the voice-state
+          # PATCH payload. Vocard 2.7.2 ships Voicelink 1.4, which doesn't send
+          # it. We inject it here so we can stay on current Lavalink (and thus
+          # get DAVE/E2EE support — Discord rejects older Lavalinks with
+          # close-code 4017). Patch is idempotent and aborts with a clear error
+          # if the upstream anchor line moves (so a silent Vocard upgrade
+          # doesn't silently run without the fix). Drop this override if
+          # Vocard ever ships a Voicelink that sends channelId natively.
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              python - <<'PYEOF'
+              import sys
+              p = '/app/voicelink/player.py'
+              src = open(p).read()
+              if '"channelId"' in src:
+                  sys.exit(0)
+              anchor = '            "sessionId": state[\'sessionId\'],\n'
+              if anchor not in src:
+                  sys.exit('voicelink channelId patch: anchor line not found in ' + p)
+              new = src.replace(anchor, anchor + '            "channelId": str(self.channel.id),\n', 1)
+              open(p, 'w').write(new)
+              print('voicelink channelId patch applied')
+              PYEOF
+              exec python -u main.py
           volumeMounts:
             - name: settings
               mountPath: /app/settings.json
