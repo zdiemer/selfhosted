@@ -1557,7 +1557,13 @@ public final class ClaudeQueryCommand {
         net.minecraft.util.Identifier id = _bossbarId(playerName);
         var manager = ctx.getSource().getServer().getBossBarManager();
         net.minecraft.entity.boss.CommandBossBar bar = manager.get(id);
-        if (bar != null) manager.remove(bar);
+        if (bar != null) {
+            // clearPlayers sends the REMOVE packet to attached clients so
+            // they actually hide the bar; manager.remove alone just drops
+            // it from the registry without notifying anyone.
+            bar.clearPlayers();
+            manager.remove(bar);
+        }
         return 1;
     }
 
