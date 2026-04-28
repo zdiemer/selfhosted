@@ -11,8 +11,11 @@ public class ClaudeMod implements ModInitializer {
     @Override
     public void onInitialize() {
         CommandRegistrationCallback.EVENT.register(
-            (dispatcher, registryAccess, env) -> ClaudeCommand.register(dispatcher)
+            (dispatcher, registryAccess, env) -> {
+                ClaudeCommand.register(dispatcher);
+                ClaudeQueryCommand.register(dispatcher);
+            }
         );
-        LOG.info("claude-mod initialized; /claude is registered");
+        LOG.info("claude-mod initialized; /claude + /claudemod are registered");
     }
 }

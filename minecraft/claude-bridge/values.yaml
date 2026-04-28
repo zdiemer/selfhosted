@@ -123,6 +123,19 @@ bridge:
         "go where X is". The tool moves the asking player ONLY — if a
         player asks you to move someone else, decline politely; that's
         not a thing this tool does.
+      - run_query_command: read-only Minecraft state queries (RCON allowlist).
+        Use this aggressively for ANY in-game question — XP, inventory,
+        stats, position, recipes, time, online players, scoreboards. Compose
+        commands as needed and parse the output. Examples worth trying first:
+          "claudemod query xp <player>" — level + remaining XP to next
+          "claudemod query inventory <player>" — full inventory JSON
+          "claudemod query stats <player> killed" — kill counts by mob
+          "claudemod query recipes makes minecraft:beacon" — how to craft it
+          "data get entity <player> Pos" — current coords
+          "list" — who's online
+        For "how many skeletons until level up?" type questions: pull XP +
+        stats yourself and do the math (a mob's XP drop is fixed knowledge).
+        Mutations are blocked; the tool's docstring lists the full allowlist.
 
     All other tools (Bash, Edit, Write, NotebookEdit, Task) are denied —
     do not attempt them.

@@ -133,6 +133,87 @@ def teleport_caller_to_player(target_player: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Generic read-only RCON query — Claude composes commands dynamically rather
+# than us baking a tool per data type. The allowlist below scopes this to
+# verbs that can't change game state. Mutations (give, op, kill, gamemode,
+# data merge/modify/remove, time set, xp add, summon, fill, setblock, etc.)
+# are not on the list and get rejected before reaching RCON.
+# ---------------------------------------------------------------------------
+SAFE_QUERY_PATTERNS = [
+    re.compile(p) for p in [
+        r"^data\s+get\b",                             # NBT reads (inventory, pos, effects)
+        r"^xp\s+query\b",                             # xp level / points
+        r"^time\s+query\b",                           # in-game time
+        r"^scoreboard\s+(objectives|players)\s+(list|get)\b",
+        r"^forceload\s+query\b",
+        r"^list(\s+uuids)?\s*$",                      # online players (+ uuids)
+        r"^whitelist\s+list\s*$",
+        r"^team\s+list\b",
+        r"^tag\s+\S+\s+list\b",
+        r"^seed\s*$",
+        r"^difficulty\s*$",                           # bare = query
+        r"^attribute\s+\S+\s+\S+\s+get\b",
+        r"^gamerule\s+\S+\s*$",                       # gamerule <rule> = query
+        r"^claudemod\s+query\b",                      # mod's structured queries
+    ]
+]
+
+
+@mcp.tool()
+def run_query_command(command: str) -> str:
+    """
+    Execute a read-only Minecraft server query and return the raw output.
+
+    Use this to look up live game state when answering player questions.
+    Compose queries dynamically based on what's needed.
+
+    Allowlist (read-only verbs only):
+      - data get entity <player> <path>          # NBT: inventory, pos, effects, attrs
+      - xp query <player> <points|levels>        # XP state
+      - time query daytime                       # in-game time
+      - list / list uuids                        # online players
+      - whitelist list                           # whitelisted accounts
+      - team list [<team>]                       # team membership
+      - tag <player> list                        # tags on player
+      - scoreboard players|objectives list|get   # scoreboard reads
+      - attribute <target> <attr> get            # attribute value
+      - gamerule <rule>                          # current rule value
+      - difficulty                               # current difficulty
+      - seed                                     # world seed
+      - forceload query                          # forced chunks
+      - claudemod query inventory <player>       # full inventory JSON
+      - claudemod query xp <player>              # level + progress + total
+      - claudemod query stats <player> [type]    # vanilla stats (optionally filtered)
+      - claudemod query recipes makes <item>     # recipes producing this item
+      - claudemod query recipes uses  <item>     # recipes using this item
+
+    Mutation commands (give, op, gamemode, kill, kick, ban, setblock, fill,
+    summon, weather, time set, xp add/set, data merge/modify/remove, etc.)
+    are blocked. If you need teleport, use teleport_caller_to_player.
+
+    Args:
+        command: The command WITHOUT a leading slash (e.g.
+                 "data get entity StarFoxA Inventory" or
+                 "claudemod query xp StarFoxA").
+
+    Returns:
+        Raw RCON output. For claudemod query commands the output is JSON;
+        for vanilla reads it's the standard SNBT / text format. Parse as
+        needed.
+    """
+    cleaned = (command or "").strip().lstrip("/")
+    if not cleaned:
+        return "(rejected: empty command)"
+    if not any(p.match(cleaned) for p in SAFE_QUERY_PATTERNS):
+        return f"(rejected: '{cleaned.split()[0]}' or its sub-verb is not on the read-only allowlist)"
+    try:
+        return _rcon(cleaned)
+    except Exception as e:
+        print(f"run_query_command rcon failed: {e}", file=sys.stderr)
+        return f"(rcon failed: {e})"
+
+
+# ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
 def _online_players() -> list[str]:

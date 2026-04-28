@@ -14,7 +14,8 @@
       "WebFetch",
       "WebSearch",
       "mcp__claude-bridge-feedback__record_feature_request",
-      "mcp__claude-bridge-feedback__teleport_caller_to_player"
+      "mcp__claude-bridge-feedback__teleport_caller_to_player",
+      "mcp__claude-bridge-feedback__run_query_command"
     ]
   },
   "includeCoAuthoredBy": false
