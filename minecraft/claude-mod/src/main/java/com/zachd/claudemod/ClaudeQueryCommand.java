@@ -1439,16 +1439,24 @@ public final class ClaudeQueryCommand {
 
     // ---------- nearest biome / structure ------------------------------------
     /**
-     * Locate the nearest biome or structure to a player using vanilla
-     * ServerWorld APIs (the compass mods are UI sugar over the same lookups).
+     * Locate the nearest biome or structure to a player.
      *
-     * Biome search: 6400-block radius, sampled every 32x64. Returns the
-     * nearest matching biome with its (x, y, z).
+     * Biome search: bounded sampling via ServerWorld.locateBiome. Doesn't
+     * need to load chunks beyond the noise/biome layer, so this is fast
+     * and watchdog-safe at 2048-block radius.
      *
-     * Structure search: 100-chunk (~1600-block) radius. We deliberately use
-     * a single Structure entry list (not a structure tag) so id maps 1:1
-     * to Adventurez bosses, dungeon arena structures, etc.
+     * Structure search: ChunkGenerator.locateStructure walks chunks
+     * synchronously on the server thread to verify structure presence.
+     * Unloaded chunks get loaded on-demand which is slow. We crashed
+     * once with a 100-chunk radius (>60s watchdog timeout); now capped
+     * to 25 chunks (~400 blocks) which on a Random-Spread structure
+     * checks ~10-15 candidate chunks max — typically <2s on this pack.
+     * Players asking for further-away structures should use vanilla
+     * `/locate structure` themselves so they own the lag risk.
      */
+    private static final int STRUCTURE_SEARCH_RADIUS_CHUNKS = 25;
+    private static final int BIOME_SEARCH_RADIUS_BLOCKS = 2048;
+
     private static int queryNearest(CommandContext<ServerCommandSource> ctx, boolean isBiome) {
         String idStr = StringArgumentType.getString(ctx, "id").trim();
         Identifier id = Identifier.tryParse(idStr.contains(":") ? idStr : "minecraft:" + idStr);
@@ -1471,15 +1479,17 @@ public final class ClaudeQueryCommand {
 
         try {
             BlockPos found;
+            int radiusBlocks;
             if (isBiome) {
                 var biomeReg = world.getRegistryManager().get(RegistryKeys.BIOME);
                 RegistryKey<net.minecraft.world.biome.Biome> bk = RegistryKey.of(RegistryKeys.BIOME, id);
                 if (!biomeReg.contains(bk)) return error(ctx, "unknown biome: " + id);
                 var pair = world.locateBiome(
                     entry -> entry.matchesKey(bk),
-                    origin, 6400, 32, 64
+                    origin, BIOME_SEARCH_RADIUS_BLOCKS, 32, 64
                 );
                 found = pair == null ? null : pair.getFirst();
+                radiusBlocks = BIOME_SEARCH_RADIUS_BLOCKS;
             } else {
                 var structReg = world.getRegistryManager().get(RegistryKeys.STRUCTURE);
                 RegistryKey<net.minecraft.world.gen.structure.Structure> sk =
@@ -1488,14 +1498,14 @@ public final class ClaudeQueryCommand {
                 if (entryOpt.isEmpty()) return error(ctx, "unknown structure: " + id);
                 var entryList = net.minecraft.registry.entry.RegistryEntryList.of(entryOpt.get());
                 var pair = world.getChunkManager().getChunkGenerator()
-                    .locateStructure(world, entryList, origin, 100, false);
+                    .locateStructure(world, entryList, origin, STRUCTURE_SEARCH_RADIUS_CHUNKS, false);
                 found = pair == null ? null : pair.getFirst();
+                radiusBlocks = STRUCTURE_SEARCH_RADIUS_CHUNKS * 16;
             }
             if (found == null) {
                 root.addProperty("found", false);
-                root.addProperty("note", isBiome
-                    ? "no match within 6400 blocks of origin"
-                    : "no match within 100 chunks (~1600 blocks)");
+                root.addProperty("note", "no match within " + radiusBlocks +
+                    " blocks of origin (search is intentionally bounded so it can't lag the server — wider scans need vanilla /locate)");
             } else {
                 root.addProperty("found", true);
                 root.addProperty("x", found.getX());

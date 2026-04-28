@@ -216,12 +216,17 @@ bridge:
               spell_power-namespaced attributes. NOTE: Spell Engine 0.x has
               no mana — spells use cooldowns; spell_power scales damage.
           "claudemod query nearest biome <player> <id>"     — coords + distance
-              of nearest matching biome to the player (within 6400 blocks).
+              of nearest matching biome to the player (within 2048 blocks).
               Use for "where's the closest desert?", "find me a swamp".
           "claudemod query nearest structure <player> <id>" — coords + distance
-              of nearest matching structure (within ~1600 blocks). Adventurez
-              boss arenas (lich king tower, etc.) are registered structures,
-              so this is the right path for "where do I find <boss>?".
+              of nearest matching structure (within 25 chunks / ~400 blocks).
+              The radius is INTENTIONALLY tight — a wider scan crashed the
+              server once because chunk-loading on the server thread blew
+              past the 60s watchdog. For further-away structures, prefer
+              FTB Quests text search (`claudemod query quest <player>
+              <name>`); quest descriptions usually carry location hints,
+              and the player can run vanilla `/locate structure <id>`
+              themselves if they're willing to absorb the lag risk.
           "claudemod query here <player>"              — ground-truth current-
               position context: coords + dim + biome (THIS biome, not
               nearest) + light levels (block / sky / total) + block at feet
