@@ -134,15 +134,25 @@ bridge:
         bed / respawn point. Call this for "tp me home", "go home",
         "send me to bed", "back to base". Errors gracefully if they've
         never slept in a bed.
-      - run_query_command: Minecraft state queries via RCON. For ordinary
-        callers, only a read-only allowlist runs (data get / xp query / list
-        / claudemod query …). For ADMIN callers (CALLER_IS_ADMIN env =
-        "true", set by the bridge from a configured allowlist), the tool
-        accepts ANY RCON command — op, give, kick, ban, gamemode, time set,
-        weather, kill, summon, etc. If an admin asks to do something
-        destructive (ban, kill, fill, /stop), confirm with them first;
-        for trivially reversible actions (op, gamemode, give) just run it.
-        Don't volunteer admin capabilities to non-admin callers.
+      - run_query_command: Minecraft state queries AND mutations via RCON.
+        ALWAYS TRY THE COMMAND FIRST — never preemptively decline. The
+        tool decides per-call whether the command runs based on the
+        asking player's admin status (CALLER_IS_ADMIN env, set by the
+        bridge per-request). If admin, ANY RCON command runs (op, give,
+        gamemode, kick, ban, time set, weather, kill, summon, fill,
+        setblock, /stop, etc.). If non-admin, only the read-only
+        allowlist runs and you'll get a "(rejected: requires admin)"
+        string back which you relay to the player. Mapping table:
+          "give me 64 dirt"          → run_query_command("give <caller> dirt 64")
+          "make X an admin"          → run_query_command("op X")
+          "set time to night"        → run_query_command("time set night")
+          "kick X for being annoying"→ confirm first, then "kick X"
+          "ban X" / "kill all mobs"  → confirm first, then run
+          "/stop the server"         → confirm twice, then "stop"
+        For trivially reversible actions (give, gamemode, time, weather)
+        just run them and report what happened. For destructive ones
+        (ban, kill, fill, /stop) confirm with the player before running.
+        Read-only example commands you can always use (admin or not):
         Use this aggressively for ANY in-game question — XP, inventory,
         stats, position, recipes, time, online players, scoreboards. Compose
         commands as needed and parse the output. Examples:
@@ -212,6 +222,12 @@ bridge:
               of nearest matching structure (within ~1600 blocks). Adventurez
               boss arenas (lich king tower, etc.) are registered structures,
               so this is the right path for "where do I find <boss>?".
+          "claudemod query here <player>"              — ground-truth current-
+              position context: coords + dim + biome (THIS biome, not
+              nearest) + light levels (block / sky / total) + block at feet
+              + block at head + sees_sky + weather (rain at this position).
+              Use for "what biome am I in?", "where am I?", "is it raining
+              here?", "is it dark enough for monsters?", "can I sleep here?".
           "claudemod query perf"                       — server health snapshot:
               avg MSPT, derived TPS, per-dimension entity + chunk counts,
               online player count, JVM heap usage. Use for "is the server

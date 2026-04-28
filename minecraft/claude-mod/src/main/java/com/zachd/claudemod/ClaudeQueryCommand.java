@@ -167,6 +167,9 @@ public final class ClaudeQueryCommand {
                     .then(CommandManager.literal("spells")
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(ClaudeQueryCommand::querySpells)))
+                    .then(CommandManager.literal("here")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::queryHere)))
                     .then(CommandManager.literal("nearest")
                         .then(CommandManager.literal("biome")
                             .then(CommandManager.argument("player", StringArgumentType.word())
@@ -1354,6 +1357,70 @@ public final class ClaudeQueryCommand {
             o.addProperty("nbt_snbt", stack.getNbt().toString());
         }
         return o;
+    }
+
+    // ---------- here (current position context) -----------------------------
+    /**
+     * Ground-truth context about a player's CURRENT position: coords +
+     * dimension + biome at that pos + light levels + the block at their
+     * feet + whether the sky is visible + whether it's raining here.
+     * Vanilla has no "what biome am I in?" command — `/locate biome` only
+     * finds the nearest match, not the current one — so this fills the gap
+     * for "where am I?", "what biome is this?", "is it raining here?",
+     * "can I sleep here right now?" type questions.
+     */
+    private static int queryHere(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+        ServerWorld world = (ServerWorld) p.getWorld();
+        BlockPos pos = p.getBlockPos();
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        JsonObject coords = new JsonObject();
+        coords.addProperty("x", pos.getX());
+        coords.addProperty("y", pos.getY());
+        coords.addProperty("z", pos.getZ());
+        coords.addProperty("dim", world.getRegistryKey().getValue().toString());
+        root.add("pos", coords);
+
+        // Biome at the player's exact position.
+        try {
+            var biomeEntry = world.getBiome(pos);
+            var key = biomeEntry.getKey();
+            if (key.isPresent()) {
+                root.addProperty("biome", key.get().getValue().toString());
+            }
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("biome lookup failed: {}", t.toString());
+        }
+
+        // Light levels — block (torches/glowstone) vs sky (sun/moon).
+        JsonObject light = new JsonObject();
+        light.addProperty("block",
+            world.getLightLevel(net.minecraft.world.LightType.BLOCK, pos));
+        light.addProperty("sky",
+            world.getLightLevel(net.minecraft.world.LightType.SKY, pos));
+        light.addProperty("total", world.getLightLevel(pos));
+        root.add("light", light);
+        root.addProperty("sees_sky", world.isSkyVisible(pos));
+
+        // Block at feet + 1 above (head). Useful for "am I in water?",
+        // "am I standing on netherrack?".
+        Identifier feet = Registries.BLOCK.getId(world.getBlockState(pos).getBlock());
+        Identifier head = Registries.BLOCK.getId(world.getBlockState(pos.up()).getBlock());
+        root.addProperty("block_at_feet", feet == null ? "?" : feet.toString());
+        root.addProperty("block_at_head", head == null ? "?" : head.toString());
+
+        // Weather: per-position rain, biome precipitation, raining (global).
+        JsonObject weather = new JsonObject();
+        weather.addProperty("raining_global", world.isRaining());
+        weather.addProperty("thundering_global", world.isThundering());
+        weather.addProperty("raining_here", world.hasRain(pos));
+        root.add("weather", weather);
+
+        root.addProperty("time_of_day", (int)(world.getTimeOfDay() % 24000));
+        return reply(ctx, root);
     }
 
     // ---------- nearest biome / structure ------------------------------------
