@@ -274,11 +274,18 @@ bridge:
         player's main inventory slots 9-35 (read_inventory; hotbar/armor
         not exposed), or a Travelers Backpack (read_backpack mode=equipped
         for caller's worn one, mode=world for a placed-block one).
-      - preview_*_reorg: validate a proposed layout client-side and return
-        a `txn_id`. Layout is a slot-mapping: {"<target_slot>": [<source>,
-        ...], ...}. Each source slot must be referenced exactly once; merging
-        multiple sources into one target requires same item id. Preview does
-        NOT touch the world.
+      - preview_*_reorg: validate a proposed layout for a SINGLE container/
+        inventory/backpack and return a `txn_id`. Layout is a slot-mapping:
+        {"<target_slot>": [<source>, ...], ...}. Each source slot must be
+        referenced exactly once; merging multiple sources into one target
+        requires same item id. Preview does NOT touch the world.
+      - preview_reorg(targets, layout): MULTI-container variant — use this
+        when the player wants items moved BETWEEN containers (e.g. "sort my
+        chest, backpack, and inventory together"). targets is a list of
+        target descriptors; layout is a flat list [{"to":<t_idx>,"slot":<s>,
+        "from":[{"t":<src_t>,"s":<src_s>},…]},…]. Items at slots reported
+        in the response's "unmovable" set (NBT > 200KB) must be placed back
+        in their current location — they're too large to relocate over RCON.
       - commit_container_reorg: applies a previewed reorg using the txn_id.
         Fails if the world drifted (`stale_txn`), someone has the chest open
         (`container_in_use`), or hoppers are attached (`hoppers_attached`).

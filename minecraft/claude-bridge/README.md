@@ -13,6 +13,12 @@ ClusterIP service. Bridge upgrades never restart the Minecraft pod.
 
 ## What it does
 
+`/claude clear` (or `reset`) drops the player's cached conversation
+context so the next `/claude` starts a fresh session. Useful when the
+LLM has gotten stuck on a wrong assumption or carried too much history.
+
+
+
 ```
 /claude what's the recipe for a beacon?
 [Claude → Bob] Surround a Nether Star with 3 obsidian on the bottom row and

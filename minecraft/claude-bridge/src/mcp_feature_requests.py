@@ -44,13 +44,22 @@ SNAPSHOT_DIR = STATE_DIR / "container-snapshots"
 SNAPSHOTS_PER_PLAYER = 5
 PREVIEW_TTL_S = 60
 
-# Source RCON request payloads top out around 1413 bytes; if our
-# txn_slot would exceed this with `<count>:<base64>` plus framing,
-# we fall back to the chunked txn_slot_part / txn_slot_finish protocol
-# on the mod side. 900 keeps a comfortable margin for command-line
-# overhead even with the longest txn_id + slot combinations.
-WRITE_INLINE_MAX = 1100   # full `<count>:<base64>` length budget for one-shot
-WRITE_CHUNK_SIZE = 900    # per-fragment base64 size for chunked writes
+# Source RCON request payloads top out around 1413 bytes; framing overhead
+# for a chunked write command ("claudemod write txn_slot_part <txn_id>
+# <slot> <chunk_idx> <part>") is roughly 60 chars, so we leave generous
+# headroom rather than maximizing throughput. 600 chars per chunk × ~13
+# bytes/byte-of-NBT-base64 still moves several KB of NBT per slot in a
+# few RCON round trips.
+WRITE_INLINE_MAX = 800    # full `<count>:<base64>` length budget for one-shot
+WRITE_CHUNK_SIZE = 600    # per-fragment base64 size for chunked writes
+# A single item with NBT base64 above this threshold is reported up-front
+# at preview time as "unmovable" — the LLM must keep it in its current slot
+# rather than relocating it. Most items fit easily; the cap protects us
+# against mods that store kilobytes of metadata on a single item (e.g.
+# patchouli guidebooks, written books with many pages, modded reagent
+# bags). Set generously — even a 100-page written book is comfortably
+# below this — but bounded so a multi-MB outlier doesn't lock the bridge.
+ITEM_MOVE_NBT_MAX = 200_000
 
 mcp = FastMCP("claude-bridge-feedback")
 
@@ -519,6 +528,10 @@ def _validate_layout(slots: list[dict[str, Any]], total: int,
     or {ok: false, error, detail}.
     """
     by_slot: dict[int, dict[str, Any]] = {s["slot"]: s for s in slots}
+    unmovable: set[int] = {
+        int(s["slot"]) for s in slots
+        if isinstance(s.get("n"), str) and len(s["n"]) > ITEM_MOVE_NBT_MAX
+    }
 
     # Normalize layout to dict[int, list[int]]
     norm: dict[int, list[int]] = {}
@@ -578,6 +591,10 @@ def _validate_layout(slots: list[dict[str, Any]], total: int,
             if stk["i"] != item_id:
                 return {"ok": False, "error": "bad_layout",
                         "detail": f"target {tgt}: can't merge {item_id} with {stk['i']} from slot {s}"}
+            if s in unmovable and s != tgt:
+                return {"ok": False, "error": "unmovable_item",
+                        "detail": (f"slot {s} holds an item with NBT > {ITEM_MOVE_NBT_MAX} "
+                                   "bytes; it must stay in slot " + str(s))}
             used[s] = tgt
             merged += int(stk["c"])
         # The mod ItemStack max stack size is item-dependent; we conservatively
@@ -599,7 +616,8 @@ def _validate_layout(slots: list[dict[str, Any]], total: int,
         return {"ok": False, "error": "bad_layout",
                 "detail": f"sources not placed (would be lost): {sorted(unplaced)}"}
 
-    return {"ok": True, "target_stacks": target_stacks}
+    return {"ok": True, "target_stacks": target_stacks,
+            "unmovable": sorted(unmovable)}
 
 
 def _render_diff(before: list[dict[str, Any]], after: dict[int, dict[str, Any]],
@@ -669,8 +687,13 @@ def _do_commit(state: dict[str, Any]) -> dict[str, Any]:
     if kind in ("container", "backpack_world"):
         args += [state["dim"], str(state["x"]), str(state["y"]), str(state["z"])]
     args.append(state["contents_hash"])
-    if state.get("mode") == "restore":
-        args.append("restore")
+    # Forward the mode literally — the mod accepts "restore" (skip hopper +
+    # conservation, used by undo) and "multi" (skip per-target conservation
+    # only, used by cross-container reorgs where conservation is enforced
+    # across the union of targets at the bridge).
+    mode = state.get("mode")
+    if mode in ("restore", "multi"):
+        args.append(mode)
     opened = _mod_call(*args)
     if not opened.get("ok"):
         return opened
@@ -836,12 +859,15 @@ def _do_preview(kind: str, new_layout: Any, *, dim: str | None = None,
         "target_stacks": target_stacks,
         "expires_at": time.time() + PREVIEW_TTL_S,
     }
-    return json.dumps({
+    out: dict[str, Any] = {
         "ok": True,
         "txn_id": txn_id,
         "diff": diff,
         "expires_in_s": PREVIEW_TTL_S,
-    })
+    }
+    if val.get("unmovable"):
+        out["unmovable"] = val["unmovable"]
+    return json.dumps(out)
 
 
 @mcp.tool()
@@ -959,6 +985,8 @@ def commit_container_reorg(txn_id: str) -> str:
     if state["caller"].lower() != caller_env.lower():
         return json.dumps({"error": "wrong_caller",
                            "detail": "txn was created by a different player"})
+    if state.get("is_multi"):
+        return json.dumps(_do_commit_multi(state))
     res = _do_commit(state)
     if not res.get("ok"):
         return json.dumps(res)
@@ -969,6 +997,341 @@ def commit_container_reorg(txn_id: str) -> str:
         print(f"snapshot save failed: {e}", file=sys.stderr)
         res["snapshot_warning"] = f"snapshot save failed: {e}"
     return json.dumps(res)
+
+
+# ----- multi-target (cross-container) reorg --------------------------------
+
+def _validate_multi_layout(reads: list[dict[str, Any]],
+                           layout: Any) -> dict[str, Any]:
+    """
+    Cross-target version of _validate_layout. `layout` is a flat list:
+      [
+        {"to": <to_target>, "slot": <to_slot>, "from": [{"t": <src_t>, "s": <src_s>}, ...]},
+        ...
+      ]
+    Each (target_idx, slot) source must be referenced exactly once across
+    the entire layout (item conservation). Merges into one target slot
+    require matching item id. Returns
+    {ok, target_stacks: [<target_idx -> {slot -> {i, c, n}}>, ...]}.
+    """
+    if isinstance(layout, str):
+        try:
+            layout = json.loads(layout)
+        except Exception as e:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"layout JSON parse failed: {e}"}
+    if not isinstance(layout, list):
+        return {"ok": False, "error": "bad_layout",
+                "detail": "layout must be a list of placements"}
+
+    by_ts: dict[tuple[int, int], dict[str, Any]] = {}
+    unmovable: set[tuple[int, int]] = set()
+    for ti, rd in enumerate(reads):
+        for s in rd["slots"]:
+            key = (ti, int(s["slot"]))
+            by_ts[key] = s
+            n = s.get("n") or ""
+            if len(n) > ITEM_MOVE_NBT_MAX:
+                unmovable.add(key)
+
+    used: dict[tuple[int, int], tuple[int, int]] = {}
+    target_stacks: list[dict[int, dict[str, Any]]] = [dict() for _ in reads]
+
+    for entry in layout:
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "bad_layout",
+                    "detail": "each entry must be a dict {to, slot, from}"}
+        try:
+            to_t = int(entry["to"])
+            to_s = int(entry["slot"])
+            froms = entry.get("from") or []
+        except (KeyError, ValueError, TypeError) as e:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"entry missing/bad fields: {e}"}
+        if to_t < 0 or to_t >= len(reads):
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target {to_t} out of range [0, {len(reads)})"}
+        if to_s < 0 or to_s >= reads[to_t]["total_slots"]:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target {to_t} slot {to_s} out of range"}
+        if not froms:
+            continue
+
+        first_key = (int(froms[0]["t"]), int(froms[0]["s"]))
+        first = by_ts.get(first_key)
+        if first is None:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"source {first_key} is empty"}
+        item_id = first["i"]
+        merged = 0
+        for f in froms:
+            ts_key = (int(f["t"]), int(f["s"]))
+            if ts_key in used:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"source {ts_key} used by target {used[ts_key]} and target ({to_t},{to_s})"}
+            stk = by_ts.get(ts_key)
+            if stk is None:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"source {ts_key} is empty"}
+            if stk["i"] != item_id:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"can't merge {item_id} with {stk['i']} from {ts_key}"}
+            # Unmovable-item constraint: huge-NBT items must stay in place.
+            if ts_key in unmovable and ts_key != (to_t, to_s):
+                return {"ok": False, "error": "unmovable_item",
+                        "detail": (f"item at target {ts_key[0]} slot {ts_key[1]} has "
+                                   f"NBT > {ITEM_MOVE_NBT_MAX} bytes and must stay in place; "
+                                   "place its source identically to its current location")}
+            used[ts_key] = (to_t, to_s)
+            merged += int(stk["c"])
+        if merged > 64:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target ({to_t},{to_s}): merged count {merged} > 64"}
+        target_stacks[to_t][to_s] = {
+            "i": item_id, "c": merged, "n": first.get("n"),
+        }
+
+    all_sources = set(by_ts.keys())
+    unplaced = all_sources - set(used.keys())
+    if unplaced:
+        return {"ok": False, "error": "bad_layout",
+                "detail": f"unplaced sources (would be lost): {sorted(unplaced)}"}
+
+    return {"ok": True, "target_stacks": target_stacks, "unmovable": sorted(unmovable)}
+
+
+def _render_multi_diff(reads: list[dict[str, Any]],
+                       target_stacks: list[dict[int, dict[str, Any]]]) -> str:
+    out_lines: list[str] = []
+    for ti, rd in enumerate(reads):
+        before = {s["slot"]: s for s in rd["slots"]}
+        after = target_stacks[ti]
+        target_changes: list[str] = []
+        for i in range(rd["total_slots"]):
+            b = before.get(i)
+            a = after.get(i)
+            if b is None and a is None:
+                continue
+            b_str = "·" if b is None else f"{_short_id(b['i'])}×{b['c']}"
+            a_str = "·" if a is None else f"{_short_id(a['i'])}×{a['c']}"
+            if b_str == a_str:
+                continue
+            target_changes.append(f"  slot {i:>2}: {b_str:<24} → {a_str}")
+        if target_changes:
+            kind = rd.get("kind", "?")
+            out_lines.append(f"target {ti} ({kind}):")
+            out_lines.extend(target_changes)
+    return "\n".join(out_lines) if out_lines else "(no slot changes)"
+
+
+def _save_compound_snapshot(caller: str, component_ids: list[str]) -> str:
+    snap_id = f"{int(time.time() * 1000)}-c{uuid.uuid4().hex[:6]}"
+    pdir = SNAPSHOT_DIR / re.sub(r"[^A-Za-z0-9_\-]", "_", caller)
+    pdir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "snapshot_id": snap_id,
+        "compound": True,
+        "component_ids": component_ids,
+        "taken_at": datetime.now(timezone.utc).isoformat(),
+        "caller": caller,
+    }
+    tmp = pdir / f".{snap_id}.tmp"
+    final = pdir / f"{snap_id}.json"
+    tmp.write_text(json.dumps(payload))
+    os.replace(tmp, final)
+    # Compound snapshots count toward the same ring-buffer budget.
+    files = sorted([p for p in pdir.iterdir() if p.suffix == ".json"], key=lambda p: p.name)
+    while len(files) > SNAPSHOTS_PER_PLAYER:
+        try: files[0].unlink()
+        except Exception: pass
+        files = files[1:]
+    return snap_id
+
+
+def _do_commit_multi(state: dict[str, Any]) -> dict[str, Any]:
+    """
+    Sequentially commit each target via _do_commit (mode=multi so the mod
+    skips per-target conservation). On failure, rollback already-committed
+    targets via the restore path.
+    """
+    caller = state["caller"]
+    targets = state["targets"]
+    reads = state["reads"]
+    target_stacks_list = state["target_stacks"]
+    committed: list[tuple[int, dict[str, Any]]] = []
+    snapshot_ids: list[str] = []
+
+    for ti, tgt in enumerate(targets):
+        kind = tgt["kind"]
+        sub_state = {
+            "caller": caller,
+            "kind": kind,
+            "dim": tgt.get("dim"), "x": tgt.get("x"),
+            "y": tgt.get("y"), "z": tgt.get("z"),
+            "backpack_mode": ("equipped" if kind == "backpack_equipped"
+                              else "world" if kind == "backpack_world" else None),
+            "total_slots": reads[ti]["total_slots"],
+            "contents_hash": reads[ti]["contents_hash"],
+            "snapshot_contents": reads[ti]["slots"],
+            "target_stacks": target_stacks_list[ti],
+            "mode": "multi",
+        }
+        # Skip targets with no actual changes — saves an RCON round-trip
+        # and avoids triggering the viewer guard for unchanged targets.
+        if not _target_has_changes(reads[ti], target_stacks_list[ti]):
+            committed.append((ti, sub_state))
+            continue
+
+        res = _do_commit(sub_state)
+        if not res.get("ok"):
+            # Rollback previously-committed targets in reverse order.
+            rollback_failures: list[dict[str, Any]] = []
+            for prev_ti, prev_state in reversed(committed):
+                if prev_state.get("_skipped"):
+                    continue
+                # Build a restore from the original snapshot_contents.
+                prev_state_restore = dict(prev_state)
+                prev_state_restore["mode"] = "restore"
+                prev_state_restore["target_stacks"] = {
+                    int(s["slot"]): {"i": s["i"], "c": int(s["c"]), "n": s.get("n")}
+                    for s in prev_state["snapshot_contents"]
+                }
+                rb = _do_commit(prev_state_restore)
+                if not rb.get("ok"):
+                    rollback_failures.append({"target": prev_ti, "error": rb})
+                    print(f"ROLLBACK FAILED for target {prev_ti}: {rb}", file=sys.stderr)
+            err = dict(res)
+            err["target_failed"] = ti
+            err["rolled_back"] = [t for t, _ in committed]
+            if rollback_failures:
+                err["rollback_failures"] = rollback_failures
+            return err
+
+        try:
+            snap_id = _save_snapshot(
+                sub_state, res.get("snapshot_pre_hash", reads[ti]["contents_hash"])
+            )
+            snapshot_ids.append(snap_id)
+        except Exception as e:
+            print(f"snapshot save failed for target {ti}: {e}", file=sys.stderr)
+        committed.append((ti, sub_state))
+
+    if not snapshot_ids:
+        return {"ok": True, "applied": 0, "detail": "no targets had changes"}
+    if len(snapshot_ids) == 1:
+        return {"ok": True, "snapshot_id": snapshot_ids[0],
+                "applied": len(committed), "targets": len(targets)}
+    compound_id = _save_compound_snapshot(caller, snapshot_ids)
+    return {"ok": True, "snapshot_id": compound_id,
+            "component_snapshots": snapshot_ids,
+            "applied": len(committed), "targets": len(targets)}
+
+
+def _target_has_changes(read: dict[str, Any],
+                        target_stacks: dict[int, dict[str, Any]]) -> bool:
+    before = {s["slot"]: s for s in read["slots"]}
+    for i in range(read["total_slots"]):
+        b = before.get(i)
+        a = target_stacks.get(i)
+        if (b is None) != (a is None):
+            return True
+        if b is None:
+            continue
+        if b["i"] != a["i"] or int(b["c"]) != int(a["c"]):
+            return True
+    return False
+
+
+@mcp.tool()
+def preview_reorg(targets: Any, layout: Any) -> str:
+    """
+    Preview a reorganization that may move items between multiple
+    containers / inventories / backpacks. Use this when the player
+    asks for a cross-container sort (e.g. "consolidate my inventory,
+    backpack, and the chest in front of me").
+
+    Args:
+        targets: List of target descriptors. Each is one of:
+            {"kind": "container",         "dim": "<id>", "x":int, "y":int, "z":int}
+            {"kind": "inventory"}
+            {"kind": "backpack_equipped"}
+            {"kind": "backpack_world",    "dim": "<id>", "x":int, "y":int, "z":int}
+            Order matters: target_idx in the layout refers to position in this list.
+        layout: List of placements. Each entry:
+            {"to": <to_target_idx>, "slot": <to_slot>,
+             "from": [{"t": <src_target_idx>, "s": <src_slot>}, ...]}
+            Each (target_idx, slot) source must appear exactly once across
+            all entries. Merging multiple sources into one target slot
+            requires same item id and total count ≤ 64.
+
+    Returns:
+        JSON {ok, txn_id, diff, expires_in_s} on success, or {error, detail}.
+        For commit, pass txn_id to commit_container_reorg.
+
+    Special cases:
+      - Items with NBT base64 > {ITEM_MOVE_NBT_MAX} bytes (e.g. very large
+        modded books) are flagged "unmovable": layout must keep them in
+        their current (target, slot). This avoids straining the RCON
+        protocol with multi-MB chunked writes.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+
+    if isinstance(targets, str):
+        try:
+            targets = json.loads(targets)
+        except Exception as e:
+            return json.dumps({"error": "bad_args",
+                               "detail": f"targets JSON parse failed: {e}"})
+    if not isinstance(targets, list) or not targets:
+        return json.dumps({"error": "bad_args",
+                           "detail": "targets must be a non-empty list"})
+
+    reads: list[dict[str, Any]] = []
+    for ti, tgt in enumerate(targets):
+        if not isinstance(tgt, dict) or "kind" not in tgt:
+            return json.dumps({"error": "bad_args",
+                               "detail": f"target {ti}: missing 'kind'"})
+        kind = tgt["kind"]
+        if kind == "container":
+            rd = _do_read("container", caller=caller, dim=tgt.get("dim"),
+                          x=tgt.get("x"), y=tgt.get("y"), z=tgt.get("z"))
+        elif kind == "inventory":
+            rd = _do_read("inventory", caller=caller)
+        elif kind == "backpack_equipped":
+            rd = _do_read("backpack_equipped", caller=caller)
+        elif kind == "backpack_world":
+            rd = _do_read("backpack_world", caller=caller, dim=tgt.get("dim"),
+                          x=tgt.get("x"), y=tgt.get("y"), z=tgt.get("z"))
+        else:
+            return json.dumps({"error": "bad_args",
+                               "detail": f"target {ti}: unknown kind '{kind}'"})
+        if not rd.get("ok"):
+            err = dict(rd)
+            err["target"] = ti
+            return json.dumps(err)
+        reads.append(rd)
+
+    val = _validate_multi_layout(reads, layout)
+    if not val.get("ok"):
+        return json.dumps(val)
+
+    diff = _render_multi_diff(reads, val["target_stacks"])
+    _gc_previews()
+    txn_id = uuid.uuid4().hex[:16]
+    PREVIEW_STATE[txn_id] = {
+        "caller": caller,
+        "is_multi": True,
+        "targets": targets,
+        "reads": reads,
+        "target_stacks": val["target_stacks"],
+        "expires_at": time.time() + PREVIEW_TTL_S,
+    }
+    out = {"ok": True, "txn_id": txn_id, "diff": diff, "expires_in_s": PREVIEW_TTL_S}
+    if val.get("unmovable"):
+        out["unmovable"] = val["unmovable"]
+    return json.dumps(out)
 
 
 @mcp.tool()
@@ -1007,6 +1370,20 @@ def undo_container_reorg(snapshot_id: str) -> str:
         return json.dumps({"error": "bad_snapshot", "detail": str(e)})
     if snap.get("caller", "").lower() != caller.lower():
         return json.dumps({"error": "wrong_caller", "detail": "snapshot belongs to another player"})
+
+    # Compound (multi-target) snapshot — restore each component in reverse
+    # order so the most-recently-committed target is reverted first
+    # (mirrors the logical undo order).
+    if snap.get("compound"):
+        components = snap.get("component_ids", [])
+        results: list[dict[str, Any]] = []
+        all_ok = True
+        for sub_id in reversed(components):
+            sub_res = json.loads(undo_container_reorg(sub_id))
+            results.append({"component": sub_id, "result": sub_res})
+            if not sub_res.get("ok"):
+                all_ok = False
+        return json.dumps({"ok": all_ok, "components": results})
 
     # Build target_stacks from snapshot_contents directly.
     target_stacks = {}

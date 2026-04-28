@@ -325,14 +325,48 @@ class Claude:
                     continue
 
                 etype = event.get("type")
-                if etype == "assistant" and on_progress:
+                if etype == "assistant":
                     msg = event.get("message", {}) or {}
                     for block in msg.get("content", []) or []:
                         if isinstance(block, dict) and block.get("type") == "tool_use":
+                            # Surface the call (name + truncated input) so
+                            # MCP tool failures are diagnosable from bridge
+                            # logs without instrumenting the MCP layer itself.
+                            tname = block.get("name") or "?"
+                            tinp = block.get("input") or {}
                             try:
-                                on_progress(_progress_label(block))
-                            except Exception as e:
-                                log.warning("on_progress callback failed: %s", e)
+                                inp_repr = json.dumps(tinp, separators=(",", ":"))[:300]
+                            except Exception:
+                                inp_repr = str(tinp)[:300]
+                            log.info("tool_use %s args=%s", tname, inp_repr)
+                            if on_progress:
+                                try:
+                                    on_progress(_progress_label(block))
+                                except Exception as e:
+                                    log.warning("on_progress callback failed: %s", e)
+                elif etype == "user":
+                    # tool_result events come back as `user` messages; log
+                    # any error responses so we can see why a tool failed.
+                    msg = event.get("message", {}) or {}
+                    for block in msg.get("content", []) or []:
+                        if not isinstance(block, dict) or block.get("type") != "tool_result":
+                            continue
+                        content = block.get("content")
+                        if isinstance(content, list):
+                            content = "".join(
+                                c.get("text", "") if isinstance(c, dict) else str(c)
+                                for c in content
+                            )
+                        content = (content or "")[:600]
+                        is_err = bool(block.get("is_error")) or '"error"' in content
+                        if is_err:
+                            log.warning("tool_result ERROR id=%s: %s",
+                                        (block.get("tool_use_id") or "")[-8:], content)
+                        else:
+                            # Trim verbose successes so logs stay readable.
+                            log.info("tool_result id=%s: %s",
+                                     (block.get("tool_use_id") or "")[-8:],
+                                     content[:200])
                 elif etype == "result":
                     if event.get("is_error"):
                         had_error = True
@@ -657,6 +691,23 @@ def main() -> None:
         if CFG.enforce_whitelist and not whitelist.contains(player):
             log.info("rejecting non-whitelisted player %s", player)
             continue
+
+        # /claude clear / /claude reset — drop the player's cached
+        # session_id so the next /claude starts a fresh conversation.
+        # Useful when the LLM is stuck on a wrong assumption or has
+        # accumulated too much context. Cheap, doesn't go through Claude.
+        if prompt.strip().lower() in ("clear", "/clear", "reset", "/reset", "new session"):
+            key = name_to_uuid.get(player.lower(), player.lower())
+            sessions.set(key, "")
+            log.info("cleared session for %s (key=%s)", player, key)
+            try:
+                broadcast(rcon, player,
+                          "(cleared your context — next /claude starts fresh)",
+                          CFG.max_response_chars)
+            except Exception:
+                pass
+            continue
+
         if len(prompt) > CFG.max_prompt_chars:
             try:
                 broadcast(rcon, player, f"(prompt too long; max {CFG.max_prompt_chars} chars)", CFG.max_response_chars)

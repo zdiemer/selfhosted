@@ -24,6 +24,7 @@
       "mcp__claude-bridge-feedback__preview_container_reorg",
       "mcp__claude-bridge-feedback__preview_inventory_reorg",
       "mcp__claude-bridge-feedback__preview_backpack_reorg",
+      "mcp__claude-bridge-feedback__preview_reorg",
       "mcp__claude-bridge-feedback__commit_container_reorg",
       "mcp__claude-bridge-feedback__undo_container_reorg"
     ]

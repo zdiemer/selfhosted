@@ -135,7 +135,17 @@ public final class ClaudeWriteCommand {
 
     // ----- transactions -----------------------------------------------------
 
-    enum Mode { DEFAULT, RESTORE }
+    /**
+     * Commit modes:
+     *   DEFAULT  — full safety: hopper check, viewer guard, per-target item-conservation
+     *   RESTORE  — for `undo`: skip hopper check (so a hopper added after the original
+     *              commit can't permanently brick undo) and skip conservation (the
+     *              snapshot is authoritative for the layout we're restoring)
+     *   MULTI    — for cross-container reorgs orchestrated by the bridge: keep hopper
+     *              and viewer checks but skip per-target conservation (the bridge
+     *              enforces conservation across the full set of targets, not within one)
+     */
+    enum Mode { DEFAULT, RESTORE, MULTI }
     enum Kind { CONTAINER, INVENTORY, BACKPACK_EQUIPPED, BACKPACK_WORLD }
 
     // Source RCON request payloads top out around 1413 bytes; responses
@@ -312,7 +322,11 @@ public final class ClaudeWriteCommand {
     private static Mode parseMode(CommandContext<ServerCommandSource> ctx) {
         try {
             String m = StringArgumentType.getString(ctx, "mode").toLowerCase(Locale.ROOT);
-            return "restore".equals(m) ? Mode.RESTORE : Mode.DEFAULT;
+            return switch (m) {
+                case "restore" -> Mode.RESTORE;
+                case "multi" -> Mode.MULTI;
+                default -> Mode.DEFAULT;
+            };
         } catch (IllegalArgumentException e) {
             return Mode.DEFAULT;
         }
@@ -681,8 +695,11 @@ public final class ClaudeWriteCommand {
             proposed.add(s == null ? ItemStack.EMPTY : s);
         }
 
-        // Item conservation (stripped NBT) — except restore mode trusts the snapshot.
-        if (t.mode != Mode.RESTORE) {
+        // Item conservation (stripped NBT) — only run in DEFAULT mode.
+        // RESTORE trusts the snapshot; MULTI defers to bridge-side cross-target
+        // conservation (per-target multisets don't balance when items move
+        // between containers).
+        if (t.mode == Mode.DEFAULT) {
             String mismatch = checkConservation(live, proposed);
             if (mismatch != null) {
                 JsonObject extra = new JsonObject();
