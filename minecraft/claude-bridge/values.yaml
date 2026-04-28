@@ -186,6 +186,18 @@ bridge:
               grimoire / tome / staff / wand items with their NBT, plus any
               spell_power-namespaced attributes. NOTE: Spell Engine 0.x has
               no mana — spells use cooldowns; spell_power scales damage.
+          "claudemod query nearest biome <player> <id>"     — coords + distance
+              of nearest matching biome to the player (within 6400 blocks).
+              Use for "where's the closest desert?", "find me a swamp".
+          "claudemod query nearest structure <player> <id>" — coords + distance
+              of nearest matching structure (within ~1600 blocks). Adventurez
+              boss arenas (lich king tower, etc.) are registered structures,
+              so this is the right path for "where do I find <boss>?".
+          "claudemod query class <player>"             — consolidated build view:
+              puffish_skills (per-category level + points + unlocked skills)
+              + heuristic NBT/scoreboard scan for simplyskills /
+              more_rpg_classes data. Use for "what's my build?",
+              "what specialization am I?".
           "data get entity <player> Pos"               — current coords
           "data get entity <player> SelectedItem"      — held item NBT
               (item levels / affixes / enchantment tiers usually live here)

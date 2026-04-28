@@ -12,26 +12,6 @@ subcommand. The bridge's `run_query_command` allowlist already covers
 `^claudemod\s+query\b`, so the bridge changes are typically just a
 system-prompt nudge.
 
-### Explorer's Compass / Nature's Compass — nearest biome / structure
-- New: `claudemod query nearest biome <id> [<player>]`
-- New: `claudemod query nearest structure <id> [<player>]`
-- Both mods are installed (`ExplorersCompass-1.20.1-2.2.3-fabric.jar`,
-  `NaturesCompass-1.20.1-2.2.3-fabric.jar`) and ship public APIs that
-  scan a region offset from a position for the matching biome/structure.
-- Adventurez registers its boss arenas as named structures, so this
-  likely answers "where do I find the lich king?" better than the
-  current quest-text search.
-- Defaults to the asking player's current dimension + position; bridge
-  resolves caller pos via `data get entity`.
-
-### Open Parties and Claims — claims + party
-- New: `claudemod query opac <player>`
-- Mod installed: `open-parties-and-claims-fabric-1.20.1-0.25.10.jar`.
-- Surface: claimed chunk count, bounding box per claim, party name +
-  members, party permissions for the asking player.
-- Answers "how many chunks have I claimed?", "is StarFoxA in my party?",
-  "who can build in my base?".
-
 ## Tier 3 — bigger / cross-system
 
 ### Server perf
@@ -44,15 +24,6 @@ system-prompt nudge.
   see `minecraft/monitor.sh`), but exposing inline lets Claude
   answer "is the server lagging?", "what's eating CPU?" without
   the operator pulling Grafana.
-
-### Unified class / skill summary
-- New: `claudemod query class <player>`
-- Consolidates state from puffish_skills + simplyskills +
-  more_rpg_classes into one view: per-system level + chosen class +
-  key stats + unspent points. Replaces the need for Claude to call
-  three siloed queries to answer "what's my build?".
-- Drop-in extension to the existing `claudemod query skills` —
-  could either supersede it or live alongside.
 
 ## Tier 4 (potential, unscoped)
 

@@ -162,7 +162,19 @@ public final class ClaudeQueryCommand {
                             .executes(ClaudeQueryCommand::queryBackpack)))
                     .then(CommandManager.literal("spells")
                         .then(CommandManager.argument("player", StringArgumentType.word())
-                            .executes(ClaudeQueryCommand::querySpells))))
+                            .executes(ClaudeQueryCommand::querySpells)))
+                    .then(CommandManager.literal("nearest")
+                        .then(CommandManager.literal("biome")
+                            .then(CommandManager.argument("player", StringArgumentType.word())
+                                .then(CommandManager.argument("id", StringArgumentType.greedyString())
+                                    .executes(ctx -> queryNearest(ctx, true)))))
+                        .then(CommandManager.literal("structure")
+                            .then(CommandManager.argument("player", StringArgumentType.word())
+                                .then(CommandManager.argument("id", StringArgumentType.greedyString())
+                                    .executes(ctx -> queryNearest(ctx, false))))))
+                    .then(CommandManager.literal("class")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::queryClass))))
         );
     }
 
@@ -1268,6 +1280,167 @@ public final class ClaudeQueryCommand {
             o.addProperty("nbt_snbt", stack.getNbt().toString());
         }
         return o;
+    }
+
+    // ---------- nearest biome / structure ------------------------------------
+    /**
+     * Locate the nearest biome or structure to a player using vanilla
+     * ServerWorld APIs (the compass mods are UI sugar over the same lookups).
+     *
+     * Biome search: 6400-block radius, sampled every 32x64. Returns the
+     * nearest matching biome with its (x, y, z).
+     *
+     * Structure search: 100-chunk (~1600-block) radius. We deliberately use
+     * a single Structure entry list (not a structure tag) so id maps 1:1
+     * to Adventurez bosses, dungeon arena structures, etc.
+     */
+    private static int queryNearest(CommandContext<ServerCommandSource> ctx, boolean isBiome) {
+        String idStr = StringArgumentType.getString(ctx, "id").trim();
+        Identifier id = Identifier.tryParse(idStr.contains(":") ? idStr : "minecraft:" + idStr);
+        if (id == null) return error(ctx, "bad id: " + idStr);
+
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+        ServerWorld world = (ServerWorld) p.getWorld();
+        BlockPos origin = p.getBlockPos();
+
+        JsonObject root = new JsonObject();
+        root.addProperty(isBiome ? "biome" : "structure", id.toString());
+        root.addProperty("player", p.getName().getString());
+        JsonObject originJson = new JsonObject();
+        originJson.addProperty("x", origin.getX());
+        originJson.addProperty("y", origin.getY());
+        originJson.addProperty("z", origin.getZ());
+        originJson.addProperty("dim", world.getRegistryKey().getValue().toString());
+        root.add("origin", originJson);
+
+        try {
+            BlockPos found;
+            if (isBiome) {
+                var biomeReg = world.getRegistryManager().get(RegistryKeys.BIOME);
+                RegistryKey<net.minecraft.world.biome.Biome> bk = RegistryKey.of(RegistryKeys.BIOME, id);
+                if (!biomeReg.contains(bk)) return error(ctx, "unknown biome: " + id);
+                var pair = world.locateBiome(
+                    entry -> entry.matchesKey(bk),
+                    origin, 6400, 32, 64
+                );
+                found = pair == null ? null : pair.getFirst();
+            } else {
+                var structReg = world.getRegistryManager().get(RegistryKeys.STRUCTURE);
+                RegistryKey<net.minecraft.world.gen.structure.Structure> sk =
+                    RegistryKey.of(RegistryKeys.STRUCTURE, id);
+                var entryOpt = structReg.getEntry(sk);
+                if (entryOpt.isEmpty()) return error(ctx, "unknown structure: " + id);
+                var entryList = net.minecraft.registry.entry.RegistryEntryList.of(entryOpt.get());
+                var pair = world.getChunkManager().getChunkGenerator()
+                    .locateStructure(world, entryList, origin, 100, false);
+                found = pair == null ? null : pair.getFirst();
+            }
+            if (found == null) {
+                root.addProperty("found", false);
+                root.addProperty("note", isBiome
+                    ? "no match within 6400 blocks of origin"
+                    : "no match within 100 chunks (~1600 blocks)");
+            } else {
+                root.addProperty("found", true);
+                root.addProperty("x", found.getX());
+                root.addProperty("y", found.getY());
+                root.addProperty("z", found.getZ());
+                double dx = found.getX() - origin.getX();
+                double dz = found.getZ() - origin.getZ();
+                root.addProperty("distance_blocks", (int) Math.sqrt(dx * dx + dz * dz));
+            }
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("nearest lookup failed: {}", t.toString());
+            return error(ctx, "lookup failed: " + t.getClass().getSimpleName());
+        }
+        return reply(ctx, root);
+    }
+
+    // ---------- class (unified skill / class summary) -----------------------
+    /**
+     * Consolidated player-build view across the modpack's progression
+     * systems. Cleanly surfaces puffish_skills (the Prominence leveling
+     * frontend) via its public API; for simplyskills + more_rpg_classes,
+     * which don't expose stable APIs, probes the player's NBT and the
+     * server scoreboard for objectives whose names look skill-related, and
+     * dumps what's there for Claude to interpret.
+     */
+    private static int queryClass(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+
+        // Puffish — clean API access (same as `claudemod query skills`).
+        if (FabricLoader.getInstance().isModLoaded("puffish_skills")) {
+            JsonArray puffish = new JsonArray();
+            try {
+                net.puffish.skillsmod.api.SkillsAPI.streamCategories().forEach(cat -> {
+                    JsonObject c = new JsonObject();
+                    c.addProperty("id", cat.getId().toString());
+                    c.addProperty("unlocked", cat.isUnlocked(p));
+                    c.addProperty("points_left", cat.getPointsLeft(p));
+                    c.addProperty("points_spent", cat.getSpentPoints(p));
+                    cat.getExperience().ifPresent(exp -> {
+                        c.addProperty("level", exp.getLevel(p));
+                        c.addProperty("xp_to_next", exp.getRequired(p, exp.getLevel(p)));
+                    });
+                    long unlocked = cat.streamUnlockedSkills(p).count();
+                    long total = cat.streamSkills().count();
+                    c.addProperty("skills_unlocked", unlocked);
+                    c.addProperty("skills_total", total);
+                    puffish.add(c);
+                });
+            } catch (Throwable t) {
+                ClaudeMod.LOG.warn("puffish summary in queryClass failed: {}", t.toString());
+            }
+            root.add("puffish_skills", puffish);
+        }
+
+        // simplyskills / more_rpg_classes — heuristic NBT scan. Keys
+        // matching skill-system patterns get dumped as SNBT.
+        JsonObject nbtFound = new JsonObject();
+        try {
+            net.minecraft.nbt.NbtCompound nbt = new net.minecraft.nbt.NbtCompound();
+            p.writeNbt(nbt);
+            for (String k : nbt.getKeys()) {
+                String lk = k.toLowerCase();
+                if (lk.contains("skill") || lk.contains("class") || lk.contains("rpg")
+                        || lk.contains("special") || lk.contains("simply")) {
+                    String snbt = nbt.get(k).toString();
+                    nbtFound.addProperty(k, truncate(snbt, 400));
+                }
+            }
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("nbt scan in queryClass failed: {}", t.toString());
+        }
+        root.add("nbt_skill_keys", nbtFound);
+
+        // Scoreboard scan — SimplySkills tracks unspent skill points via
+        // a scoreboard packet, suggesting it stores them as objectives.
+        JsonObject scores = new JsonObject();
+        try {
+            var scoreboard = ctx.getSource().getServer().getScoreboard();
+            String name = p.getName().getString();
+            for (var obj : scoreboard.getObjectives()) {
+                String objName = obj.getName().toLowerCase();
+                if (objName.contains("skill") || objName.contains("class")
+                        || objName.contains("rpg") || objName.contains("special")
+                        || objName.contains("simply")) {
+                    if (scoreboard.playerHasObjective(name, obj)) {
+                        var score = scoreboard.getPlayerScore(name, obj);
+                        scores.addProperty(obj.getName(), score.getScore());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("scoreboard scan in queryClass failed: {}", t.toString());
+        }
+        root.add("scoreboard_skill_keys", scores);
+
+        return reply(ctx, root);
     }
 
     // ---------- nbt_keys (index for unknown mod data) ------------------------
