@@ -33,7 +33,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from kubernetes import client, config, watch
 from kubernetes.client.rest import ApiException
@@ -249,14 +249,24 @@ class Claude:
         self.model = model
         self.timeout = timeout
 
-    def ask(self, player_uuid: str, player_name: str, prompt: str) -> str:
+    def ask(self, player_uuid: str, player_name: str, prompt: str,
+            on_progress: Callable[[str], None] | None = None) -> str:
+        """
+        Run a Claude turn with streaming output. on_progress is called for
+        every tool_use the model emits — callers use this to update a
+        bossbar / status indicator while the agent works through multi-tool
+        questions like "find iron in my base and tell me if it's enough
+        for a beacon".
+        """
         session_id = self.sessions.get(player_uuid)
         # Prompt goes via stdin — claude's --mcp-config is variadic, so a
         # positional prompt arg gets swallowed by it. stdin sidesteps the
         # whole flag-ordering problem.
         cmd = [
             "claude", "-p",
-            "--output-format", "json",
+            "--output-format", "stream-json",
+            "--input-format", "text",
+            "--verbose",   # stream-json requires --verbose to emit per-event lines
             "--append-system-prompt", f"{self.system_prompt}\n\nThe player asking is named {player_name}.",
             "--mcp-config", "/app/claude-config/mcp.json",
         ]
@@ -266,68 +276,246 @@ class Claude:
             cmd += ["--resume", session_id]
 
         log.info("claude ask player=%s session=%s prompt_len=%d", player_name, session_id or "new", len(prompt))
+        # CALLER_PLAYER lets the MCP tools enforce "this action is taken
+        # on behalf of THIS player" without trusting an LLM-supplied arg.
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1,
+            env={**os.environ, "CALLER_PLAYER": player_name},
+        )
         try:
-            # CALLER_PLAYER lets the MCP tools enforce "this action is taken
-            # on behalf of THIS player" without trusting an LLM-supplied arg.
-            r = subprocess.run(
-                cmd, input=prompt, capture_output=True, text=True, timeout=self.timeout,
-                env={**os.environ, "CALLER_PLAYER": player_name},
-            )
-        except subprocess.TimeoutExpired:
-            log.error("claude timed out for %s", player_name)
-            return "(timed out — try again with a shorter question)"
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except Exception as e:
+            log.warning("failed to send prompt to claude stdin: %s", e)
 
-        if r.returncode != 0:
-            log.error("claude exited %d: stderr=%s", r.returncode, r.stderr.strip()[:500])
-            # `--resume` against a stale session ID errors; reset and let the
-            # next request start fresh.
-            if session_id and "session" in r.stderr.lower():
+        deadline = time.time() + self.timeout
+        final_text = ""
+        new_session: str | None = None
+        had_error = False
+
+        try:
+            for raw in proc.stdout:
+                if time.time() > deadline:
+                    log.error("claude timed out for %s", player_name)
+                    proc.kill()
+                    return "(timed out — try again with a shorter question)"
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                etype = event.get("type")
+                if etype == "assistant" and on_progress:
+                    msg = event.get("message", {}) or {}
+                    for block in msg.get("content", []) or []:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            try:
+                                on_progress(_progress_label(block))
+                            except Exception as e:
+                                log.warning("on_progress callback failed: %s", e)
+                elif etype == "result":
+                    if event.get("is_error"):
+                        had_error = True
+                        log.error("claude result error: subtype=%s",
+                                  event.get("subtype"))
+                    final_text = (event.get("result") or "").strip()
+                    new_session = event.get("session_id")
+                    break
+        finally:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if proc.returncode and not final_text:
+            stderr_tail = ""
+            try:
+                stderr_tail = (proc.stderr.read() or "").strip()[:500]
+            except Exception:
+                pass
+            log.error("claude exited %s: stderr=%s", proc.returncode, stderr_tail)
+            if session_id and "session" in stderr_tail.lower():
                 self.sessions.set(player_uuid, "")
             return "(sorry, I hit an error)"
 
-        try:
-            payload = json.loads(r.stdout)
-        except json.JSONDecodeError:
-            log.error("claude returned non-JSON: %s", r.stdout[:500])
-            return "(sorry, I got confused)"
-
-        new_session = payload.get("session_id")
         if new_session and new_session != session_id:
             self.sessions.set(player_uuid, new_session)
 
-        text = (payload.get("result") or "").strip()
-        return text or "(no reply)"
+        if had_error and not final_text:
+            return "(sorry, I hit an error)"
+        return final_text or "(no reply)"
+
+
+# ---------------------------------------------------------------------------
+# Friendly progress labels for tool_use events. The mapping is intentionally
+# soft — we surface "what is the assistant doing?" in human terms rather than
+# leaking tool / RCON command names. Falls back to a generic label so a new
+# tool we forgot to map still produces something coherent.
+# ---------------------------------------------------------------------------
+def _progress_label(block: dict) -> str:
+    name = block.get("name") or ""
+    inp = block.get("input") or {}
+    short = name.rsplit("__", 1)[-1] if "__" in name else name
+
+    if short == "run_query_command":
+        cmd = (inp.get("command") or "").strip()
+        starts = (
+            ("claudemod query inventory", "checking your inventory"),
+            ("claudemod query xp",        "checking your XP"),
+            ("claudemod query stats",     "looking up your stats"),
+            ("claudemod query recipes",   "looking up the recipe"),
+            ("claudemod query trinkets",  "checking your trinkets"),
+            ("claudemod query skills",    "checking your skill tree"),
+            ("claudemod query quest",     "searching the quest book"),
+            ("claudemod query find",      "scanning chests"),
+            ("claudemod query nbt_keys",  "indexing your data"),
+            ("claudemod mark",            "updating the map"),
+            ("data get entity",           "checking entity data"),
+            ("list",                      "checking who's online"),
+            ("time query",                "checking the time"),
+            ("scoreboard",                "reading the scoreboard"),
+        )
+        for prefix, label in starts:
+            if cmd.startswith(prefix):
+                return label
+        return "querying server"
+    if short == "teleport_caller_to_player":
+        return "teleporting you"
+    if short == "add_bluemap_marker":
+        return "marking the map"
+    if short == "record_feature_request":
+        return "logging your feature request"
+    if short == "WebSearch":
+        q = (inp.get("query") or "").strip()
+        return f"searching the web for {q[:30]}" if q else "searching the web"
+    if short == "WebFetch":
+        url = (inp.get("url") or "")
+        host = url.split("/", 3)[2] if url.startswith("http") and "/" in url[8:] else url[:30]
+        return f"fetching {host}" if host else "fetching"
+    if short in ("Read", "Glob", "Grep"):
+        return "reading docs"
+    # Claude Code internal tools that show up in stream events but aren't
+    # interesting to surface to the player as progress. Map them to a
+    # generic "thinking" so the bossbar doesn't say "using ToolSearch".
+    if short in ("ToolSearch",):
+        return "thinking"
+    return f"using {short}" if short else "thinking"
 
 
 # ---------------------------------------------------------------------------
 # tellraw broadcast — splits long responses across multiple chat lines so
-# Minecraft's per-message budget doesn't truncate mid-word.
+# Minecraft's per-message budget doesn't truncate mid-word. Each chunk is
+# parsed for a markdown-lite subset (**bold**, *italic*, `code`) and rendered
+# as styled tellraw components.
 # ---------------------------------------------------------------------------
 def broadcast(rcon: RCON, who: str, text: str, max_chars: int) -> None:
     text = text.strip().replace("\r", "")
     if len(text) > max_chars:
         text = text[: max_chars - 1].rstrip() + "…"
 
-    # Split on whitespace into ~180-char chunks so a single long reply still
+    # Split on whitespace into ~200-char chunks so a single long reply still
     # renders cleanly on default-width chat. tellraw itself can take longer
-    # strings, but client-side wrap gets ugly past ~200.
-    chunks = list(_chunk(text, 180))
+    # strings, but client-side wrap gets ugly past ~220.
+    chunks = list(_chunk(text, 200))
     for i, chunk in enumerate(chunks):
         prefix = f"[Claude → {who}]" if i == 0 else "[…]"
-        msg = json.dumps([
-            {"text": prefix + " ", "color": "aqua", "bold": True},
-            {"text": chunk, "color": "white", "bold": False},
-        ])
-        rcon.send(f"tellraw @a {msg}")
+        components = [{"text": prefix + " ", "color": "aqua", "bold": True}]
+        components.extend(_markdown_to_components(chunk))
+        rcon.send(f"tellraw @a {json.dumps(components)}")
 
 
-def send_thinking(rcon: RCON, who: str) -> None:
-    """Quick low-key ack so a player isn't left wondering if the bridge ate it."""
-    msg = json.dumps([
-        {"text": f"[Claude → {who}] ", "color": "aqua", "bold": True},
-        {"text": "thinking…", "color": "gray", "italic": True},
-    ])
-    rcon.send(f"tellraw @a {msg}")
+# Markdown-lite → tellraw components.
+#   **text**  → bold (white)
+#   *text*    → italic (gray)
+#   `text`    → highlighted (aqua) — good for item ids, commands, coords
+# Anything else stays plain white. Unmatched delimiters render as literals.
+# Nested formatting is intentionally not supported (keeps the parser tiny).
+_MD_DELIMS = ("**", "`", "*")  # order matters: ** before *
+
+
+def _markdown_to_components(text: str) -> list[dict]:
+    out: list[dict] = []
+    i = 0
+    while i < len(text):
+        # Try each delimiter at this position.
+        matched = False
+        for delim in _MD_DELIMS:
+            if text.startswith(delim, i):
+                end = text.find(delim, i + len(delim))
+                if end == -1:
+                    continue
+                inner = text[i + len(delim):end]
+                if delim == "**":
+                    out.append({"text": inner, "color": "white", "bold": True})
+                elif delim == "`":
+                    out.append({"text": inner, "color": "aqua"})
+                else:  # "*"
+                    out.append({"text": inner, "color": "gray", "italic": True})
+                i = end + len(delim)
+                matched = True
+                break
+        if matched:
+            continue
+        # Plain run — read up to the next delimiter.
+        next_pos = len(text)
+        for delim in _MD_DELIMS:
+            p = text.find(delim, i)
+            if p != -1 and p < next_pos:
+                next_pos = p
+        if next_pos == i:
+            # Shouldn't happen, but guard against infinite loop.
+            next_pos = i + 1
+        out.append({"text": text[i:next_pos], "color": "white"})
+        i = next_pos
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Per-request bossbar — one updateable status indicator per active /claude
+# request. Replaces the old in-chat "thinking…" line so progress doesn't
+# spam chat. Created when a request is dequeued, updated on every tool_use
+# event, removed when the final reply lands. Uses vanilla `bossbar`, no mod
+# changes required.
+# ---------------------------------------------------------------------------
+_BOSSBAR_NAME_RE = re.compile(r"[^a-z0-9_]")
+
+
+def _bossbar_id(player: str) -> str:
+    safe = _BOSSBAR_NAME_RE.sub("_", player.lower())
+    return f"claudemod:claude_{safe}"
+
+
+def bossbar_create(rcon: RCON, player: str, text: str) -> None:
+    bid = _bossbar_id(player)
+    name = json.dumps({"text": text, "color": "aqua"})
+    # Defensive cleanup of any orphan from a previous request.
+    try:
+        rcon.send(f"bossbar remove {bid}")
+    except Exception:
+        pass
+    rcon.send(f"bossbar add {bid} {name}")
+    rcon.send(f"bossbar set {bid} color blue")
+    rcon.send(f"bossbar set {bid} max 1")
+    rcon.send(f"bossbar set {bid} value 1")
+    rcon.send(f"bossbar set {bid} players {player}")
+
+
+def bossbar_update(rcon: RCON, player: str, text: str) -> None:
+    bid = _bossbar_id(player)
+    name = json.dumps({"text": text, "color": "aqua"})
+    rcon.send(f"bossbar set {bid} name {name}")
+
+
+def bossbar_remove(rcon: RCON, player: str) -> None:
+    bid = _bossbar_id(player)
+    try:
+        rcon.send(f"bossbar remove {bid}")
+    except Exception:
+        pass
 
 
 def _chunk(text: str, n: int) -> Iterable[str]:
@@ -418,13 +606,24 @@ def main() -> None:
     def worker() -> None:
         while True:
             player, prompt = work_q.get()
+            bossbar_active = False
             try:
                 try:
-                    send_thinking(rcon, player)
+                    bossbar_create(rcon, player, "Claude is thinking…")
+                    bossbar_active = True
                 except Exception as e:
-                    log.warning("thinking ack failed for %s: %s", player, e)
+                    log.warning("bossbar create failed for %s: %s", player, e)
+
+                def on_progress(label: str) -> None:
+                    if not bossbar_active:
+                        return
+                    try:
+                        bossbar_update(rcon, player, f"Claude: {label}…")
+                    except Exception as e:
+                        log.warning("bossbar update failed for %s: %s", player, e)
+
                 key = name_to_uuid.get(player.lower(), player.lower())
-                reply = claude.ask(key, player, prompt)
+                reply = claude.ask(key, player, prompt, on_progress=on_progress)
                 broadcast(rcon, player, reply, CFG.max_response_chars)
             except Exception as e:
                 log.exception("worker error for %s: %s", player, e)
@@ -432,6 +631,12 @@ def main() -> None:
                     broadcast(rcon, player, "(sorry, something broke)", CFG.max_response_chars)
                 except Exception:
                     pass
+            finally:
+                if bossbar_active:
+                    try:
+                        bossbar_remove(rcon, player)
+                    except Exception:
+                        pass
 
     threading.Thread(target=worker, daemon=True, name="claude-worker").start()
 

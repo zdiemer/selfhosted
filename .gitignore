@@ -28,3 +28,7 @@ secrets/
 # Claude-mod compileOnly jar cache, populated from the live mc pod by
 # install.sh's prep_libs() — never committed.
 minecraft/claude-mod/libs/
+
+# Python __pycache__
+__pycache__/
+*.pyc
