@@ -603,7 +603,13 @@ public final class ClaudeQueryCommand {
                         if (td.isCompleted(q)) chCounts[1]++;
                     }
                     JsonObject c = new JsonObject();
-                    c.addProperty("title", chapter.getTitle().getString());
+                    // Cast to QuestObjectBase to bypass the Movable interface
+                    // dispatch — Movable.getTitle() is abstract, but
+                    // QuestObjectBase has the concrete impl. Without the
+                    // cast javac emits invokeinterface on Movable and the
+                    // JVM throws AbstractMethodError.
+                    c.addProperty("title",
+                        ((dev.ftb.mods.ftbquests.quest.QuestObjectBase) chapter).getRawTitle());
                     c.addProperty("completed", chCounts[1]);
                     c.addProperty("total", chCounts[0]);
                     chapters.add(c);
@@ -625,7 +631,12 @@ public final class ClaudeQueryCommand {
                 int[] counter = {0};
                 sqf.forAllQuests(q -> {
                     if (counter[0] >= QUEST_HIT_CAP) return;
-                    String title = q.getTitle().getString();
+                    // Casts dodge the Movable.getTitle() interface dispatch
+                    // (see comment above). QuestObjectBase has the concrete
+                    // impl Quest/Chapter inherit.
+                    String title = ((dev.ftb.mods.ftbquests.quest.QuestObjectBase) q)
+                        .getRawTitle();
+                    if (title == null) title = "";
                     String desc = describeQuest(q);
                     String hay = (title + " | " + desc).toLowerCase();
                     if (!hay.contains(needle)) return;
@@ -634,7 +645,10 @@ public final class ClaudeQueryCommand {
                     h.addProperty("description", truncate(desc, 600));
                     h.addProperty("completed", td.isCompleted(q));
                     h.addProperty("started", td.isStarted(q));
-                    h.addProperty("chapter", q.getChapter() != null ? q.getChapter().getTitle().getString() : "?");
+                    var chapter = q.getChapter();
+                    h.addProperty("chapter", chapter != null
+                        ? ((dev.ftb.mods.ftbquests.quest.QuestObjectBase) chapter).getRawTitle()
+                        : "?");
                     hits.add(h);
                     counter[0]++;
                 });
