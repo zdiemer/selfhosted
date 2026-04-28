@@ -32,35 +32,7 @@ system-prompt nudge.
 - Answers "how many chunks have I claimed?", "is StarFoxA in my party?",
   "who can build in my base?".
 
-### Spell Engine — known spells + mana
-- New: `claudemod query spells <player>`
-- Mods: `spell_engine`, `spellbladenext`, `spell_power`, plus several
-  Spell Engine add-ons (`extraspellattributes`, `archers-expansion`,
-  `invoke`).
-- Surface: equipped spellbook contents, currently-known spells, mana
-  current/max, mana regen rate, school affinities if exposed.
-
-### Travelers Backpack — equipped backpack contents
-- New: `claudemod query backpack <player>`
-- Mod installed: `travelersbackpack-fabric-1.20.1-9.1.50.jar`.
-- The currently-equipped backpack stores its inventory in an attached
-  entity invisible to `claudemod query inventory`. Surface contents
-  (slots), tank fluid levels, and tool slots.
-
 ## Tier 3 — bigger / cross-system
-
-### Combined gear stats (resolved item attributes)
-- New: `claudemod query gear <player>`
-- For held item + each armor slot: compute final attack / defense /
-  crit / movement / etc. AFTER all attribute modifiers resolve —
-  including Apotheosis / Zenith affix data, gem sockets, and Custom
-  Item Attributes.
-- Walks the attribute modifier list per slot and aggregates by
-  attribute name. Distinct from `query vitals`, which dumps the
-  player-level resolved values; `gear` breaks down WHICH item /
-  affix contributes WHAT.
-- Answers "is this new sword better than my current?", "what's my
-  best armor piece?", "where's my crit chance coming from?".
 
 ### Server perf
 - New: `claudemod query perf`

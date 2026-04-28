@@ -22,9 +22,12 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.attribute.DefaultAttributeContainer;
 import net.minecraft.entity.attribute.DefaultAttributeRegistry;
+import net.minecraft.entity.attribute.EntityAttribute;
 import net.minecraft.entity.attribute.EntityAttributeInstance;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerInventory;
@@ -150,7 +153,16 @@ public final class ClaudeQueryCommand {
                     .then(CommandManager.literal("mods")
                         .executes(ctx -> queryMods(ctx, null))
                         .then(CommandManager.argument("search", StringArgumentType.greedyString())
-                            .executes(ctx -> queryMods(ctx, StringArgumentType.getString(ctx, "search"))))))
+                            .executes(ctx -> queryMods(ctx, StringArgumentType.getString(ctx, "search")))))
+                    .then(CommandManager.literal("gear")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::queryGear)))
+                    .then(CommandManager.literal("backpack")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::queryBackpack)))
+                    .then(CommandManager.literal("spells")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::querySpells))))
         );
     }
 
@@ -999,6 +1011,261 @@ public final class ClaudeQueryCommand {
         String desc = md.getDescription();
         if (desc != null && !desc.isEmpty()) {
             o.addProperty("description", truncate(desc, 200));
+        }
+        return o;
+    }
+
+    // ---------- gear (resolved item attributes per slot) ---------------------
+    /**
+     * Per-equipment-slot breakdown of which item contributes which
+     * attribute modifier — answers "is this new sword better?", "where's
+     * my crit chance coming from?", "which armor piece carries my speed?".
+     *
+     * For each of main_hand, off_hand, head/chest/legs/feet, walks the
+     * stack's getAttributeModifiers(slot) — that's the vanilla API path
+     * and Apotheosis/Zenith/Custom Item Attributes plug their affix
+     * modifiers into the same map, so we get them for free.
+     *
+     * Plus a `summary` block with per-attribute totals (sum of all
+     * additions across slots) so Claude can answer "what's my total attack
+     * damage from gear?" without summing it itself. The fully resolved
+     * value (base + all modifiers including non-gear sources) is in
+     * `claudemod query vitals` — `gear` is for breakdown by source.
+     */
+    private static int queryGear(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+
+        // Tracking: per-attribute sum across all slots, addition-only (the
+        // common case; multiplicative modifiers are reported per slot but
+        // not summed here since they don't combine linearly).
+        java.util.Map<Identifier, Double> additionSums = new java.util.LinkedHashMap<>();
+
+        JsonObject slots = new JsonObject();
+        var slotMap = new java.util.LinkedHashMap<String, EquipmentSlot>();
+        slotMap.put("main_hand", EquipmentSlot.MAINHAND);
+        slotMap.put("off_hand", EquipmentSlot.OFFHAND);
+        slotMap.put("head", EquipmentSlot.HEAD);
+        slotMap.put("chest", EquipmentSlot.CHEST);
+        slotMap.put("legs", EquipmentSlot.LEGS);
+        slotMap.put("feet", EquipmentSlot.FEET);
+
+        for (var e : slotMap.entrySet()) {
+            ItemStack stack = p.getEquippedStack(e.getValue());
+            JsonObject sj = new JsonObject();
+            if (stack == null || stack.isEmpty()) {
+                sj.addProperty("empty", true);
+                slots.add(e.getKey(), sj);
+                continue;
+            }
+            Identifier iid = Registries.ITEM.getId(stack.getItem());
+            sj.addProperty("id", iid == null ? "?" : iid.toString());
+            sj.addProperty("name", stack.getName().getString());
+            sj.addProperty("count", stack.getCount());
+
+            JsonArray mods = new JsonArray();
+            try {
+                var multimap = stack.getAttributeModifiers(e.getValue());
+                for (var entry : multimap.entries()) {
+                    EntityAttribute attr = entry.getKey();
+                    EntityAttributeModifier mod = entry.getValue();
+                    Identifier aid = Registries.ATTRIBUTE.getId(attr);
+                    JsonObject m = new JsonObject();
+                    m.addProperty("attribute", aid == null ? "?" : aid.toString());
+                    m.addProperty("amount", mod.getValue());
+                    m.addProperty("operation", mod.getOperation().name().toLowerCase());
+                    m.addProperty("name", mod.getName());
+                    mods.add(m);
+                    if (mod.getOperation() == EntityAttributeModifier.Operation.ADDITION
+                            && aid != null) {
+                        additionSums.merge(aid, mod.getValue(), Double::sum);
+                    }
+                }
+            } catch (Throwable t) {
+                ClaudeMod.LOG.warn("attr lookup failed for {}: {}",
+                    iid, t.toString());
+            }
+            sj.add("modifiers", mods);
+            slots.add(e.getKey(), sj);
+        }
+        root.add("slots", slots);
+
+        JsonObject summary = new JsonObject();
+        for (var entry : additionSums.entrySet()) {
+            summary.addProperty(entry.getKey().toString(), entry.getValue());
+        }
+        summary.addProperty("note", "addition-operation modifiers summed across slots; multiplicative effects listed per slot only");
+        root.add("summary_addition_only", summary);
+        return reply(ctx, root);
+    }
+
+    // ---------- backpack (Travelers Backpack contents) -----------------------
+    /**
+     * Surface the equipped Travelers Backpack's storage / tool slots /
+     * upgrades. Empty slots are omitted to keep the response small.
+     * Skipped if the mod isn't loaded or the player isn't wearing one.
+     */
+    private static int queryBackpack(CommandContext<ServerCommandSource> ctx) {
+        if (!FabricLoader.getInstance().isModLoaded("travelersbackpack")) {
+            return error(ctx, "travelersbackpack not loaded");
+        }
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+
+        try {
+            if (!com.tiviacz.travelersbackpack.component.ComponentUtils.isWearingBackpack(p)) {
+                root.addProperty("equipped", false);
+                return reply(ctx, root);
+            }
+            ItemStack bpStack = com.tiviacz.travelersbackpack.component.ComponentUtils.getWearingBackpack(p);
+            var wrapper = com.tiviacz.travelersbackpack.component.ComponentUtils.getBackpackWrapper(p);
+            root.addProperty("equipped", true);
+            Identifier bid = Registries.ITEM.getId(bpStack.getItem());
+            root.addProperty("backpack_id", bid == null ? "?" : bid.toString());
+            root.addProperty("backpack_name", bpStack.getName().getString());
+
+            // storage / tools / upgrades — each is an ItemStackHandler with
+            // getSlots() + getStackInSlot(int).
+            root.add("storage", _dumpItemHandler(wrapper.getStorage()));
+            root.add("tools",   _dumpItemHandler(wrapper.getTools()));
+            root.add("upgrades",_dumpItemHandler(wrapper.getUpgrades()));
+            root.addProperty("tank_capacity_mb", wrapper.getBackpackTankCapacity());
+        } catch (Throwable t) {
+            return error(ctx, "travelersbackpack api call failed: " + t.toString());
+        }
+        return reply(ctx, root);
+    }
+
+    /** Dump non-empty slots of an ItemStackHandler-like inventory to JSON. */
+    private static JsonArray _dumpItemHandler(Object handler) {
+        JsonArray arr = new JsonArray();
+        if (handler == null) return arr;
+        try {
+            int slots = (int) handler.getClass().getMethod("getSlots").invoke(handler);
+            var getStack = handler.getClass().getMethod("getStackInSlot", int.class);
+            for (int i = 0; i < slots; i++) {
+                ItemStack s = (ItemStack) getStack.invoke(handler, i);
+                if (s == null || s.isEmpty()) continue;
+                JsonElement el = stackJson(s);
+                if (el != null && !el.isJsonNull()) {
+                    JsonObject o = el.getAsJsonObject();
+                    o.addProperty("slot", i);
+                    arr.add(o);
+                }
+            }
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("itemhandler dump failed: {}", t.toString());
+        }
+        return arr;
+    }
+
+    // ---------- spells (Spell Engine) ----------------------------------------
+    /**
+     * Best-effort surface of a player's spell state. Spell Engine 0.x has
+     * no per-player "known spells" pool — spells come from items the
+     * player has equipped (typically a SpellBookItem in a Trinkets slot).
+     * We walk the trinket slots, find any item whose registered id namespace
+     * contains "spell" (or whose item class is a SpellBookItem), and dump
+     * the SpellContainer NBT plus the ItemStack's full NBT for Claude to
+     * interpret. Plus we surface attribute values from spell_power's
+     * attribute namespace if any are present.
+     *
+     * No "mana" — Spell Engine uses cooldowns, not a mana pool.
+     */
+    private static int querySpells(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("note", "spell_engine 0.x has no mana — spells use cooldowns; spell power scales damage");
+
+        // Equipped held items: main + off hand
+        JsonArray equipped = new JsonArray();
+        for (EquipmentSlot slot : new EquipmentSlot[] { EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND }) {
+            ItemStack stack = p.getEquippedStack(slot);
+            if (stack == null || stack.isEmpty()) continue;
+            Identifier id = Registries.ITEM.getId(stack.getItem());
+            if (id == null) continue;
+            if (_looksSpellRelated(stack, id)) {
+                equipped.add(_spellItemJson(stack, id, slot.getName()));
+            }
+        }
+
+        // Trinket slots (where most spellbooks live in this pack)
+        if (FabricLoader.getInstance().isModLoaded("trinkets")) {
+            try {
+                var tcOpt = dev.emi.trinkets.api.TrinketsApi.getTrinketComponent(p);
+                tcOpt.ifPresent(tc -> {
+                    for (var groupEntry : tc.getInventory().entrySet()) {
+                        for (var slotEntry : groupEntry.getValue().entrySet()) {
+                            var inv = slotEntry.getValue();
+                            for (int i = 0; i < inv.size(); i++) {
+                                ItemStack stack = inv.getStack(i);
+                                if (stack == null || stack.isEmpty()) continue;
+                                Identifier id = Registries.ITEM.getId(stack.getItem());
+                                if (id == null) continue;
+                                if (_looksSpellRelated(stack, id)) {
+                                    equipped.add(_spellItemJson(stack, id,
+                                        "trinket:" + groupEntry.getKey() + "/" + slotEntry.getKey()));
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (Throwable t) {
+                ClaudeMod.LOG.warn("trinkets walk for spells failed: {}", t.toString());
+            }
+        }
+        root.add("spell_items", equipped);
+
+        // Surface any spell_power-namespaced attributes the player has.
+        JsonObject spellAttrs = new JsonObject();
+        for (EntityAttribute attr : Registries.ATTRIBUTE) {
+            Identifier aid = Registries.ATTRIBUTE.getId(attr);
+            if (aid == null) continue;
+            if (!aid.getNamespace().contains("spell")) continue;
+            EntityAttributeInstance inst = p.getAttributeInstance(attr);
+            if (inst == null) continue;
+            JsonObject a = new JsonObject();
+            a.addProperty("base", inst.getBaseValue());
+            a.addProperty("value", inst.getValue());
+            spellAttrs.add(aid.toString(), a);
+        }
+        root.add("spell_attributes", spellAttrs);
+        return reply(ctx, root);
+    }
+
+    private static boolean _looksSpellRelated(ItemStack stack, Identifier id) {
+        if (id.getNamespace().contains("spell")) return true;
+        if (id.getPath().contains("spell")) return true;
+        if (id.getPath().contains("grimoire")) return true;
+        if (id.getPath().contains("tome")) return true;
+        if (id.getPath().contains("staff")) return true;
+        if (id.getPath().contains("wand")) return true;
+        // Detect SpellBookItem class without hard-importing (so non-spell mods
+        // don't break compilation if the API changes).
+        try {
+            Class<?> sbi = Class.forName("net.spell_engine.api.item.trinket.SpellBookItem");
+            if (sbi.isInstance(stack.getItem())) return true;
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    private static JsonObject _spellItemJson(ItemStack stack, Identifier id, String slotLabel) {
+        JsonObject o = new JsonObject();
+        o.addProperty("slot", slotLabel);
+        o.addProperty("id", id.toString());
+        o.addProperty("name", stack.getName().getString());
+        if (stack.hasNbt()) {
+            // Full NBT as SNBT — Claude can probe spell_engine-specific keys.
+            o.addProperty("nbt_snbt", stack.getNbt().toString());
         }
         return o;
     }

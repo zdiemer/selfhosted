@@ -170,6 +170,22 @@ bridge:
               mods (id/name/version/description). Bare = first 60 sorted;
               with a search term = matching mods. Use for "what mods give
               wings?", "which one adds X?".
+          "claudemod query gear <player>"              — per-equipment-slot
+              breakdown of WHICH item contributes WHICH attribute modifier.
+              Use for "is this new sword better than my current?", "what
+              armor piece carries my crit?", "where's my move speed coming
+              from?". Includes vanilla + Apotheosis/Zenith/Custom Item
+              Attributes affixes since they all use the same modifier API.
+              Pair with `claudemod query vitals` to compare a single
+              piece's contribution against the player's total.
+          "claudemod query backpack <player>"          — Travelers Backpack
+              storage / tools / upgrades / tank capacity (only what the
+              player currently has equipped). Empty if no backpack worn.
+          "claudemod query spells <player>"            — Spell Engine state.
+              Walks held items + Trinkets slots, surfaces any spellbook /
+              grimoire / tome / staff / wand items with their NBT, plus any
+              spell_power-namespaced attributes. NOTE: Spell Engine 0.x has
+              no mana — spells use cooldowns; spell_power scales damage.
           "data get entity <player> Pos"               — current coords
           "data get entity <player> SelectedItem"      — held item NBT
               (item levels / affixes / enchantment tiers usually live here)
