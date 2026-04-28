@@ -59,8 +59,31 @@ gradle.properties        # mod_version + minecraft/loader/yarn/fabric-api versio
 settings.gradle          # adds maven.fabricmc.net plugin repo
 install.sh               # build + sideload + restart
 src/main/java/com/zachd/claudemod/
-  ClaudeMod.java         # ModInitializer; registers the command
-  ClaudeCommand.java     # Brigadier registration + handoff to stdout
+  ClaudeMod.java                # ModInitializer; registers all commands + tick hooks
+  ClaudeCommand.java            # /claude <prompt>: stdout handoff to claude-bridge
+  ClaudeMarkerCommand.java      # /claudemod mark *: BlueMap POI markers
+  ClaudeQueryCommand.java       # /claudemod query *: thin Brigadier tree → query/*
+  ClaudeWriteCommand.java       # /claudemod write *: thin Brigadier tree → write/*
+  shared/
+    ClaudeIo.java               # canonical reply/error/onlinePlayer + RCON cap
+  query/
+    InventoryQueries.java       # inventory, xp, gear, trinkets, backpack, spells
+    RegistryQueries.java        # recipes, item, tag, mob, mods
+    PlayerStateQueries.java     # stats, vitals, here, skills, nbt_keys
+    WorldSearchQueries.java     # find, nearest, home
+    QuestQueries.java           # quest, quest available
+    ServerAdminQueries.java     # perf, bossbar update/remove
+  write/
+    Mode.java                   # DEFAULT / RESTORE / MULTI commit modes
+    Kind.java                   # CONTAINER / INVENTORY / BACKPACK_*
+    PendingTxn.java             # per-txn state + TXNS map + sweep + newId
+    ResolvedTarget.java         # resolved Inventory + slot mapping
+    TargetException.java        # error code + detail thrown by resolver
+    TargetResolver.java         # Kind → ResolvedTarget dispatch
+    SafetyChecks.java           # hopper / viewer TOCTOU guards
+    Conservation.java           # NBT stripping + multiset + hashing + b64
+    BackpackIntegration.java    # TravelersBackpack reflection bridge
+    TxnHandlers.java            # openTxn / read* / txnSlot* / txnCommit
 src/main/resources/
   fabric.mod.json        # mod metadata, server-only, depends fabric-permissions-api
 LICENSE
