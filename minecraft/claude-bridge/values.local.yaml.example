@@ -13,3 +13,10 @@
 
 secrets:
   githubToken: "ghp_PASTE_HERE"
+
+# Players who can drive Claude to run unrestricted RCON commands (op, give,
+# kick, ban, etc.). Empty list = no admin bypass. Names case-insensitive.
+# Override per-deployment here so the global values.yaml stays generic.
+bridge:
+  admins:
+    - "StarFoxA"

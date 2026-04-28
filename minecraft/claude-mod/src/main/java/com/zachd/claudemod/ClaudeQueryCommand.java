@@ -184,6 +184,9 @@ public final class ClaudeQueryCommand {
                 .then(CommandManager.literal("home")
                     .then(CommandManager.argument("player", StringArgumentType.word())
                         .executes(ClaudeQueryCommand::homeCommand)))
+                .then(CommandManager.literal("query")
+                    .then(CommandManager.literal("perf")
+                        .executes(ClaudeQueryCommand::queryPerf)))
         );
     }
 
@@ -1419,6 +1422,77 @@ public final class ClaudeQueryCommand {
             ClaudeMod.LOG.warn("nearest lookup failed: {}", t.toString());
             return error(ctx, "lookup failed: " + t.getClass().getSimpleName());
         }
+        return reply(ctx, root);
+    }
+
+    // ---------- perf (server health) ----------------------------------------
+    /**
+     * Server perf snapshot: average MSPT (ms per tick) → derived TPS,
+     * per-dimension loaded chunk counts, entity counts, online players,
+     * and JVM heap usage. Answers "is the server lagging?", "what's eating
+     * resources?". No external profiler needed — uses MinecraftServer's
+     * built-in tick-time array and ServerWorld accessors.
+     */
+    private static int queryPerf(CommandContext<ServerCommandSource> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        JsonObject root = new JsonObject();
+
+        // Tick perf — averaged over our rolling history filled by the
+        // ServerTickEvents handlers in ClaudeMod.
+        int fill = ClaudeMod.tickHistoryFill;
+        if (fill > 0) {
+            long sum = 0;
+            for (int i = 0; i < fill; i++) sum += ClaudeMod.TICK_HISTORY_NS[i];
+            double avgMs = (sum / (double) fill) / 1_000_000.0;
+            root.addProperty("avg_mspt", avgMs);
+            root.addProperty("tps", Math.min(20.0, 1000.0 / Math.max(avgMs, 0.0001)));
+            root.addProperty("tick_samples", fill);
+        }
+
+        // Per-world counts. We skip dims with no loaded chunks AND no
+        // entities AND no players to keep the response focused on
+        // dimensions actually doing work — this pack registers ~25 dims
+        // (ad_astra, mineCells, etc.), most of which sit empty.
+        JsonArray worlds = new JsonArray();
+        long totalEntities = 0;
+        long totalChunks = 0;
+        int idleDims = 0;
+        for (ServerWorld world : server.getWorlds()) {
+            int chunks = world.getChunkManager().getLoadedChunkCount();
+            int entities = 0;
+            for (var ignored : world.iterateEntities()) entities++;
+            int players = world.getPlayers().size();
+            totalEntities += entities;
+            totalChunks += chunks;
+            if (chunks == 0 && entities == 0 && players == 0) {
+                idleDims++;
+                continue;
+            }
+            JsonObject w = new JsonObject();
+            w.addProperty("dim", world.getRegistryKey().getValue().toString());
+            w.addProperty("loaded_chunks", chunks);
+            w.addProperty("entities", entities);
+            w.addProperty("players", players);
+            worlds.add(w);
+        }
+        root.add("active_worlds", worlds);
+        root.addProperty("idle_dims", idleDims);
+        root.addProperty("total_entities", totalEntities);
+        root.addProperty("total_loaded_chunks", totalChunks);
+        root.addProperty("online_players", server.getCurrentPlayerCount());
+
+        // JVM heap.
+        Runtime rt = Runtime.getRuntime();
+        long total = rt.totalMemory();
+        long free = rt.freeMemory();
+        long max = rt.maxMemory();
+        JsonObject mem = new JsonObject();
+        mem.addProperty("used_mb", (total - free) / (1024 * 1024));
+        mem.addProperty("committed_mb", total / (1024 * 1024));
+        mem.addProperty("max_mb", max / (1024 * 1024));
+        mem.addProperty("used_pct", Math.round(((total - free) * 100.0) / max));
+        root.add("jvm_heap", mem);
+
         return reply(ctx, root);
     }
 

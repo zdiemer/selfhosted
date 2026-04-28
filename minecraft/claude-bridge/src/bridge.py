@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from kubernetes import client, config, watch
+from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from mctools import RCONClient
 
@@ -64,6 +64,7 @@ class Config:
     rate_limit_window: int
     enforce_whitelist: bool
     model: str
+    admins: frozenset[str]
 
     system_prompt: str
     feedback_repo_url: str
@@ -97,6 +98,14 @@ class Config:
             rate_limit_window=int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60")),
             enforce_whitelist=os.environ.get("ENFORCE_WHITELIST", "true").lower() == "true",
             model=os.environ.get("CLAUDE_MODEL", "sonnet"),
+            # Admins (lowercased for case-insensitive compare) bypass the
+            # run_query_command read-only allowlist — they can `op`, `give`,
+            # `kick`, etc. via Claude. Empty list = no admins.
+            admins=frozenset(
+                n.strip().lower()
+                for n in os.environ.get("BRIDGE_ADMINS", "").split(",")
+                if n.strip()
+            ),
             system_prompt=need("SYSTEM_PROMPT"),
             feedback_repo_url=need("FEEDBACK_REPO_URL"),
             feedback_branch=os.environ.get("FEEDBACK_BRANCH", "main"),
@@ -275,13 +284,20 @@ class Claude:
         if session_id:
             cmd += ["--resume", session_id]
 
-        log.info("claude ask player=%s session=%s prompt_len=%d", player_name, session_id or "new", len(prompt))
-        # CALLER_PLAYER lets the MCP tools enforce "this action is taken
-        # on behalf of THIS player" without trusting an LLM-supplied arg.
+        is_admin = player_name.lower() in CFG.admins
+        log.info("claude ask player=%s admin=%s session=%s prompt_len=%d",
+                 player_name, is_admin, session_id or "new", len(prompt))
+        # CALLER_PLAYER + CALLER_IS_ADMIN let the MCP tools enforce per-player
+        # behavior without trusting LLM-supplied args. The bridge process is
+        # the trust boundary for both — Claude can't fake them.
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
-            env={**os.environ, "CALLER_PLAYER": player_name},
+            env={
+                **os.environ,
+                "CALLER_PLAYER": player_name,
+                "CALLER_IS_ADMIN": "true" if is_admin else "false",
+            },
         )
         try:
             proc.stdin.write(prompt)

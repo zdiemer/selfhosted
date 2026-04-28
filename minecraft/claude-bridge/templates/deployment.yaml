@@ -71,6 +71,8 @@ spec:
               value: {{ .Values.bridge.enforceWhitelist | quote }}
             - name: CLAUDE_MODEL
               value: {{ .Values.bridge.model | quote }}
+            - name: BRIDGE_ADMINS
+              value: {{ .Values.bridge.admins | join "," | quote }}
             - name: SYSTEM_PROMPT
               value: {{ .Values.bridge.systemPrompt | quote }}
             - name: FEEDBACK_REPO_URL

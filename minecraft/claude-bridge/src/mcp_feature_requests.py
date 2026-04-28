@@ -164,50 +164,53 @@ SAFE_QUERY_PATTERNS = [
 @mcp.tool()
 def run_query_command(command: str) -> str:
     """
-    Execute a read-only Minecraft server query and return the raw output.
+    Execute a Minecraft server command via RCON and return the raw output.
 
-    Use this to look up live game state when answering player questions.
-    Compose queries dynamically based on what's needed.
+    There are two modes, gated by the asking player's admin status (set by
+    the bridge from a configured allowlist of player names):
 
-    Allowlist (read-only verbs only):
-      - data get entity <player> <path>          # NBT: inventory, pos, effects, attrs
-      - xp query <player> <points|levels>        # XP state
-      - time query daytime                       # in-game time
+    NON-ADMIN callers (default): only read-only verbs run. Allowlist:
+      - data get entity <player> <path>          # NBT reads
+      - xp query <player> <points|levels>
+      - time query daytime
       - list / list uuids                        # online players
-      - whitelist list                           # whitelisted accounts
-      - team list [<team>]                       # team membership
-      - tag <player> list                        # tags on player
-      - scoreboard players|objectives list|get   # scoreboard reads
-      - attribute <target> <attr> get            # attribute value
-      - gamerule <rule>                          # current rule value
-      - difficulty                               # current difficulty
-      - seed                                     # world seed
-      - forceload query                          # forced chunks
-      - claudemod query inventory <player>       # full inventory JSON
-      - claudemod query xp <player>              # level + progress + total
-      - claudemod query stats <player> [type]    # vanilla stats (optionally filtered)
-      - claudemod query recipes makes <item>     # recipes producing this item
-      - claudemod query recipes uses  <item>     # recipes using this item
+      - whitelist list, team list, tag <p> list  # other reads
+      - scoreboard players|objectives list|get
+      - attribute <target> <attr> get
+      - gamerule <rule>                          # current value
+      - difficulty / seed / forceload query
+      - claudemod query ...                      # mod's structured queries
+      - claudemod mark list / mark remove <name> # bluemap markers (small mut)
 
-    Mutation commands (give, op, gamemode, kill, kick, ban, setblock, fill,
-    summon, weather, time set, xp add/set, data merge/modify/remove, etc.)
-    are blocked. If you need teleport, use teleport_caller_to_player.
+    ADMIN callers (CALLER_IS_ADMIN env == "true"): every constraint above
+    is dropped — admins can run ANY RCON command, including mutations
+    (op, deop, gamemode, give, kill, kick, ban, setblock, fill, summon,
+    weather, time set, etc.). Use this responsibly:
+      - Confirm DESTRUCTIVE actions with the player before running them
+        ("Are you sure you want to ban X?", "This will kill all entities
+        in a 100-block radius — proceed?").
+      - For trivially reversible actions (op, gamemode, give, weather)
+        just run it and report the result.
+      - Don't volunteer admin-only capabilities to non-admin players;
+        the tool's rejection message tells them they lack permission.
 
     Args:
         command: The command WITHOUT a leading slash (e.g.
-                 "data get entity StarFoxA Inventory" or
-                 "claudemod query xp StarFoxA").
+                 "data get entity StarFoxA Inventory" for non-admins,
+                 "op SomePlayer" for admins).
 
     Returns:
         Raw RCON output. For claudemod query commands the output is JSON;
-        for vanilla reads it's the standard SNBT / text format. Parse as
-        needed.
+        for vanilla reads/writes it's standard text. On a rejection, the
+        return string starts with "(rejected:".
     """
     cleaned = (command or "").strip().lstrip("/")
     if not cleaned:
         return "(rejected: empty command)"
-    if not any(p.match(cleaned) for p in SAFE_QUERY_PATTERNS):
-        return f"(rejected: '{cleaned.split()[0]}' or its sub-verb is not on the read-only allowlist)"
+    is_admin = os.environ.get("CALLER_IS_ADMIN", "").lower() == "true"
+    if not is_admin and not any(p.match(cleaned) for p in SAFE_QUERY_PATTERNS):
+        return (f"(rejected: '{cleaned.split()[0]}' or its sub-verb is not on "
+                "the read-only allowlist; this command requires admin)")
     try:
         return _rcon(cleaned)
     except Exception as e:

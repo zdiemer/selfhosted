@@ -14,17 +14,6 @@ system-prompt nudge.
 
 ## Tier 3 — bigger / cross-system
 
-### Server perf
-- New: `claudemod query perf`
-- TPS over 1m / 5m / 15m windows, mean MSPT, total entities loaded,
-  total chunks loaded, top-N busiest dimensions. Uses Fabric's
-  `TickManager` plus a small ring buffer in the mod for the rolling
-  windows.
-- Spark monitoring is already running externally (cluster CronJob,
-  see `minecraft/monitor.sh`), but exposing inline lets Claude
-  answer "is the server lagging?", "what's eating CPU?" without
-  the operator pulling Grafana.
-
 ## Tier 4 (potential, unscoped)
 
 - **Vanilla advancements** — read `world/advancements/<uuid>.json`
