@@ -17,6 +17,8 @@ public class ClaudeMod implements ModInitializer {
     public static volatile int tickHistoryFill = 0;
     private static int tickHistoryIdx = 0;
     private static long tickStartNs = 0;
+    // Sweep pending write transactions periodically (every ~30s of game time).
+    private static int writeTxnSweepCounter = 0;
 
     @Override
     public void onInitialize() {
@@ -25,6 +27,7 @@ public class ClaudeMod implements ModInitializer {
                 ClaudeCommand.register(dispatcher);
                 ClaudeQueryCommand.register(dispatcher);
                 ClaudeMarkerCommand.register(dispatcher);
+                ClaudeWriteCommand.register(dispatcher);
             }
         );
         // After server start, load the markers file and hook BlueMap.
@@ -39,6 +42,12 @@ public class ClaudeMod implements ModInitializer {
             TICK_HISTORY_NS[tickHistoryIdx] = delta;
             tickHistoryIdx = (tickHistoryIdx + 1) % TICK_HISTORY_NS.length;
             if (tickHistoryFill < TICK_HISTORY_NS.length) tickHistoryFill++;
+            // Cheap TTL sweep — 600 ticks ≈ 30s — so a crashed bridge
+            // can't leak pending write txns indefinitely.
+            if (++writeTxnSweepCounter >= 600) {
+                writeTxnSweepCounter = 0;
+                ClaudeWriteCommand.sweep();
+            }
         });
 
         LOG.info("claude-mod initialized; /claude + /claudemod are registered");

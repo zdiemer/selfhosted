@@ -17,7 +17,15 @@
       "mcp__claude-bridge-feedback__teleport_caller_to_player",
       "mcp__claude-bridge-feedback__teleport_caller_home",
       "mcp__claude-bridge-feedback__run_query_command",
-      "mcp__claude-bridge-feedback__add_bluemap_marker"
+      "mcp__claude-bridge-feedback__add_bluemap_marker",
+      "mcp__claude-bridge-feedback__read_container",
+      "mcp__claude-bridge-feedback__read_inventory",
+      "mcp__claude-bridge-feedback__read_backpack",
+      "mcp__claude-bridge-feedback__preview_container_reorg",
+      "mcp__claude-bridge-feedback__preview_inventory_reorg",
+      "mcp__claude-bridge-feedback__preview_backpack_reorg",
+      "mcp__claude-bridge-feedback__commit_container_reorg",
+      "mcp__claude-bridge-feedback__undo_container_reorg"
     ]
   },
   "includeCoAuthoredBy": false

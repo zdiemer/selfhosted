@@ -1,11 +1,18 @@
 """
 Stdio MCP server bundling the bridge's tools.
 
-Tools:
+Tools (read-only and writes; caller identity comes from $CALLER_PLAYER
+env so Claude can't spoof it):
   - record_feature_request: append to FEEDBACK.md, commit, push.
-  - teleport_caller_to_player: teleport the requesting player to another
-    online player (caller identity comes from $CALLER_PLAYER env so Claude
-    can't spoof it).
+  - teleport_caller_to_player / teleport_caller_home
+  - run_query_command: gated RCON dispatcher (allowlist for non-admins).
+  - add_bluemap_marker
+  - read_container / read_inventory / read_backpack: dump container state.
+  - preview_container_reorg / preview_inventory_reorg / preview_backpack_reorg:
+    validate a proposed layout client-side, return a txn_id.
+  - commit_container_reorg: apply a previewed layout via the mod's chunked
+    write protocol; snapshots the pre-state to PVC for undo.
+  - undo_container_reorg: restore from a snapshot.
 
 Claude Code spawns one of these per request. The tools open short-lived
 RCON connections directly — independent of the bridge's RCON pool — so
@@ -19,8 +26,11 @@ import os
 import re
 import subprocess
 import sys
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mctools import RCONClient
@@ -30,6 +40,9 @@ REPO_DIR = STATE_DIR / "feedback-repo"
 AUDIT_LOG = STATE_DIR / "feature-requests.jsonl"
 FEEDBACK_FILE = os.environ.get("FEEDBACK_FILE", "FEEDBACK.md")
 BRANCH = os.environ.get("FEEDBACK_BRANCH", "main")
+SNAPSHOT_DIR = STATE_DIR / "container-snapshots"
+SNAPSHOTS_PER_PLAYER = 5
+PREVIEW_TTL_S = 60
 
 mcp = FastMCP("claude-bridge-feedback")
 
@@ -391,6 +404,599 @@ def _git(*args: str) -> str:
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Container-write protocol — chunked RCON conversation with claude-mod's
+# /claudemod write subtree. The mod is authoritative for safety
+# (distance, hopper detection, viewer guard, item conservation, TOCTOU
+# hash); the bridge validates layouts client-side, persists snapshots
+# for undo, and stitches the chunked read/write flow into single MCP
+# tool calls.
+# ---------------------------------------------------------------------------
+
+# In-process pending-preview map. Bridge restart drops these; on commit
+# the system prompt instructs Claude to re-preview if `unknown_txn`.
+PREVIEW_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _gc_previews() -> None:
+    now = time.time()
+    expired = [k for k, v in PREVIEW_STATE.items() if v["expires_at"] < now]
+    for k in expired:
+        PREVIEW_STATE.pop(k, None)
+
+
+def _mod_call(*args: str) -> dict[str, Any]:
+    """Send a /claudemod write … sub-command and parse the JSON response."""
+    cmd = " ".join(("claudemod", "write", *args))
+    out = _rcon(cmd)
+    out = (out or "").strip()
+    if not out:
+        return {"ok": False, "error": "empty_response", "detail": "no output from mod"}
+    try:
+        return json.loads(out)
+    except Exception:
+        return {"ok": False, "error": "bad_response", "detail": out[:300]}
+
+
+def _do_read(kind: str, *, caller: str, dim: str | None = None,
+             x: int | None = None, y: int | None = None, z: int | None = None
+             ) -> dict[str, Any]:
+    """Run the chunked read protocol; return {ok, kind, half, slots:[...], contents_hash}."""
+    if kind == "container":
+        opened = _mod_call("read_open", "container", caller, dim, str(x), str(y), str(z))
+    elif kind == "inventory":
+        opened = _mod_call("read_open", "inventory", caller)
+    elif kind == "backpack_equipped":
+        opened = _mod_call("read_open", "backpack_equipped", caller)
+    elif kind == "backpack_world":
+        opened = _mod_call("read_open", "backpack_world", caller, dim, str(x), str(y), str(z))
+    else:
+        return {"ok": False, "error": "bad_kind", "detail": kind}
+    if not opened.get("ok"):
+        return opened
+    txn_id = opened["txn_id"]
+    total = int(opened["total_slots"])
+    slots: list[dict[str, Any]] = []
+    try:
+        for i in range(total):
+            r = _mod_call("read_slot", txn_id, str(i))
+            if r.get("ok") is False:
+                return r
+            if r.get("empty"):
+                continue
+            entry = {"slot": i, "i": r["i"], "c": int(r["c"])}
+            if r.get("n"):
+                entry["n"] = r["n"]
+            slots.append(entry)
+    finally:
+        try:
+            _mod_call("read_close", txn_id)
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "kind": opened.get("kind", kind),
+        "half": opened.get("half"),
+        "total_slots": total,
+        "contents_hash": opened["contents_hash"],
+        "slots": slots,
+    }
+
+
+def _validate_layout(slots: list[dict[str, Any]], total: int,
+                     new_layout: dict[str, list[int]] | list[Any]
+                     ) -> dict[str, Any]:
+    """
+    Validate an LLM-supplied layout against the read result.
+
+    `new_layout` accepts two shapes:
+      dict[str|int, list[int]]: target_slot → list of source slot indices to
+                                place there (multiple sources = merge)
+      list[list[int] | None]:    target_slot index → sources (or None = empty)
+
+    Each source slot must be referenced exactly once; merges require
+    matching item ids. Returns {ok, target_stacks: {slot: {i, c, n}}}
+    or {ok: false, error, detail}.
+    """
+    by_slot: dict[int, dict[str, Any]] = {s["slot"]: s for s in slots}
+
+    # Normalize layout to dict[int, list[int]]
+    norm: dict[int, list[int]] = {}
+    if isinstance(new_layout, list):
+        for i, entry in enumerate(new_layout):
+            if entry is None or entry == [] or entry == {}:
+                continue
+            if isinstance(entry, dict) and "sources" in entry:
+                norm[i] = [int(x) for x in entry["sources"]]
+            elif isinstance(entry, list):
+                norm[i] = [int(x) for x in entry]
+            else:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"target {i}: expected list of source slots or null"}
+    elif isinstance(new_layout, dict):
+        for k, v in new_layout.items():
+            try:
+                ki = int(k)
+            except Exception:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"target slot key '{k}' is not an int"}
+            if v is None or v == []:
+                continue
+            if isinstance(v, dict) and "sources" in v:
+                norm[ki] = [int(x) for x in v["sources"]]
+            elif isinstance(v, list):
+                norm[ki] = [int(x) for x in v]
+            else:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"target {ki}: expected list of source slots"}
+    else:
+        return {"ok": False, "error": "bad_layout",
+                "detail": "new_layout must be list or dict"}
+
+    used: dict[int, int] = {}  # source slot → target where it was placed
+    target_stacks: dict[int, dict[str, Any]] = {}
+    for tgt, src_list in norm.items():
+        if tgt < 0 or tgt >= total:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target slot {tgt} out of range [0, {total})"}
+        if not src_list:
+            continue
+        first = by_slot.get(src_list[0])
+        if first is None:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target {tgt}: source slot {src_list[0]} is empty"}
+        item_id = first["i"]
+        merged = 0
+        for s in src_list:
+            if s in used:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"source slot {s} referenced by target {used[s]} and target {tgt}"}
+            stk = by_slot.get(s)
+            if stk is None:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"target {tgt}: source slot {s} is empty"}
+            if stk["i"] != item_id:
+                return {"ok": False, "error": "bad_layout",
+                        "detail": f"target {tgt}: can't merge {item_id} with {stk['i']} from slot {s}"}
+            used[s] = tgt
+            merged += int(stk["c"])
+        # The mod ItemStack max stack size is item-dependent; we conservatively
+        # check 64 here. (Some items cap at 16 or 1 — the mod will reject if
+        # we exceed during commit; this is just a friendlier early rejection.)
+        if merged > 64:
+            return {"ok": False, "error": "bad_layout",
+                    "detail": f"target {tgt}: merged count {merged} exceeds 64 (vanilla cap)"}
+        target_stacks[tgt] = {
+            "i": item_id,
+            "c": merged,
+            "n": first.get("n"),  # NBT from first source — same stripped identity for all
+        }
+
+    # Conservation: every non-empty source slot must be placed.
+    all_sources = {s["slot"] for s in slots}
+    unplaced = all_sources - set(used.keys())
+    if unplaced:
+        return {"ok": False, "error": "bad_layout",
+                "detail": f"sources not placed (would be lost): {sorted(unplaced)}"}
+
+    return {"ok": True, "target_stacks": target_stacks}
+
+
+def _render_diff(before: list[dict[str, Any]], after: dict[int, dict[str, Any]],
+                 total: int) -> str:
+    """Human-readable preview of slot-by-slot changes."""
+    by_before = {s["slot"]: s for s in before}
+    lines: list[str] = []
+    changed = 0
+    for i in range(total):
+        b = by_before.get(i)
+        a = after.get(i)
+        if b is None and a is None:
+            continue
+        b_str = "·" if b is None else f"{_short_id(b['i'])}×{b['c']}"
+        a_str = "·" if a is None else f"{_short_id(a['i'])}×{a['c']}"
+        if b_str == a_str:
+            continue
+        lines.append(f"  slot {i:>2}: {b_str:<24} → {a_str}")
+        changed += 1
+    if changed == 0:
+        return "(no slot changes — layout is identical)"
+    return f"{changed} slot(s) change:\n" + "\n".join(lines)
+
+
+def _short_id(item_id: str) -> str:
+    return item_id.split(":", 1)[1] if ":" in item_id else item_id
+
+
+def _save_snapshot(state: dict[str, Any], pre_hash: str) -> str:
+    """Persist a snapshot of the pre-commit contents; trim to ring-buffer cap."""
+    caller = state["caller"]
+    snap_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+    pdir = SNAPSHOT_DIR / re.sub(r"[^A-Za-z0-9_\-]", "_", caller)
+    pdir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "snapshot_id": snap_id,
+        "taken_at": datetime.now(timezone.utc).isoformat(),
+        "caller": caller,
+        "kind": state["kind"],
+        "dim": state.get("dim"),
+        "x": state.get("x"), "y": state.get("y"), "z": state.get("z"),
+        "backpack_mode": state.get("backpack_mode"),
+        "total_slots": state["total_slots"],
+        "pre_commit_contents_hash": pre_hash,
+        "snapshot_contents": state["snapshot_contents"],
+    }
+    tmp = pdir / f".{snap_id}.tmp"
+    final = pdir / f"{snap_id}.json"
+    tmp.write_text(json.dumps(payload))
+    os.replace(tmp, final)
+    # Trim ring buffer.
+    files = sorted([p for p in pdir.iterdir() if p.suffix == ".json"], key=lambda p: p.name)
+    while len(files) > SNAPSHOTS_PER_PLAYER:
+        try: files[0].unlink()
+        except Exception: pass
+        files = files[1:]
+    return snap_id
+
+
+def _do_commit(state: dict[str, Any]) -> dict[str, Any]:
+    """Execute the chunked write protocol with the layout from `state`."""
+    caller = state["caller"]
+    kind = state["kind"]
+    target_stacks: dict[int, dict[str, Any]] = state["target_stacks"]
+    # 1. Open the mod-side write txn.
+    args = ["txn_open", kind, caller]
+    if kind in ("container", "backpack_world"):
+        args += [state["dim"], str(state["x"]), str(state["y"]), str(state["z"])]
+    args.append(state["contents_hash"])
+    if state.get("mode") == "restore":
+        args.append("restore")
+    opened = _mod_call(*args)
+    if not opened.get("ok"):
+        return opened
+    txn_id = opened["txn_id"]
+    try:
+        # 2. Stream non-empty target slots.
+        for slot, stk in sorted(target_stacks.items()):
+            n = stk.get("n")
+            if not n:
+                # Item with no NBT — we still need a base64 NBT for the mod.
+                # The mod uses ItemStack.fromNbt; the minimum payload is a
+                # compound with `id` and `Count`. Easier to just refuse here
+                # and require the bridge to have NBT for every read item.
+                return {"ok": False, "error": "missing_nbt",
+                        "detail": f"slot {slot}: read result didn't include NBT"}
+            wire = f"{stk['c']}:{n}"
+            r = _mod_call("txn_slot", txn_id, str(slot), wire)
+            if not r.get("ok"):
+                # Best-effort abort.
+                try: _mod_call("txn_abort", txn_id)
+                except Exception: pass
+                return r
+        # 3. Commit.
+        committed = _mod_call("txn_commit", txn_id)
+        return committed
+    except Exception as e:
+        try: _mod_call("txn_abort", txn_id)
+        except Exception: pass
+        return {"ok": False, "error": "commit_exception", "detail": str(e)}
+
+
+# ----- public MCP tools ----------------------------------------------------
+
+@mcp.tool()
+def read_container(dim: str, x: int, y: int, z: int) -> str:
+    """
+    Read a chest / barrel / shulker box's contents at the given coordinates.
+
+    Use this when the player asks about (or asks you to act on) a specific
+    container's contents and you have its coordinates. Returns the full
+    slot inventory as JSON, including a `contents_hash` you should pass
+    along to `preview_container_reorg` so the mod can detect tampering
+    between read and commit.
+
+    Distance gate: the caller must be within 8 blocks of the target.
+    Reject if any hopper, dropper, or hopper minecart is feeding into or
+    pulling from this container — those are race-condition risks at
+    write time and are reported here too.
+
+    Args:
+        dim: Dimension id (e.g. "minecraft:overworld").
+        x, y, z: Block coordinates of the chest/barrel/shulker.
+
+    Returns:
+        JSON string with {kind, half, total_slots, contents_hash,
+        slots:[{slot, i, c, n}]} or {error, detail}.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+    return json.dumps(_do_read("container", caller=caller, dim=dim, x=x, y=y, z=z))
+
+
+@mcp.tool()
+def read_inventory() -> str:
+    """
+    Read the requesting player's main inventory (slots 9–35 only — hotbar,
+    armor, and off-hand are NOT exposed).
+
+    Use this when the player asks you to organize, sort, or look at their
+    own inventory. The slot indices in the response are 0–26 (dense),
+    mapping to vanilla slots 9–35 internally — the LLM never needs to
+    know the raw mapping.
+
+    Returns:
+        JSON string with {kind:"inventory", total_slots:27, contents_hash,
+        slots:[{slot, i, c, n}]} or {error, detail}.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+    return json.dumps(_do_read("inventory", caller=caller))
+
+
+@mcp.tool()
+def read_backpack(mode: str, dim: str = "", x: int = 0, y: int = 0, z: int = 0) -> str:
+    """
+    Read a Travelers Backpack — either equipped on the caller, or placed
+    in the world as a block.
+
+    Only the MAIN STORAGE slots are exposed. Crafting grid, tool slots,
+    and fluid tanks are intentionally unreachable from this protocol so
+    the LLM can't disturb them.
+
+    Args:
+        mode: "equipped" (caller's worn backpack) or "world" (placed block).
+        dim, x, y, z: Required only for `mode="world"`.
+
+    Returns:
+        JSON string with {kind, total_slots, contents_hash, slots:[...]}
+        or {error, detail}. Errors include backpack_unequipped (mode=equipped
+        but caller is not wearing one) and wrong_target_type (mode=world
+        but block isn't a backpack).
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+    if mode == "equipped":
+        return json.dumps(_do_read("backpack_equipped", caller=caller))
+    elif mode == "world":
+        if not dim:
+            return json.dumps({"error": "bad_args", "detail": "world mode requires dim/x/y/z"})
+        return json.dumps(_do_read("backpack_world", caller=caller, dim=dim, x=x, y=y, z=z))
+    else:
+        return json.dumps({"error": "bad_args", "detail": "mode must be 'equipped' or 'world'"})
+
+
+def _do_preview(kind: str, new_layout: Any, *, dim: str | None = None,
+                x: int | None = None, y: int | None = None, z: int | None = None,
+                backpack_mode: str | None = None) -> str:
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+    if isinstance(new_layout, str):
+        try:
+            new_layout = json.loads(new_layout)
+        except Exception as e:
+            return json.dumps({"error": "bad_layout", "detail": f"layout JSON parse failed: {e}"})
+    rd = _do_read(kind, caller=caller, dim=dim, x=x, y=y, z=z)
+    if not rd.get("ok"):
+        return json.dumps(rd)
+    val = _validate_layout(rd["slots"], rd["total_slots"], new_layout)
+    if not val.get("ok"):
+        return json.dumps(val)
+    target_stacks = val["target_stacks"]
+    diff = _render_diff(rd["slots"], target_stacks, rd["total_slots"])
+    _gc_previews()
+    txn_id = uuid.uuid4().hex[:16]
+    PREVIEW_STATE[txn_id] = {
+        "caller": caller,
+        "kind": kind,
+        "dim": dim, "x": x, "y": y, "z": z,
+        "backpack_mode": backpack_mode,
+        "total_slots": rd["total_slots"],
+        "contents_hash": rd["contents_hash"],
+        "snapshot_contents": rd["slots"],
+        "target_stacks": target_stacks,
+        "expires_at": time.time() + PREVIEW_TTL_S,
+    }
+    return json.dumps({
+        "ok": True,
+        "txn_id": txn_id,
+        "diff": diff,
+        "expires_in_s": PREVIEW_TTL_S,
+    })
+
+
+@mcp.tool()
+def preview_container_reorg(dim: str, x: int, y: int, z: int, new_layout: Any) -> str:
+    """
+    Preview a chest/barrel/shulker reorganization. Returns a `txn_id`
+    bound to the current contents hash; pass that txn_id to
+    commit_container_reorg to apply.
+
+    Layout format (use whichever shape is more natural):
+      dict: {"<target_slot>": [<source_slot>, ...], ...}
+        e.g. {"0": [3, 7], "1": [2]} = target 0 gets sources 3+7 merged,
+                                       target 1 gets source 2 unchanged.
+      list: [[3, 7], [2], null, ...] = target i gets the i-th element's
+                                       source list (null = empty target).
+
+    Constraints:
+      - Every non-empty source slot must be placed somewhere (no item loss).
+      - Each source slot can be referenced at most once.
+      - Sources merged into one target must share an item id.
+      - Merged count must not exceed 64 (vanilla stack cap).
+
+    The preview does NOT touch the world; nothing changes until commit.
+
+    Args:
+        dim, x, y, z: Container coordinates.
+        new_layout: Slot mapping (see above). Accepts JSON string or dict/list.
+
+    Returns:
+        JSON {ok, txn_id, diff, expires_in_s} or {error, detail}.
+    """
+    return _do_preview("container", new_layout, dim=dim, x=x, y=y, z=z)
+
+
+@mcp.tool()
+def preview_inventory_reorg(new_layout: Any) -> str:
+    """
+    Preview a reorganization of the requesting player's main inventory
+    (slots 9–35, dense indices 0–26 — see read_inventory).
+
+    Same layout format and constraints as preview_container_reorg.
+
+    Args:
+        new_layout: Slot mapping (see preview_container_reorg).
+
+    Returns:
+        JSON {ok, txn_id, diff, expires_in_s} or {error, detail}.
+    """
+    return _do_preview("inventory", new_layout)
+
+
+@mcp.tool()
+def preview_backpack_reorg(mode: str, new_layout: Any,
+                           dim: str = "", x: int = 0, y: int = 0, z: int = 0) -> str:
+    """
+    Preview a Travelers Backpack reorganization. Same layout format and
+    constraints as preview_container_reorg.
+
+    Args:
+        mode: "equipped" or "world".
+        new_layout: Slot mapping.
+        dim, x, y, z: Required only for `mode="world"`.
+
+    Returns:
+        JSON {ok, txn_id, diff, expires_in_s} or {error, detail}.
+    """
+    if mode == "equipped":
+        return _do_preview("backpack_equipped", new_layout, backpack_mode="equipped")
+    elif mode == "world":
+        if not dim:
+            return json.dumps({"error": "bad_args", "detail": "world mode requires dim/x/y/z"})
+        return _do_preview("backpack_world", new_layout, dim=dim, x=x, y=y, z=z, backpack_mode="world")
+    else:
+        return json.dumps({"error": "bad_args", "detail": "mode must be 'equipped' or 'world'"})
+
+
+@mcp.tool()
+def commit_container_reorg(txn_id: str) -> str:
+    """
+    Apply a previewed reorganization. Always preview first — this tool
+    needs a fresh txn_id from preview_*_reorg. The txn captures the
+    target identity (chest coords / inventory / backpack) so commit
+    is a single arg.
+
+    On success, persists a snapshot of the pre-commit contents to the
+    bridge's PVC (last 5 per player) and returns its snapshot_id.
+    Surface the snapshot_id back to the player so they know how to
+    invoke `undo_container_reorg`.
+
+    Common errors:
+      unknown_txn — the bridge restarted (rare); re-preview.
+      stale_txn — someone else moved items in the container between
+                  preview and commit; re-read and re-preview.
+      container_in_use — a player has the container open; ask them
+                         to close it.
+      hoppers_attached — a hopper / dropper / hopper-minecart is
+                         feeding/pulling; remove it before retrying.
+      conservation_failed — the mod's invariant check failed; this
+                            should not happen if the preview validated
+                            cleanly (file a bug).
+      backpack_unequipped — caller took the backpack off after preview.
+
+    Args:
+        txn_id: The txn_id returned from preview_*_reorg.
+
+    Returns:
+        JSON {ok, snapshot_id, applied} or {error, detail}.
+    """
+    _gc_previews()
+    state = PREVIEW_STATE.pop(txn_id, None)
+    if state is None:
+        return json.dumps({"error": "unknown_txn",
+                           "detail": "no such txn (or expired); re-preview"})
+    caller_env = os.environ.get("CALLER_PLAYER", "").strip()
+    if state["caller"].lower() != caller_env.lower():
+        return json.dumps({"error": "wrong_caller",
+                           "detail": "txn was created by a different player"})
+    res = _do_commit(state)
+    if not res.get("ok"):
+        return json.dumps(res)
+    try:
+        snap_id = _save_snapshot(state, res.get("snapshot_pre_hash", state["contents_hash"]))
+        res["snapshot_id"] = snap_id
+    except Exception as e:
+        print(f"snapshot save failed: {e}", file=sys.stderr)
+        res["snapshot_warning"] = f"snapshot save failed: {e}"
+    return json.dumps(res)
+
+
+@mcp.tool()
+def undo_container_reorg(snapshot_id: str) -> str:
+    """
+    Restore a previous container/inventory/backpack layout from a snapshot.
+
+    Use when a player wants to undo a reorg you just performed. The
+    snapshot_id was returned by `commit_container_reorg`. Each player
+    keeps the 5 most recent snapshots; older ones are dropped.
+
+    The mod re-validates that the player is still in range and (for
+    backpack_equipped) is still wearing the backpack. The hopper-attached
+    check is intentionally SKIPPED in restore mode so a hopper added
+    after the original commit doesn't permanently brick undo. The TOCTOU
+    contents-hash check is skipped (we're explicitly overwriting); item
+    conservation is also skipped because the snapshot is authoritative.
+
+    Args:
+        snapshot_id: The id returned by `commit_container_reorg`.
+
+    Returns:
+        JSON {ok, applied} or {error, detail}.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return json.dumps({"error": "no_caller", "detail": "CALLER_PLAYER unset"})
+    pdir = SNAPSHOT_DIR / re.sub(r"[^A-Za-z0-9_\-]", "_", caller)
+    snap_path = pdir / f"{snapshot_id}.json"
+    if not snap_path.exists():
+        return json.dumps({"error": "unknown_snapshot",
+                           "detail": f"no snapshot {snapshot_id} for {caller}"})
+    try:
+        snap = json.loads(snap_path.read_text())
+    except Exception as e:
+        return json.dumps({"error": "bad_snapshot", "detail": str(e)})
+    if snap.get("caller", "").lower() != caller.lower():
+        return json.dumps({"error": "wrong_caller", "detail": "snapshot belongs to another player"})
+
+    # Build target_stacks from snapshot_contents directly.
+    target_stacks = {}
+    for s in snap["snapshot_contents"]:
+        target_stacks[int(s["slot"])] = {
+            "i": s["i"], "c": int(s["c"]), "n": s.get("n"),
+        }
+
+    state = {
+        "caller": caller,
+        "kind": snap["kind"],
+        "dim": snap.get("dim"), "x": snap.get("x"), "y": snap.get("y"), "z": snap.get("z"),
+        "backpack_mode": snap.get("backpack_mode"),
+        "total_slots": int(snap["total_slots"]),
+        "contents_hash": snap["pre_commit_contents_hash"],
+        "snapshot_contents": snap["snapshot_contents"],
+        "target_stacks": target_stacks,
+        "mode": "restore",
+    }
+    # Restore mode bypasses the hash precheck — but the mod still expects
+    # *some* expected_hash arg; pass the snapshot's pre-hash even though
+    # the mod will skip validating it in restore mode.
+    res = _do_commit(state)
+    return json.dumps(res)
 
 
 if __name__ == "__main__":

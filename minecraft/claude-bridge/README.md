@@ -23,6 +23,19 @@ Plus: when a player expresses a feature wish, Claude calls a tiny MCP
 tool that appends the request to `FEEDBACK.md`, commits, and pushes to
 this repo.
 
+Container reorganization is also wired up: when a player asks "organize
+this chest" or "sort my inventory," Claude reads the current contents
+via the bridge's MCP tools, computes a new layout, previews the diff in
+chat, and — after the player confirms — applies it atomically through a
+chunked write protocol on the sibling [`claude-mod`](../claude-mod/).
+The mod owns server-authoritative safety (≤8-block distance, no hoppers
+attached, no players viewing, item-conservation invariant, TOCTOU
+contents-hash). The bridge persists the pre-commit state to the PVC
+(last 5 snapshots per player) so `undo_container_reorg` can revert.
+Targets supported: chests/barrels/shulker boxes, the caller's main
+inventory (slots 9–35 only — hotbar/armor are unreachable), and
+Travelers Backpacks (equipped or world-placed).
+
 ## Sandbox layers
 
 1. **Pod hardening** — non-root, `readOnlyRootFilesystem: true`, all caps

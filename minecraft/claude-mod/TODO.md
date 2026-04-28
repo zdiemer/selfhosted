@@ -43,3 +43,18 @@ system-prompt nudge.
 4. After adding the subcommand, update the bridge system prompt in
    `minecraft/claude-bridge/values.yaml` with a one-line example so
    Claude knows when to reach for it.
+
+## Write protocol (`/claudemod write …`)
+
+The "all-read-only" convention above applies to `query` subcommands.
+The `write` subtree (in `ClaudeWriteCommand.java`) is the exception —
+it lets the bridge atomically reorganize chests / barrels / shulker
+boxes, the caller's main inventory (slots 9–35 only), and Travelers
+Backpacks (equipped or world-placed). Server-authoritative safety
+checks live in the mod: distance ≤ 8 blocks, no hoppers/droppers/hopper
+minecarts attached, no players viewing the container, item conservation
+(stripped-NBT multiset), and a TOCTOU contents-hash check. The bridge
+exposes the chunked protocol via four MCP tool families: `read_*`,
+`preview_*_reorg`, `commit_container_reorg`, `undo_container_reorg`.
+Keep new mutation surfaces opt-in this way — never inline raw mutation
+into `query` subcommands.

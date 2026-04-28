@@ -1908,7 +1908,9 @@ public final class ClaudeQueryCommand {
     }
 
     // ---------- helpers ------------------------------------------------------
-    private static ServerPlayerEntity onlinePlayer(CommandContext<ServerCommandSource> ctx) {
+    // Package-private so ClaudeWriteCommand (and any future sibling commands)
+    // can reuse the same canonical reply/error/onlinePlayer paths.
+    static ServerPlayerEntity onlinePlayer(CommandContext<ServerCommandSource> ctx) {
         String name = StringArgumentType.getString(ctx, "player");
         ServerPlayerEntity p = ctx.getSource().getServer().getPlayerManager().getPlayer(name);
         if (p == null) {
@@ -1918,7 +1920,7 @@ public final class ClaudeQueryCommand {
         return p;
     }
 
-    private static int reply(CommandContext<ServerCommandSource> ctx, JsonObject o) {
+    static int reply(CommandContext<ServerCommandSource> ctx, JsonObject o) {
         String json = GSON.toJson(o);
         if (json.length() > MAX_RESPONSE_CHARS) {
             JsonObject trim = new JsonObject();
@@ -1931,7 +1933,7 @@ public final class ClaudeQueryCommand {
         return 1;
     }
 
-    private static int error(CommandContext<ServerCommandSource> ctx, String msg) {
+    static int error(CommandContext<ServerCommandSource> ctx, String msg) {
         JsonObject o = new JsonObject();
         o.addProperty("error", msg);
         ctx.getSource().sendFeedback(() -> Text.literal(GSON.toJson(o)), false);

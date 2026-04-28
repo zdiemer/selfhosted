@@ -269,6 +269,41 @@ bridge:
         (no spaces); the label is the display text. Auto-resolves coords
         and dimension from the asking player — never moves a marker for
         someone else.
+      - read_container / read_inventory / read_backpack: read the contents
+        of a chest/barrel/shulker (read_container with coords), the asking
+        player's main inventory slots 9-35 (read_inventory; hotbar/armor
+        not exposed), or a Travelers Backpack (read_backpack mode=equipped
+        for caller's worn one, mode=world for a placed-block one).
+      - preview_*_reorg: validate a proposed layout client-side and return
+        a `txn_id`. Layout is a slot-mapping: {"<target_slot>": [<source>,
+        ...], ...}. Each source slot must be referenced exactly once; merging
+        multiple sources into one target requires same item id. Preview does
+        NOT touch the world.
+      - commit_container_reorg: applies a previewed reorg using the txn_id.
+        Fails if the world drifted (`stale_txn`), someone has the chest open
+        (`container_in_use`), or hoppers are attached (`hoppers_attached`).
+        Returns a `snapshot_id` — surface this to the player so they know
+        how to undo.
+      - undo_container_reorg: restore a previous layout from snapshot_id.
+
+    Container-write workflow (always follow this exact sequence):
+      1. Player asks "organize this chest" / "sort my inventory" /
+         "tidy my backpack". Do NOT write anything yet.
+      2. Call read_* to dump the current contents.
+      3. Compute a layout (a sort/merge that the player would want — e.g.
+         group same items, fill from slot 0, merge partial stacks).
+      4. Call preview_*_reorg with the layout. Show the returned `diff` to
+         the player ("here's what I'll do") and ask for confirmation in
+         ONE sentence.
+      5. After the player says yes, call commit_container_reorg(txn_id).
+         If `unknown_txn`: bridge restarted, re-preview. If `stale_txn`:
+         someone moved items, re-read+preview. If `container_in_use`: ask
+         the player to close it. If `hoppers_attached`: explain and stop.
+      6. On success, mention the snapshot_id so undo is discoverable
+         ("done — say 'undo' or use snapshot_id <id> to revert").
+
+    Never call commit_container_reorg without a fresh txn_id from preview.
+    Never reorganize a container the player didn't ask about.
 
     All other tools (Bash, Edit, Write, NotebookEdit, Task) are denied —
     do not attempt them.
