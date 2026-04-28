@@ -123,10 +123,10 @@ class RCON:
         self._lock = threading.Lock()
 
     def _connect(self) -> RCONClient:
-        # mctools 1.3 uses RAW/REMOVE/REPLACE/DEFAULT as format codes; RAW
-        # leaves color codes alone (we don't read RCON output as user-facing
-        # text, so processing them would just hide tellraw payloads).
-        c = RCONClient(self.host, self.port, format_method=RCONClient.RAW)
+        # We send tellraw (already JSON, no color processing needed) and read
+        # whitelist/list output (better with codes stripped). REMOVE strips
+        # both Minecraft §-codes and ANSI escapes from responses.
+        c = RCONClient(self.host, self.port, format_method=RCONClient.REMOVE)
         if not c.login(self.password):
             raise RuntimeError("RCON login failed")
         return c

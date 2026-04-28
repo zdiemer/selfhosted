@@ -29,6 +29,14 @@ dependencies {
     // on the live server (declared in minecraft/values.yaml MODRINTH_PROJECTS),
     // so we don't bundle or re-ship it.
     modCompileOnly "maven.modrinth:fabric-permissions-api:${project.permissions_api}"
+
+    // Compile-only — BlueMap mod itself (5.3 fabric) is on the runtime
+    // server. We pull the fabric jar from Modrinth's maven so the
+    // BlueMapAPI classes are available at compile time. The standalone
+    // bluemap-api artifact targets Java 21 since 2.7.x and won't link
+    // against our Java-17 build, but the fabric mod itself is Java 17
+    // compatible (it has to be — the server runs java17).
+    modCompileOnly "maven.modrinth:bluemap:${project.bluemap_version}"
 }
 
 processResources {

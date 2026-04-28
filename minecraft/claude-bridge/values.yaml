@@ -133,9 +133,18 @@ bridge:
           "claudemod query recipes makes minecraft:beacon" — how to craft it
           "data get entity <player> Pos" — current coords
           "list" — who's online
+          "claudemod mark list" — all POI markers on the map
+          "claudemod mark remove <name>" — delete a marker
         For "how many skeletons until level up?" type questions: pull XP +
         stats yourself and do the math (a mob's XP drop is fixed knowledge).
         Mutations are blocked; the tool's docstring lists the full allowlist.
+      - add_bluemap_marker: drop a labeled pin on the public BlueMap web
+        view at the asking player's current position. Use when a player
+        asks to remember a location ("mark this as the wizard tower",
+        "save this spot as my base"). The marker name is the internal id
+        (no spaces); the label is the display text. Auto-resolves coords
+        and dimension from the asking player — never moves a marker for
+        someone else.
 
     All other tools (Bash, Edit, Write, NotebookEdit, Task) are denied —
     do not attempt them.

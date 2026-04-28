@@ -155,6 +155,8 @@ SAFE_QUERY_PATTERNS = [
         r"^attribute\s+\S+\s+\S+\s+get\b",
         r"^gamerule\s+\S+\s*$",                       # gamerule <rule> = query
         r"^claudemod\s+query\b",                      # mod's structured queries
+        r"^claudemod\s+mark\s+list\s*$",              # bluemap marker list (read)
+        r"^claudemod\s+mark\s+remove\s+\S+\s*$",      # bluemap marker remove (small mutation, scoped)
     ]
 ]
 
@@ -214,6 +216,86 @@ def run_query_command(command: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# BlueMap marker creation — caller-only, position auto-resolved from the
+# requesting player's current entity data. Marker management beyond "add"
+# (list / remove) goes through run_query_command since those are essentially
+# read-only or trivially-scoped mutations.
+# ---------------------------------------------------------------------------
+_POS_RE = re.compile(r"\[(-?\d+\.?\d*)d?,\s*(-?\d+\.?\d*)d?,\s*(-?\d+\.?\d*)d?\]")
+_DIM_RE = re.compile(r'"(?P<dim>[a-z0-9_\-.]+:[a-z0-9_\-./]+)"')
+_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,32}$")
+
+
+@mcp.tool()
+def add_bluemap_marker(name: str, label: str = "") -> str:
+    """
+    Add a point-of-interest marker to the public BlueMap web view at the
+    requesting player's current position.
+
+    Use this when a player wants to remember a location ("mark this as the
+    wizard tower", "save this spot as my base", "remember here as
+    starting_island"). The marker shows up as a labeled pin on the map
+    that everyone can see.
+
+    The marker is anchored to the player's CURRENT coordinates and
+    dimension at the moment the command runs. The asking player is
+    recorded as the marker's author for accountability.
+
+    Args:
+        name: Internal unique identifier (1-32 chars, letters/digits/-/_,
+              no spaces). Used to remove the marker later. Pick something
+              short and stable like "wizard_tower" or "bobs_base".
+        label: Display label shown on the map. Falls back to `name` if
+               empty. May contain spaces and most punctuation.
+
+    Returns:
+        Human-readable confirmation including the coords, or an error
+        string starting with "(". Surface this back to the player so
+        they know it landed.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return "(error: caller name not available; refusing to add marker)"
+    name = (name or "").strip()
+    if not _NAME_RE.match(name):
+        return "(error: marker name must be 1-32 chars, letters/digits/-/_ only, no spaces)"
+    label = (label or name).strip()
+    # Strip newlines / control chars from the label just to be safe — it
+    # ends up rendered in BlueMap's web UI.
+    label = re.sub(r"[\r\n\t]+", " ", label)[:120]
+
+    try:
+        pos_out = _rcon(f"data get entity {caller} Pos")
+    except Exception as e:
+        print(f"add_bluemap_marker: pos lookup failed: {e}", file=sys.stderr)
+        return f"({caller} doesn't appear to be online — try again after rejoining)"
+
+    pm = _POS_RE.search(pos_out)
+    if not pm:
+        return f"(couldn't parse position; raw: {pos_out[:200]})"
+    x, y, z = float(pm.group(1)), float(pm.group(2)), float(pm.group(3))
+
+    # Resolve the player's current dimension. Falls back to overworld if
+    # the response shape isn't what we expect (e.g. modpack formatting tweak).
+    dim = "minecraft:overworld"
+    try:
+        dim_out = _rcon(f"data get entity {caller} Dimension")
+        dm = _DIM_RE.search(dim_out)
+        if dm:
+            dim = dm.group("dim")
+    except Exception:
+        pass
+
+    # Brigadier label argument is greedyString — passing it last is fine.
+    cmd = f"claudemod mark add {name} {dim} {x:.2f} {y:.2f} {z:.2f} {caller} {label}"
+    try:
+        return _rcon(cmd)
+    except Exception as e:
+        print(f"add_bluemap_marker: rcon failed: {e}", file=sys.stderr)
+        return f"(failed to add marker: {e})"
+
+
+# ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
 def _online_players() -> list[str]:
@@ -229,7 +311,9 @@ def _rcon(command: str) -> str:
     host = os.environ["RCON_HOST"]
     port = int(os.environ.get("RCON_PORT", "25575"))
     password = os.environ["RCON_PASSWORD"]
-    c = RCONClient(host, port, format_method=RCONClient.RAW)
+    # REMOVE strips Minecraft §-codes and ANSI escapes from the response so
+    # Claude sees clean text (RCON adds reset codes around multi-line output).
+    c = RCONClient(host, port, format_method=RCONClient.REMOVE)
     if not c.login(password):
         raise RuntimeError("RCON login failed")
     try:
