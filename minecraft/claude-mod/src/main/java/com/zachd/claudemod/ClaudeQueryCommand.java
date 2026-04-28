@@ -124,6 +124,12 @@ public final class ClaudeQueryCommand {
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(ClaudeQueryCommand::queryTrinkets)))
                     .then(CommandManager.literal("quest")
+                        .then(CommandManager.literal("available")
+                            .then(CommandManager.argument("player", StringArgumentType.word())
+                                .executes(ctx -> queryAvailableQuests(ctx, null))
+                                .then(CommandManager.argument("chapter", StringArgumentType.greedyString())
+                                    .executes(ctx -> queryAvailableQuests(ctx,
+                                        StringArgumentType.getString(ctx, "chapter"))))))
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(ctx -> queryQuest(ctx, null))
                             .then(CommandManager.argument("search", StringArgumentType.greedyString())
@@ -655,6 +661,74 @@ public final class ClaudeQueryCommand {
                 root.addProperty("query", search);
                 root.addProperty("hits", hits.size());
                 root.add("matches", hits);
+            }
+            return reply(ctx, root);
+        } catch (Throwable t) {
+            return error(ctx, "ftb-quests api call failed: " + t.toString());
+        }
+    }
+
+    /**
+     * Quests the player can START RIGHT NOW: not completed, dependencies
+     * satisfied, and visible to their team. Optional chapter filter is a
+     * substring match on chapter title — the right path for "what
+     * Getting Started quest can I do next?". Caps at 10 results, sorted
+     * by chapter then title-as-discovered.
+     */
+    private static int queryAvailableQuests(CommandContext<ServerCommandSource> ctx, String chapterFilter) {
+        if (!FabricLoader.getInstance().isModLoaded("ftbquests")) {
+            return error(ctx, "ftb-quests not loaded");
+        }
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        try {
+            var sqf = dev.ftb.mods.ftbquests.quest.ServerQuestFile.INSTANCE;
+            if (sqf == null) return error(ctx, "FTB Quests not initialized yet");
+            var td = sqf.getNullableTeamData(p.getUuid());
+            if (td == null) {
+                JsonObject root = new JsonObject();
+                root.addProperty("player", p.getName().getString());
+                root.addProperty("note", "no team data for this player");
+                return reply(ctx, root);
+            }
+
+            String needle = chapterFilter == null ? null : chapterFilter.toLowerCase().trim();
+            JsonArray hits = new JsonArray();
+            int[] counter = {0};
+            sqf.forAllQuests(q -> {
+                if (counter[0] >= 10) return;
+                if (td.isCompleted(q)) return;
+                if (!q.areDependenciesComplete(td)) return;
+                if (!q.isVisible(td)) return;
+
+                var chapter = q.getChapter();
+                String chTitle = chapter != null
+                    ? ((dev.ftb.mods.ftbquests.quest.QuestObjectBase) chapter).getRawTitle()
+                    : "";
+                if (chTitle == null) chTitle = "";
+                if (needle != null && !chTitle.toLowerCase().contains(needle)) return;
+
+                String title = ((dev.ftb.mods.ftbquests.quest.QuestObjectBase) q).getRawTitle();
+                if (title == null) title = "";
+
+                JsonObject h = new JsonObject();
+                h.addProperty("title", title);
+                h.addProperty("chapter", chTitle);
+                h.addProperty("description", truncate(describeQuest(q), 400));
+                h.addProperty("started", td.isStarted(q));
+                h.addProperty("optional", q.isOptional());
+                hits.add(h);
+                counter[0]++;
+            });
+
+            JsonObject root = new JsonObject();
+            root.addProperty("player", p.getName().getString());
+            if (chapterFilter != null) root.addProperty("chapter_filter", chapterFilter);
+            root.addProperty("count", hits.size());
+            root.add("quests", hits);
+            if (hits.size() == 10) {
+                root.addProperty("note", "showing first 10 — narrow with a chapter substring filter (e.g. \"Getting Started\")");
             }
             return reply(ctx, root);
         } catch (Throwable t) {
@@ -1461,14 +1535,14 @@ public final class ClaudeQueryCommand {
      *     caught it but TPS dropped to ~1.8 for a minute.
      */
     private static final int BIOME_SEARCH_RADIUS_BLOCKS = 2048;
-    private static final int LOADED_STRUCTURE_RADIUS_CHUNKS = 32;
+    private static final int LOADED_STRUCTURE_RADIUS_CHUNKS = 16;
     // Strict upper bound on the on-demand fallback when the loaded scan
-    // misses. 10 chunks ≈ 160 blocks. On Random-Spread structures (~32-
-    // chunk spacing) there's at most 1-2 candidate spread points in this
-    // radius, so the chunk-load budget is small enough to stay under
-    // watchdog. Wider scans crashed us before; don't grow this without
-    // moving the work off the server thread.
-    private static final int ON_DEMAND_STRUCTURE_RADIUS_CHUNKS = 10;
+    // misses. 5 chunks ≈ 80 blocks. Earlier 10-chunk attempts still cost
+    // 52s of server-thread time on village searches in this pack (vanilla's
+    // own timeout caught it, no watchdog kill, but TPS suffered). 5 keeps
+    // the candidate spread set tiny — at most 0-1 points to verify.
+    // Wider scans need to move off the server thread.
+    private static final int ON_DEMAND_STRUCTURE_RADIUS_CHUNKS = 5;
 
     private static int queryNearest(CommandContext<ServerCommandSource> ctx, boolean isBiome) {
         String idStr = StringArgumentType.getString(ctx, "id").trim();

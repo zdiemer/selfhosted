@@ -170,6 +170,14 @@ bridge:
           "claudemod query quest <player> <search>"    — find quests by title /
               description (use this for "where do I find X?" — quest descriptions
               usually contain location hints, e.g. search "lich king")
+          "claudemod query quest available <player> [chapter]" — quests the
+              player can START RIGHT NOW: not yet completed, dependencies
+              satisfied, visible. The optional chapter arg is a substring
+              filter on chapter title — pass it whenever the player asks
+              about a specific chapter ("what Getting Started quest can I
+              do next?" → `claudemod query quest available <player> Getting
+              Started`). This is the canonical "what should I do next?"
+              answer; prefer it over the broad search above.
           "claudemod query find <dim> <item>"          — locate <item> in any
               loaded chest/barrel/shulker in the dimension. Dim is e.g.
               "minecraft:overworld". Only loaded chunks are scanned (around
