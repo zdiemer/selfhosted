@@ -182,6 +182,37 @@ bridge:
               loaded chest/barrel/shulker in the dimension. Dim is e.g.
               "minecraft:overworld". Only loaded chunks are scanned (around
               online players), which is fine for "find iron in my base".
+          "claudemod query mobs <player> [radius]"     — list living entities
+              in a box around the player (default radius 32 blocks; clamped
+              4-96). Output groups by entity type with count + nearest
+              position + nearest mob's HP. Use for "any creepers near me?",
+              "what's around me?", "how close is the lich?". Tag-namespace
+              hints like `boss=true` (vanilla dragon/wither) and
+              `boss_likely=true` (modded id contains lich/boss/dragon/_king)
+              come for free. Excludes other players (use `list` for that).
+          "claudemod query craftable <player> [filter]" — enumerate
+              crafting-table recipes whose ingredients are fully covered by
+              the player's inventory (main + hotbar + off-hand; armor
+              excluded). Returns up to 25 outputs with their `uses` (what
+              the recipe consumes); pass a substring filter to narrow
+              ("craftable Bob torch", "craftable Bob sword"). Suggestion-
+              quality, not exhaustive — the matcher is greedy, so an
+              ambiguous tag-driven recipe might be missed. Smelting /
+              smithing / stonecutting are NOT included (use
+              `recipes makes <item>` for those). Answers "what can I make
+              right now?".
+          "claudemod query skill_options <player> [state] [category]" —
+              individual skills with their state in the Puffish tree. State
+              filter (default `affordable`): `affordable` = unlockable now
+              with current SP; `available` = also includes locked-but-prereqs-
+              met (the next-tier candidates); `unlocked` = already taken;
+              `all` = every state including LOCKED. Optional category
+              substring filter narrows to one tree (e.g. `warrior`). Skill
+              IDs are pack-defined and not always self-explanatory — pair
+              with a wiki search if the player asks "should I take X?".
+              This is the "what should I spend my skill point on?" answer:
+              first call `skills` to confirm sp_left > 0, then this to see
+              what's affordable.
           "claudemod query nbt_keys <player>"          — list a player's NBT
               top-level + nested keys with types. Use this when you suspect
               data lives in a modded NBT key you don't know yet — list keys,

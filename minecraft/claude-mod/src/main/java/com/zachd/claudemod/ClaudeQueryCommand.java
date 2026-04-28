@@ -1,6 +1,7 @@
 package com.zachd.claudemod;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 
 import net.minecraft.command.argument.IdentifierArgumentType;
@@ -79,6 +80,28 @@ public final class ClaudeQueryCommand {
                     .then(CommandManager.literal("skills")
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(PlayerStateQueries::querySkills)))
+                    .then(CommandManager.literal("skill_options")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ctx -> PlayerStateQueries.querySkillOptions(ctx, null, null))
+                            .then(CommandManager.argument("state", StringArgumentType.word())
+                                .executes(ctx -> PlayerStateQueries.querySkillOptions(ctx,
+                                    StringArgumentType.getString(ctx, "state"), null))
+                                .then(CommandManager.argument("category", StringArgumentType.greedyString())
+                                    .executes(ctx -> PlayerStateQueries.querySkillOptions(ctx,
+                                        StringArgumentType.getString(ctx, "state"),
+                                        StringArgumentType.getString(ctx, "category")))))))
+                    .then(CommandManager.literal("mobs")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ctx -> WorldSearchQueries.queryMobs(ctx, 32))
+                            .then(CommandManager.argument("radius", IntegerArgumentType.integer(1, 256))
+                                .executes(ctx -> WorldSearchQueries.queryMobs(ctx,
+                                    IntegerArgumentType.getInteger(ctx, "radius"))))))
+                    .then(CommandManager.literal("craftable")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ctx -> RegistryQueries.queryCraftable(ctx, null))
+                            .then(CommandManager.argument("filter", StringArgumentType.greedyString())
+                                .executes(ctx -> RegistryQueries.queryCraftable(ctx,
+                                    StringArgumentType.getString(ctx, "filter"))))))
                     .then(CommandManager.literal("vitals")
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(PlayerStateQueries::queryVitals)))

@@ -2,6 +2,12 @@ package com.zachd.claudemod.query;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -20,10 +26,13 @@ import net.minecraft.entity.attribute.EntityAttribute;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.recipe.AbstractCookingRecipe;
 import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.Recipe;
+import net.minecraft.recipe.RecipeType;
 import net.minecraft.recipe.ShapedRecipe;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKeys;
@@ -48,6 +57,10 @@ public final class RegistryQueries {
     private static final int RECIPE_RESULT_CAP = 20;
     private static final int TAG_RESULT_CAP = 60;
     private static final int MODS_RESULT_CAP = 60;
+    // Craftable: cap surfaced suggestions. The suggestion list is meant for
+    // chat-shaped "you could make X, Y, Z" answers — past 25 items the
+    // response gets unhelpful and risks the RCON budget.
+    private static final int CRAFTABLE_RESULT_CAP = 25;
 
     public static int queryRecipes(CommandContext<ServerCommandSource> ctx, boolean makes) {
         String raw = StringArgumentType.getString(ctx, "item").trim();
@@ -138,6 +151,164 @@ public final class RegistryQueries {
             arr.add(sid == null ? "?" : sid.toString());
         }
         return arr;
+    }
+
+    /**
+     * "What can I craft right now?" — enumerate vanilla crafting-table
+     * recipes whose ingredients are fully covered by the player's
+     * inventory (main + hotbar + offhand). NBT-blind: ingredient matching
+     * uses {@link Ingredient#getMatchingStacks()}, which already flattens
+     * tags, so e.g. {@code #c:planks} is satisfied by any modded plank.
+     *
+     * Heuristic, not a solver — we greedily pick the first matching item
+     * for each ingredient slot, processing more-restrictive ingredients
+     * first to avoid burning a flexible item on a slot that could've used
+     * something else. Good enough for "you could craft a torch / shears /
+     * crafting table". For exact possibilities the LLM can ask the player
+     * what they specifically want and use {@code recipes makes}.
+     *
+     * Only RecipeType.CRAFTING is considered — smelting / smithing /
+     * stonecutting / modded recipe types live elsewhere and have their
+     * own input/output semantics. Adding them naively muddies the answer.
+     */
+    public static int queryCraftable(CommandContext<ServerCommandSource> ctx, String filter) {
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        // Multiset of items the player has on their person. We treat NBT-
+        // varying instances of the same item as fungible for ingredient
+        // matching; a "Tiered" sword with affixes still counts as `iron_sword`
+        // for the purposes of "can I craft something that wants an iron_sword".
+        // PlayerInventory layout (1.20.1, size=41):
+        //   slots 0..35  hotbar + main inventory
+        //   slots 36..39 armor (skipped — wouldn't take it off mid-craft)
+        //   slot  40     off-hand
+        PlayerInventory inv = p.getInventory();
+        Map<Item, Integer> have = new HashMap<>();
+        for (int i = 0; i < inv.size(); i++) {
+            if (i >= 36 && i <= 39) continue;
+            ItemStack stack = inv.getStack(i);
+            if (stack.isEmpty()) continue;
+            have.merge(stack.getItem(), stack.getCount(), Integer::sum);
+        }
+
+        net.minecraft.server.MinecraftServer server = ctx.getSource().getServer();
+        DynamicRegistryManager rm = server.getRegistryManager();
+
+        String needle = (filter == null || filter.isBlank()) ? null : filter.toLowerCase();
+
+        JsonArray hits = new JsonArray();
+        // Track output ids we've already surfaced so multiple recipes for
+        // the same output (e.g. shapeless + shaped torch) don't duplicate.
+        Set<String> seenOutputs = new HashSet<>();
+        int recipesScanned = 0;
+        boolean truncated = false;
+
+        for (Recipe<?> r : server.getRecipeManager().listAllOfType(RecipeType.CRAFTING)) {
+            recipesScanned++;
+            if (r.isIgnoredInRecipeBook()) continue;
+            ItemStack out = r.getOutput(rm);
+            if (out == null || out.isEmpty()) continue;
+            net.minecraft.util.Identifier oid = Registries.ITEM.getId(out.getItem());
+            if (oid == null) continue;
+            String oidStr = oid.toString();
+            if (seenOutputs.contains(oidStr)) continue;
+
+            if (needle != null) {
+                String hay = (oidStr + " " + out.getName().getString()).toLowerCase();
+                if (!hay.contains(needle)) continue;
+            }
+
+            if (!canSatisfyIngredients(r.getIngredients(), have)) continue;
+
+            JsonObject h = new JsonObject();
+            h.addProperty("output", oidStr);
+            h.addProperty("name", out.getName().getString());
+            h.addProperty("count", out.getCount());
+            h.addProperty("recipe_id", r.getId().toString());
+            // Ingredient summary — first acceptable item per slot, dedup'd
+            // and capped, so the LLM can sanity-check what the player would
+            // actually consume without paging into `recipes makes`.
+            JsonArray ingSummary = new JsonArray();
+            LinkedHashMap<String, Integer> uses = new LinkedHashMap<>();
+            for (Ingredient ing : r.getIngredients()) {
+                if (ing == null || ing.isEmpty()) continue;
+                ItemStack[] choices = ing.getMatchingStacks();
+                if (choices.length == 0) continue;
+                // Prefer an item the player actually has — keeps the summary
+                // truthful instead of showing the recipe's first listed item.
+                Item chosen = null;
+                for (ItemStack c : choices) {
+                    if (have.getOrDefault(c.getItem(), 0) > 0) { chosen = c.getItem(); break; }
+                }
+                if (chosen == null) chosen = choices[0].getItem();
+                net.minecraft.util.Identifier cid = Registries.ITEM.getId(chosen);
+                String shortId = cid == null ? "?"
+                    : ("minecraft".equals(cid.getNamespace()) ? cid.getPath() : cid.toString());
+                uses.merge(shortId, 1, Integer::sum);
+            }
+            for (var u : uses.entrySet()) {
+                JsonObject uj = new JsonObject();
+                uj.addProperty("item", u.getKey());
+                uj.addProperty("n", u.getValue());
+                ingSummary.add(uj);
+            }
+            h.add("uses", ingSummary);
+            hits.add(h);
+            seenOutputs.add(oidStr);
+            if (hits.size() >= CRAFTABLE_RESULT_CAP) { truncated = true; break; }
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        if (filter != null) root.addProperty("filter", filter);
+        root.addProperty("recipes_scanned", recipesScanned);
+        root.addProperty("returned", hits.size());
+        if (truncated) {
+            root.addProperty("truncated", true);
+            root.addProperty("hint", "many recipes match — pass a filter (e.g. `craftable <player> sword`) to narrow");
+        }
+        if (have.isEmpty()) {
+            root.addProperty("note", "inventory is empty (no items in slots 0-35 or off-hand)");
+        }
+        root.add("recipes", hits);
+        return ClaudeIo.reply(ctx, root);
+    }
+
+    /**
+     * Greedy ingredient cover: order ingredient slots by how restrictive
+     * they are (fewest matching items first) and pick the first available
+     * item for each slot, deducting from a working copy of the inventory
+     * multiset. Returns true iff every non-empty ingredient is satisfied.
+     */
+    private static boolean canSatisfyIngredients(List<Ingredient> ingredients,
+                                                 Map<Item, Integer> have) {
+        // Filter out empty ingredients, then sort by matching-set size asc.
+        // The choices array of a Bukkit / Forge style "any item" wildcard
+        // can be huge; tightest constraints first reduces wasted picks.
+        List<Ingredient> active = new ArrayList<>();
+        for (Ingredient ing : ingredients) {
+            if (ing != null && !ing.isEmpty()) active.add(ing);
+        }
+        if (active.isEmpty()) return false;
+        active.sort(Comparator.comparingInt(i -> i.getMatchingStacks().length));
+
+        Map<Item, Integer> remain = new HashMap<>(have);
+        for (Ingredient ing : active) {
+            boolean placed = false;
+            for (ItemStack choice : ing.getMatchingStacks()) {
+                Item it = choice.getItem();
+                int cnt = remain.getOrDefault(it, 0);
+                if (cnt > 0) {
+                    if (cnt == 1) remain.remove(it);
+                    else remain.put(it, cnt - 1);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) return false;
+        }
+        return true;
     }
 
     /**

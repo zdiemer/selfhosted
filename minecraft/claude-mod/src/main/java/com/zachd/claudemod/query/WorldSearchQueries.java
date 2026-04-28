@@ -7,6 +7,11 @@ import com.mojang.brigadier.context.CommandContext;
 
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.command.argument.IdentifierArgumentType;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.SpawnGroup;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -19,7 +24,9 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.chunk.WorldChunk;
@@ -46,6 +53,19 @@ public final class WorldSearchQueries {
     private static final int FIND_CHUNK_CAP = 2048;
     // View-distance halo (in chunks) we scan around each online player.
     private static final int FIND_VIEW_RADIUS = 8;
+
+    // Mobs scan: bounded box around the asking player, in blocks.
+    // 32 covers the typical "what's threatening me right now" question
+    // (a creeper triggers at ~3 blocks; aggro range for hostile mobs is
+    // 16-24). Cap MAX so a curious player can't accidentally scan a
+    // multi-thousand-entity radius and blow the RCON budget.
+    private static final int MOBS_DEFAULT_RADIUS = 32;
+    private static final int MOBS_MIN_RADIUS = 4;
+    private static final int MOBS_MAX_RADIUS = 96;
+    // Per-type bucket cap. Modded farms can produce hundreds of one
+    // species in a halo; we surface the count + nearest position and
+    // clip the per-type detail.
+    private static final int MOBS_GROUP_CAP = 60;
 
     private static final int BIOME_SEARCH_RADIUS_BLOCKS = 2048;
     private static final int LOADED_STRUCTURE_RADIUS_CHUNKS = 16;
@@ -245,6 +265,140 @@ public final class WorldSearchQueries {
             }
         }
         return best;
+    }
+
+    /**
+     * Scan a bounded box around the asking player for living entities.
+     * Answers "what's near me?" / "are there creepers nearby?" without
+     * the LLM having to compose vanilla {@code execute} selectors.
+     *
+     * Players are excluded — that's covered by vanilla {@code list}. Items,
+     * arrows, and other non-living entities are excluded too. Output groups
+     * by entity type with count + nearest distance + nearest position.
+     */
+    public static int queryMobs(CommandContext<ServerCommandSource> ctx, int rawRadius) {
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+        int radius = Math.max(MOBS_MIN_RADIUS, Math.min(MOBS_MAX_RADIUS, rawRadius));
+
+        ServerWorld world = (ServerWorld) p.getWorld();
+        Vec3d origin = p.getPos();
+        Box box = new Box(
+            origin.x - radius, origin.y - radius, origin.z - radius,
+            origin.x + radius, origin.y + radius, origin.z + radius
+        );
+
+        // Per-type accumulator. We track the closest representative so the
+        // player can navigate to (or away from) the nearest one, plus the
+        // total count in the halo.
+        class Bucket {
+            int count = 0;
+            double nearestDistSq = Double.MAX_VALUE;
+            BlockPos nearestPos = null;
+            float nearestHealth = -1;
+            float nearestMaxHealth = -1;
+        }
+        java.util.LinkedHashMap<EntityType<?>, Bucket> byType = new java.util.LinkedHashMap<>();
+        int totalHostile = 0, totalCreature = 0, totalAmbient = 0, totalOther = 0;
+
+        for (Entity e : world.getOtherEntities(p, box)) {
+            if (!(e instanceof LivingEntity living)) continue;
+            if (e instanceof PlayerEntity) continue;  // ignore other players
+            if (!e.isAlive()) continue;
+
+            EntityType<?> type = e.getType();
+            Bucket b = byType.computeIfAbsent(type, k -> new Bucket());
+            b.count++;
+            double d = origin.squaredDistanceTo(e.getPos());
+            if (d < b.nearestDistSq) {
+                b.nearestDistSq = d;
+                b.nearestPos = e.getBlockPos();
+                b.nearestHealth = living.getHealth();
+                b.nearestMaxHealth = living.getMaxHealth();
+            }
+
+            SpawnGroup grp = type.getSpawnGroup();
+            if (grp == SpawnGroup.MONSTER) totalHostile++;
+            else if (grp == SpawnGroup.CREATURE) totalCreature++;
+            else if (grp == SpawnGroup.AMBIENT) totalAmbient++;
+            else totalOther++;
+        }
+
+        // Sort: hostile first, then by count desc, so the LLM's first hits
+        // are the ones the player likely cares about.
+        java.util.List<java.util.Map.Entry<EntityType<?>, Bucket>> sorted =
+            new java.util.ArrayList<>(byType.entrySet());
+        sorted.sort((a, b) -> {
+            int aH = a.getKey().getSpawnGroup() == SpawnGroup.MONSTER ? 0 : 1;
+            int bH = b.getKey().getSpawnGroup() == SpawnGroup.MONSTER ? 0 : 1;
+            if (aH != bH) return Integer.compare(aH, bH);
+            return Integer.compare(b.getValue().count, a.getValue().count);
+        });
+
+        JsonArray groups = new JsonArray();
+        boolean truncated = false;
+        for (var entry : sorted) {
+            if (groups.size() >= MOBS_GROUP_CAP) { truncated = true; break; }
+            EntityType<?> type = entry.getKey();
+            Bucket b = entry.getValue();
+            Identifier eid = Registries.ENTITY_TYPE.getId(type);
+            JsonObject g = new JsonObject();
+            g.addProperty("id", eid == null ? "?" : eid.toString());
+            g.addProperty("name", type.getName().getString());
+            g.addProperty("category", type.getSpawnGroup().getName());
+            g.addProperty("count", b.count);
+            g.addProperty("nearest_dist", Math.sqrt(b.nearestDistSq));
+            if (b.nearestPos != null) {
+                JsonObject np = new JsonObject();
+                np.addProperty("x", b.nearestPos.getX());
+                np.addProperty("y", b.nearestPos.getY());
+                np.addProperty("z", b.nearestPos.getZ());
+                g.add("nearest_pos", np);
+            }
+            if (b.nearestMaxHealth > 0) {
+                JsonObject hp = new JsonObject();
+                hp.addProperty("hp", b.nearestHealth);
+                hp.addProperty("max", b.nearestMaxHealth);
+                g.add("nearest_health", hp);
+            }
+            // Surface vanilla bosses explicitly — useful "is the dragon
+            // here?" / "is the wither nearby?" answer.
+            if (type == EntityType.ENDER_DRAGON || type == EntityType.WITHER) {
+                g.addProperty("boss", true);
+            }
+            // Adventurez / Mowzie's / similar mods stamp boss-like mob ids
+            // with predictable suffixes; cheap heuristic for "is the lich
+            // here?" — Claude can web-search for confirmation if needed.
+            if (eid != null) {
+                String path = eid.getPath();
+                if (path.contains("boss") || path.contains("lich")
+                    || path.contains("dragon") || path.endsWith("_king")) {
+                    if (!g.has("boss")) g.addProperty("boss_likely", true);
+                }
+            }
+            groups.add(g);
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("radius", radius);
+        if (radius != rawRadius) root.addProperty("radius_clamped_from", rawRadius);
+        JsonObject originJson = new JsonObject();
+        originJson.addProperty("x", p.getBlockX());
+        originJson.addProperty("y", p.getBlockY());
+        originJson.addProperty("z", p.getBlockZ());
+        originJson.addProperty("dim", world.getRegistryKey().getValue().toString());
+        root.add("origin", originJson);
+        root.addProperty("total", totalHostile + totalCreature + totalAmbient + totalOther);
+        JsonObject byCat = new JsonObject();
+        byCat.addProperty("hostile", totalHostile);
+        byCat.addProperty("creature", totalCreature);
+        byCat.addProperty("ambient", totalAmbient);
+        byCat.addProperty("other", totalOther);
+        root.add("by_category", byCat);
+        if (truncated) root.addProperty("truncated", true);
+        root.add("groups", groups);
+        return ClaudeIo.reply(ctx, root);
     }
 
     /**

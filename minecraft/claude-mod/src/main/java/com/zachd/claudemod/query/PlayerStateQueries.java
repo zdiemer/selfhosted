@@ -5,7 +5,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import com.google.gson.JsonArray;
@@ -263,6 +265,112 @@ public final class PlayerStateQueries {
             return ClaudeIo.error(ctx, "puffish_skills api call failed: " + t.toString());
         }
 
+        root.add("categories", categories);
+        return ClaudeIo.reply(ctx, root);
+    }
+
+    /**
+     * Per-skill detail across Puffish categories — answers "what should
+     * I spend my pending skill point on?". {@link #querySkills} returns
+     * category-level totals; this returns the actual skill IDs along with
+     * each one's state (LOCKED / AVAILABLE / AFFORDABLE / UNLOCKED /
+     * EXCLUDED).
+     *
+     * The default state filter is "affordable" — skills the player has
+     * the points for AND has prereqs satisfied for. That's the canonical
+     * "what can I unlock right now?" set. Other filters:
+     *   "available"  — affordable + locked-but-prereqs-met
+     *   "unlocked"   — already taken
+     *   "all"        — every state including LOCKED (verbose; capped)
+     *
+     * Skill IDs are pack-defined (e.g. {@code warrior:strike_1}). Without
+     * descriptions in the API surface we expose IDs only — Claude can
+     * web-search the Prominence II wiki for what they do.
+     */
+    public static int querySkillOptions(CommandContext<ServerCommandSource> ctx,
+                                        String stateArg, String categoryArg) {
+        if (!FabricLoader.getInstance().isModLoaded("puffish_skills")) {
+            return ClaudeIo.error(ctx, "puffish_skills not loaded");
+        }
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        // Resolve state filter. We use the API's enum directly so adding
+        // new states upstream surfaces a clean error rather than silently
+        // dropping skills.
+        String stateNorm = (stateArg == null ? "affordable" : stateArg.trim().toLowerCase());
+        Set<net.puffish.skillsmod.api.Skill.State> wanted = switch (stateNorm) {
+            case "affordable" -> EnumSet.of(
+                net.puffish.skillsmod.api.Skill.State.AFFORDABLE);
+            case "available"  -> EnumSet.of(
+                net.puffish.skillsmod.api.Skill.State.AVAILABLE,
+                net.puffish.skillsmod.api.Skill.State.AFFORDABLE);
+            case "unlocked"   -> EnumSet.of(
+                net.puffish.skillsmod.api.Skill.State.UNLOCKED);
+            case "all"        -> EnumSet.allOf(net.puffish.skillsmod.api.Skill.State.class);
+            default -> null;
+        };
+        if (wanted == null) {
+            return ClaudeIo.error(ctx,
+                "bad state filter '" + stateArg + "'; want: affordable | available | unlocked | all");
+        }
+
+        String catNeedle = (categoryArg == null || categoryArg.isBlank())
+            ? null : categoryArg.toLowerCase();
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("state_filter", stateNorm);
+        if (catNeedle != null) root.addProperty("category_filter", categoryArg);
+
+        JsonArray categories = new JsonArray();
+        // Per-category cap on emitted skills. Modded skill trees can be
+        // large; affordable lists are typically small but "all" can blow
+        // the RCON budget without a cap.
+        final int PER_CAT_CAP = 80;
+
+        try {
+            net.puffish.skillsmod.api.SkillsAPI.streamCategories().forEach(cat -> {
+                String cid = cat.getId().toString();
+                if (catNeedle != null && !cid.toLowerCase().contains(catNeedle)) return;
+
+                JsonObject c = new JsonObject();
+                c.addProperty("id", cid);
+                c.addProperty("sp_left", cat.getPointsLeft(p));
+                c.addProperty("sp_spent", cat.getSpentPoints(p));
+                cat.getExperience().ifPresent(exp -> {
+                    int level = exp.getLevel(p);
+                    c.addProperty("lvl", level);
+                });
+
+                JsonArray skills = new JsonArray();
+                int[] truncated = {0};
+                cat.streamSkills()
+                   .filter(sk -> wanted.contains(sk.getState(p)))
+                   .forEach(sk -> {
+                       if (skills.size() >= PER_CAT_CAP) {
+                           truncated[0]++;
+                           return;
+                       }
+                       JsonObject sj = new JsonObject();
+                       sj.addProperty("id", sk.getId());
+                       sj.addProperty("state",
+                           sk.getState(p).name().toLowerCase());
+                       skills.add(sj);
+                   });
+                c.addProperty("returned", skills.size());
+                if (truncated[0] > 0) c.addProperty("truncated", true);
+                c.add("skills", skills);
+                categories.add(c);
+            });
+        } catch (Throwable t) {
+            return ClaudeIo.error(ctx, "puffish_skills api call failed: " + t.toString());
+        }
+
+        if (categories.size() == 0 && catNeedle != null) {
+            root.addProperty("note",
+                "no category id contains '" + categoryArg + "' — try `claudemod query skills <player>` for the list");
+        }
         root.add("categories", categories);
         return ClaudeIo.reply(ctx, root);
     }
