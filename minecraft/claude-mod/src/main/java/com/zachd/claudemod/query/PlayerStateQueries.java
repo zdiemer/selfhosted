@@ -272,9 +272,12 @@ public final class PlayerStateQueries {
     /**
      * Per-skill detail across Puffish categories — answers "what should
      * I spend my pending skill point on?". {@link #querySkills} returns
-     * category-level totals; this returns the actual skill IDs along with
-     * each one's state (LOCKED / AVAILABLE / AFFORDABLE / UNLOCKED /
-     * EXCLUDED).
+     * category-level totals; this returns the actual skills along with
+     * their human-readable title + description + cost, grouped by
+     * definition (Puffish skill instance ids are position hashes; the
+     * <em>definition</em> is the readable thing — multiple instance
+     * nodes can share one definition, e.g. five "Strength I" nodes all
+     * point at the same definition config).
      *
      * The default state filter is "affordable" — skills the player has
      * the points for AND has prereqs satisfied for. That's the canonical
@@ -283,9 +286,11 @@ public final class PlayerStateQueries {
      *   "unlocked"   — already taken
      *   "all"        — every state including LOCKED (verbose; capped)
      *
-     * Skill IDs are pack-defined (e.g. {@code warrior:strike_1}). Without
-     * descriptions in the API surface we expose IDs only — Claude can
-     * web-search the Prominence II wiki for what they do.
+     * Definition titles / descriptions / cost / prereqs aren't exposed by
+     * Puffish's public API surface — only the {@link Skill#getId()} hash
+     * is. We reach in via reflection on {@code SkillsMod.categories}
+     * (private). If the reflection breaks (Puffish refactor), the query
+     * gracefully degrades to ID-only output instead of failing.
      */
     public static int querySkillOptions(CommandContext<ServerCommandSource> ctx,
                                         String stateArg, String categoryArg) {
@@ -323,11 +328,21 @@ public final class PlayerStateQueries {
         root.addProperty("state_filter", stateNorm);
         if (catNeedle != null) root.addProperty("category_filter", categoryArg);
 
+        // Resolve once; subsequent category lookups are O(1) map gets.
+        // Failure is non-fatal — the query falls back to ID-only output
+        // and surfaces a `defs_unavailable` note in the response.
+        java.util.Map<net.minecraft.util.Identifier, Object> catConfigs =
+            PuffishConfigAccess.getCategoryConfigs();
+        if (catConfigs == null) {
+            root.addProperty("defs_unavailable", true);
+            root.addProperty("defs_note", "couldn't reflect into puffish config; titles + descriptions skipped");
+        }
+
         JsonArray categories = new JsonArray();
-        // Per-category cap on emitted skills. Modded skill trees can be
-        // large; affordable lists are typically small but "all" can blow
-        // the RCON budget without a cap.
-        final int PER_CAT_CAP = 80;
+        // Per-category cap. Aggregating by definition keeps this small in
+        // the typical case — Prominence II categories have ~30 unique
+        // definitions even when the tree has hundreds of node instances.
+        final int PER_CAT_CAP = 60;
 
         try {
             net.puffish.skillsmod.api.SkillsAPI.streamCategories().forEach(cat -> {
@@ -343,24 +358,82 @@ public final class PlayerStateQueries {
                     c.addProperty("lvl", level);
                 });
 
-                JsonArray skills = new JsonArray();
-                int[] truncated = {0};
-                cat.streamSkills()
-                   .filter(sk -> wanted.contains(sk.getState(p)))
-                   .forEach(sk -> {
-                       if (skills.size() >= PER_CAT_CAP) {
-                           truncated[0]++;
-                           return;
-                       }
-                       JsonObject sj = new JsonObject();
-                       sj.addProperty("id", sk.getId());
-                       sj.addProperty("state",
-                           sk.getState(p).name().toLowerCase());
-                       skills.add(sj);
-                   });
-                c.addProperty("returned", skills.size());
-                if (truncated[0] > 0) c.addProperty("truncated", true);
-                c.add("skills", skills);
+                // Group by definitionId, counting per-state across the
+                // matched skills. Each bucket records the first skill
+                // instance id it sees (so the LLM can map back to a
+                // specific node if needed), the per-state count for the
+                // wanted-state slice, and the total instances of this
+                // definition in the category (for "X/Y available").
+                class Bucket {
+                    String defId;
+                    String firstSkillId;
+                    int matchedCount = 0;
+                    int totalInCategory = 0;
+                    java.util.EnumMap<net.puffish.skillsmod.api.Skill.State, Integer> stateBreakdown =
+                        new java.util.EnumMap<>(net.puffish.skillsmod.api.Skill.State.class);
+                }
+                java.util.LinkedHashMap<String, Bucket> byDef = new java.util.LinkedHashMap<>();
+                Object catConfig = catConfigs == null
+                    ? null : catConfigs.get(cat.getId());
+
+                cat.streamSkills().forEach(sk -> {
+                    String defId = catConfig == null ? null
+                        : PuffishConfigAccess.getDefinitionIdFor(catConfig, sk.getId());
+                    String key = defId != null ? defId : ("__unknown:" + sk.getId());
+                    Bucket b = byDef.computeIfAbsent(key, k -> {
+                        Bucket nb = new Bucket();
+                        nb.defId = defId;
+                        nb.firstSkillId = sk.getId();
+                        return nb;
+                    });
+                    b.totalInCategory++;
+                    var state = sk.getState(p);
+                    b.stateBreakdown.merge(state, 1, Integer::sum);
+                    if (wanted.contains(state)) b.matchedCount++;
+                });
+
+                // Sort: most matches first so the LLM's primary candidates
+                // come first when the response is read top-to-bottom.
+                java.util.List<Bucket> sorted = new java.util.ArrayList<>(byDef.values());
+                sorted.sort(Comparator.<Bucket>comparingInt(b -> b.matchedCount).reversed());
+
+                JsonArray defs = new JsonArray();
+                int truncated = 0;
+                for (Bucket b : sorted) {
+                    if (b.matchedCount == 0) continue;  // no instances in wanted state
+                    if (defs.size() >= PER_CAT_CAP) { truncated++; continue; }
+                    JsonObject d = new JsonObject();
+                    if (b.defId != null) d.addProperty("def_id", b.defId);
+                    d.addProperty("sample_skill_id", b.firstSkillId);
+                    if (b.defId != null && catConfig != null) {
+                        var meta = PuffishConfigAccess.describeDefinition(catConfig, b.defId);
+                        if (meta != null) {
+                            if (meta.title != null && !meta.title.isEmpty())
+                                d.addProperty("title", ClaudeIo.truncate(meta.title, 80));
+                            if (meta.description != null && !meta.description.isEmpty())
+                                d.addProperty("description", ClaudeIo.truncate(meta.description, 240));
+                            d.addProperty("cost", meta.cost);
+                            if (meta.requiredSkills > 0)
+                                d.addProperty("requires_skills", meta.requiredSkills);
+                            if (meta.requiredSpentPoints > 0)
+                                d.addProperty("requires_spent", meta.requiredSpentPoints);
+                        }
+                    }
+                    d.addProperty(stateNorm + "_nodes", b.matchedCount);
+                    d.addProperty("total_nodes", b.totalInCategory);
+                    // Compact state breakdown — only non-zero buckets, so
+                    // the LLM doesn't have to scan five "0"s per entry.
+                    JsonObject br = new JsonObject();
+                    for (var e : b.stateBreakdown.entrySet()) {
+                        if (e.getValue() == 0) continue;
+                        br.addProperty(e.getKey().name().toLowerCase(), e.getValue());
+                    }
+                    d.add("state_breakdown", br);
+                    defs.add(d);
+                }
+                c.addProperty("returned", defs.size());
+                if (truncated > 0) c.addProperty("truncated", true);
+                c.add("definitions", defs);
                 categories.add(c);
             });
         } catch (Throwable t) {

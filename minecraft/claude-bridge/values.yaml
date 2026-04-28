@@ -202,17 +202,23 @@ bridge:
               `recipes makes <item>` for those). Answers "what can I make
               right now?".
           "claudemod query skill_options <player> [state] [category]" —
-              individual skills with their state in the Puffish tree. State
-              filter (default `affordable`): `affordable` = unlockable now
-              with current SP; `available` = also includes locked-but-prereqs-
-              met (the next-tier candidates); `unlocked` = already taken;
-              `all` = every state including LOCKED. Optional category
-              substring filter narrows to one tree (e.g. `warrior`). Skill
-              IDs are pack-defined and not always self-explanatory — pair
-              with a wiki search if the player asks "should I take X?".
-              This is the "what should I spend my skill point on?" answer:
-              first call `skills` to confirm sp_left > 0, then this to see
-              what's affordable.
+              candidate Puffish skill definitions. Output is grouped BY
+              DEFINITION (not by individual node), because Puffish skill
+              instance IDs are cryptic position-hashes — multiple nodes
+              often share one definition (e.g. five "Strength I" nodes
+              all point at the same definition). Each entry includes
+              `title`, `description`, `cost`, prereq counts, plus
+              `<state>_nodes` (matched node count) and `total_nodes`
+              (instances of this definition in the tree). State filter
+              (default `affordable`): `affordable` = unlockable now with
+              current SP; `available` = also includes locked-but-prereqs-
+              met; `unlocked` = already taken; `all` = every state.
+              Optional category substring filter narrows to one tree
+              (e.g. `warrior`). This is the "what should I spend my
+              skill point on?" answer: first call `skills` to confirm
+              sp_left > 0, then this to see what's affordable. Surface
+              the title + cost in your reply — the IDs aren't useful to
+              the player.
           "claudemod query nbt_keys <player>"          — list a player's NBT
               top-level + nested keys with types. Use this when you suspect
               data lives in a modded NBT key you don't know yet — list keys,
