@@ -227,6 +227,34 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,32}$")
 
 
 @mcp.tool()
+def teleport_caller_home() -> str:
+    """
+    Teleport the requesting player to their bed / respawn point.
+
+    Use when the player asks to go home, return to base, "tp me home",
+    "send me to bed", etc. Resolves the bed via the asking player's
+    SpawnPointPosition + SpawnPointDimension, so it correctly handles
+    cross-dimensional respawns (e.g. nether respawn anchor).
+
+    Args:
+        (none — caller identity comes from CALLER_PLAYER env)
+
+    Returns:
+        Confirmation including coords + dimension on success, or an
+        error message if the player has no spawn set yet (they need
+        to sleep in a bed / set a respawn anchor first).
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return "(error: caller name not available; refusing teleport)"
+    try:
+        return _rcon(f"claudemod home {caller}")
+    except Exception as e:
+        print(f"teleport_caller_home: rcon failed: {e}", file=sys.stderr)
+        return f"(home teleport failed: {e})"
+
+
+@mcp.tool()
 def add_bluemap_marker(name: str, label: str = "") -> str:
     """
     Add a point-of-interest marker to the public BlueMap web view at the

@@ -181,6 +181,9 @@ public final class ClaudeQueryCommand {
                             .then(CommandManager.argument("path", StringArgumentType.greedyString())
                                 .executes(ctx -> queryNbtKeys(ctx,
                                     StringArgumentType.getString(ctx, "path")))))))
+                .then(CommandManager.literal("home")
+                    .then(CommandManager.argument("player", StringArgumentType.word())
+                        .executes(ClaudeQueryCommand::homeCommand)))
         );
     }
 
@@ -245,6 +248,23 @@ public final class ClaudeQueryCommand {
             JsonArray arr = new JsonArray();
             ench.forEach((e, level) -> arr.add(e.getName(level).getString()));
             o.add("enchants", arr);
+        }
+        // Tiered mod adds tier/durability metadata under tag.Tiered/durable.
+        // This is the modpack's actual "item level" surface — strip the
+        // tiered: namespace for cleaner output (e.g. "legendary_melee_3").
+        if (stack.hasNbt()) {
+            var nbt = stack.getNbt();
+            if (nbt.contains("Tiered", 10)) {
+                var tiered = nbt.getCompound("Tiered");
+                if (tiered.contains("Tier", 8)) {
+                    String tier = tiered.getString("Tier");
+                    if (tier.startsWith("tiered:")) tier = tier.substring(7);
+                    o.addProperty("tier", tier);
+                }
+            }
+            if (nbt.contains("durable", 6)) {
+                o.addProperty("durability_mod", nbt.getDouble("durable"));
+            }
         }
         return o;
     }
@@ -813,6 +833,30 @@ public final class ClaudeQueryCommand {
         }
         root.add("effects", effects);
 
+        // Bed/respawn point. null when player has never slept in a bed.
+        BlockPos spawn = p.getSpawnPointPosition();
+        if (spawn != null) {
+            JsonObject bed = new JsonObject();
+            bed.addProperty("x", spawn.getX());
+            bed.addProperty("y", spawn.getY());
+            bed.addProperty("z", spawn.getZ());
+            bed.addProperty("dim", p.getSpawnPointDimension().getValue().toString());
+            bed.addProperty("angle", p.getSpawnAngle());
+            root.add("bed_spawn", bed);
+        }
+
+        // Last death location, when set (gamerule keepInventory false +
+        // recent death). Vanilla clears this on respawn so it tends to be
+        // current-life-only.
+        p.getLastDeathPos().ifPresent(global -> {
+            JsonObject d = new JsonObject();
+            d.addProperty("x", global.getPos().getX());
+            d.addProperty("y", global.getPos().getY());
+            d.addProperty("z", global.getPos().getZ());
+            d.addProperty("dim", global.getDimension().getValue().toString());
+            root.add("last_death", d);
+        });
+
         // Resolved attribute values — base + all modifiers stacked.
         JsonObject attrs = new JsonObject();
         // 1.20.1 generic attributes only — the PLAYER_*_INTERACTION_RANGE
@@ -1376,6 +1420,49 @@ public final class ClaudeQueryCommand {
             return error(ctx, "lookup failed: " + t.getClass().getSimpleName());
         }
         return reply(ctx, root);
+    }
+
+    // ---------- home (teleport to bed/spawn) --------------------------------
+    /**
+     * Teleport a player to their bed/respawn point. RCON-only, intended to
+     * be invoked by the bridge tool teleport_caller_home which substitutes
+     * the asking player's name from CALLER_PLAYER. Returns a structured
+     * error if the player has no spawn set (never slept in a bed).
+     *
+     * Uses ServerPlayerEntity.teleport which handles cross-dimension moves
+     * cleanly — important because bed_spawn can be in any dim.
+     */
+    private static int homeCommand(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        BlockPos spawn = p.getSpawnPointPosition();
+        if (spawn == null) {
+            JsonObject err = new JsonObject();
+            err.addProperty("ok", false);
+            err.addProperty("error", "no spawn point set; sleep in a bed first");
+            return reply(ctx, err);
+        }
+        RegistryKey<World> dim = p.getSpawnPointDimension();
+        ServerWorld target = ctx.getSource().getServer().getWorld(dim);
+        if (target == null) {
+            JsonObject err = new JsonObject();
+            err.addProperty("ok", false);
+            err.addProperty("error", "spawn dimension unavailable: " + dim.getValue());
+            return reply(ctx, err);
+        }
+        float angle = p.getSpawnAngle();
+        // +0.5 to land in the block centre; +1 on Y to clear bed/anchor block.
+        p.teleport(target, spawn.getX() + 0.5, spawn.getY() + 1, spawn.getZ() + 0.5, angle, 0);
+
+        JsonObject ok = new JsonObject();
+        ok.addProperty("ok", true);
+        ok.addProperty("player", p.getName().getString());
+        ok.addProperty("x", spawn.getX());
+        ok.addProperty("y", spawn.getY());
+        ok.addProperty("z", spawn.getZ());
+        ok.addProperty("dim", dim.getValue().toString());
+        return reply(ctx, ok);
     }
 
     // ---------- nbt_keys (index for unknown mod data) ------------------------

@@ -123,6 +123,10 @@ bridge:
         "go where X is". The tool moves the asking player ONLY — if a
         player asks you to move someone else, decline politely; that's
         not a thing this tool does.
+      - teleport_caller_home: teleport the requesting player to their
+        bed / respawn point. Call this for "tp me home", "go home",
+        "send me to bed", "back to base". Errors gracefully if they've
+        never slept in a bed.
       - run_query_command: read-only Minecraft state queries (RCON allowlist).
         Use this aggressively for ANY in-game question — XP, inventory,
         stats, position, recipes, time, online players, scoreboards. Compose
