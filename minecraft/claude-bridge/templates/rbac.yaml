@@ -1,0 +1,43 @@
+{{/*
+Tightly scoped ServiceAccount: the bridge only needs to list the Minecraft
+pods (to find the current one by label) and read their logs. No write
+verbs anywhere. If the bridge token leaked, the worst an attacker could do
+is read minecraft chat — which they could already see by joining the server.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "claude-bridge.fullname" . }}
+  labels:
+    {{- include "claude-bridge.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "claude-bridge.fullname" . }}
+  namespace: {{ .Values.minecraft.namespace }}
+  labels:
+    {{- include "claude-bridge.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "claude-bridge.fullname" . }}
+  namespace: {{ .Values.minecraft.namespace }}
+  labels:
+    {{- include "claude-bridge.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "claude-bridge.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "claude-bridge.fullname" . }}

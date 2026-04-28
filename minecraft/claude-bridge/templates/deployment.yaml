@@ -1,0 +1,165 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "claude-bridge.fullname" . }}
+  labels:
+    {{- include "claude-bridge.labels" . | nindent 4 }}
+spec:
+  # Single replica — RCON broadcasts and FEEDBACK.md commits are not safe to
+  # run in parallel from multiple bridge pods.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "claude-bridge.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "claude-bridge.labels" . | nindent 8 }}
+      annotations:
+        # Re-roll on settings.json / mcp.json changes so a baked-in config
+        # bump doesn't require a manual `kubectl rollout restart`.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "claude-bridge.fullname" . }}
+      securityContext:
+        runAsUser: 1000          # `node` user from the base image
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bridge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: MC_NAMESPACE
+              value: {{ .Values.minecraft.namespace | quote }}
+            - name: MC_POD_SELECTOR
+              value: {{ .Values.minecraft.podSelector | quote }}
+            - name: MC_POD_CONTAINER
+              value: {{ .Values.minecraft.podContainer | quote }}
+            - name: RCON_HOST
+              value: {{ .Values.minecraft.rcon.host | quote }}
+            - name: RCON_PORT
+              value: {{ .Values.minecraft.rcon.port | quote }}
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minecraft.rcon.existingSecret }}
+                  key: {{ .Values.minecraft.rcon.secretKey }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "claude-bridge.fullname" . }}
+                  key: github-token
+            - name: BRIDGE_PREFIX
+              value: {{ .Values.bridge.prefix | quote }}
+            - name: MAX_PROMPT_CHARS
+              value: {{ .Values.bridge.maxPromptChars | quote }}
+            - name: MAX_RESPONSE_CHARS
+              value: {{ .Values.bridge.maxResponseChars | quote }}
+            - name: RATE_LIMIT_REQUESTS
+              value: {{ .Values.bridge.rateLimit.requests | quote }}
+            - name: RATE_LIMIT_WINDOW_SECONDS
+              value: {{ .Values.bridge.rateLimit.windowSeconds | quote }}
+            - name: ENFORCE_WHITELIST
+              value: {{ .Values.bridge.enforceWhitelist | quote }}
+            - name: CLAUDE_MODEL
+              value: {{ .Values.bridge.model | quote }}
+            - name: SYSTEM_PROMPT
+              value: {{ .Values.bridge.systemPrompt | quote }}
+            - name: FEEDBACK_REPO_URL
+              value: {{ .Values.bridge.feedback.repoUrl | quote }}
+            - name: FEEDBACK_BRANCH
+              value: {{ .Values.bridge.feedback.branch | quote }}
+            - name: FEEDBACK_FILE
+              value: {{ .Values.bridge.feedback.file | quote }}
+            - name: FEEDBACK_GIT_USER
+              value: {{ .Values.bridge.feedback.gitUserName | quote }}
+            - name: FEEDBACK_GIT_EMAIL
+              value: {{ .Values.bridge.feedback.gitUserEmail | quote }}
+            # HOME points into a writable dir; .claude inside it is a
+            # symlink (set up at startup) into /home/node/.claude where
+            # we mount the OAuth credentials.
+            - name: HOME
+              value: /app/state
+            - name: STATE_DIR
+              value: /app/state
+          volumeMounts:
+            - name: state
+              mountPath: /app/state
+            # HostPath mount of the user's OAuth credentials file.
+            # Read-write so Claude Code can refresh access tokens in
+            # place — host and pod share one refresh token, kept fresh
+            # by whichever side runs most recently. The init container
+            # symlinks HOME/.claude/.credentials.json to this path so
+            # Claude Code finds it on every spawn.
+            - name: claude-creds
+              mountPath: /host-claude/credentials.json
+            # tmpfs for things that genuinely need to be writable but
+            # ephemeral — npx caches, git temp objects.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      initContainers:
+        # Bootstrap the writable state dir on the PVC: ensure subdirs exist
+        # and that HOME/.claude points at the read-only credentials mount.
+        # Runs as the same UID so file ownership is correct on first install.
+        - name: init-state
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /app/state/.claude /app/state/feedback-repo
+              # Wire the host credentials file into HOME/.claude as a
+              # symlink. Claude Code reads $HOME/.claude/.credentials.json
+              # on every spawn; the file lives on the host filesystem
+              # under /host-claude/credentials.json (hostPath mount).
+              ln -snf /host-claude/credentials.json /app/state/.claude/.credentials.json
+              # Surface the baked-in tool allowlist as $HOME/.claude/settings.json
+              # so claude-code picks it up without needing a CLI flag.
+              ln -snf /app/claude-config/settings.json /app/state/.claude/settings.json
+              echo "state initialized"
+          volumeMounts:
+            - name: state
+              mountPath: /app/state
+            - name: claude-creds
+              mountPath: /host-claude/credentials.json
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ include "claude-bridge.fullname" . }}-state
+        - name: claude-creds
+          hostPath:
+            path: {{ .Values.auth.hostPath }}
+            type: File
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

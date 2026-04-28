@@ -1,0 +1,8 @@
+apiVersion: v2
+name: claude-bridge
+description: Bridge that lets Minecraft players talk to Claude via "!claude ..." chat messages
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: zachd

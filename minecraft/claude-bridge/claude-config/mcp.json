@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "claude-bridge-feedback": {
+      "command": "/app/venv/bin/python",
+      "args": ["/app/src/mcp_feature_requests.py"]
+    }
+  }
+}

@@ -1,0 +1,213 @@
+# ============================================================================
+# claude-bridge — Minecraft chat → Claude Code → Minecraft chat
+# ----------------------------------------------------------------------------
+# A single pod that:
+#   1. Streams the Minecraft pod's stdout via the k8s API and watches for
+#      `<player> !claude <prompt>` chat lines.
+#   2. Spawns Claude Code (`claude -p`) per request, scoped via settings.json:
+#      no Bash / Edit / Write — just Read / Grep / WebFetch / WebSearch and a
+#      custom MCP tool for recording feature requests.
+#   3. Sends the reply back via RCON `tellraw`, chunked to fit chat lines.
+#
+# Sandbox layers (defense in depth):
+#   - Pod:   readOnlyRootFilesystem, no SA token mount for the claude process,
+#            NetworkPolicy egress restricted to api.anthropic.com + RCON +
+#            github.com (for FEEDBACK.md commits) + k8s API (log streaming).
+#   - Tools: Bash/Edit/Write/NotebookEdit denied via settings.json.
+#   - Bridge: per-player rate limit + prompt cap + output cap + whitelist
+#            optionally pulled from the live Minecraft whitelist.
+#
+# No restart of the Minecraft pod is required to install or upgrade this —
+# we read its logs over the API and talk to its already-exposed RCON service.
+#
+# First install:
+#   ./minecraft/claude-bridge/build.sh                         # build + side-load image
+#   cp minecraft/claude-bridge/values.local.yaml.example \
+#      minecraft/claude-bridge/values.local.yaml
+#   # ...edit values.local.yaml: ANTHROPIC_API_KEY + GITHUB_TOKEN
+#   helm install claude-bridge ./minecraft/claude-bridge -n minecraft \
+#     -f minecraft/claude-bridge/values.yaml \
+#     -f minecraft/claude-bridge/values.local.yaml
+#
+# Upgrade:
+#   ./minecraft/claude-bridge/upgrade.sh
+# ============================================================================
+
+# Built locally via build.sh and side-loaded into k3s containerd —
+# imagePullPolicy: Never because there's no registry.
+image:
+  repository: claude-bridge
+  tag: "0.1.0"
+  pullPolicy: Never
+
+# ----------------------------------------------------------------------------
+# Where the bridge points: which Minecraft pod's logs to follow + which RCON
+# service to send tellraw through. Defaults match the sibling minecraft chart
+# installed as `helm install mc itzg/minecraft -n minecraft`.
+# ----------------------------------------------------------------------------
+minecraft:
+  namespace: minecraft
+  # Label selector for the Minecraft pod (itzg's chart sets app=<release>-minecraft).
+  podSelector: "app=mc-minecraft"
+  # Container name within the pod (itzg's default).
+  podContainer: "mc-minecraft"
+  rcon:
+    # ClusterIP service exposing RCON in the minecraft namespace.
+    host: "mc-minecraft-rcon"
+    port: 25575
+    # Existing secret created during minecraft install:
+    #   kubectl -n minecraft get secret mc-rcon
+    existingSecret: "mc-rcon"
+    secretKey: "password"
+
+# ----------------------------------------------------------------------------
+# Bridge behavior — non-secret tunables.
+# ----------------------------------------------------------------------------
+bridge:
+  # Chat trigger word. Players type `<prefix> <prompt>` in public chat.
+  # Note: this DOES go to Discord via dcintegration. We tried /teammsg
+  # to avoid that, but vanilla doesn't echo team chat to server stdout,
+  # which the bridge requires. Fixing it would need a Fabric mod (= server
+  # restart). Public chat is the working path on a vanilla-flavored Fabric
+  # server.
+  prefix: "!claude"
+
+  # Hard cap on incoming prompt length, in characters. Players spamming long
+  # prompts is a cost vector. 500 chars is plenty for chat.
+  maxPromptChars: 500
+
+  # Hard cap on response length, in characters, post-formatting. Anything
+  # longer is truncated with an ellipsis. Chat is noisy — keep replies short.
+  # Roughly one line of in-game chat at default width.
+  maxResponseChars: 240
+
+  # Per-player rate limit: at most N requests per windowSeconds.
+  rateLimit:
+    requests: 5
+    windowSeconds: 60
+
+  # Model alias passed to `claude --model`. Sonnet is the right default for
+  # chat-shaped one-liners — fast, cheap, plenty smart for recipe / mechanic
+  # questions. Bump to "opus" if you want it to handle longer-form reasoning.
+  # Use "haiku" for the cheapest path. Empty string = let the CLI pick.
+  model: "sonnet"
+
+  # If true, only players currently on the Minecraft whitelist may use !claude.
+  # Pulled live via `whitelist list` over RCON. Strongly recommended on a
+  # public-IP server — anyone who guesses your address could otherwise burn
+  # your API budget. Disable only on a fully private server.
+  enforceWhitelist: true
+
+  # System prompt steers Claude toward chat-shaped answers. Players are
+  # typing in Minecraft, not reading a doc — be concise.
+  systemPrompt: |
+    You are embedded in a Minecraft server's chat. Players type !claude <q>.
+
+    Tools available (use them silently — never announce that you're using one):
+      - WebSearch: live web search. Use this when the question hinges on
+        facts you might not have memorized exactly (recipes, mechanics,
+        mod-specific behavior, current mod versions, patch notes).
+      - WebFetch: fetch a specific URL when you already know one (e.g. a
+        wiki page or modrinth listing).
+      - Read: read a file by absolute path. Limited to the bridge's own
+        working dir (/app) — only useful for meta-questions about the
+        bridge itself.
+      - Glob: list files matching a pattern (same scope as Read).
+      - Grep: search file contents (same scope as Read).
+      - record_feature_request: log a player's feature request to
+        FEEDBACK.md. Call this when the player expresses a wish for new
+        server behavior ("I wish there was…", "would be cool if…",
+        "please add…", etc.).
+      - teleport_caller_to_player: teleport the requesting player to
+        another online player. Call this for "tp me to X", "take me to X",
+        "go where X is". The tool moves the asking player ONLY — if a
+        player asks you to move someone else, decline politely; that's
+        not a thing this tool does.
+
+    All other tools (Bash, Edit, Write, NotebookEdit, Task) are denied —
+    do not attempt them.
+
+    HARD RULES — violating these is worse than being slightly less helpful:
+      - One sentence. Maximum 200 characters. No exceptions.
+      - No preamble ("Sure!", "Great question"), no sign-off, no markdown,
+        no code blocks, no lists. Just the answer.
+      - Don't say "I searched" / "according to the wiki" — just give the
+        answer. The tool calls are invisible to the player.
+      - If you can't fit the answer in one sentence, give the most useful
+        partial answer that fits. Don't say "in short" or "tl;dr".
+      - The pack is Prominence II: Hasturian Era on Fabric 1.20.1. Tailor
+        recipe / progression answers to that pack — the wiki at
+        https://prominence-2.fandom.com/ is authoritative when you need it.
+
+  # Where to commit feature requests. The bridge clones this repo into the
+  # PVC at startup, and on every record_feature_request call it appends a
+  # line to FEEDBACK.md, commits, and pushes. Falls back to a local JSONL
+  # audit log if git fails (network blip, conflict, etc.).
+  feedback:
+    repoUrl: "https://github.com/zdiemer/minecraft-k3s.git"
+    branch: "main"
+    file: "FEEDBACK.md"
+    # Author identity for the auto-commits. Email gets a +bot suffix so
+    # commits are visually distinguishable from human ones in `git log`.
+    gitUserName: "claude-bridge"
+    gitUserEmail: "claude-bridge+bot@zachd.local"
+
+# ----------------------------------------------------------------------------
+# Storage — small PVC for the cloned repo, Claude Code session history, and
+# the JSONL audit fallback. Local-path; fine to lose on cluster rebuild.
+# ----------------------------------------------------------------------------
+persistence:
+  size: 2Gi
+  # storageClass: ""   # unset = cluster default (k3s local-path)
+
+# ----------------------------------------------------------------------------
+# Resources — Claude Code is an npx-style spawn per request, ~150-300MB while
+# active. Idle is ~80MB. Keep the limit modest so a stuck session can't eat
+# the node.
+# ----------------------------------------------------------------------------
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 1Gi
+    cpu: 1000m
+
+# ----------------------------------------------------------------------------
+# Pin the bridge to the same node as the Minecraft pod. Logs stream over the
+# k8s API regardless, but co-location keeps RCON traffic local.
+# ----------------------------------------------------------------------------
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# Claude Code authentication — shared with the host.
+#
+# We hostPath-mount /home/zachd/.claude/.credentials.json straight into the
+# pod (single-node k3s, UID 1000 on both sides, 0600 perms preserved). The
+# mount is read-write so Claude Code can refresh OAuth access tokens in
+# place; you and the bridge end up using the same refresh token, kept fresh
+# by whichever side ran most recently.
+#
+# Implications:
+#   - You must have run `claude login` on this host at least once.
+#   - If the file moves or you wipe ~/.claude, the bridge breaks until you
+#     re-authenticate.
+#   - Pinned to zachd-ubuntu via nodeSelector below; don't reschedule it.
+# ----------------------------------------------------------------------------
+auth:
+  hostPath: /home/zachd/.claude/.credentials.json
+
+# ============================================================================
+# SECRETS — filled by values.local.yaml (gitignored).
+# ============================================================================
+secrets:
+  # GitHub PAT with `repo` scope on zdiemer/minecraft-k3s. Used to push
+  # FEEDBACK.md updates. Leave empty to fall back to a JSONL audit log only.
+  #   https://github.com/settings/tokens/new?scopes=repo&description=claude-bridge
+  githubToken: ""

@@ -1,0 +1,15 @@
+# Copy to values.local.yaml (gitignored) and fill in:
+#
+#   cp minecraft/claude-bridge/values.local.yaml.example \
+#      minecraft/claude-bridge/values.local.yaml
+#
+# Claude Code auth is shared with the host's ~/.claude/.credentials.json
+# (hostPath-mounted into the pod) — no secret to paste here.
+#
+# Generate githubToken at:
+#   https://github.com/settings/tokens/new?scopes=repo&description=claude-bridge
+# (only `repo` scope on zdiemer/minecraft-k3s is needed; leave empty to skip
+# auto-commit and just keep a local JSONL audit log)
+
+secrets:
+  githubToken: "ghp_PASTE_HERE"

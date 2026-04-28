@@ -1,0 +1,70 @@
+{{/*
+Egress allowlist for the bridge pod:
+  - DNS (kube-dns / coredns) on UDP+TCP 53
+  - The kube-apiserver (for streaming pod logs)
+  - The Minecraft RCON ClusterIP service inside the namespace
+  - Anything on TCP 443 (api.anthropic.com, github.com, codeload.github.com)
+    — we can't pin to a hostname here without a CNI plugin that supports
+    FQDN policies, so we widen to "any external IP on 443" and rely on
+    the tool allowlist + container hardening to keep blast radius low.
+
+Ingress: nothing. The bridge has no listening ports.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "claude-bridge.fullname" . }}
+  labels:
+    {{- include "claude-bridge.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "claude-bridge.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+    - Ingress
+  ingress: []   # no inbound traffic ever
+  egress:
+    # DNS resolution for service names + external hostnames.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Minecraft RCON inside the same namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ regexReplaceAll "^app=" .Values.minecraft.podSelector "" }}
+      ports:
+        - port: {{ .Values.minecraft.rcon.port }}
+          protocol: TCP
+
+    # Kube-apiserver — required for streaming pod logs. The address
+    # depends on the cluster; we leave the destination wide and pin to
+    # the standard apiserver ports. (k3s exposes 6443.)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+
+    # Outbound HTTPS to api.anthropic.com + github.com. Kubernetes
+    # NetworkPolicy can't match on hostname; this is the tightest we can do.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

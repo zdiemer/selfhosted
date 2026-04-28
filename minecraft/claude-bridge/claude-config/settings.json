@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Task"
+    ],
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "mcp__claude-bridge-feedback__record_feature_request",
+      "mcp__claude-bridge-feedback__teleport_caller_to_player"
+    ]
+  },
+  "includeCoAuthoredBy": false
+}
