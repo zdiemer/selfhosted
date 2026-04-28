@@ -59,8 +59,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "claude-bridge.fullname" . }}
                   key: github-token
-            - name: BRIDGE_PREFIX
-              value: {{ .Values.bridge.prefix | quote }}
             - name: MAX_PROMPT_CHARS
               value: {{ .Values.bridge.maxPromptChars | quote }}
             - name: MAX_RESPONSE_CHARS

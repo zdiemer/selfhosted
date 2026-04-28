@@ -13,7 +13,8 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 | Folder | What it is | Docs |
 |---|---|---|
 | [`minecraft/`](minecraft/) | Prominence II: Hasturian Era (Fabric 1.20.1) via the `itzg/minecraft` chart. BlueMap + Discord Integration add-ons, mc-backup sidecar. | [README bootstrap in values.yaml](minecraft/values.yaml), [ADDON_SETUP](minecraft/ADDON_SETUP.md), [CLIENT_SETUP](minecraft/CLIENT_SETUP.md) |
-| [`minecraft/claude-bridge/`](minecraft/claude-bridge/) | Sandboxed Claude Code in a pod — players type `!claude <q>` in chat, the bridge tails the server log + replies via RCON. Logs feature requests to `FEEDBACK.md`. | [minecraft/claude-bridge/README](minecraft/claude-bridge/README.md) |
+| [`minecraft/claude-bridge/`](minecraft/claude-bridge/) | Sandboxed Claude Code in a pod — players type `/claude <q>`, the bridge tails the server log + replies via RCON, can teleport on request, logs feature requests to `FEEDBACK.md`. | [minecraft/claude-bridge/README](minecraft/claude-bridge/README.md) |
+| [`minecraft/claude-mod/`](minecraft/claude-mod/) | Tiny server-side Fabric mod that registers `/claude <prompt>` via Brigadier and prints a recognizable line for `claude-bridge` to pick up. Sideloaded into the PVC via `install.sh`. | [minecraft/claude-mod/README](minecraft/claude-mod/README.md) |
 | [`discord/vocard/`](discord/vocard/) | Vocard music bot + Lavalink + MongoDB — slash-command music player for voice channels. Bot-only (no dashboard). | [discord/vocard/README](discord/vocard/README.md) |
 | [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
 | [`auth/authelia/`](auth/authelia/) | Authelia — OIDC provider + (future) Traefik forward-auth. Shared login for every service in the cluster. | [auth/authelia/README](auth/authelia/README.md) |

@@ -1,0 +1,49 @@
+// Minimal Fabric 1.20.1 mod build. Versions live in gradle.properties so
+// install.sh can stamp the same JAR name into kubectl cp without parsing
+// build files.
+
+plugins {
+    id 'fabric-loom' version '1.6.12'
+    id 'java'
+}
+
+archivesBaseName = project.archives_base_name
+version = project.mod_version
+group = project.maven_group
+
+repositories {
+    // fabric-permissions-api is hosted on Modrinth's maven, not Maven Central.
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings  "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Compile-only — fabric-permissions-api is already present at runtime
+    // on the live server (declared in minecraft/values.yaml MODRINTH_PROJECTS),
+    // so we don't bundle or re-ship it.
+    modCompileOnly "maven.modrinth:fabric-permissions-api:${project.permissions_api}"
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+jar {
+    from('LICENSE') { rename { "${it}_${project.archivesBaseName}" } }
+}

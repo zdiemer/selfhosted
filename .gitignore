@@ -19,3 +19,8 @@ secrets/
 # The ** glob covers every subproject's values.local.yaml.
 **/values.local.yaml
 .claude/settings.local.json
+
+# Gradle build artifacts (claude-mod). The JAR is sideloaded via install.sh,
+# not checked in.
+**/build/
+**/.gradle/

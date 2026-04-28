@@ -1,16 +1,20 @@
 # claude-bridge
 
-Bridge that lets Minecraft players talk to Claude directly from in-game
-chat. Players type `!claude <question>`, the bridge runs the Claude Code
-CLI in a sandboxed pod, and the reply is broadcast back via RCON
-`tellraw`. **No server-side mod or restart required** — the bridge
-streams the Minecraft pod's stdout via the Kubernetes API and reaches
-RCON over its existing ClusterIP service.
+Bridge that lets Minecraft players talk to Claude directly from in-game.
+Players type `/claude <question>` (a Brigadier command registered by the
+sibling [`claude-mod`](../claude-mod/) Fabric mod), the bridge tails the
+server log for the dispatch line, runs the Claude Code CLI in a
+sandboxed pod, and broadcasts the reply via RCON `tellraw`.
+
+The bridge itself runs no Minecraft code — it streams the Minecraft pod's
+stdout via the Kubernetes API and reaches RCON over its existing
+ClusterIP service. Bridge upgrades never restart the Minecraft pod.
+(Installing `claude-mod` does require one restart — see its README.)
 
 ## What it does
 
 ```
-[Bob] !claude what's the recipe for a beacon?
+/claude what's the recipe for a beacon?
 [Claude → Bob] Surround a Nether Star with 3 obsidian on the bottom row and
 […] 5 glass on top. Place on a 3×3 base of iron/gold/emerald/diamond blocks.
 ```
@@ -76,7 +80,7 @@ Everything player-visible lives in `values.yaml` under `bridge:`:
 
 | Knob | Default | Notes |
 |---|---|---|
-| `bridge.prefix` | `!claude` | Trigger word in chat. |
+| Trigger | `/claude <prompt>` | Registered by `claude-mod`; not a values knob. |
 | `bridge.maxPromptChars` | 500 | Rejected with a chat note above this. |
 | `bridge.maxResponseChars` | 800 | Truncated with `…` above this. |
 | `bridge.rateLimit` | 5 / 60s | Per-player sliding window. |

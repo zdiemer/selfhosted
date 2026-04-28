@@ -3,7 +3,8 @@
 # ----------------------------------------------------------------------------
 # A single pod that:
 #   1. Streams the Minecraft pod's stdout via the k8s API and watches for
-#      `<player> !claude <prompt>` chat lines.
+#      `[ClaudeRequest] <player>: <prompt>` lines emitted by the sibling
+#      claude-mod Fabric mod, which registers /claude as a Brigadier command.
 #   2. Spawns Claude Code (`claude -p`) per request, scoped via settings.json:
 #      no Bash / Edit / Write — just Read / Grep / WebFetch / WebSearch and a
 #      custom MCP tool for recording feature requests.
@@ -64,13 +65,11 @@ minecraft:
 # Bridge behavior — non-secret tunables.
 # ----------------------------------------------------------------------------
 bridge:
-  # Chat trigger word. Players type `<prefix> <prompt>` in public chat.
-  # Note: this DOES go to Discord via dcintegration. We tried /teammsg
-  # to avoid that, but vanilla doesn't echo team chat to server stdout,
-  # which the bridge requires. Fixing it would need a Fabric mod (= server
-  # restart). Public chat is the working path on a vanilla-flavored Fabric
-  # server.
-  prefix: "!claude"
+  # Trigger is `/claude <prompt>` registered by the sibling claude-mod
+  # Fabric mod. Bridge log-tails for `[ClaudeRequest] <player>: <prompt>`
+  # which the mod prints on every dispatch. No public-chat trigger; that
+  # was removed when we cut over to the slash command (it was relayed to
+  # Discord, which spammed the channel). See ../claude-mod/README.md.
 
   # Hard cap on incoming prompt length, in characters. Players spamming long
   # prompts is a cost vector. 500 chars is plenty for chat.
@@ -92,7 +91,7 @@ bridge:
   # Use "haiku" for the cheapest path. Empty string = let the CLI pick.
   model: "sonnet"
 
-  # If true, only players currently on the Minecraft whitelist may use !claude.
+  # If true, only players currently on the Minecraft whitelist may use /claude.
   # Pulled live via `whitelist list` over RCON. Strongly recommended on a
   # public-IP server — anyone who guesses your address could otherwise burn
   # your API budget. Disable only on a fully private server.
@@ -101,7 +100,8 @@ bridge:
   # System prompt steers Claude toward chat-shaped answers. Players are
   # typing in Minecraft, not reading a doc — be concise.
   systemPrompt: |
-    You are embedded in a Minecraft server's chat. Players type !claude <q>.
+    You are embedded in a Minecraft server's chat. Players invoke you with
+    /claude <prompt> (a Brigadier command registered by a small Fabric mod).
 
     Tools available (use them silently — never announce that you're using one):
       - WebSearch: live web search. Use this when the question hinges on

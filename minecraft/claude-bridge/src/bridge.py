@@ -58,7 +58,6 @@ class Config:
     rcon_port: int
     rcon_password: str
 
-    prefix: str
     max_prompt_chars: int
     max_response_chars: int
     rate_limit_requests: int
@@ -92,7 +91,6 @@ class Config:
             rcon_host=need("RCON_HOST"),
             rcon_port=int(os.environ.get("RCON_PORT", "25575")),
             rcon_password=need("RCON_PASSWORD"),
-            prefix=os.environ.get("BRIDGE_PREFIX", "!claude"),
             max_prompt_chars=int(os.environ.get("MAX_PROMPT_CHARS", "500")),
             max_response_chars=int(os.environ.get("MAX_RESPONSE_CHARS", "800")),
             rate_limit_requests=int(os.environ.get("RATE_LIMIT_REQUESTS", "5")),
@@ -391,18 +389,15 @@ def stream_minecraft_logs(cfg: Config) -> Iterable[str]:
 # UUID announcement on connect (used to learn name->uuid for sessions):
 #   [HH:MM:SS] [Server thread/INFO]: UUID of player Bob is 12345-67-...
 #
-# Public chat (vanilla / Fabric):
-#   [HH:MM:SS] [Server thread/INFO]: <Bob> message
-# A team-prefixed name shows up as `<[teamname] Bob>`; the [^>]+ capture
-# tolerates that. Downstream we strip any leading bracketed prefix.
+# Slash command from the sibling claude-mod (sees /claude <prompt> via
+# Brigadier, prints this exact line via SLF4J on the Server thread):
+#   [HH:MM:SS] [Server thread/INFO] [claudemod/]: [ClaudeRequest] Bob: prompt
+# We deliberately don't match public chat — the chat path was removed when
+# we moved to a slash command, since dcintegration relays public chat to
+# Discord and we wanted to stop spamming the channel.
 # ---------------------------------------------------------------------------
 UUID_RE = re.compile(r"\[Server thread/INFO\]:?\s*UUID of player (\S+) is ([0-9a-f-]{36})")
-CHAT_RE = re.compile(r"\[Server thread/INFO\]:?\s*<([^>]+)>\s*(.+)$")
-
-
-def _strip_team_prefix(name: str) -> str:
-    # `<[teamname] Bob>` -> `Bob`. No-op if there's no bracketed prefix.
-    return re.sub(r"^\[[^\]]+\]\s*", "", name).strip()
+COMMAND_RE = re.compile(r"\[ClaudeRequest\]\s+(\S+):\s+(.+)$")
 
 
 def main() -> None:
@@ -440,11 +435,7 @@ def main() -> None:
 
     threading.Thread(target=worker, daemon=True, name="claude-worker").start()
 
-    log.info(
-        "bridge ready; prefix=%r whitelist=%s",
-        CFG.prefix, CFG.enforce_whitelist,
-    )
-    prefix_with_space = CFG.prefix + " "
+    log.info("bridge ready; trigger=/claude whitelist=%s", CFG.enforce_whitelist)
 
     for line in stream_minecraft_logs(CFG):
         m = UUID_RE.search(line)
@@ -454,15 +445,10 @@ def main() -> None:
             log.debug("learned UUID for %s = %s", name, uuid)
             continue
 
-        m = CHAT_RE.search(line)
+        m = COMMAND_RE.search(line)
         if not m:
             continue
-        player = _strip_team_prefix(m.group(1))
-        message = m.group(2).strip()
-
-        if not message.startswith(prefix_with_space):
-            continue
-        prompt = message[len(prefix_with_space):].strip()
+        player, prompt = m.group(1), m.group(2).strip()
         if not prompt:
             continue
 
