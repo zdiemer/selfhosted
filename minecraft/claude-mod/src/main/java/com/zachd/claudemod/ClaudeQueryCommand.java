@@ -1445,17 +1445,30 @@ public final class ClaudeQueryCommand {
      * need to load chunks beyond the noise/biome layer, so this is fast
      * and watchdog-safe at 2048-block radius.
      *
-     * Structure search: ChunkGenerator.locateStructure walks chunks
-     * synchronously on the server thread to verify structure presence.
-     * Unloaded chunks get loaded on-demand which is slow. We crashed
-     * once with a 100-chunk radius (>60s watchdog timeout); now capped
-     * to 25 chunks (~400 blocks) which on a Random-Spread structure
-     * checks ~10-15 candidate chunks max — typically <2s on this pack.
-     * Players asking for further-away structures should use vanilla
-     * `/locate structure` themselves so they own the lag risk.
+     * Structure search: hybrid.
+     *   1. Scan already-LOADED chunks within 32-chunk radius via
+     *      WorldChunk.getStructureStart. Free / watchdog-safe — covers
+     *      "where was that village I visited?".
+     *   2. If nothing found, fall through to vanilla
+     *      ChunkGenerator.locateStructure with a HARD-CAPPED 10-chunk
+     *      radius. That's about 1-2 candidate spread points on a
+     *      typical Random-Spread structure, so chunk loading stays
+     *      small enough to fit under the watchdog budget.
+     *
+     * Earlier attempts that crashed:
+     *   - 100 chunk radius → 60s+ chunk loads, watchdog killed JVM.
+     *   - 25 chunk radius  → 51s chunk loads, vanilla's own timeout
+     *     caught it but TPS dropped to ~1.8 for a minute.
      */
-    private static final int STRUCTURE_SEARCH_RADIUS_CHUNKS = 25;
     private static final int BIOME_SEARCH_RADIUS_BLOCKS = 2048;
+    private static final int LOADED_STRUCTURE_RADIUS_CHUNKS = 32;
+    // Strict upper bound on the on-demand fallback when the loaded scan
+    // misses. 10 chunks ≈ 160 blocks. On Random-Spread structures (~32-
+    // chunk spacing) there's at most 1-2 candidate spread points in this
+    // radius, so the chunk-load budget is small enough to stay under
+    // watchdog. Wider scans crashed us before; don't grow this without
+    // moving the work off the server thread.
+    private static final int ON_DEMAND_STRUCTURE_RADIUS_CHUNKS = 10;
 
     private static int queryNearest(CommandContext<ServerCommandSource> ctx, boolean isBiome) {
         String idStr = StringArgumentType.getString(ctx, "id").trim();
@@ -1496,16 +1509,28 @@ public final class ClaudeQueryCommand {
                     RegistryKey.of(RegistryKeys.STRUCTURE, id);
                 var entryOpt = structReg.getEntry(sk);
                 if (entryOpt.isEmpty()) return error(ctx, "unknown structure: " + id);
-                var entryList = net.minecraft.registry.entry.RegistryEntryList.of(entryOpt.get());
-                var pair = world.getChunkManager().getChunkGenerator()
-                    .locateStructure(world, entryList, origin, STRUCTURE_SEARCH_RADIUS_CHUNKS, false);
-                found = pair == null ? null : pair.getFirst();
-                radiusBlocks = STRUCTURE_SEARCH_RADIUS_CHUNKS * 16;
+                var target = entryOpt.get().value();
+                // Step 1: scan already-loaded chunks (free, watchdog-safe).
+                found = findLoadedStructure(world, origin, target);
+                radiusBlocks = LOADED_STRUCTURE_RADIUS_CHUNKS * 16;
+                // Step 2: if nothing in loaded chunks, try a tightly-bounded
+                // on-demand vanilla locate. 10 chunks is small enough that
+                // even with chunk loading the scan stays under a few
+                // seconds in the typical case.
+                if (found == null) {
+                    var entryList = net.minecraft.registry.entry.RegistryEntryList.of(entryOpt.get());
+                    var pair = world.getChunkManager().getChunkGenerator()
+                        .locateStructure(world, entryList, origin,
+                                         ON_DEMAND_STRUCTURE_RADIUS_CHUNKS, false);
+                    found = pair == null ? null : pair.getFirst();
+                    if (found != null) radiusBlocks = ON_DEMAND_STRUCTURE_RADIUS_CHUNKS * 16;
+                }
             }
             if (found == null) {
                 root.addProperty("found", false);
-                root.addProperty("note", "no match within " + radiusBlocks +
-                    " blocks of origin (search is intentionally bounded so it can't lag the server — wider scans need vanilla /locate)");
+                root.addProperty("note", isBiome
+                    ? "no match within " + radiusBlocks + " blocks"
+                    : "no match in any currently-loaded chunk near you (we don't on-demand-load chunks here — it can crash the server). For first-time discovery, run vanilla `/locate structure " + id + "` yourself.");
             } else {
                 root.addProperty("found", true);
                 root.addProperty("x", found.getX());
@@ -1520,6 +1545,40 @@ public final class ClaudeQueryCommand {
             return error(ctx, "lookup failed: " + t.getClass().getSimpleName());
         }
         return reply(ctx, root);
+    }
+
+    /**
+     * Walk the LOADED chunk halo around `origin` and return the closest
+     * BlockPos that has a structure start matching `target`. No chunk
+     * loading — only chunks currently held in memory by the server are
+     * inspected. Returns null if no match is loaded.
+     */
+    private static BlockPos findLoadedStructure(ServerWorld world, BlockPos origin,
+                                                 net.minecraft.world.gen.structure.Structure target) {
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        int cx0 = origin.getX() >> 4;
+        int cz0 = origin.getZ() >> 4;
+        for (int dx = -LOADED_STRUCTURE_RADIUS_CHUNKS; dx <= LOADED_STRUCTURE_RADIUS_CHUNKS; dx++) {
+            for (int dz = -LOADED_STRUCTURE_RADIUS_CHUNKS; dz <= LOADED_STRUCTURE_RADIUS_CHUNKS; dz++) {
+                WorldChunk chunk = world.getChunkManager().getWorldChunk(cx0 + dx, cz0 + dz);
+                if (chunk == null) continue;
+                var start = chunk.getStructureStart(target);
+                if (start == null || !start.hasChildren()) continue;
+                var box = start.getBoundingBox();
+                BlockPos centre = new BlockPos(
+                    (box.getMinX() + box.getMaxX()) / 2,
+                    (box.getMinY() + box.getMaxY()) / 2,
+                    (box.getMinZ() + box.getMaxZ()) / 2
+                );
+                double d = origin.getSquaredDistance(centre);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = centre;
+                }
+            }
+        }
+        return best;
     }
 
     // ---------- perf (server health) ----------------------------------------

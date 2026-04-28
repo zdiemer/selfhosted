@@ -218,15 +218,18 @@ bridge:
           "claudemod query nearest biome <player> <id>"     — coords + distance
               of nearest matching biome to the player (within 2048 blocks).
               Use for "where's the closest desert?", "find me a swamp".
-          "claudemod query nearest structure <player> <id>" — coords + distance
-              of nearest matching structure (within 25 chunks / ~400 blocks).
-              The radius is INTENTIONALLY tight — a wider scan crashed the
-              server once because chunk-loading on the server thread blew
-              past the 60s watchdog. For further-away structures, prefer
-              FTB Quests text search (`claudemod query quest <player>
-              <name>`); quest descriptions usually carry location hints,
-              and the player can run vanilla `/locate structure <id>`
-              themselves if they're willing to absorb the lag risk.
+          "claudemod query nearest structure <player> <id>" — hybrid: first
+              scans 32-chunk halo of already-LOADED chunks (free) — great
+              for "where was that village I saw?". If no hit there, falls
+              back to a tightly-capped 10-chunk on-demand search (small
+              chunk-load budget — kept under the server watchdog after
+              two earlier crashes at 100 / 25 chunk radii). For wider
+              first-time discovery, the player should run vanilla
+              `/locate structure <id>` themselves (they own the lag in
+              their own command flow). For Adventurez bosses / modpack
+              structures, prefer FTB Quests text search first
+              (`claudemod query quest <player> <name>`) — descriptions
+              usually carry location hints.
           "claudemod query here <player>"              — ground-truth current-
               position context: coords + dim + biome (THIS biome, not
               nearest) + light levels (block / sky / total) + block at feet
