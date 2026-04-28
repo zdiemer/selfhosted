@@ -17,8 +17,16 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.enchantment.EnchantmentHelper;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.attribute.DefaultAttributeContainer;
+import net.minecraft.entity.attribute.DefaultAttributeRegistry;
+import net.minecraft.entity.attribute.EntityAttributeInstance;
+import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.Item;
@@ -31,6 +39,7 @@ import net.minecraft.recipe.AbstractCookingRecipe;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
@@ -80,6 +89,10 @@ public final class ClaudeQueryCommand {
     private static final int FIND_VIEW_RADIUS = 8;
     // Cap on quest results returned per search.
     private static final int QUEST_HIT_CAP = 15;
+    // Cap on items returned per tag query (some tags have hundreds).
+    private static final int TAG_RESULT_CAP = 60;
+    // Cap on mods returned without a search filter (we have ~400 in this pack).
+    private static final int MODS_RESULT_CAP = 60;
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(
@@ -121,7 +134,23 @@ public final class ClaudeQueryCommand {
                             .executes(ClaudeQueryCommand::queryNbtKeys)))
                     .then(CommandManager.literal("skills")
                         .then(CommandManager.argument("player", StringArgumentType.word())
-                            .executes(ClaudeQueryCommand::querySkills))))
+                            .executes(ClaudeQueryCommand::querySkills)))
+                    .then(CommandManager.literal("vitals")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::queryVitals)))
+                    .then(CommandManager.literal("item")
+                        .then(CommandManager.argument("id", StringArgumentType.greedyString())
+                            .executes(ClaudeQueryCommand::queryItem)))
+                    .then(CommandManager.literal("tag")
+                        .then(CommandManager.argument("tag", StringArgumentType.greedyString())
+                            .executes(ClaudeQueryCommand::queryTag)))
+                    .then(CommandManager.literal("mob")
+                        .then(CommandManager.argument("id", StringArgumentType.greedyString())
+                            .executes(ClaudeQueryCommand::queryMob)))
+                    .then(CommandManager.literal("mods")
+                        .executes(ctx -> queryMods(ctx, null))
+                        .then(CommandManager.argument("search", StringArgumentType.greedyString())
+                            .executes(ctx -> queryMods(ctx, StringArgumentType.getString(ctx, "search"))))))
         );
     }
 
@@ -714,6 +743,264 @@ public final class ClaudeQueryCommand {
 
         root.add("categories", categories);
         return reply(ctx, root);
+    }
+
+    // ---------- vitals -------------------------------------------------------
+    /**
+     * Live player vitals: health, hunger, air, status effects (with duration
+     * + amplifier), and the resolved values of common attributes including
+     * any modifiers from gear, affixes, skills, etc. This is what Claude
+     * needs to answer "what does my held sword actually hit for?", "what
+     * buffs am I running?", "why am I slow?".
+     */
+    private static int queryVitals(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity p = onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("health", p.getHealth());
+        root.addProperty("max_health", p.getMaxHealth());
+        root.addProperty("hunger", p.getHungerManager().getFoodLevel());
+        root.addProperty("saturation", p.getHungerManager().getSaturationLevel());
+        root.addProperty("air", p.getAir());
+        root.addProperty("max_air", p.getMaxAir());
+        root.addProperty("xp_level", p.experienceLevel);
+
+        // Active status effects.
+        JsonArray effects = new JsonArray();
+        for (StatusEffectInstance eff : p.getStatusEffects()) {
+            JsonObject e = new JsonObject();
+            Identifier eid = Registries.STATUS_EFFECT.getId(eff.getEffectType());
+            e.addProperty("id", eid == null ? "?" : eid.toString());
+            e.addProperty("name", eff.getEffectType().getName().getString());
+            e.addProperty("amplifier", eff.getAmplifier());
+            int dur = eff.getDuration();
+            e.addProperty("duration_ticks", dur);
+            // Vanilla "infinite" duration is -1; otherwise convert to seconds.
+            if (dur >= 0) e.addProperty("duration_seconds", dur / 20);
+            effects.add(e);
+        }
+        root.add("effects", effects);
+
+        // Resolved attribute values — base + all modifiers stacked.
+        JsonObject attrs = new JsonObject();
+        // 1.20.1 generic attributes only — the PLAYER_*_INTERACTION_RANGE
+        // and BLOCK_BREAK_SPEED constants were added in 1.20.5+.
+        var attributes = new net.minecraft.entity.attribute.EntityAttribute[] {
+            EntityAttributes.GENERIC_MAX_HEALTH,
+            EntityAttributes.GENERIC_ATTACK_DAMAGE,
+            EntityAttributes.GENERIC_ATTACK_SPEED,
+            EntityAttributes.GENERIC_ATTACK_KNOCKBACK,
+            EntityAttributes.GENERIC_ARMOR,
+            EntityAttributes.GENERIC_ARMOR_TOUGHNESS,
+            EntityAttributes.GENERIC_KNOCKBACK_RESISTANCE,
+            EntityAttributes.GENERIC_MOVEMENT_SPEED,
+            EntityAttributes.GENERIC_LUCK,
+        };
+        for (var attr : attributes) {
+            EntityAttributeInstance inst = p.getAttributeInstance(attr);
+            if (inst == null) continue;
+            Identifier aid = Registries.ATTRIBUTE.getId(attr);
+            JsonObject a = new JsonObject();
+            a.addProperty("base", inst.getBaseValue());
+            a.addProperty("value", inst.getValue());
+            attrs.add(aid == null ? "?" : aid.toString(), a);
+        }
+        root.add("attributes", attrs);
+        return reply(ctx, root);
+    }
+
+    // ---------- item lookup --------------------------------------------------
+    /**
+     * Translate an item id into a friendlier description: display name,
+     * which tags it belongs to (tags drive cross-mod equivalence — e.g.
+     * #c:ingots/iron is what unifies modded iron variants), max stack size,
+     * rarity, and the source mod. The bridge can hand item ids from
+     * inventory dumps to this for nicer chat replies.
+     */
+    private static int queryItem(CommandContext<ServerCommandSource> ctx) {
+        String raw = StringArgumentType.getString(ctx, "id").trim();
+        Identifier id = Identifier.tryParse(raw.contains(":") ? raw : ("minecraft:" + raw));
+        if (id == null) return error(ctx, "bad item id: " + raw);
+        if (!Registries.ITEM.containsId(id)) return error(ctx, "unknown item: " + id);
+
+        Item item = Registries.ITEM.get(id);
+        ItemStack stack = item.getDefaultStack();
+
+        JsonObject out = new JsonObject();
+        out.addProperty("id", id.toString());
+        out.addProperty("name", stack.getName().getString());
+        out.addProperty("max_stack_size", item.getMaxCount());
+        out.addProperty("rarity", stack.getRarity().name().toLowerCase());
+        out.addProperty("mod_id", id.getNamespace());
+
+        // Tags this item belongs to. Iterating Registries.ITEM.streamTags()
+        // is server-cheap because tags are a small flat structure.
+        JsonArray tags = new JsonArray();
+        Registries.ITEM.streamTags()
+            .filter(tag -> Registries.ITEM.getEntryList(tag)
+                .map(list -> list.stream().anyMatch(e -> e.value() == item))
+                .orElse(false))
+            .forEach(tag -> tags.add("#" + tag.id().toString()));
+        out.add("tags", tags);
+        return reply(ctx, out);
+    }
+
+    // ---------- tag membership ----------------------------------------------
+    /**
+     * List items in an item tag (cross-mod equivalence groups). Player can
+     * include or omit the leading '#'; we accept either. Caps at
+     * TAG_RESULT_CAP entries — modded packs have very large tags.
+     */
+    private static int queryTag(CommandContext<ServerCommandSource> ctx) {
+        String raw = StringArgumentType.getString(ctx, "tag").trim();
+        if (raw.startsWith("#")) raw = raw.substring(1);
+        Identifier tagId = Identifier.tryParse(raw.contains(":") ? raw : ("minecraft:" + raw));
+        if (tagId == null) return error(ctx, "bad tag: " + raw);
+
+        TagKey<Item> key = TagKey.of(RegistryKeys.ITEM, tagId);
+        var entryListOpt = Registries.ITEM.getEntryList(key);
+        if (entryListOpt.isEmpty()) {
+            JsonObject empty = new JsonObject();
+            empty.addProperty("tag", "#" + tagId);
+            empty.addProperty("hits", 0);
+            empty.add("items", new JsonArray());
+            empty.addProperty("note", "no such tag, or tag is empty");
+            return reply(ctx, empty);
+        }
+        JsonArray items = new JsonArray();
+        int total = 0;
+        boolean truncated = false;
+        for (var entry : entryListOpt.get()) {
+            if (items.size() >= TAG_RESULT_CAP) { truncated = true; break; }
+            Identifier iid = Registries.ITEM.getId(entry.value());
+            if (iid != null) items.add(iid.toString());
+            total++;
+        }
+        // Count the rest without adding to the array, just so the caller
+        // knows there's more.
+        if (truncated) {
+            for (var ignored : entryListOpt.get()) total++;
+        }
+        JsonObject out = new JsonObject();
+        out.addProperty("tag", "#" + tagId);
+        out.addProperty("hits", entryListOpt.get().size());
+        out.add("items", items);
+        if (truncated) out.addProperty("truncated", true);
+        return reply(ctx, out);
+    }
+
+    // ---------- mob info -----------------------------------------------------
+    /**
+     * Static info about an entity type (vanilla or modded): display name,
+     * source mod, default attribute values (max HP, attack damage, armor
+     * if applicable), and the loot table id. We can't get exact XP drops
+     * without instantiating, so we leave that to Claude / WebSearch — the
+     * loot table id is enough to look up more if needed.
+     */
+    private static int queryMob(CommandContext<ServerCommandSource> ctx) {
+        String raw = StringArgumentType.getString(ctx, "id").trim();
+        Identifier id = Identifier.tryParse(raw.contains(":") ? raw : ("minecraft:" + raw));
+        if (id == null) return error(ctx, "bad entity id: " + raw);
+        if (!Registries.ENTITY_TYPE.containsId(id)) return error(ctx, "unknown entity: " + id);
+
+        EntityType<?> type = Registries.ENTITY_TYPE.get(id);
+        JsonObject out = new JsonObject();
+        out.addProperty("id", id.toString());
+        out.addProperty("name", type.getName().getString());
+        out.addProperty("category", type.getSpawnGroup().getName());
+        out.addProperty("mod_id", id.getNamespace());
+        out.addProperty("loot_table", type.getLootTableId().toString());
+
+        // Pull the default attribute container if this is a LivingEntity type.
+        try {
+            @SuppressWarnings("unchecked")
+            EntityType<? extends LivingEntity> living = (EntityType<? extends LivingEntity>) type;
+            DefaultAttributeContainer attrs = DefaultAttributeRegistry.get(living);
+            if (attrs != null) {
+                JsonObject a = new JsonObject();
+                var keys = new net.minecraft.entity.attribute.EntityAttribute[] {
+                    EntityAttributes.GENERIC_MAX_HEALTH,
+                    EntityAttributes.GENERIC_ATTACK_DAMAGE,
+                    EntityAttributes.GENERIC_ARMOR,
+                    EntityAttributes.GENERIC_MOVEMENT_SPEED,
+                    EntityAttributes.GENERIC_FOLLOW_RANGE,
+                    EntityAttributes.GENERIC_KNOCKBACK_RESISTANCE,
+                };
+                for (var k : keys) {
+                    if (attrs.has(k)) {
+                        Identifier aid = Registries.ATTRIBUTE.getId(k);
+                        a.addProperty(aid == null ? "?" : aid.toString(),
+                                      attrs.getBaseValue(k));
+                    }
+                }
+                out.add("attributes", a);
+            }
+        } catch (ClassCastException ignored) {
+            // Not a LivingEntity (e.g. arrow, item, boat) — no attributes.
+        } catch (Throwable t) {
+            ClaudeMod.LOG.warn("mob query attribute lookup failed: {}", t.toString());
+        }
+        return reply(ctx, out);
+    }
+
+    // ---------- mods ---------------------------------------------------------
+    /**
+     * List loaded Fabric mods. Without a search arg, returns the count plus
+     * the first MODS_RESULT_CAP sorted by id. With a search arg, returns
+     * mods whose id, name, or description (case-insensitive substring) match.
+     * Useful for "what mods give wings?", "which one adds the dragon eggs?",
+     * and as a self-introspection tool when Claude needs to know what's
+     * actually installed.
+     */
+    private static int queryMods(CommandContext<ServerCommandSource> ctx, String search) {
+        var loader = FabricLoader.getInstance();
+        var allMods = new ArrayList<>(loader.getAllMods());
+        allMods.sort(Comparator.comparing(m -> m.getMetadata().getId()));
+
+        JsonObject root = new JsonObject();
+        root.addProperty("total_loaded", allMods.size());
+
+        JsonArray arr = new JsonArray();
+        boolean truncated = false;
+        if (search == null || search.isBlank()) {
+            for (ModContainer m : allMods) {
+                if (arr.size() >= MODS_RESULT_CAP) { truncated = true; break; }
+                arr.add(modJson(m));
+            }
+            if (truncated) {
+                root.addProperty("truncated", true);
+                root.addProperty("hint", "pass a search term to filter, e.g. `claudemod query mods spell`");
+            }
+        } else {
+            String needle = search.toLowerCase();
+            for (ModContainer m : allMods) {
+                var md = m.getMetadata();
+                String hay = (md.getId() + " " + md.getName() + " " + md.getDescription()).toLowerCase();
+                if (!hay.contains(needle)) continue;
+                if (arr.size() >= MODS_RESULT_CAP) { truncated = true; break; }
+                arr.add(modJson(m));
+            }
+            root.addProperty("query", search);
+            if (truncated) root.addProperty("truncated", true);
+        }
+        root.addProperty("returned", arr.size());
+        root.add("mods", arr);
+        return reply(ctx, root);
+    }
+
+    private static JsonObject modJson(ModContainer m) {
+        var md = m.getMetadata();
+        JsonObject o = new JsonObject();
+        o.addProperty("id", md.getId());
+        o.addProperty("name", md.getName());
+        o.addProperty("version", md.getVersion().getFriendlyString());
+        String desc = md.getDescription();
+        if (desc != null && !desc.isEmpty()) {
+            o.addProperty("description", truncate(desc, 200));
+        }
+        return o;
     }
 
     // ---------- nbt_keys (index for unknown mod data) ------------------------

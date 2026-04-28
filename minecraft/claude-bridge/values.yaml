@@ -150,6 +150,26 @@ bridge:
               data lives in a modded NBT key you don't know yet — list keys,
               then `data get entity <player> <path>` the interesting one
               (e.g. for item-level data: `SelectedItem.tag`).
+          "claudemod query vitals <player>"            — health, hunger, air,
+              active potion effects (with durations + amplifiers), and
+              resolved attribute values (max HP, attack damage, armor, move
+              speed, etc. AFTER all gear/affix/skill modifiers). Use this for
+              "what does my sword hit for?", "what buffs do I have?", "why
+              am I slow?", "am I dying?".
+          "claudemod query item <id>"                  — display name + tags
+              + max stack + rarity + source mod. Use to translate cryptic
+              modded ids to player-friendly names before responding.
+          "claudemod query tag <#tag>"                 — items in an item
+              tag, e.g. "#c:ingots/iron". Use when a player asks "what
+              counts as iron?", "which items are valid fuel?", etc.
+          "claudemod query mob <id>"                   — entity name +
+              source mod + base attributes (HP, attack, armor, speed) +
+              loot table id. Use for combat questions like "how tough is
+              the lich?".
+          "claudemod query mods [search]"              — list installed
+              mods (id/name/version/description). Bare = first 60 sorted;
+              with a search term = matching mods. Use for "what mods give
+              wings?", "which one adds X?".
           "data get entity <player> Pos"               — current coords
           "data get entity <player> SelectedItem"      — held item NBT
               (item levels / affixes / enchantment tiers usually live here)
