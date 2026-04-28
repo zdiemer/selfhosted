@@ -138,6 +138,18 @@ public final class ClaudeWriteCommand {
     enum Mode { DEFAULT, RESTORE }
     enum Kind { CONTAINER, INVENTORY, BACKPACK_EQUIPPED, BACKPACK_WORLD }
 
+    // Source RCON request payloads top out around 1413 bytes; responses
+    // around 4096. We leave generous margin for command/response framing
+    // ("claudemod write txn_slot_part <19-char id> <slot> <idx> <b64>" is
+    // ~50 chars of overhead).
+    static final int READ_NBT_INLINE_MAX = 2500;   // if b64 > this, the mod
+                                                    // returns chunked metadata
+                                                    // and the bridge fetches
+                                                    // via read_slot_part
+    static final int READ_CHUNK_SIZE = 1500;       // per-chunk slice on read
+                                                    // responses
+    // (write-side chunk size is the bridge's call — it picks 900 by default)
+
     static final class PendingTxn {
         final String id;
         final String caller;
@@ -150,6 +162,12 @@ public final class ClaudeWriteCommand {
         final String openContentsHash;       // hash at open time
         final List<ItemStack> openSnapshot;  // captured at open, used as snapshot if commit succeeds
         final Map<Integer, ItemStack> layout = new HashMap<>(); // for write txns
+        // Per-slot full base64 cache for chunked reads — populated lazily on
+        // first read_slot or read_slot_part for the slot.
+        final Map<Integer, String> readB64Cache = new HashMap<>();
+        // Per-slot fragment buffer for chunked writes. Keyed by chunk index
+        // so out-of-order delivery is handled.
+        final Map<Integer, Map<Integer, String>> writeFragments = new HashMap<>();
         long expiresAt;
 
         PendingTxn(String id, String caller, Kind kind, boolean isWrite, Mode mode,
@@ -214,6 +232,12 @@ public final class ClaudeWriteCommand {
                         .then(CommandManager.argument("txn_id", StringArgumentType.word())
                             .then(CommandManager.argument("slot", IntegerArgumentType.integer(0))
                                 .executes(ClaudeWriteCommand::readSlot))))
+                    // ----- read_slot_part (chunked read for large NBT) -----
+                    .then(CommandManager.literal("read_slot_part")
+                        .then(CommandManager.argument("txn_id", StringArgumentType.word())
+                            .then(CommandManager.argument("slot", IntegerArgumentType.integer(0))
+                                .then(CommandManager.argument("chunk_idx", IntegerArgumentType.integer(0))
+                                    .executes(ClaudeWriteCommand::readSlotPart)))))
                     // ----- read_close -----
                     .then(CommandManager.literal("read_close")
                         .then(CommandManager.argument("txn_id", StringArgumentType.word())
@@ -254,12 +278,25 @@ public final class ClaudeWriteCommand {
                                                     .then(CommandManager.argument("mode", StringArgumentType.word())
                                                         .executes(ctx -> openTxn(ctx, Kind.BACKPACK_WORLD, true, parseMode(ctx), true))))))))))
                     )
-                    // ----- txn_slot -----
+                    // ----- txn_slot (single-shot, small NBT) -----
                     .then(CommandManager.literal("txn_slot")
                         .then(CommandManager.argument("txn_id", StringArgumentType.word())
                             .then(CommandManager.argument("slot", IntegerArgumentType.integer(0))
                                 .then(CommandManager.argument("stack", StringArgumentType.greedyString())
                                     .executes(ClaudeWriteCommand::txnSlot)))))
+                    // ----- txn_slot_part (chunked write — append a fragment) -----
+                    .then(CommandManager.literal("txn_slot_part")
+                        .then(CommandManager.argument("txn_id", StringArgumentType.word())
+                            .then(CommandManager.argument("slot", IntegerArgumentType.integer(0))
+                                .then(CommandManager.argument("chunk_idx", IntegerArgumentType.integer(0))
+                                    .then(CommandManager.argument("part", StringArgumentType.greedyString())
+                                        .executes(ClaudeWriteCommand::txnSlotPart))))))
+                    // ----- txn_slot_finish (chunked write — finalize, build stack) -----
+                    .then(CommandManager.literal("txn_slot_finish")
+                        .then(CommandManager.argument("txn_id", StringArgumentType.word())
+                            .then(CommandManager.argument("slot", IntegerArgumentType.integer(0))
+                                .then(CommandManager.argument("count", IntegerArgumentType.integer(1))
+                                    .executes(ClaudeWriteCommand::txnSlotFinish)))))
                     // ----- txn_commit -----
                     .then(CommandManager.literal("txn_commit")
                         .then(CommandManager.argument("txn_id", StringArgumentType.word())
@@ -402,13 +439,113 @@ public final class ClaudeWriteCommand {
         JsonObject out = new JsonObject();
         if (s == null || s.isEmpty()) {
             out.addProperty("empty", true);
-        } else {
-            Identifier iid = Registries.ITEM.getId(s.getItem());
-            out.addProperty("i", iid == null ? "?" : iid.toString());
-            out.addProperty("c", s.getCount());
-            String b64 = stackToB64(s);
-            if (b64 != null) out.addProperty("n", b64);
+            return ClaudeQueryCommand.reply(ctx, out);
         }
+        Identifier iid = Registries.ITEM.getId(s.getItem());
+        out.addProperty("i", iid == null ? "?" : iid.toString());
+        out.addProperty("c", s.getCount());
+        String b64 = stackToB64(s);
+        if (b64 == null) {
+            // Encoding failed; bridge will see no `n` and reject on commit.
+            return ClaudeQueryCommand.reply(ctx, out);
+        }
+        if (b64.length() <= READ_NBT_INLINE_MAX) {
+            out.addProperty("n", b64);
+        } else {
+            // Item NBT exceeds a safe single-response budget. Cache the
+            // full base64 and report chunk metadata; bridge fetches via
+            // read_slot_part.
+            t.readB64Cache.put(slot, b64);
+            int chunks = (b64.length() + READ_CHUNK_SIZE - 1) / READ_CHUNK_SIZE;
+            out.addProperty("n_size", b64.length());
+            out.addProperty("n_chunks", chunks);
+            out.addProperty("n_chunk_size", READ_CHUNK_SIZE);
+        }
+        return ClaudeQueryCommand.reply(ctx, out);
+    }
+
+    private static int readSlotPart(CommandContext<ServerCommandSource> ctx) {
+        String id = StringArgumentType.getString(ctx, "txn_id");
+        int slot = IntegerArgumentType.getInteger(ctx, "slot");
+        int idx = IntegerArgumentType.getInteger(ctx, "chunk_idx");
+        PendingTxn t = TXNS.get(id);
+        if (t == null) return errOf(ctx, "unknown_txn", "no such txn_id (or expired)");
+        if (t.isWrite) return errOf(ctx, "wrong_txn_kind", "this txn was opened for write, not read");
+        if (slot >= t.totalSlots) return errOf(ctx, "bad_slot", "slot out of range");
+        String b64 = t.readB64Cache.get(slot);
+        if (b64 == null) {
+            // Bridge calling read_slot_part without a prior chunked read_slot
+            // — populate the cache lazily so callers can skip read_slot when
+            // they already know the slot is large.
+            ItemStack s = t.openSnapshot.get(slot);
+            if (s == null || s.isEmpty()) return errOf(ctx, "empty_slot", "slot is empty");
+            b64 = stackToB64(s);
+            if (b64 == null) return errOf(ctx, "bad_stack", "stack encode failed");
+            t.readB64Cache.put(slot, b64);
+        }
+        int start = idx * READ_CHUNK_SIZE;
+        if (start >= b64.length() || idx < 0) return errOf(ctx, "bad_chunk",
+            "chunk_idx out of range");
+        int end = Math.min(start + READ_CHUNK_SIZE, b64.length());
+        JsonObject out = new JsonObject();
+        out.addProperty("part", b64.substring(start, end));
+        out.addProperty("done", end == b64.length());
+        return ClaudeQueryCommand.reply(ctx, out);
+    }
+
+    private static int txnSlotPart(CommandContext<ServerCommandSource> ctx) {
+        String id = StringArgumentType.getString(ctx, "txn_id");
+        int slot = IntegerArgumentType.getInteger(ctx, "slot");
+        int idx = IntegerArgumentType.getInteger(ctx, "chunk_idx");
+        String part = StringArgumentType.getString(ctx, "part").trim();
+        PendingTxn t = TXNS.get(id);
+        if (t == null) return errOf(ctx, "unknown_txn", "no such txn_id (or expired)");
+        if (!t.isWrite) return errOf(ctx, "wrong_txn_kind", "this txn was opened for read, not write");
+        if (slot < 0 || slot >= t.totalSlots) return errOf(ctx, "bad_slot",
+            "slot out of range [0, " + t.totalSlots + ")");
+        Map<Integer, String> frags = t.writeFragments.computeIfAbsent(slot, k -> new HashMap<>());
+        frags.put(idx, part);
+        t.expiresAt = System.currentTimeMillis() + TXN_TTL_MS;
+        JsonObject out = new JsonObject();
+        out.addProperty("ok", true);
+        return ClaudeQueryCommand.reply(ctx, out);
+    }
+
+    private static int txnSlotFinish(CommandContext<ServerCommandSource> ctx) {
+        String id = StringArgumentType.getString(ctx, "txn_id");
+        int slot = IntegerArgumentType.getInteger(ctx, "slot");
+        int count = IntegerArgumentType.getInteger(ctx, "count");
+        PendingTxn t = TXNS.get(id);
+        if (t == null) return errOf(ctx, "unknown_txn", "no such txn_id (or expired)");
+        if (!t.isWrite) return errOf(ctx, "wrong_txn_kind", "this txn was opened for read, not write");
+        if (slot < 0 || slot >= t.totalSlots) return errOf(ctx, "bad_slot",
+            "slot out of range [0, " + t.totalSlots + ")");
+        if (count < 1) return errOf(ctx, "bad_stack", "count must be >= 1");
+        Map<Integer, String> frags = t.writeFragments.remove(slot);
+        if (frags == null || frags.isEmpty()) {
+            return errOf(ctx, "no_fragments", "no chunked fragments staged for this slot");
+        }
+        // Concatenate in chunk-index order.
+        int[] indices = frags.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < indices.length; i++) {
+            if (indices[i] != i) {
+                return errOf(ctx, "missing_chunk",
+                    "expected chunk_idx " + i + " but next received was " + indices[i]);
+            }
+            sb.append(frags.get(indices[i]));
+        }
+        ItemStack stack;
+        try {
+            stack = stackFromB64(sb.toString());
+            stack.setCount(count);
+        } catch (Exception e) {
+            return errOf(ctx, "bad_stack", "stack decode failed: " + e.getMessage());
+        }
+        t.layout.put(slot, stack);
+        t.expiresAt = System.currentTimeMillis() + TXN_TTL_MS;
+        JsonObject out = new JsonObject();
+        out.addProperty("ok", true);
         return ClaudeQueryCommand.reply(ctx, out);
     }
 

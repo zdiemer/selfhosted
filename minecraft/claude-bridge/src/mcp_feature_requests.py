@@ -44,6 +44,14 @@ SNAPSHOT_DIR = STATE_DIR / "container-snapshots"
 SNAPSHOTS_PER_PLAYER = 5
 PREVIEW_TTL_S = 60
 
+# Source RCON request payloads top out around 1413 bytes; if our
+# txn_slot would exceed this with `<count>:<base64>` plus framing,
+# we fall back to the chunked txn_slot_part / txn_slot_finish protocol
+# on the mod side. 900 keeps a comfortable margin for command-line
+# overhead even with the longest txn_id + slot combinations.
+WRITE_INLINE_MAX = 1100   # full `<count>:<base64>` length budget for one-shot
+WRITE_CHUNK_SIZE = 900    # per-fragment base64 size for chunked writes
+
 mcp = FastMCP("claude-bridge-feedback")
 
 
@@ -469,6 +477,16 @@ def _do_read(kind: str, *, caller: str, dim: str | None = None,
             entry = {"slot": i, "i": r["i"], "c": int(r["c"])}
             if r.get("n"):
                 entry["n"] = r["n"]
+            elif r.get("n_chunks"):
+                # NBT exceeded the inline budget; assemble from chunks.
+                n_chunks = int(r["n_chunks"])
+                parts: list[str] = []
+                for ci in range(n_chunks):
+                    pr = _mod_call("read_slot_part", txn_id, str(i), str(ci))
+                    if pr.get("ok") is False:
+                        return pr
+                    parts.append(pr.get("part", ""))
+                entry["n"] = "".join(parts)
             slots.append(entry)
     finally:
         try:
@@ -658,20 +676,36 @@ def _do_commit(state: dict[str, Any]) -> dict[str, Any]:
         return opened
     txn_id = opened["txn_id"]
     try:
-        # 2. Stream non-empty target slots.
+        # 2. Stream non-empty target slots. Single-shot when payload fits
+        #    in one RCON request, otherwise chunk via txn_slot_part /
+        #    txn_slot_finish to handle heavy modded NBT (Tiered + spell
+        #    engine + enchants etc.).
         for slot, stk in sorted(target_stacks.items()):
             n = stk.get("n")
             if not n:
-                # Item with no NBT — we still need a base64 NBT for the mod.
-                # The mod uses ItemStack.fromNbt; the minimum payload is a
-                # compound with `id` and `Count`. Easier to just refuse here
-                # and require the bridge to have NBT for every read item.
                 return {"ok": False, "error": "missing_nbt",
                         "detail": f"slot {slot}: read result didn't include NBT"}
             wire = f"{stk['c']}:{n}"
-            r = _mod_call("txn_slot", txn_id, str(slot), wire)
+            if len(wire) <= WRITE_INLINE_MAX:
+                r = _mod_call("txn_slot", txn_id, str(slot), wire)
+                if not r.get("ok"):
+                    try: _mod_call("txn_abort", txn_id)
+                    except Exception: pass
+                    return r
+                continue
+            # Chunked path: split the base64 (NOT the count prefix) and
+            # send each chunk via txn_slot_part, then finalize with the
+            # count via txn_slot_finish.
+            for ci in range(0, len(n), WRITE_CHUNK_SIZE):
+                part = n[ci:ci + WRITE_CHUNK_SIZE]
+                idx = ci // WRITE_CHUNK_SIZE
+                r = _mod_call("txn_slot_part", txn_id, str(slot), str(idx), part)
+                if not r.get("ok"):
+                    try: _mod_call("txn_abort", txn_id)
+                    except Exception: pass
+                    return r
+            r = _mod_call("txn_slot_finish", txn_id, str(slot), str(stk["c"]))
             if not r.get("ok"):
-                # Best-effort abort.
                 try: _mod_call("txn_abort", txn_id)
                 except Exception: pass
                 return r
