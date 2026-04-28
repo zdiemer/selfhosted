@@ -492,44 +492,25 @@ def _markdown_to_components(text: str) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # Per-request bossbar — one updateable status indicator per active /claude
-# request. Replaces the old in-chat "thinking…" line so progress doesn't
-# spam chat. Created when a request is dequeued, updated on every tool_use
-# event, removed when the final reply lands. Uses vanilla `bossbar`, no mod
-# changes required.
+# request. Routes through `claudemod bossbar update/remove` rather than the
+# vanilla `bossbar` family so we don't get a "[Rcon: Set ... for custom
+# bossbar X]" line per call in /data/logs/latest.log (vanilla `bossbar add`
+# + 4 sets per create + 1 set per update is a lot of spam). The mod command
+# manipulates BossBarManager directly without calling sendFeedback.
 # ---------------------------------------------------------------------------
-_BOSSBAR_NAME_RE = re.compile(r"[^a-z0-9_]")
-
-
-def _bossbar_id(player: str) -> str:
-    safe = _BOSSBAR_NAME_RE.sub("_", player.lower())
-    return f"claudemod:claude_{safe}"
-
-
 def bossbar_create(rcon: RCON, player: str, text: str) -> None:
-    bid = _bossbar_id(player)
-    name = json.dumps({"text": text, "color": "aqua"})
-    # Defensive cleanup of any orphan from a previous request.
-    try:
-        rcon.send(f"bossbar remove {bid}")
-    except Exception:
-        pass
-    rcon.send(f"bossbar add {bid} {name}")
-    rcon.send(f"bossbar set {bid} color blue")
-    rcon.send(f"bossbar set {bid} max 1")
-    rcon.send(f"bossbar set {bid} value 1")
-    rcon.send(f"bossbar set {bid} players {player}")
+    # Idempotent — `claudemod bossbar update` creates if absent, updates
+    # otherwise. Single RCON round-trip per state change.
+    rcon.send(f"claudemod bossbar update {player} {text}")
 
 
 def bossbar_update(rcon: RCON, player: str, text: str) -> None:
-    bid = _bossbar_id(player)
-    name = json.dumps({"text": text, "color": "aqua"})
-    rcon.send(f"bossbar set {bid} name {name}")
+    rcon.send(f"claudemod bossbar update {player} {text}")
 
 
 def bossbar_remove(rcon: RCON, player: str) -> None:
-    bid = _bossbar_id(player)
     try:
-        rcon.send(f"bossbar remove {bid}")
+        rcon.send(f"claudemod bossbar remove {player}")
     except Exception:
         pass
 

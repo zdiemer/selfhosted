@@ -187,6 +187,14 @@ public final class ClaudeQueryCommand {
                 .then(CommandManager.literal("query")
                     .then(CommandManager.literal("perf")
                         .executes(ClaudeQueryCommand::queryPerf)))
+                .then(CommandManager.literal("bossbar")
+                    .then(CommandManager.literal("update")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .then(CommandManager.argument("text", StringArgumentType.greedyString())
+                                .executes(ClaudeQueryCommand::bossbarUpdate))))
+                    .then(CommandManager.literal("remove")
+                        .then(CommandManager.argument("player", StringArgumentType.word())
+                            .executes(ClaudeQueryCommand::bossbarRemove))))
         );
     }
 
@@ -1494,6 +1502,63 @@ public final class ClaudeQueryCommand {
         root.add("jvm_heap", mem);
 
         return reply(ctx, root);
+    }
+
+    // ---------- bossbar (silent — no log spam) ------------------------------
+    /**
+     * Bossbar manipulation that doesn't echo feedback to the server log.
+     * The vanilla `bossbar` family routes through Brigadier and emits
+     * "[Rcon: Set ... for custom bossbar X]" lines on every set, which
+     * spams /data/logs because the bridge issues five of them per
+     * progress update. We bypass that by talking to BossBarManager
+     * directly and never calling sendFeedback.
+     *
+     * `update` is idempotent: creates the bossbar if absent, otherwise
+     * updates name + ensures the player is attached. Hardcodes color,
+     * max, and value to the values the bridge always wants.
+     *
+     * Bossbar id format mirrors the bridge's prior convention:
+     *   claudemod:claude_<sanitized_player_name>
+     */
+    private static final net.minecraft.entity.boss.BossBar.Color BOSSBAR_COLOR =
+        net.minecraft.entity.boss.BossBar.Color.BLUE;
+
+    private static net.minecraft.util.Identifier _bossbarId(String player) {
+        String safe = player.toLowerCase().replaceAll("[^a-z0-9_]", "_");
+        return new net.minecraft.util.Identifier("claudemod", "claude_" + safe);
+    }
+
+    private static int bossbarUpdate(CommandContext<ServerCommandSource> ctx) {
+        String playerName = StringArgumentType.getString(ctx, "player");
+        String text = StringArgumentType.getString(ctx, "text");
+        MinecraftServer server = ctx.getSource().getServer();
+        ServerPlayerEntity p = server.getPlayerManager().getPlayer(playerName);
+        if (p == null) return 0;
+
+        net.minecraft.util.Identifier id = _bossbarId(playerName);
+        var manager = server.getBossBarManager();
+        net.minecraft.entity.boss.CommandBossBar bar = manager.get(id);
+        if (bar == null) {
+            bar = manager.add(id, net.minecraft.text.Text.literal(text));
+            bar.setColor(BOSSBAR_COLOR);
+            bar.setMaxValue(1);
+            bar.setValue(1);
+        } else {
+            bar.setName(net.minecraft.text.Text.literal(text));
+        }
+        if (!bar.getPlayers().contains(p)) {
+            bar.addPlayer(p);
+        }
+        return 1;
+    }
+
+    private static int bossbarRemove(CommandContext<ServerCommandSource> ctx) {
+        String playerName = StringArgumentType.getString(ctx, "player");
+        net.minecraft.util.Identifier id = _bossbarId(playerName);
+        var manager = ctx.getSource().getServer().getBossBarManager();
+        net.minecraft.entity.boss.CommandBossBar bar = manager.get(id);
+        if (bar != null) manager.remove(bar);
+        return 1;
     }
 
     // ---------- home (teleport to bed/spawn) --------------------------------
