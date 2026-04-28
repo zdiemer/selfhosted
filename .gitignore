@@ -24,3 +24,7 @@ secrets/
 # not checked in.
 **/build/
 **/.gradle/
+
+# Claude-mod compileOnly jar cache, populated from the live mc pod by
+# install.sh's prep_libs() — never committed.
+minecraft/claude-mod/libs/

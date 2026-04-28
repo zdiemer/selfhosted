@@ -3,7 +3,7 @@
 // build files.
 
 plugins {
-    id 'fabric-loom' version '1.6.12'
+    id 'fabric-loom' version '1.9.2'
     id 'java'
 }
 
@@ -37,6 +37,13 @@ dependencies {
     // against our Java-17 build, but the fabric mod itself is Java 17
     // compatible (it has to be — the server runs java17).
     modCompileOnly "maven.modrinth:bluemap:${project.bluemap_version}"
+
+    // Trinkets, FTB Library/Quests, Puffish Skills are pulled from the
+    // running mc pod into ./libs/ by install.sh (see prep_libs() there) —
+    // they aren't all on Modrinth maven (FTB ships CurseForge-only for
+    // 1.20.1 Fabric; Puffish has its own coords). Any *.jar dropped into
+    // libs/ becomes a compileOnly dep automatically.
+    modCompileOnly fileTree(dir: 'libs', include: '*.jar')
 }
 
 processResources {

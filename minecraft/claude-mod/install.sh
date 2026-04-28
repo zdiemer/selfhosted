@@ -23,7 +23,47 @@ NS="${NAMESPACE:-minecraft}"
 command -v docker  >/dev/null || { echo "docker required";  exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
+# Sync any compileOnly jars we need (trinkets, ftb-*, puffish_skills) from
+# the live mc pod into ./libs/. They aren't all on a public maven for
+# 1.20.1 Fabric, and pulling them from the pod we're targeting guarantees
+# we compile against the same versions that are running. Existing jars
+# are left in place — bump install.sh's prefix list and re-run if you
+# want a fresh sync.
+prep_libs() {
+  local pod="$1"
+  mkdir -p "$HERE/libs"
+  for prefix in trinkets ftb-quests-fabric ftb-library-fabric puffish_skills cardinal-components-api; do
+    local pod_jar
+    pod_jar="$(kubectl -n "$NS" exec "$pod" -c mc-minecraft -- \
+      sh -c "ls -1 /data/mods/${prefix}*.jar 2>/dev/null" | head -1 | tr -d '\r')"
+    [[ -z "$pod_jar" ]] && continue
+    local local_jar="$HERE/libs/$(basename "$pod_jar")"
+    if [[ ! -f "$local_jar" ]]; then
+      echo "==> syncing $(basename "$pod_jar") into libs/"
+      kubectl -n "$NS" cp "$pod:$pod_jar" "$local_jar" -c mc-minecraft
+    fi
+  done
+  # Cardinal Components API ships as a fat jar with nested sub-jars
+  # under META-INF/jars/. Loom doesn't unpack JiJ for file-tree deps,
+  # so extract the sub-jars Trinkets actually uses (base, entity)
+  # into libs/ alongside the parent.
+  local cca_jar
+  cca_jar="$(ls -1 "$HERE"/libs/cardinal-components-api-*.jar 2>/dev/null | head -1)"
+  if [[ -n "$cca_jar" ]] && ! ls -1 "$HERE"/libs/cardinal-components-base-*.jar >/dev/null 2>&1; then
+    echo "==> extracting CCA sub-jars (base + entity) into libs/"
+    (cd "$HERE/libs" && unzip -oq "$(basename "$cca_jar")" \
+        'META-INF/jars/cardinal-components-base-*.jar' \
+        'META-INF/jars/cardinal-components-entity-*.jar' \
+      && mv META-INF/jars/cardinal-components-*.jar . \
+      && rm -rf META-INF)
+  fi
+}
+
 if [[ -z "${SKIP_BUILD:-}" ]]; then
+  echo "==> resolving live mc pod for compileOnly jar sync"
+  PREP_POD="$(kubectl -n "$NS" get pod -l app=mc-minecraft -o jsonpath='{.items[0].metadata.name}')"
+  if [[ -n "$PREP_POD" ]]; then prep_libs "$PREP_POD"; fi
+
   echo "==> building JAR via dockerized gradle (first run downloads ~200MB)"
   # --user matches host UID so build/ output is owned by us, not root.
   # gradle home is mounted to a host cache so subsequent builds are fast.
@@ -34,7 +74,7 @@ if [[ -z "${SKIP_BUILD:-}" ]]; then
     -v "${HOME}/.gradle-claude-mod:/home/gradle/.gradle" \
     -w /work \
     -e GRADLE_USER_HOME=/home/gradle/.gradle \
-    gradle:8.6-jdk17 \
+    gradle:8.11-jdk17 \
     gradle --no-daemon build
 fi
 

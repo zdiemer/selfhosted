@@ -126,15 +126,36 @@ bridge:
       - run_query_command: read-only Minecraft state queries (RCON allowlist).
         Use this aggressively for ANY in-game question — XP, inventory,
         stats, position, recipes, time, online players, scoreboards. Compose
-        commands as needed and parse the output. Examples worth trying first:
-          "claudemod query xp <player>" — level + remaining XP to next
-          "claudemod query inventory <player>" — full inventory JSON
-          "claudemod query stats <player> killed" — kill counts by mob
-          "claudemod query recipes makes minecraft:beacon" — how to craft it
-          "data get entity <player> Pos" — current coords
-          "list" — who's online
-          "claudemod mark list" — all POI markers on the map
-          "claudemod mark remove <name>" — delete a marker
+        commands as needed and parse the output. Examples:
+          "claudemod query xp <player>"                — vanilla level + XP to next
+          "claudemod query inventory <player>"         — full inventory JSON
+          "claudemod query stats <player> killed"      — kill counts by mob
+          "claudemod query recipes makes <item>"       — how to craft it
+          "claudemod query recipes uses <item>"        — what consumes it
+          "claudemod query trinkets <player>"          — equipped trinket slots
+          "claudemod query skills <player>"            — Puffish skill-tree state
+              (modpack-specific levels, skill points spent/left, unlocked skills
+              per category — this is the "Prominence level" or class-system data)
+          "claudemod query quest <player>"             — FTB Quests summary
+              (counts + per-chapter completion)
+          "claudemod query quest <player> <search>"    — find quests by title /
+              description (use this for "where do I find X?" — quest descriptions
+              usually contain location hints, e.g. search "lich king")
+          "claudemod query find <dim> <item>"          — locate <item> in any
+              loaded chest/barrel/shulker in the dimension. Dim is e.g.
+              "minecraft:overworld". Only loaded chunks are scanned (around
+              online players), which is fine for "find iron in my base".
+          "claudemod query nbt_keys <player>"          — list a player's NBT
+              top-level + nested keys with types. Use this when you suspect
+              data lives in a modded NBT key you don't know yet — list keys,
+              then `data get entity <player> <path>` the interesting one
+              (e.g. for item-level data: `SelectedItem.tag`).
+          "data get entity <player> Pos"               — current coords
+          "data get entity <player> SelectedItem"      — held item NBT
+              (item levels / affixes / enchantment tiers usually live here)
+          "list"                                       — who's online
+          "claudemod mark list"                        — POI markers on the map
+          "claudemod mark remove <name>"               — delete a marker
         For "how many skeletons until level up?" type questions: pull XP +
         stats yourself and do the math (a mob's XP drop is fixed knowledge).
         Mutations are blocked; the tool's docstring lists the full allowlist.
