@@ -9,6 +9,7 @@ import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -43,12 +44,18 @@ public final class ClaudeCommand {
         // stable: "[ClaudeRequest] <player>: <prompt>".
         ClaudeMod.LOG.info("[ClaudeRequest] {}: {}", player.getName().getString(), prompt);
 
-        // Instant feedback to the asking player only — bridge will follow
-        // up with its own broadcast within a couple seconds.
-        ctx.getSource().sendFeedback(
-            () -> Text.literal("thinking…").formatted(Formatting.GRAY, Formatting.ITALIC),
-            false
-        );
+        // Echo the prompt to every online player so the conversation is
+        // visible — otherwise everyone sees Claude's reply in chat with
+        // no context for what was asked. Slash commands themselves are
+        // private to the executor; this broadcast restores conversational
+        // flow without going through the public chat event (so
+        // dcintegration's relay still ignores it).
+        String name = player.getName().getString();
+        MutableText echo = Text.literal("[" + name + " → Claude] ")
+            .formatted(Formatting.AQUA, Formatting.BOLD)
+            .append(Text.literal(prompt).formatted(Formatting.WHITE)
+                .styled(s -> s.withBold(false)));
+        ctx.getSource().getServer().getPlayerManager().broadcast(echo, false);
         return 1;
     }
 }
