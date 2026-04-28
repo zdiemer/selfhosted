@@ -74,9 +74,9 @@ public final class ClaudeQueryCommand {
     private ClaudeQueryCommand() {}
 
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
-    // RCON output cap. Minecraft RCON spec is 4096; we leave headroom for
-    // the network framing the protocol adds.
-    private static final int MAX_RESPONSE_CHARS = 3500;
+    // RCON output cap. Minecraft's RCON spec allows packets up to 4096
+    // bytes; we leave a small margin for protocol framing.
+    private static final int MAX_RESPONSE_CHARS = 3900;
     // Per-category cap on stat entries returned, sorted by count desc.
     // Modded servers have thousands of stat keys; capping keeps the response
     // under the RCON budget.
@@ -134,7 +134,10 @@ public final class ClaudeQueryCommand {
                                 .executes(ClaudeQueryCommand::queryFind))))
                     .then(CommandManager.literal("nbt_keys")
                         .then(CommandManager.argument("player", StringArgumentType.word())
-                            .executes(ClaudeQueryCommand::queryNbtKeys)))
+                            .executes(ctx -> queryNbtKeys(ctx, null))
+                            .then(CommandManager.argument("path", StringArgumentType.greedyString())
+                                .executes(ctx -> queryNbtKeys(ctx,
+                                    StringArgumentType.getString(ctx, "path"))))))
                     .then(CommandManager.literal("skills")
                         .then(CommandManager.argument("player", StringArgumentType.word())
                             .executes(ClaudeQueryCommand::querySkills)))
@@ -172,9 +175,12 @@ public final class ClaudeQueryCommand {
                             .then(CommandManager.argument("player", StringArgumentType.word())
                                 .then(CommandManager.argument("id", StringArgumentType.greedyString())
                                     .executes(ctx -> queryNearest(ctx, false))))))
-                    .then(CommandManager.literal("class")
+                    .then(CommandManager.literal("nbt_keys")
                         .then(CommandManager.argument("player", StringArgumentType.word())
-                            .executes(ClaudeQueryCommand::queryClass))))
+                            .executes(ctx -> queryNbtKeys(ctx, null))
+                            .then(CommandManager.argument("path", StringArgumentType.greedyString())
+                                .executes(ctx -> queryNbtKeys(ctx,
+                                    StringArgumentType.getString(ctx, "path")))))))
         );
     }
 
@@ -721,11 +727,15 @@ public final class ClaudeQueryCommand {
 
     // ---------- skills (puffish_skills) -------------------------------------
     /**
-     * Per-player skill-tree state from Puffish Skills. Reports each
-     * configured category with the player's level, experience progress,
-     * skill points (total / spent / unspent), and how many skills they've
-     * unlocked vs total available. Modpacks like Prominence II expose
-     * their leveling system through one or more Puffish categories.
+     * Per-player skill-tree state from Puffish Skills. SimplySkills (the
+     * Prominence II class system) is built ON Puffish — its specializations
+     * ARE puffish categories, and ability triggers fire from puffish skill
+     * unlocks. So this single query covers BOTH puffish and SimplySkills.
+     * More RPG Classes adds content (items/spells/effects) but no per-player
+     * progression, so it has nothing to surface here.
+     *
+     * Compact JSON keys to fit RCON's 4kb cap on heavily-leveled players:
+     *   id, lvl, xp, xp_next, sp_left, sp_spent, unlocked / total skills.
      */
     private static int querySkills(CommandContext<ServerCommandSource> ctx) {
         if (!FabricLoader.getInstance().isModLoaded("puffish_skills")) {
@@ -736,29 +746,25 @@ public final class ClaudeQueryCommand {
 
         JsonObject root = new JsonObject();
         root.addProperty("player", p.getName().getString());
+        root.addProperty("note", "SimplySkills classes ARE these puffish categories; same data, no separate query needed");
         JsonArray categories = new JsonArray();
 
         try {
             net.puffish.skillsmod.api.SkillsAPI.streamCategories().forEach(cat -> {
                 JsonObject c = new JsonObject();
                 c.addProperty("id", cat.getId().toString());
-                c.addProperty("unlocked_for_player", cat.isUnlocked(p));
-                c.addProperty("skill_points_total", cat.getPointsTotal(p));
-                c.addProperty("skill_points_spent", cat.getSpentPoints(p));
-                c.addProperty("skill_points_left", cat.getPointsLeft(p));
-
                 cat.getExperience().ifPresent(exp -> {
                     int level = exp.getLevel(p);
-                    c.addProperty("level", level);
-                    c.addProperty("current_level_xp", exp.getCurrent(p));
-                    c.addProperty("xp_to_next_level", exp.getRequired(p, level));
-                    c.addProperty("total_xp_collected", exp.getTotal(p));
+                    c.addProperty("lvl", level);
+                    c.addProperty("xp", exp.getCurrent(p));
+                    c.addProperty("xp_next", exp.getRequired(p, level));
                 });
-
+                c.addProperty("sp_left", cat.getPointsLeft(p));
+                c.addProperty("sp_spent", cat.getSpentPoints(p));
                 long total = cat.streamSkills().count();
                 long unlocked = cat.streamUnlockedSkills(p).count();
-                c.addProperty("skills_unlocked", unlocked);
-                c.addProperty("skills_total", total);
+                c.addProperty("unlocked", unlocked);
+                c.addProperty("total", total);
                 categories.add(c);
             });
         } catch (Throwable t) {
@@ -1085,14 +1091,19 @@ public final class ClaudeQueryCommand {
                     EntityAttribute attr = entry.getKey();
                     EntityAttributeModifier mod = entry.getValue();
                     Identifier aid = Registries.ATTRIBUTE.getId(attr);
+                    if (aid == null) continue;
+                    if (mod.getValue() == 0.0) continue;  // drop zero modifiers
                     JsonObject m = new JsonObject();
-                    m.addProperty("attribute", aid == null ? "?" : aid.toString());
-                    m.addProperty("amount", mod.getValue());
-                    m.addProperty("operation", mod.getOperation().name().toLowerCase());
-                    m.addProperty("name", mod.getName());
+                    // Strip "minecraft:" prefix and abbreviate the operation
+                    // to keep the response under the RCON cap on a heavily
+                    // affixed player.
+                    String shortAttr = aid.getNamespace().equals("minecraft")
+                        ? aid.getPath() : aid.toString();
+                    m.addProperty("a", shortAttr);
+                    m.addProperty("v", mod.getValue());
+                    m.addProperty("op", _shortOp(mod.getOperation()));
                     mods.add(m);
-                    if (mod.getOperation() == EntityAttributeModifier.Operation.ADDITION
-                            && aid != null) {
+                    if (mod.getOperation() == EntityAttributeModifier.Operation.ADDITION) {
                         additionSums.merge(aid, mod.getValue(), Double::sum);
                     }
                 }
@@ -1100,18 +1111,28 @@ public final class ClaudeQueryCommand {
                 ClaudeMod.LOG.warn("attr lookup failed for {}: {}",
                     iid, t.toString());
             }
-            sj.add("modifiers", mods);
+            sj.add("mods", mods);
             slots.add(e.getKey(), sj);
         }
         root.add("slots", slots);
 
         JsonObject summary = new JsonObject();
         for (var entry : additionSums.entrySet()) {
-            summary.addProperty(entry.getKey().toString(), entry.getValue());
+            String shortKey = entry.getKey().getNamespace().equals("minecraft")
+                ? entry.getKey().getPath() : entry.getKey().toString();
+            summary.addProperty(shortKey, entry.getValue());
         }
-        summary.addProperty("note", "addition-operation modifiers summed across slots; multiplicative effects listed per slot only");
-        root.add("summary_addition_only", summary);
+        root.add("totals_added", summary);
+        root.addProperty("legend", "op: +=add, ×b=multiply_base, ×t=multiply_total");
         return reply(ctx, root);
+    }
+
+    private static String _shortOp(EntityAttributeModifier.Operation op) {
+        return switch (op) {
+            case ADDITION -> "+";
+            case MULTIPLY_BASE -> "×b";
+            case MULTIPLY_TOTAL -> "×t";
+        };
     }
 
     // ---------- backpack (Travelers Backpack contents) -----------------------
@@ -1357,131 +1378,59 @@ public final class ClaudeQueryCommand {
         return reply(ctx, root);
     }
 
-    // ---------- class (unified skill / class summary) -----------------------
-    /**
-     * Consolidated player-build view across the modpack's progression
-     * systems. Cleanly surfaces puffish_skills (the Prominence leveling
-     * frontend) via its public API; for simplyskills + more_rpg_classes,
-     * which don't expose stable APIs, probes the player's NBT and the
-     * server scoreboard for objectives whose names look skill-related, and
-     * dumps what's there for Claude to interpret.
-     */
-    private static int queryClass(CommandContext<ServerCommandSource> ctx) {
-        ServerPlayerEntity p = onlinePlayer(ctx);
-        if (p == null) return 0;
-
-        JsonObject root = new JsonObject();
-        root.addProperty("player", p.getName().getString());
-
-        // Puffish — clean API access (same as `claudemod query skills`).
-        if (FabricLoader.getInstance().isModLoaded("puffish_skills")) {
-            JsonArray puffish = new JsonArray();
-            try {
-                net.puffish.skillsmod.api.SkillsAPI.streamCategories().forEach(cat -> {
-                    JsonObject c = new JsonObject();
-                    c.addProperty("id", cat.getId().toString());
-                    c.addProperty("unlocked", cat.isUnlocked(p));
-                    c.addProperty("points_left", cat.getPointsLeft(p));
-                    c.addProperty("points_spent", cat.getSpentPoints(p));
-                    cat.getExperience().ifPresent(exp -> {
-                        c.addProperty("level", exp.getLevel(p));
-                        c.addProperty("xp_to_next", exp.getRequired(p, exp.getLevel(p)));
-                    });
-                    long unlocked = cat.streamUnlockedSkills(p).count();
-                    long total = cat.streamSkills().count();
-                    c.addProperty("skills_unlocked", unlocked);
-                    c.addProperty("skills_total", total);
-                    puffish.add(c);
-                });
-            } catch (Throwable t) {
-                ClaudeMod.LOG.warn("puffish summary in queryClass failed: {}", t.toString());
-            }
-            root.add("puffish_skills", puffish);
-        }
-
-        // simplyskills / more_rpg_classes — heuristic NBT scan. Keys
-        // matching skill-system patterns get dumped as SNBT.
-        JsonObject nbtFound = new JsonObject();
-        try {
-            net.minecraft.nbt.NbtCompound nbt = new net.minecraft.nbt.NbtCompound();
-            p.writeNbt(nbt);
-            for (String k : nbt.getKeys()) {
-                String lk = k.toLowerCase();
-                if (lk.contains("skill") || lk.contains("class") || lk.contains("rpg")
-                        || lk.contains("special") || lk.contains("simply")) {
-                    String snbt = nbt.get(k).toString();
-                    nbtFound.addProperty(k, truncate(snbt, 400));
-                }
-            }
-        } catch (Throwable t) {
-            ClaudeMod.LOG.warn("nbt scan in queryClass failed: {}", t.toString());
-        }
-        root.add("nbt_skill_keys", nbtFound);
-
-        // Scoreboard scan — SimplySkills tracks unspent skill points via
-        // a scoreboard packet, suggesting it stores them as objectives.
-        JsonObject scores = new JsonObject();
-        try {
-            var scoreboard = ctx.getSource().getServer().getScoreboard();
-            String name = p.getName().getString();
-            for (var obj : scoreboard.getObjectives()) {
-                String objName = obj.getName().toLowerCase();
-                if (objName.contains("skill") || objName.contains("class")
-                        || objName.contains("rpg") || objName.contains("special")
-                        || objName.contains("simply")) {
-                    if (scoreboard.playerHasObjective(name, obj)) {
-                        var score = scoreboard.getPlayerScore(name, obj);
-                        scores.addProperty(obj.getName(), score.getScore());
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            ClaudeMod.LOG.warn("scoreboard scan in queryClass failed: {}", t.toString());
-        }
-        root.add("scoreboard_skill_keys", scores);
-
-        return reply(ctx, root);
-    }
-
     // ---------- nbt_keys (index for unknown mod data) ------------------------
     /**
-     * Lists the top-level keys of a player's serialized NBT, plus one level
-     * of nested keys for any compound subtree. No values — just the index
-     * Claude needs to know what `data get entity <player> <path>` calls are
-     * worth making. This is the on-ramp for mod-specific data the bridge
-     * doesn't have a dedicated tool for (Prominence levels, item-level
-     * NBT under SelectedItem.tag, modded skill systems, etc.).
+     * Lists keys at a given NBT path on a player. Top-level only by default;
+     * pass a path arg to drill into a specific compound. The pathArg uses
+     * vanilla NBT path syntax (same as `data get entity` accepts), so for
+     * keys with colons / dots use quoted segments:
+     *   nbt_keys X                                — top-level
+     *   nbt_keys X cardinal_components             — list CCA component keys
+     *   nbt_keys X "cardinal_components.\"trinkets:trinkets\""  — drill in
      *
-     * Output:
-     *   { "player":"X",
-     *     "keys":{
-     *       "<key>": "<type>"                  for primitive/list/array,
-     *       "<key>:compound": ["<sk>:<type>"]  for nested compounds
-     *     } }
+     * Output is intentionally compact — only key names + types, no values.
+     * For the actual values use `data get entity <player> <path>` directly.
      */
-    private static int queryNbtKeys(CommandContext<ServerCommandSource> ctx) {
+    private static int queryNbtKeys(CommandContext<ServerCommandSource> ctx, String pathArg) {
         ServerPlayerEntity p = onlinePlayer(ctx);
         if (p == null) return 0;
-        net.minecraft.nbt.NbtCompound nbt = new net.minecraft.nbt.NbtCompound();
-        p.writeNbt(nbt);
+        net.minecraft.nbt.NbtCompound full = new net.minecraft.nbt.NbtCompound();
+        p.writeNbt(full);
+
+        net.minecraft.nbt.NbtCompound target = full;
+        if (pathArg != null && !pathArg.isBlank()) {
+            try {
+                var path = net.minecraft.command.argument.NbtPathArgumentType.nbtPath()
+                    .parse(new com.mojang.brigadier.StringReader(pathArg));
+                var elements = path.get(full);
+                if (elements.isEmpty()) {
+                    return error(ctx, "no element at path: " + pathArg);
+                }
+                net.minecraft.nbt.NbtElement el = elements.get(0);
+                if (el instanceof net.minecraft.nbt.NbtCompound c) {
+                    target = c;
+                } else {
+                    JsonObject leaf = new JsonObject();
+                    leaf.addProperty("player", p.getName().getString());
+                    leaf.addProperty("path", pathArg);
+                    leaf.addProperty("type", nbtTypeName(el));
+                    leaf.addProperty("hint", "this path is not a compound; use `data get entity` to read the value");
+                    return reply(ctx, leaf);
+                }
+            } catch (Exception e) {
+                return error(ctx, "bad path '" + pathArg + "': " + e.getMessage());
+            }
+        }
 
         JsonObject root = new JsonObject();
         root.addProperty("player", p.getName().getString());
+        if (pathArg != null) root.addProperty("path", pathArg);
         JsonObject keys = new JsonObject();
-        for (String k : nbt.getKeys()) {
-            net.minecraft.nbt.NbtElement el = nbt.get(k);
-            if (el instanceof net.minecraft.nbt.NbtCompound sub) {
-                JsonArray subKeys = new JsonArray();
-                for (String sk : sub.getKeys()) {
-                    subKeys.add(sk + ":" + nbtTypeName(sub.get(sk)));
-                }
-                keys.add(k + ":compound", subKeys);
-            } else {
-                keys.addProperty(k, nbtTypeName(el));
-            }
+        for (String k : target.getKeys()) {
+            keys.addProperty(k, nbtTypeName(target.get(k)));
         }
         root.add("keys", keys);
-        root.addProperty("hint", "use `data get entity " + p.getName().getString() + " <path>` to read a specific subtree");
+        root.addProperty("count", target.getKeys().size());
         return reply(ctx, root);
     }
 
