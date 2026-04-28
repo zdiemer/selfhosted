@@ -129,7 +129,8 @@ public final class ClaudeQueryCommand {
                             .then(CommandManager.argument("search", StringArgumentType.greedyString())
                                 .executes(ctx -> queryQuest(ctx, StringArgumentType.getString(ctx, "search"))))))
                     .then(CommandManager.literal("find")
-                        .then(CommandManager.argument("dim", StringArgumentType.word())
+                        .then(CommandManager.argument("dim",
+                                net.minecraft.command.argument.IdentifierArgumentType.identifier())
                             .then(CommandManager.argument("item", StringArgumentType.greedyString())
                                 .executes(ClaudeQueryCommand::queryFind))))
                     .then(CommandManager.literal("nbt_keys")
@@ -681,12 +682,9 @@ public final class ClaudeQueryCommand {
      * block entities, which is fine.
      */
     private static int queryFind(CommandContext<ServerCommandSource> ctx) {
-        String dimRaw = StringArgumentType.getString(ctx, "dim");
+        Identifier dimId = net.minecraft.command.argument.IdentifierArgumentType
+            .getIdentifier(ctx, "dim");
         String itemRaw = StringArgumentType.getString(ctx, "item").trim();
-
-        if (!dimRaw.contains(":")) dimRaw = "minecraft:" + dimRaw;
-        Identifier dimId = Identifier.tryParse(dimRaw);
-        if (dimId == null) return error(ctx, "bad dim: " + dimRaw);
 
         Identifier itemId = Identifier.tryParse(itemRaw.contains(":") ? itemRaw : ("minecraft:" + itemRaw));
         if (itemId == null) return error(ctx, "bad item: " + itemRaw);

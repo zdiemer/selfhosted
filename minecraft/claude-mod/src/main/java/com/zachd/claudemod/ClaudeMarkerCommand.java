@@ -77,7 +77,8 @@ public final class ClaudeMarkerCommand {
                 .then(CommandManager.literal("mark")
                     .then(CommandManager.literal("add")
                         .then(CommandManager.argument("name", StringArgumentType.word())
-                            .then(CommandManager.argument("world", StringArgumentType.word())
+                            .then(CommandManager.argument("world",
+                                    net.minecraft.command.argument.IdentifierArgumentType.identifier())
                                 .then(CommandManager.argument("x", DoubleArgumentType.doubleArg())
                                     .then(CommandManager.argument("y", DoubleArgumentType.doubleArg())
                                         .then(CommandManager.argument("z", DoubleArgumentType.doubleArg())
@@ -118,15 +119,15 @@ public final class ClaudeMarkerCommand {
     // ---------- Brigadier handlers ------------------------------------------
     private static int add(CommandContext<ServerCommandSource> ctx) {
         String name = StringArgumentType.getString(ctx, "name");
-        String world = StringArgumentType.getString(ctx, "world");
+        // IdentifierArgumentType always returns a namespaced id, so no
+        // "missing namespace" branch needed.
+        String world = net.minecraft.command.argument.IdentifierArgumentType
+            .getIdentifier(ctx, "world").toString();
         double x = DoubleArgumentType.getDouble(ctx, "x");
         double y = DoubleArgumentType.getDouble(ctx, "y");
         double z = DoubleArgumentType.getDouble(ctx, "z");
         String author = StringArgumentType.getString(ctx, "author");
         String label = StringArgumentType.getString(ctx, "label");
-
-        // Normalize world to a "namespace:path" form for BlueMap lookup.
-        if (!world.contains(":")) world = "minecraft:" + world;
 
         synchronized (markers) {
             // Replace existing marker of the same name.
