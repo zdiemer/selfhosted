@@ -85,9 +85,9 @@ spec:
               value: {{ .Values.bridge.feedback.gitUserName | quote }}
             - name: FEEDBACK_GIT_EMAIL
               value: {{ .Values.bridge.feedback.gitUserEmail | quote }}
-            # HOME points into a writable dir; .claude inside it is a
-            # symlink (set up at startup) into /home/node/.claude where
-            # we mount the OAuth credentials.
+            # HOME points into a writable PVC dir; the init container
+            # populates HOME/.claude with symlinks to the host creds dir
+            # (/host-claude) and the baked-in settings.json.
             - name: HOME
               value: /app/state
             - name: STATE_DIR
@@ -95,14 +95,15 @@ spec:
           volumeMounts:
             - name: state
               mountPath: /app/state
-            # HostPath mount of the user's OAuth credentials file.
-            # Read-write so Claude Code can refresh access tokens in
-            # place — host and pod share one refresh token, kept fresh
-            # by whichever side runs most recently. The init container
-            # symlinks HOME/.claude/.credentials.json to this path so
-            # Claude Code finds it on every spawn.
+            # HostPath dir mount of the user's ~/.claude. Must be the
+            # directory, not the credentials file alone: Claude Code
+            # refreshes OAuth tokens via tmp+rename, which gives the
+            # file a new inode. A single-file bind mount pins the
+            # original inode and goes stale forever; a directory mount
+            # tracks rename-in-place so the pod sees fresh tokens.
+            # Read-write so either side can drive the refresh.
             - name: claude-creds
-              mountPath: /host-claude/credentials.json
+              mountPath: /host-claude
             # tmpfs for things that genuinely need to be writable but
             # ephemeral — npx caches, git temp objects.
             - name: tmp
@@ -111,8 +112,8 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
       initContainers:
         # Bootstrap the writable state dir on the PVC: ensure subdirs exist
-        # and that HOME/.claude points at the read-only credentials mount.
-        # Runs as the same UID so file ownership is correct on first install.
+        # and that HOME/.claude/.credentials.json points at the host dir
+        # mount. Runs as the same UID so ownership is correct on first install.
         - name: init-state
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -127,11 +128,12 @@ spec:
             - |
               set -eu
               mkdir -p /app/state/.claude /app/state/feedback-repo
-              # Wire the host credentials file into HOME/.claude as a
-              # symlink. Claude Code reads $HOME/.claude/.credentials.json
-              # on every spawn; the file lives on the host filesystem
-              # under /host-claude/credentials.json (hostPath mount).
-              ln -snf /host-claude/credentials.json /app/state/.claude/.credentials.json
+              # Symlink HOME/.claude/.credentials.json at the host's
+              # ~/.claude/.credentials.json, exposed via the directory
+              # hostPath at /host-claude. Symlink is resolved fresh on
+              # every claude spawn, so atomic-rename refreshes on the
+              # host become visible without restarting the pod.
+              ln -snf /host-claude/.credentials.json /app/state/.claude/.credentials.json
               # Surface the baked-in tool allowlist as $HOME/.claude/settings.json
               # so claude-code picks it up without needing a CLI flag.
               ln -snf /app/claude-config/settings.json /app/state/.claude/settings.json
@@ -140,7 +142,7 @@ spec:
             - name: state
               mountPath: /app/state
             - name: claude-creds
-              mountPath: /host-claude/credentials.json
+              mountPath: /host-claude
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -150,7 +152,7 @@ spec:
         - name: claude-creds
           hostPath:
             path: {{ .Values.auth.hostPath }}
-            type: File
+            type: Directory
         - name: tmp
           emptyDir:
             medium: Memory

@@ -374,6 +374,12 @@ class Claude:
                                   event.get("subtype"))
                     final_text = (event.get("result") or "").strip()
                     new_session = event.get("session_id")
+                    # Log the full reply (already capped at MAX_RESPONSE_CHARS
+                    # downstream by broadcast) so replies are auditable post
+                    # hoc — bridge logs previously only carried tool calls.
+                    log.info("claude reply player=%s len=%d text=%s",
+                             player_name, len(final_text),
+                             final_text.replace("\n", " ⏎ "))
                     break
         finally:
             try:
@@ -424,6 +430,7 @@ def _progress_label(block: dict) -> str:
             ("claudemod query skills",        "checking your skill tree"),
             ("claudemod query quest",         "searching the quest book"),
             ("claudemod query find",          "scanning chests"),
+            ("claudemod query blocks",        "scanning the area"),
             ("claudemod query mobs",          "scanning for nearby mobs"),
             ("claudemod query nbt_keys",      "indexing your data"),
             ("claudemod mark",            "updating the map"),

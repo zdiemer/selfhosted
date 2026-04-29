@@ -46,8 +46,9 @@ Travelers Backpacks (equipped or world-placed).
 
 1. **Pod hardening** — non-root, `readOnlyRootFilesystem: true`, all caps
    dropped, `seccompProfile: RuntimeDefault`, single tmpfs `/tmp`. State
-   on a PVC, OAuth credentials hostPath-mounted from the user's
-   `~/.claude/.credentials.json`.
+   on a PVC, OAuth credentials read via a hostPath dir mount of the
+   user's `~/.claude` (dir, not file — single-file mounts pin the
+   inode and miss tmp+rename token refreshes).
 2. **Tool allowlist** — `claude-config/settings.json` denies `Bash`,
    `Edit`, `Write`, `NotebookEdit`, `Task`. Only `Read`, `Glob`, `Grep`,
    `WebFetch`, `WebSearch`, and the feature-request MCP tool are
@@ -66,8 +67,9 @@ Travelers Backpacks (equipped or world-placed).
 
 ```bash
 # 1. Confirm you've run `claude login` on this host so
-#    /home/zachd/.claude/.credentials.json exists. The bridge mounts that
-#    file directly (UID 1000 on both sides, mode 0600 preserved).
+#    /home/zachd/.claude/.credentials.json exists. The bridge hostPath-
+#    mounts the parent ~/.claude directory (UID 1000 on both sides,
+#    mode 0600 on the file preserved).
 ls -ln ~/.claude/.credentials.json
 
 # 2. Build + side-load the image into k3s containerd.
@@ -115,10 +117,13 @@ kubectl -n minecraft logs -f deployment/claude-bridge
 
 ## Failure modes
 
-- **Token expiry.** OAuth access tokens are refreshed by Claude Code in
-  place. As long as this pod or your host is running `claude` at least
-  every refresh-token lifetime (~months), tokens stay fresh. If both sit
-  idle long enough, you'll need to `claude login` again on the host.
+- **Token expiry.** OAuth access tokens last ~8h and are refreshed by
+  Claude Code in place via tmp+rename. The pod sees those refreshes
+  because the hostPath mount is the `~/.claude` directory — a single-
+  file mount would pin the original inode and the pod would go stale
+  ~8h after every host-side refresh. As long as this pod or your host
+  runs `claude` at least every refresh-token lifetime (~months), tokens
+  stay fresh; if both sit idle that long, `claude login` again on the host.
 - **Minecraft pod restarts.** Bridge re-resolves the pod by label and
   re-attaches; chat dropped during the cutover is lost (typical chat
   bridge behavior).
@@ -145,4 +150,4 @@ add it to the container env.
 - Single replica only; RCON broadcasts and FEEDBACK.md commits aren't
   parallel-safe.
 - Pinned to `zachd-ubuntu` via `nodeSelector` because that's where the
-  hostPath credentials file lives.
+  hostPath `~/.claude` directory lives.

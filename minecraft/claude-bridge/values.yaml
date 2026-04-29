@@ -110,6 +110,21 @@ bridge:
     You are embedded in a Minecraft server's chat. Players invoke you with
     /claude <prompt> (a Brigadier command registered by a small Fabric mod).
 
+    Player name aliases — when a player references someone by a nickname,
+    resolve it to the canonical Minecraft username before passing it to any
+    tool. Tools (RCON, MCP) only accept canonical names; aliases will fail.
+      - "logan" or "lojak"     → lojak_2
+      - "rawl" or "ben"        → rawlistic
+      - "indel" or "matt"      → indelmaen
+      - "zach"                 → AMBIGUOUS: could be starfoxa or zachjak.
+        Run `list` (run_query_command) to see who's online. If exactly one
+        of {starfoxa, zachjak} is online, use that one. If both, ask the
+        asking player which Zach they mean before any tool call. If
+        neither, say so.
+    Aliases also apply to the asking player's own self-reference (e.g. if
+    starfoxa types "give zach 64 dirt" they mean themselves — but still
+    disambiguate if zachjak is also online).
+
     Tools available (use them silently — never announce that you're using one):
       - WebSearch: live web search. Use this when the question hinges on
         facts you might not have memorized exactly (recipes, mechanics,
@@ -182,6 +197,19 @@ bridge:
               loaded chest/barrel/shulker in the dimension. Dim is e.g.
               "minecraft:overworld". Only loaded chunks are scanned (around
               online players), which is fine for "find iron in my base".
+              CONTAINERS ONLY — for raw world blocks (gravel, ores, logs)
+              use `claudemod query blocks` instead.
+          "claudemod query blocks <player> <block>"    — locate world BLOCKS
+              (not container contents) in a 9×9-chunk halo around the
+              player. Use this for "where's gravel?", "any iron ore
+              nearby?", "find a tree" — anything mined/harvested from the
+              environment. Output is grouped by chunk: each cluster has a
+              `count`, `nearest` blockpos, and `dist`. Surface the nearest
+              cluster's coords + distance in the reply. Block id can be
+              vanilla short form ("gravel") or fully qualified
+              ("minecraft:iron_ore", "modid:thing"). Tags are not
+              supported — for "iron ore" callers may need
+              `iron_ore` AND `deepslate_iron_ore` (run twice if needed).
           "claudemod query mobs <player> [radius]"     — list living entities
               in a box around the player (default radius 32 blocks; clamped
               4-96). Output groups by entity type with count + nearest
@@ -421,20 +449,24 @@ tolerations:
 # ----------------------------------------------------------------------------
 # Claude Code authentication — shared with the host.
 #
-# We hostPath-mount /home/zachd/.claude/.credentials.json straight into the
-# pod (single-node k3s, UID 1000 on both sides, 0600 perms preserved). The
-# mount is read-write so Claude Code can refresh OAuth access tokens in
-# place; you and the bridge end up using the same refresh token, kept fresh
-# by whichever side ran most recently.
+# We hostPath-mount the entire ~/.claude directory (not just the credentials
+# file) into the pod. Claude Code refreshes OAuth tokens via tmp+rename,
+# which assigns a new inode each time; a single-file bind mount pins the
+# original inode and goes stale within ~8h. A directory mount tracks the
+# rename so the pod always reads the current credentials. Read-write so
+# either side can drive the refresh — both end up using the same token.
+#
+# Trade-off: the pod's claude process can read/write everything under
+# ~/.claude (history.jsonl, sessions, projects). Acceptable here because
+# the pod already runs claude as your account; no privilege escalation.
 #
 # Implications:
 #   - You must have run `claude login` on this host at least once.
-#   - If the file moves or you wipe ~/.claude, the bridge breaks until you
-#     re-authenticate.
+#   - If you wipe ~/.claude, the bridge breaks until you re-authenticate.
 #   - Pinned to zachd-ubuntu via nodeSelector below; don't reschedule it.
 # ----------------------------------------------------------------------------
 auth:
-  hostPath: /home/zachd/.claude/.credentials.json
+  hostPath: /home/zachd/.claude
 
 # ============================================================================
 # SECRETS — filled by values.local.yaml (gitignored).

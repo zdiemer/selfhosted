@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 
+import net.minecraft.block.Block;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.command.argument.IdentifierArgumentType;
 import net.minecraft.entity.Entity;
@@ -29,6 +30,7 @@ import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
+import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.gen.structure.Structure;
 
@@ -66,6 +68,24 @@ public final class WorldSearchQueries {
     // species in a halo; we surface the count + nearest position and
     // clip the per-type detail.
     private static final int MOBS_GROUP_CAP = 60;
+
+    // Block-scan halo around the asking player, in CHUNKS. 4 chunks = 64
+    // blocks horizontal — enough for "any gravel near me?" without paying
+    // the cost of palette-checking every loaded section in the dimension.
+    // The per-section palette pre-check is the load-bearing optimisation:
+    // sections without the target block in their palette skip their 4096
+    // cells in O(palette size).
+    private static final int BLOCKS_DEFAULT_RADIUS_CHUNKS = 4;
+    private static final int BLOCKS_MIN_RADIUS_CHUNKS = 1;
+    private static final int BLOCKS_MAX_RADIUS_CHUNKS = 8;
+    // Cap on cluster entries returned. Hits are grouped by chunk (one
+    // cluster per chunk), so this caps the response shape, not the raw
+    // hit count — a single cluster's `count` may be much higher.
+    private static final int BLOCKS_RESULT_CAP = 30;
+    // Per-chunk cap on individual blocks scanned once we know a section
+    // contains the target. A solid gravel chunk has ~5k matches; we only
+    // need enough to fix the nearest-position estimate.
+    private static final int BLOCKS_PER_CHUNK_CAP = 256;
 
     private static final int BIOME_SEARCH_RADIUS_BLOCKS = 2048;
     private static final int LOADED_STRUCTURE_RADIUS_CHUNKS = 16;
@@ -155,6 +175,149 @@ public final class WorldSearchQueries {
             if (stack.getItem() == target) count += stack.getCount();
         }
         return count;
+    }
+
+    /**
+     * Scan loaded chunks around the asking player for a block type, e.g.
+     * "where's gravel?". Counterpart to {@link #queryFind} which only
+     * looks inside containers — this one inspects world blocks themselves.
+     *
+     * Performance hinges on {@link ChunkSection#hasAny} which checks the
+     * section's palette before iterating cells, so empty / unrelated
+     * sections cost ~1µs. A radius-4 halo (9×9 chunks ≈ 1900 sections in
+     * the overworld) finishes in single-digit ms when the target is rare
+     * and tens of ms when it's everywhere. Hits are grouped by chunk so
+     * the response stays bounded: a solid gravel ravine becomes one
+     * cluster, not 5,000 blockpos entries.
+     */
+    public static int queryBlocks(CommandContext<ServerCommandSource> ctx, int rawRadius) {
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+        int radius = Math.max(BLOCKS_MIN_RADIUS_CHUNKS, Math.min(BLOCKS_MAX_RADIUS_CHUNKS, rawRadius));
+
+        String idStr = StringArgumentType.getString(ctx, "block").trim();
+        Identifier id = Identifier.tryParse(idStr.contains(":") ? idStr : "minecraft:" + idStr);
+        if (id == null) return ClaudeIo.error(ctx, "bad block: " + idStr);
+        if (!Registries.BLOCK.containsId(id)) return ClaudeIo.error(ctx, "unknown block: " + id);
+        Block target = Registries.BLOCK.get(id);
+
+        ServerWorld world = (ServerWorld) p.getWorld();
+        BlockPos origin = p.getBlockPos();
+        ChunkPos cp = p.getChunkPos();
+
+        // One bucket per chunk that contains a hit. We track the closest
+        // representative + total count so the LLM can say "patch of 124
+        // gravel ~30 blocks NE" instead of dumping per-block coords.
+        class Bucket {
+            int cx, cz;
+            int count = 0;
+            BlockPos nearest = null;
+            double nearestDistSq = Double.MAX_VALUE;
+            boolean countCapped = false;
+        }
+        java.util.List<Bucket> buckets = new java.util.ArrayList<>();
+        int chunksLoaded = 0;
+        int sectionsMatched = 0;
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int chunkX = cp.x + dx;
+                int chunkZ = cp.z + dz;
+                WorldChunk chunk = world.getChunkManager().getWorldChunk(chunkX, chunkZ);
+                if (chunk == null) continue;
+                chunksLoaded++;
+                Bucket bucket = null;
+                ChunkSection[] sections = chunk.getSectionArray();
+                int bottomSectionCoord = chunk.getBottomSectionCoord();
+                for (int si = 0; si < sections.length; si++) {
+                    ChunkSection s = sections[si];
+                    if (s == null || s.isEmpty()) continue;
+                    // Palette pre-check: O(palette size), avoids the 4096-cell
+                    // walk for sections that don't contain the target at all.
+                    if (!s.hasAny(state -> state.isOf(target))) continue;
+                    sectionsMatched++;
+                    int sectionBlockY = (bottomSectionCoord + si) << 4;
+                    int chunkBlockX = chunkX << 4;
+                    int chunkBlockZ = chunkZ << 4;
+                    cellScan:
+                    for (int x = 0; x < 16; x++) {
+                        for (int y = 0; y < 16; y++) {
+                            for (int z = 0; z < 16; z++) {
+                                if (!s.getBlockState(x, y, z).isOf(target)) continue;
+                                if (bucket == null) {
+                                    bucket = new Bucket();
+                                    bucket.cx = chunkX;
+                                    bucket.cz = chunkZ;
+                                    buckets.add(bucket);
+                                }
+                                bucket.count++;
+                                BlockPos pos = new BlockPos(
+                                    chunkBlockX + x, sectionBlockY + y, chunkBlockZ + z);
+                                double d = origin.getSquaredDistance(pos);
+                                if (d < bucket.nearestDistSq) {
+                                    bucket.nearestDistSq = d;
+                                    bucket.nearest = pos;
+                                }
+                                if (bucket.count >= BLOCKS_PER_CHUNK_CAP) {
+                                    bucket.countCapped = true;
+                                    break cellScan;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        buckets.sort((a, b) -> Double.compare(a.nearestDistSq, b.nearestDistSq));
+
+        JsonArray clusters = new JsonArray();
+        boolean truncated = false;
+        int totalReportedHits = 0;
+        for (Bucket b : buckets) {
+            if (clusters.size() >= BLOCKS_RESULT_CAP) { truncated = true; break; }
+            JsonObject c = new JsonObject();
+            c.addProperty("count", b.count);
+            if (b.countCapped) c.addProperty("count_capped", true);
+            JsonObject np = new JsonObject();
+            np.addProperty("x", b.nearest.getX());
+            np.addProperty("y", b.nearest.getY());
+            np.addProperty("z", b.nearest.getZ());
+            c.add("nearest", np);
+            c.addProperty("dist", (int) Math.sqrt(b.nearestDistSq));
+            JsonObject chunkPos = new JsonObject();
+            chunkPos.addProperty("x", b.cx);
+            chunkPos.addProperty("z", b.cz);
+            c.add("chunk", chunkPos);
+            clusters.add(c);
+            totalReportedHits += b.count;
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("block", id.toString());
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("radius_chunks", radius);
+        if (radius != rawRadius) root.addProperty("radius_clamped_from", rawRadius);
+        JsonObject originJson = new JsonObject();
+        originJson.addProperty("x", origin.getX());
+        originJson.addProperty("y", origin.getY());
+        originJson.addProperty("z", origin.getZ());
+        originJson.addProperty("dim", world.getRegistryKey().getValue().toString());
+        root.add("origin", originJson);
+        root.addProperty("chunks_loaded", chunksLoaded);
+        root.addProperty("sections_matched", sectionsMatched);
+        root.addProperty("clusters_found", buckets.size());
+        root.addProperty("hits_reported", totalReportedHits);
+        if (chunksLoaded == 0) {
+            root.addProperty("note", "no chunks loaded near the player");
+        } else if (buckets.isEmpty()) {
+            root.addProperty("note",
+                "no " + id + " in the " + (radius * 2 + 1) + "×" + (radius * 2 + 1) +
+                "-chunk halo around the player; only loaded chunks are scanned");
+        }
+        if (truncated) root.addProperty("truncated", true);
+        root.add("clusters", clusters);
+        return ClaudeIo.reply(ctx, root);
     }
 
     public static int queryNearest(CommandContext<ServerCommandSource> ctx, boolean isBiome) {
