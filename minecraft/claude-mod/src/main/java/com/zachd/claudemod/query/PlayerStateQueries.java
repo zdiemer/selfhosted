@@ -99,8 +99,17 @@ public final class PlayerStateQueries {
 
         if (typeFilter != null) {
             String key = typeFilter.contains(":") ? typeFilter : ("minecraft:" + typeFilter);
-            if (stats.has(key)) {
+            if (stats.has(key) && stats.get(key).isJsonObject()) {
                 out.add(key, topN(stats.getAsJsonObject(key), STATS_TOP_N));
+            } else if (stats.has("minecraft:custom")
+                    && stats.getAsJsonObject("minecraft:custom").has(key)) {
+                // Vanilla puts deaths / mob_kills / play_time / damage_dealt etc.
+                // under minecraft:custom — surface them as if the user had passed
+                // the full path so "stats <p> deaths" Just Works.
+                JsonObject section = new JsonObject();
+                section.add(key, stats.getAsJsonObject("minecraft:custom").get(key));
+                out.add("minecraft:custom", section);
+                out.addProperty("aliased_from", typeFilter);
             } else {
                 out.addProperty("error", "no such stat type: " + key);
             }
