@@ -153,13 +153,26 @@ public final class PlayerStateQueries {
      * Live player vitals: health, hunger, air, status effects (with duration
      * + amplifier), and the resolved values of common attributes including
      * any modifiers from gear, affixes, skills, etc.
+     *
+     * For offline players we fall back to reading {@code world/playerdata/
+     * <uuid>.dat} — same file {@link #queryLastDeath} uses. The offline
+     * payload omits live-only fields ({@code max_health}, {@code max_air},
+     * resolved attribute {@code value}) and tags {@code source} so callers
+     * can tell the difference. Bed spawn / last death / xp / saturation are
+     * all persisted in the NBT and surfaced in both branches.
      */
     public static int queryVitals(CommandContext<ServerCommandSource> ctx) {
-        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
-        if (p == null) return 0;
+        String name = StringArgumentType.getString(ctx, "player");
+        MinecraftServer server = ctx.getSource().getServer();
+        ServerPlayerEntity online = server.getPlayerManager().getPlayer(name);
+        if (online != null) return onlineVitals(ctx, online);
+        return offlineVitals(ctx, server, name);
+    }
 
+    private static int onlineVitals(CommandContext<ServerCommandSource> ctx, ServerPlayerEntity p) {
         JsonObject root = new JsonObject();
         root.addProperty("player", p.getName().getString());
+        root.addProperty("source", "online");
         root.addProperty("health", p.getHealth());
         root.addProperty("max_health", p.getMaxHealth());
         root.addProperty("hunger", p.getHungerManager().getFoodLevel());
@@ -231,6 +244,122 @@ public final class PlayerStateQueries {
             a.addProperty("base", inst.getBaseValue());
             a.addProperty("value", inst.getValue());
             attrs.add(aid == null ? "?" : aid.toString(), a);
+        }
+        root.add("attributes", attrs);
+        return ClaudeIo.reply(ctx, root);
+    }
+
+    private static int offlineVitals(CommandContext<ServerCommandSource> ctx,
+                                     MinecraftServer server, String name) {
+        UUID uuid = server.getUserCache() == null ? null
+            : server.getUserCache().findByName(name).map(p -> p.getId()).orElse(null);
+        if (uuid == null) return ClaudeIo.error(ctx, "unknown player: " + name);
+
+        Path datFile = server.getSavePath(WorldSavePath.PLAYERDATA).resolve(uuid + ".dat");
+        JsonObject root = new JsonObject();
+        root.addProperty("player", name);
+        root.addProperty("source", "offline_playerdata");
+        if (!Files.exists(datFile)) {
+            root.addProperty("note", "no playerdata file (player has not joined)");
+            return ClaudeIo.reply(ctx, root);
+        }
+
+        NbtCompound nbt;
+        try {
+            nbt = NbtIo.readCompressed(datFile.toFile());
+        } catch (IOException e) {
+            return ClaudeIo.error(ctx, "playerdata unreadable: " + e.getMessage());
+        }
+
+        // Scalars persisted by ServerPlayerEntity.writeCustomDataToNbt /
+        // PlayerEntity.writeNbt — every running 1.20.1 player has these.
+        if (nbt.contains("Health", NbtElement.NUMBER_TYPE))
+            root.addProperty("health", nbt.getFloat("Health"));
+        if (nbt.contains("foodLevel", NbtElement.NUMBER_TYPE))
+            root.addProperty("hunger", nbt.getInt("foodLevel"));
+        if (nbt.contains("foodSaturationLevel", NbtElement.NUMBER_TYPE))
+            root.addProperty("saturation", nbt.getFloat("foodSaturationLevel"));
+        if (nbt.contains("Air", NbtElement.NUMBER_TYPE))
+            root.addProperty("air", nbt.getShort("Air"));
+        if (nbt.contains("XpLevel", NbtElement.NUMBER_TYPE))
+            root.addProperty("xp_level", nbt.getInt("XpLevel"));
+
+        // ActiveEffects shape on 1.20.1: list of {Id (string), Amplifier (byte),
+        // Duration (int), ShowParticles (byte), ShowIcon (byte), Ambient (byte)}.
+        JsonArray effects = new JsonArray();
+        if (nbt.contains("ActiveEffects", NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList("ActiveEffects", NbtElement.COMPOUND_TYPE);
+            for (int i = 0; i < list.size(); i++) {
+                NbtCompound eff = list.getCompound(i);
+                JsonObject e = new JsonObject();
+                e.addProperty("id", eff.getString("Id"));
+                e.addProperty("amplifier", eff.getByte("Amplifier"));
+                int dur = eff.getInt("Duration");
+                e.addProperty("duration_ticks", dur);
+                if (dur >= 0) e.addProperty("duration_seconds", dur / 20);
+                effects.add(e);
+            }
+        }
+        root.add("effects", effects);
+
+        // Bed/respawn point. Vanilla persists Spawn{X,Y,Z,Dimension,Angle,Forced}
+        // at logout and clears them on bed-block break or /spawnpoint clear.
+        if (nbt.contains("SpawnX", NbtElement.NUMBER_TYPE)) {
+            JsonObject bed = new JsonObject();
+            bed.addProperty("x", nbt.getInt("SpawnX"));
+            bed.addProperty("y", nbt.getInt("SpawnY"));
+            bed.addProperty("z", nbt.getInt("SpawnZ"));
+            bed.addProperty("dim", nbt.contains("SpawnDimension", NbtElement.STRING_TYPE)
+                ? nbt.getString("SpawnDimension") : "minecraft:overworld");
+            if (nbt.contains("SpawnAngle", NbtElement.NUMBER_TYPE))
+                bed.addProperty("angle", nbt.getFloat("SpawnAngle"));
+            if (nbt.contains("SpawnForced", NbtElement.NUMBER_TYPE))
+                bed.addProperty("forced", nbt.getBoolean("SpawnForced"));
+            root.add("bed_spawn", bed);
+        }
+
+        // Last death — same shape queryLastDeath reads.
+        if (nbt.contains("LastDeathLocation", NbtElement.COMPOUND_TYPE)) {
+            NbtCompound ld = nbt.getCompound("LastDeathLocation");
+            int[] arr = ld.getIntArray("pos");
+            if (arr.length == 3) {
+                JsonObject d = new JsonObject();
+                d.addProperty("x", arr[0]);
+                d.addProperty("y", arr[1]);
+                d.addProperty("z", arr[2]);
+                d.addProperty("dim", ld.getString("dimension"));
+                root.add("last_death", d);
+            }
+        }
+
+        // Last known position when they logged out — handy for "where did
+        // they leave from?" follow-ups even though it's not strictly vitals.
+        if (nbt.contains("Pos", NbtElement.LIST_TYPE)) {
+            NbtList pos = nbt.getList("Pos", NbtElement.DOUBLE_TYPE);
+            if (pos.size() == 3) {
+                JsonObject lp = new JsonObject();
+                lp.addProperty("x", (int) Math.floor(pos.getDouble(0)));
+                lp.addProperty("y", (int) Math.floor(pos.getDouble(1)));
+                lp.addProperty("z", (int) Math.floor(pos.getDouble(2)));
+                if (nbt.contains("Dimension", NbtElement.STRING_TYPE))
+                    lp.addProperty("dim", nbt.getString("Dimension"));
+                root.add("last_known_pos", lp);
+            }
+        }
+
+        // Persisted base values only — modifiers are gear/effect-bound and
+        // need a live entity to resolve, so we skip resolved `value`.
+        JsonObject attrs = new JsonObject();
+        if (nbt.contains("Attributes", NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList("Attributes", NbtElement.COMPOUND_TYPE);
+            for (int i = 0; i < list.size(); i++) {
+                NbtCompound a = list.getCompound(i);
+                String n = a.getString("Name");
+                if (n.isEmpty()) continue;
+                JsonObject ao = new JsonObject();
+                ao.addProperty("base", a.getDouble("Base"));
+                attrs.add(n, ao);
+            }
         }
         root.add("attributes", attrs);
         return ClaudeIo.reply(ctx, root);
