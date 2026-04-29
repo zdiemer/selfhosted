@@ -22,6 +22,7 @@ import net.minecraft.command.argument.NbtPathArgumentType;
 import net.minecraft.entity.attribute.EntityAttribute;
 import net.minecraft.entity.attribute.EntityAttributeInstance;
 import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.effect.StatusEffect;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -284,15 +285,21 @@ public final class PlayerStateQueries {
         if (nbt.contains("XpLevel", NbtElement.NUMBER_TYPE))
             root.addProperty("xp_level", nbt.getInt("XpLevel"));
 
-        // ActiveEffects shape on 1.20.1: list of {Id (string), Amplifier (byte),
-        // Duration (int), ShowParticles (byte), ShowIcon (byte), Ambient (byte)}.
+        // ActiveEffects shape on 1.20.1: list of compounds with `Id` stored
+        // as a *byte* raw id (vanilla switched to a string Identifier in
+        // 1.20.5+). Resolve back through the registry so callers see the
+        // namespaced effect id, not 12.
         JsonArray effects = new JsonArray();
         if (nbt.contains("ActiveEffects", NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList("ActiveEffects", NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < list.size(); i++) {
                 NbtCompound eff = list.getCompound(i);
                 JsonObject e = new JsonObject();
-                e.addProperty("id", eff.getString("Id"));
+                int rawId = eff.getByte("Id") & 0xFF;
+                StatusEffect type = StatusEffect.byRawId(rawId);
+                Identifier eid = type == null ? null : Registries.STATUS_EFFECT.getId(type);
+                e.addProperty("id", eid == null ? ("raw_" + rawId) : eid.toString());
+                if (type != null) e.addProperty("name", type.getName().getString());
                 e.addProperty("amplifier", eff.getByte("Amplifier"));
                 int dur = eff.getInt("Duration");
                 e.addProperty("duration_ticks", dur);
@@ -347,21 +354,11 @@ public final class PlayerStateQueries {
             }
         }
 
-        // Persisted base values only — modifiers are gear/effect-bound and
-        // need a live entity to resolve, so we skip resolved `value`.
-        JsonObject attrs = new JsonObject();
-        if (nbt.contains("Attributes", NbtElement.LIST_TYPE)) {
-            NbtList list = nbt.getList("Attributes", NbtElement.COMPOUND_TYPE);
-            for (int i = 0; i < list.size(); i++) {
-                NbtCompound a = list.getCompound(i);
-                String n = a.getString("Name");
-                if (n.isEmpty()) continue;
-                JsonObject ao = new JsonObject();
-                ao.addProperty("base", a.getDouble("Base"));
-                attrs.add(n, ao);
-            }
-        }
-        root.add("attributes", attrs);
+        // Attributes are intentionally omitted offline: modded servers
+        // persist hundreds of namespaced entries (trinkets / skills /
+        // affixes) and the raw Base value without a live entity to apply
+        // gear modifiers isn't actionable. Online callers still get the
+        // resolved `value` via the vanilla whitelist in onlineVitals.
         return ClaudeIo.reply(ctx, root);
     }
 
