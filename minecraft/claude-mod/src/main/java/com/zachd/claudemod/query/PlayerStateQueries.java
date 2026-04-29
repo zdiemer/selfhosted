@@ -25,6 +25,7 @@ import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
@@ -585,5 +586,118 @@ public final class PlayerStateQueries {
             case 12 -> "long[]";
             default -> "?";
         };
+    }
+
+    /**
+     * Prominence II "level" — the integer the modpack surfaces to players
+     * via the {@code prominent_talents:level_stat_indicator} inventory
+     * widget. Distinct from vanilla XpLevel (held in player NBT) and from
+     * Puffish skill points spent (returned by {@link #querySkills}). When
+     * a player asks about "my level" in this pack, this is the answer.
+     *
+     * Reads via the API of the {@code prominent_talents} mod's
+     * {@code TalentTree.getServerPlayerLevel}. Returns a structured error
+     * if the mod isn't loaded — the LLM can fall back to
+     * {@code query skills} (talent-tree SP) or {@code query xp} (vanilla)
+     * with the right framing.
+     */
+    public static int queryLevel(CommandContext<ServerCommandSource> ctx) {
+        if (!FabricLoader.getInstance().isModLoaded("prominent_talents")) {
+            return ClaudeIo.error(ctx, "prominent_talents mod not loaded");
+        }
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+
+        JsonObject out = new JsonObject();
+        out.addProperty("player", p.getName().getString());
+        try {
+            int level = elocindev.prominent_talents.util.TalentTree.getServerPlayerLevel(p);
+            out.addProperty("level", level);
+            out.addProperty("max_level", elocindev.prominent_talents.util.TalentTree.MAX_LEVEL);
+            out.addProperty("source", "prominent_talents.TalentTree.getServerPlayerLevel");
+        } catch (Throwable t) {
+            return ClaudeIo.error(ctx, "TalentTree call failed: " + t.toString());
+        }
+        return ClaudeIo.reply(ctx, out);
+    }
+
+    /**
+     * Last death coordinates + dimension. For online players, reads
+     * {@link ServerPlayerEntity#getLastDeathPos()} (vanilla 1.19+ field
+     * persisted across deaths until next respawn). For offline players,
+     * deserializes the saved playerdata file at
+     * {@code world/playerdata/<uuid>.dat} — vanilla writes
+     * {@code LastDeathLocation} as a compound {@code {dimension, pos}}
+     * to that file at logout.
+     *
+     * The bridge previously got told "Minecraft doesn't store this" by
+     * the LLM; this command exists so the answer is "(x, y, z) in dim"
+     * instead.
+     */
+    public static int queryLastDeath(CommandContext<ServerCommandSource> ctx) {
+        String name = StringArgumentType.getString(ctx, "player");
+        MinecraftServer server = ctx.getSource().getServer();
+
+        ServerPlayerEntity online = server.getPlayerManager().getPlayer(name);
+        JsonObject out = new JsonObject();
+        out.addProperty("player", name);
+
+        if (online != null) {
+            var opt = online.getLastDeathPos();
+            if (opt.isEmpty()) {
+                out.addProperty("found", false);
+                out.addProperty("note", "no recorded last death this life");
+                return ClaudeIo.reply(ctx, out);
+            }
+            var global = opt.get();
+            BlockPos pos = global.getPos();
+            out.addProperty("found", true);
+            out.addProperty("source", "online");
+            out.addProperty("x", pos.getX());
+            out.addProperty("y", pos.getY());
+            out.addProperty("z", pos.getZ());
+            out.addProperty("dim", global.getDimension().getValue().toString());
+            return ClaudeIo.reply(ctx, out);
+        }
+
+        // Offline path: resolve UUID via UserCache, read playerdata NBT.
+        UUID uuid = server.getUserCache() == null ? null
+            : server.getUserCache().findByName(name).map(p -> p.getId()).orElse(null);
+        if (uuid == null) return ClaudeIo.error(ctx, "unknown player: " + name);
+
+        Path datFile = server.getSavePath(WorldSavePath.PLAYERDATA).resolve(uuid + ".dat");
+        if (!Files.exists(datFile)) {
+            out.addProperty("found", false);
+            out.addProperty("note", "no playerdata file (player has not joined)");
+            return ClaudeIo.reply(ctx, out);
+        }
+
+        NbtCompound nbt;
+        try {
+            nbt = NbtIo.readCompressed(datFile.toFile());
+        } catch (IOException e) {
+            return ClaudeIo.error(ctx, "playerdata unreadable: " + e.getMessage());
+        }
+
+        // Vanilla shape (1.19+):
+        //   LastDeathLocation: { dimension: "<dim>", pos: [I; X, Y, Z] }
+        if (!nbt.contains("LastDeathLocation", NbtElement.COMPOUND_TYPE)) {
+            out.addProperty("found", false);
+            out.addProperty("note", "no LastDeathLocation in saved NBT");
+            return ClaudeIo.reply(ctx, out);
+        }
+        NbtCompound ld = nbt.getCompound("LastDeathLocation");
+        String dim = ld.getString("dimension");
+        int[] arr = ld.getIntArray("pos");
+        if (arr.length != 3) {
+            return ClaudeIo.error(ctx, "malformed LastDeathLocation pos array");
+        }
+        out.addProperty("found", true);
+        out.addProperty("source", "offline_playerdata");
+        out.addProperty("x", arr[0]);
+        out.addProperty("y", arr[1]);
+        out.addProperty("z", arr[2]);
+        out.addProperty("dim", dim);
+        return ClaudeIo.reply(ctx, out);
     }
 }

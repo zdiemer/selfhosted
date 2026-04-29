@@ -57,6 +57,24 @@ prep_libs() {
       && mv META-INF/jars/cardinal-components-*.jar . \
       && rm -rf META-INF)
   fi
+
+  # The Prominence "level" surface (powerlevel — what `query level` exposes)
+  # lives in the talents-api.jar that the Prominent-* mod ships JiJ'd. The
+  # mod isn't on a public maven for 1.20.1 Fabric, so we pull it from the
+  # live pod's parent jar (matching the prep_libs convention above).
+  if ! ls -1 "$HERE"/libs/talents-api*.jar >/dev/null 2>&1; then
+    local prom_jar
+    prom_jar="$(kubectl -n "$NS" exec "$pod" -c mc-minecraft -- \
+      sh -c "ls -1 /data/mods/Prominent-*.jar 2>/dev/null" | head -1 | tr -d '\r')"
+    if [[ -n "$prom_jar" ]]; then
+      local prom_local="$HERE/libs/.prom-host.jar"
+      echo "==> syncing Prominent jar to extract talents-api"
+      kubectl -n "$NS" cp "$pod:$prom_jar" "$prom_local" -c mc-minecraft
+      (cd "$HERE/libs" && unzip -oq "$(basename "$prom_local")" 'META-INF/jars/talents-api*.jar' \
+        && mv META-INF/jars/talents-api*.jar . && rm -rf META-INF)
+      rm -f "$prom_local"
+    fi
+  fi
 }
 
 if [[ -z "${SKIP_BUILD:-}" ]]; then

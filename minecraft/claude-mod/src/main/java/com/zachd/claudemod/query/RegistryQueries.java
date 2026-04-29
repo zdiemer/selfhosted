@@ -347,6 +347,76 @@ public final class RegistryQueries {
     }
 
     /**
+     * Fuzzy item-name search across the entire item registry. Substring
+     * match against both the id (path part — namespace stripped) and the
+     * resolved display name, case-insensitively. Solves the "soul tome"
+     * problem: the LLM doesn't know the mod prefix
+     * ({@code archon:silver_swarm_soul_tome}), but a substring search
+     * surfaces every match in one call.
+     */
+    public static int queryItems(CommandContext<ServerCommandSource> ctx) {
+        String raw = StringArgumentType.getString(ctx, "search").trim().toLowerCase();
+        if (raw.isEmpty()) return ClaudeIo.error(ctx, "empty search term");
+
+        record Hit(String id, String name) {}
+        java.util.List<Hit> hits = new java.util.ArrayList<>();
+        boolean truncated = false;
+        // Cap at the same scale as `mods` — chat is the surface, the LLM
+        // doesn't need 500 weak matches.
+        final int cap = 60;
+
+        for (Item item : Registries.ITEM) {
+            net.minecraft.util.Identifier id = Registries.ITEM.getId(item);
+            if (id == null) continue;
+            String idPath = id.getPath().toLowerCase();
+            String full = id.toString().toLowerCase();
+            // Some modded items' getName() touches client-only classes
+            // (NoClassDefFoundError on net.minecraft.class_638 / ClientWorld
+            // observed during full-registry iteration). Fall back to the
+            // translation key (server-safe) so one buggy mod can't poison
+            // the whole search.
+            String displayName;
+            try {
+                displayName = item.getDefaultStack().getName().getString();
+            } catch (Throwable t) {
+                displayName = item.getTranslationKey();
+            }
+            String displayLower = displayName.toLowerCase();
+            if (!idPath.contains(raw) && !full.contains(raw) && !displayLower.contains(raw)) continue;
+            hits.add(new Hit(id.toString(), displayName));
+            if (hits.size() >= cap) { truncated = true; break; }
+        }
+
+        // Rank: exact id-path matches first, then display-name starts-with,
+        // then everything else. The LLM benefits from "best guess" being
+        // first when the player's name is unambiguous.
+        hits.sort((a, b) -> {
+            int aExact = a.id().endsWith(":" + raw) || a.id().equals(raw) ? 0 : 1;
+            int bExact = b.id().endsWith(":" + raw) || b.id().equals(raw) ? 0 : 1;
+            if (aExact != bExact) return Integer.compare(aExact, bExact);
+            int aStarts = a.name().toLowerCase().startsWith(raw) ? 0 : 1;
+            int bStarts = b.name().toLowerCase().startsWith(raw) ? 0 : 1;
+            if (aStarts != bStarts) return Integer.compare(aStarts, bStarts);
+            return a.id().compareTo(b.id());
+        });
+
+        JsonArray arr = new JsonArray();
+        for (Hit h : hits) {
+            JsonObject o = new JsonObject();
+            o.addProperty("id", h.id());
+            o.addProperty("name", h.name());
+            arr.add(o);
+        }
+
+        JsonObject out = new JsonObject();
+        out.addProperty("search", raw);
+        out.addProperty("hits", hits.size());
+        if (truncated) out.addProperty("truncated", true);
+        out.add("items", arr);
+        return ClaudeIo.reply(ctx, out);
+    }
+
+    /**
      * List items in an item tag (cross-mod equivalence groups). Player can
      * include or omit the leading '#'; we accept either. Caps at
      * TAG_RESULT_CAP entries — modded packs have very large tags.

@@ -285,8 +285,12 @@ class Claude:
             cmd += ["--resume", session_id]
 
         is_admin = player_name.lower() in CFG.admins
-        log.info("claude ask player=%s admin=%s session=%s prompt_len=%d",
-                 player_name, is_admin, session_id or "new", len(prompt))
+        # Log the prompt verbatim (newlines folded) so a single tail of the
+        # bridge log shows ask + tool calls + reply for one request without
+        # cross-referencing /data/logs/latest.log on the Minecraft side.
+        log.info("claude ask player=%s admin=%s session=%s prompt_len=%d prompt=%s",
+                 player_name, is_admin, session_id or "new", len(prompt),
+                 prompt.replace("\n", " ⏎ "))
         # CALLER_PLAYER + CALLER_IS_ADMIN let the MCP tools enforce per-player
         # behavior without trusting LLM-supplied args. The bridge process is
         # the trust boundary for both — Claude can't fake them.

@@ -69,6 +69,21 @@ public final class WorldSearchQueries {
     // clip the per-type detail.
     private static final int MOBS_GROUP_CAP = 60;
 
+    // Containers scan: bounded chunk halo, single-pass over each loaded
+    // chunk's block-entities filtering anything that's an Inventory.
+    // Solves "where are the chests near me?" in one query — without this,
+    // the LLM had to enumerate `query blocks <player> chest` per
+    // container block id and still wouldn't see the chest's contents
+    // summary on the same call.
+    private static final int CONTAINERS_DEFAULT_RADIUS_CHUNKS = 4;
+    private static final int CONTAINERS_MIN_RADIUS_CHUNKS = 1;
+    private static final int CONTAINERS_MAX_RADIUS_CHUNKS = 8;
+    private static final int CONTAINERS_RESULT_CAP = 50;
+    // Per-container, surface only the top-N item kinds so a 27-slot chest
+    // doesn't flood the response. The LLM can `read_container` for the
+    // full layout if needed.
+    private static final int CONTAINERS_TOP_ITEMS = 3;
+
     // Block-scan halo around the asking player, in CHUNKS. 4 chunks = 64
     // blocks horizontal — enough for "any gravel near me?" without paying
     // the cost of palette-checking every loaded section in the dimension.
@@ -317,6 +332,122 @@ public final class WorldSearchQueries {
         }
         if (truncated) root.addProperty("truncated", true);
         root.add("clusters", clusters);
+        return ClaudeIo.reply(ctx, root);
+    }
+
+    /**
+     * List nearby container block-entities (chests, barrels, shulker boxes,
+     * hoppers, brewing stands, mod-added containers — anything that
+     * implements {@link Inventory}). Answers "where are the chests near
+     * me?" in one query, where previously the LLM had to enumerate
+     * {@link #queryBlocks} per container block id and still wouldn't see
+     * contents on the same call.
+     *
+     * Output groups by exact world-position so the LLM has an actionable
+     * coord list. Each entry includes block-entity type, total item count,
+     * and the top {@link #CONTAINERS_TOP_ITEMS} item ids by count — the LLM
+     * can `read_container x y z` for the full layout.
+     */
+    public static int queryContainers(CommandContext<ServerCommandSource> ctx, int rawRadius) {
+        ServerPlayerEntity p = ClaudeIo.onlinePlayer(ctx);
+        if (p == null) return 0;
+        int radius = Math.max(CONTAINERS_MIN_RADIUS_CHUNKS,
+                              Math.min(CONTAINERS_MAX_RADIUS_CHUNKS, rawRadius));
+
+        ServerWorld world = (ServerWorld) p.getWorld();
+        BlockPos origin = p.getBlockPos();
+        ChunkPos cp = p.getChunkPos();
+
+        class Hit {
+            BlockPos pos;
+            String container;
+            int totalItems;
+            int totalSlots;
+            int filledSlots;
+            java.util.LinkedHashMap<String, Integer> topItems = new java.util.LinkedHashMap<>();
+            double distSq;
+        }
+        java.util.List<Hit> hits = new java.util.ArrayList<>();
+        int chunksLoaded = 0;
+        boolean truncated = false;
+
+        outer:
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                WorldChunk chunk = world.getChunkManager().getWorldChunk(cp.x + dx, cp.z + dz);
+                if (chunk == null) continue;
+                chunksLoaded++;
+                for (var entry : chunk.getBlockEntities().entrySet()) {
+                    BlockEntity be = entry.getValue();
+                    if (!(be instanceof Inventory inv)) continue;
+                    BlockPos bp = entry.getKey();
+                    Hit h = new Hit();
+                    h.pos = bp;
+                    Identifier beType = Registries.BLOCK_ENTITY_TYPE.getId(be.getType());
+                    h.container = beType == null ? "?" : beType.toString();
+                    h.totalSlots = inv.size();
+                    h.distSq = origin.getSquaredDistance(bp);
+                    // Aggregate items by id; track the dominant kinds so
+                    // the LLM can answer "which chest has my iron?" without
+                    // a follow-up read_container.
+                    java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
+                    for (int i = 0; i < inv.size(); i++) {
+                        ItemStack stack = inv.getStack(i);
+                        if (stack.isEmpty()) continue;
+                        h.filledSlots++;
+                        h.totalItems += stack.getCount();
+                        Identifier iid = Registries.ITEM.getId(stack.getItem());
+                        String key = iid == null ? "?" : iid.toString();
+                        counts.merge(key, stack.getCount(), Integer::sum);
+                    }
+                    counts.entrySet().stream()
+                        .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                        .limit(CONTAINERS_TOP_ITEMS)
+                        .forEach(e -> h.topItems.put(e.getKey(), e.getValue()));
+                    hits.add(h);
+                    if (hits.size() >= CONTAINERS_RESULT_CAP) { truncated = true; break outer; }
+                }
+            }
+        }
+
+        // Sort by distance so the closest containers come first — this is
+        // what the LLM almost always wants ("nearest empty chest?").
+        hits.sort((a, b) -> Double.compare(a.distSq, b.distSq));
+
+        JsonArray out = new JsonArray();
+        for (Hit h : hits) {
+            JsonObject o = new JsonObject();
+            o.addProperty("container", h.container);
+            o.addProperty("x", h.pos.getX());
+            o.addProperty("y", h.pos.getY());
+            o.addProperty("z", h.pos.getZ());
+            o.addProperty("dist", (int) Math.sqrt(h.distSq));
+            o.addProperty("slots_total", h.totalSlots);
+            o.addProperty("slots_filled", h.filledSlots);
+            o.addProperty("items_total", h.totalItems);
+            JsonObject top = new JsonObject();
+            h.topItems.forEach(top::addProperty);
+            o.add("top_items", top);
+            out.add(o);
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("player", p.getName().getString());
+        root.addProperty("radius_chunks", radius);
+        if (radius != rawRadius) root.addProperty("radius_clamped_from", rawRadius);
+        JsonObject originJson = new JsonObject();
+        originJson.addProperty("x", origin.getX());
+        originJson.addProperty("y", origin.getY());
+        originJson.addProperty("z", origin.getZ());
+        originJson.addProperty("dim", world.getRegistryKey().getValue().toString());
+        root.add("origin", originJson);
+        root.addProperty("chunks_loaded", chunksLoaded);
+        root.addProperty("hits", hits.size());
+        if (truncated) root.addProperty("truncated", true);
+        if (chunksLoaded == 0) {
+            root.addProperty("note", "no chunks loaded near the player");
+        }
+        root.add("containers", out);
         return ClaudeIo.reply(ctx, root);
     }
 

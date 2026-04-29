@@ -171,15 +171,44 @@ bridge:
         Use this aggressively for ANY in-game question — XP, inventory,
         stats, position, recipes, time, online players, scoreboards. Compose
         commands as needed and parse the output. Examples:
-          "claudemod query xp <player>"                — vanilla level + XP to next
-          "claudemod query inventory <player>"         — full inventory JSON
-          "claudemod query stats <player> killed"      — kill counts by mob
+          "claudemod query xp <player>"                — VANILLA xp level (the
+              floating green number above the hotbar) + XP to next. Only
+              say "vanilla level" when reporting this — players almost
+              never mean this when they say "my level".
+          "claudemod query level <player>"             — PROMINENCE LEVEL
+              (the modpack's character level surfaced in the inventory
+              widget {@code prominent_talents:level_stat_indicator}).
+              When a player says "what's my level?" / "how high level
+              is X?" / "am I high enough for the lich?", THIS IS THE
+              ANSWER — not vanilla XP, not skill points spent. Returns
+              `level` + `max_level`. Backed by the prominent_talents
+              mod; errors with "mod not loaded" if absent (only the case
+              on non-Prominence packs).
+          "claudemod query inventory <player>"         — full inventory JSON.
+              Use this aggressively when a player references an item by a
+              colloquial name you don't recognise ("my soul tome", "this
+              sickle"): mod-prefixed item ids are easy to guess wrong and
+              the inventory dump tells you the canonical id directly.
+              Then call `claudemod query item <id>` for details.
+          "claudemod query stats <player> killed"      — kill counts by mob.
+              Works for both online AND offline players (offline names are
+              resolved through the server's UserCache). NEVER tell the
+              asking player "I can't check offline players" without
+              actually trying — only error if the command itself fails.
+              Bare-name aliases like "deaths", "play_time", "mob_kills",
+              "damage_dealt" all resolve to their `minecraft:custom`
+              subkey automatically — just pass the bare name.
           "claudemod query recipes makes <item>"       — how to craft it
           "claudemod query recipes uses <item>"        — what consumes it
           "claudemod query trinkets <player>"          — equipped trinket slots
-          "claudemod query skills <player>"            — Puffish skill-tree state
-              (modpack-specific levels, skill points spent/left, unlocked skills
-              per category — this is the "Prominence level" or class-system data)
+          "claudemod query skills <player>"            — Puffish SKILL-TREE
+              state: per-category levels, skill points spent/left,
+              unlocked skills per category. NOTE: the per-category
+              "level" here means SKILL POINTS SPENT in that tree — it
+              is NOT the modpack's character level. Use this for "what
+              skills do I have?", "how many skill points am I sitting
+              on?", "what tree am I leaning into?". For "what level am
+              I?" use `query level` instead.
           "claudemod query quest <player>"             — FTB Quests summary
               (counts + per-chapter completion)
           "claudemod query quest <player> <search>"    — find quests by title /
@@ -202,14 +231,29 @@ bridge:
           "claudemod query blocks <player> <block>"    — locate world BLOCKS
               (not container contents) in a 9×9-chunk halo around the
               player. Use this for "where's gravel?", "any iron ore
-              nearby?", "find a tree" — anything mined/harvested from the
-              environment. Output is grouped by chunk: each cluster has a
-              `count`, `nearest` blockpos, and `dist`. Surface the nearest
+              nearby?", "find a tree" — anything mined/harvested from
+              the environment. For chests / barrels / shulker boxes use
+              `claudemod query containers` instead — it returns every
+              container type in one call with item summaries.
+              Output is grouped by chunk: each cluster has a `count`,
+              `nearest` blockpos, and `dist`. Surface the nearest
               cluster's coords + distance in the reply. Block id can be
               vanilla short form ("gravel") or fully qualified
               ("minecraft:iron_ore", "modid:thing"). Tags are not
               supported — for "iron ore" callers may need
               `iron_ore` AND `deepslate_iron_ore` (run twice if needed).
+          "claudemod query containers <player> [radius]" — list all nearby
+              container block-entities (chests, barrels, shulker boxes,
+              hoppers, brewing stands, mod-added storage) in one call.
+              Output is sorted nearest-first with each entry's coords,
+              container type, slot fill counts, and `top_items` (top-3
+              item ids by count). Use this for "where are the chests
+              near me?", "any empty barrels around?", "find a chest
+              with iron" — much cheaper than enumerating
+              `query blocks <player> chest|barrel|shulker_box|…` and
+              the `top_items` summary often answers the follow-up
+              without a `read_container` call. Default radius 4 chunks
+              (~64 blocks); clamped 1-8.
           "claudemod query mobs <player> [radius]"     — list living entities
               in a box around the player (default radius 32 blocks; clamped
               4-96). Output groups by entity type with count + nearest
@@ -253,14 +297,37 @@ bridge:
               then `data get entity <player> <path>` the interesting one
               (e.g. for item-level data: `SelectedItem.tag`).
           "claudemod query vitals <player>"            — health, hunger, air,
-              active potion effects (with durations + amplifiers), and
-              resolved attribute values (max HP, attack damage, armor, move
-              speed, etc. AFTER all gear/affix/skill modifiers). Use this for
-              "what does my sword hit for?", "what buffs do I have?", "why
-              am I slow?", "am I dying?".
+              active potion effects (with durations + amplifiers), bed
+              spawn coords, current-life last_death coords (when set),
+              and resolved attribute values (max HP, attack damage,
+              armor, move speed, etc. AFTER all gear/affix/skill
+              modifiers). Use this for "what does my sword hit for?",
+              "what buffs do I have?", "why am I slow?", "am I dying?",
+              "where did I just die?" (the `last_death` field is the
+              shortcut — `query last_death <player>` is for offline
+              players or when you only need the death coords).
           "claudemod query item <id>"                  — display name + tags
               + max stack + rarity + source mod. Use to translate cryptic
               modded ids to player-friendly names before responding.
+          "claudemod query items <search>"             — fuzzy item-name
+              search across the registry. Substring match (case-
+              insensitive) on both id and display name. Use when a
+              player names an item colloquially and you don't know the
+              mod prefix ("soul tome" → `archon:silver_swarm_soul_tome`
+              + 4 siblings). Combine with `query item <id>` for full
+              tag/rarity details on the chosen match. PREFER `query
+              inventory <player>` first if the player is referring to
+              something they have — that gives you the exact id with
+              zero ambiguity.
+          "claudemod query last_death <player>"        — last-death coords
+              + dimension. Vanilla 1.19+ field, persisted across
+              relogs. Works for online AND offline players (offline
+              path reads the player's saved NBT directly). Returns
+              `{found: false}` if the player has never died this life
+              (online) or has no LastDeathLocation in their saved data
+              (offline). Use for "where did I die?", "send me back to
+              my grave coords" — this server tracks it; do NOT claim
+              Minecraft doesn't.
           "claudemod query tag <#tag>"                 — items in an item
               tag, e.g. "#c:ingots/iron". Use when a player asks "what
               counts as iron?", "which items are valid fuel?", etc.
@@ -313,11 +380,6 @@ bridge:
               avg MSPT, derived TPS, per-dimension entity + chunk counts,
               online player count, JVM heap usage. Use for "is the server
               lagging?", "what's eating CPU?".
-          "claudemod query class <player>"             — consolidated build view:
-              puffish_skills (per-category level + points + unlocked skills)
-              + heuristic NBT/scoreboard scan for simplyskills /
-              more_rpg_classes data. Use for "what's my build?",
-              "what specialization am I?".
           "data get entity <player> Pos"               — current coords
           "data get entity <player> SelectedItem"      — held item NBT
               (item levels / affixes / enchantment tiers usually live here)
