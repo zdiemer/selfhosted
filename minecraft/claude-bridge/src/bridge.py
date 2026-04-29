@@ -76,6 +76,7 @@ class Config:
 
     state_dir: Path
     request_timeout: int
+    worker_count: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -115,6 +116,7 @@ class Config:
             github_token=os.environ.get("GITHUB_TOKEN", ""),
             state_dir=Path(os.environ.get("STATE_DIR", "/app/state")),
             request_timeout=int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "120")),
+            worker_count=int(os.environ.get("BRIDGE_WORKERS", "3")),
         )
 
 
@@ -170,14 +172,23 @@ class Whitelist:
     def __init__(self, rcon: RCON) -> None:
         self.rcon = rcon
         self._names: set[str] = set()
-        self._fetched_at = 0.0
         self._lock = threading.Lock()
 
     def contains(self, name: str) -> bool:
         with self._lock:
-            if time.time() - self._fetched_at > self.REFRESH_SECONDS:
-                self._refresh()
             return name.lower() in self._names
+
+    def start_background_refresh(self) -> None:
+        # Synchronous first refresh so dispatch never sees an empty cache
+        # during the small window before the first background tick.
+        self._refresh()
+        t = threading.Thread(target=self._refresh_loop, daemon=True, name="whitelist-refresh")
+        t.start()
+
+    def _refresh_loop(self) -> None:
+        while True:
+            time.sleep(self.REFRESH_SECONDS)
+            self._refresh()
 
     def _refresh(self) -> None:
         try:
@@ -190,8 +201,8 @@ class Whitelist:
         # The literal "(s)" trips a naive `players` match.
         m = re.search(r"whitelisted player\(s\)\s*:\s*(.+)", out)
         names = {n.strip().lower() for n in m.group(1).split(",") if n.strip()} if m else set()
-        self._names = names
-        self._fetched_at = time.time()
+        with self._lock:
+            self._names = names
         log.info("whitelist refreshed: %d players", len(names))
 
 
@@ -257,6 +268,19 @@ class Claude:
         self.system_prompt = system_prompt
         self.model = model
         self.timeout = timeout
+        # Per-player lock: same-player requests must serialize so the
+        # session_id read/write around a Claude turn isn't clobbered by a
+        # concurrent turn from the same player. Cross-player parallel.
+        self._player_locks: dict[str, threading.Lock] = {}
+        self._player_locks_meta = threading.Lock()
+
+    def _lock_for(self, key: str) -> threading.Lock:
+        with self._player_locks_meta:
+            lk = self._player_locks.get(key)
+            if lk is None:
+                lk = threading.Lock()
+                self._player_locks[key] = lk
+            return lk
 
     def ask(self, player_uuid: str, player_name: str, prompt: str,
             on_progress: Callable[[str], None] | None = None) -> str:
@@ -267,6 +291,11 @@ class Claude:
         questions like "find iron in my base and tell me if it's enough
         for a beacon".
         """
+        with self._lock_for(player_uuid):
+            return self._ask_locked(player_uuid, player_name, prompt, on_progress)
+
+    def _ask_locked(self, player_uuid: str, player_name: str, prompt: str,
+                    on_progress: Callable[[str], None] | None) -> str:
         session_id = self.sessions.get(player_uuid)
         # Prompt goes via stdin — claude's --mcp-config is variadic, so a
         # positional prompt arg gets swallowed by it. stdin sidesteps the
@@ -683,9 +712,13 @@ def main() -> None:
                     except Exception:
                         pass
 
-    threading.Thread(target=worker, daemon=True, name="claude-worker").start()
+    for i in range(CFG.worker_count):
+        threading.Thread(target=worker, daemon=True, name=f"claude-worker-{i+1}").start()
 
-    log.info("bridge ready; trigger=/claude whitelist=%s", CFG.enforce_whitelist)
+    whitelist.start_background_refresh()
+
+    log.info("bridge ready; trigger=/claude whitelist=%s workers=%d",
+             CFG.enforce_whitelist, CFG.worker_count)
 
     for line in stream_minecraft_logs(CFG):
         m = UUID_RE.search(line)

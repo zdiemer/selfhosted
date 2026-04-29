@@ -85,6 +85,12 @@ bridge:
     requests: 5
     windowSeconds: 60
 
+  # In-process worker threads draining the request queue. Distinct from
+  # `replicas: 1` above — that pin is about cross-pod safety; this knob
+  # lets one pod handle multiple players' /claude in parallel. Same-player
+  # requests still serialize internally so session_id stays consistent.
+  workers: 3
+
   # Model alias passed to `claude --model`. Sonnet is the right default for
   # chat-shaped one-liners — fast, cheap, plenty smart for recipe / mechanic
   # questions. Bump to "opus" if you want it to handle longer-form reasoning.

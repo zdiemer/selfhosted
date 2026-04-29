@@ -67,6 +67,8 @@ spec:
               value: {{ .Values.bridge.rateLimit.requests | quote }}
             - name: RATE_LIMIT_WINDOW_SECONDS
               value: {{ .Values.bridge.rateLimit.windowSeconds | quote }}
+            - name: BRIDGE_WORKERS
+              value: {{ .Values.bridge.workers | quote }}
             - name: ENFORCE_WHITELIST
               value: {{ .Values.bridge.enforceWhitelist | quote }}
             - name: CLAUDE_MODEL
