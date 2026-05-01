@@ -78,6 +78,11 @@ class Config:
     request_timeout: int
     worker_count: int
 
+    death_advice_enabled: bool
+    death_advice_system_prompt: str
+    death_rate_limit_requests: int
+    death_rate_limit_window: int
+
     @classmethod
     def from_env(cls) -> "Config":
         def need(k: str) -> str:
@@ -117,6 +122,10 @@ class Config:
             state_dir=Path(os.environ.get("STATE_DIR", "/app/state")),
             request_timeout=int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "120")),
             worker_count=int(os.environ.get("BRIDGE_WORKERS", "3")),
+            death_advice_enabled=os.environ.get("DEATH_ADVICE_ENABLED", "true").lower() == "true",
+            death_advice_system_prompt=os.environ.get("DEATH_ADVICE_SYSTEM_PROMPT", ""),
+            death_rate_limit_requests=int(os.environ.get("DEATH_RATE_LIMIT_REQUESTS", "2")),
+            death_rate_limit_window=int(os.environ.get("DEATH_RATE_LIMIT_WINDOW_SECONDS", "120")),
         )
 
 
@@ -283,29 +292,44 @@ class Claude:
             return lk
 
     def ask(self, player_uuid: str, player_name: str, prompt: str,
-            on_progress: Callable[[str], None] | None = None) -> str:
+            on_progress: Callable[[str], None] | None = None,
+            extra_system: str = "",
+            ephemeral: bool = False) -> str:
         """
         Run a Claude turn with streaming output. on_progress is called for
         every tool_use the model emits — callers use this to update a
         bossbar / status indicator while the agent works through multi-tool
         questions like "find iron in my base and tell me if it's enough
         for a beacon".
+
+        extra_system is appended to the system prompt for this turn only —
+        used by the death-advice path to swap in death-specific guidance
+        without disturbing the persistent /claude system prompt.
+
+        ephemeral=True bypasses the persisted session_id (no resume, no
+        write-back). Death advice runs ephemeral so it never poisons the
+        player's regular /claude conversation context.
         """
         with self._lock_for(player_uuid):
-            return self._ask_locked(player_uuid, player_name, prompt, on_progress)
+            return self._ask_locked(player_uuid, player_name, prompt,
+                                    on_progress, extra_system, ephemeral)
 
     def _ask_locked(self, player_uuid: str, player_name: str, prompt: str,
-                    on_progress: Callable[[str], None] | None) -> str:
-        session_id = self.sessions.get(player_uuid)
+                    on_progress: Callable[[str], None] | None,
+                    extra_system: str, ephemeral: bool) -> str:
+        session_id = None if ephemeral else self.sessions.get(player_uuid)
         # Prompt goes via stdin — claude's --mcp-config is variadic, so a
         # positional prompt arg gets swallowed by it. stdin sidesteps the
         # whole flag-ordering problem.
+        addendum = f"{self.system_prompt}\n\nThe player asking is named {player_name}."
+        if extra_system:
+            addendum += f"\n\n{extra_system}"
         cmd = [
             "claude", "-p",
             "--output-format", "stream-json",
             "--input-format", "text",
             "--verbose",   # stream-json requires --verbose to emit per-event lines
-            "--append-system-prompt", f"{self.system_prompt}\n\nThe player asking is named {player_name}.",
+            "--append-system-prompt", addendum,
             "--mcp-config", "/app/claude-config/mcp.json",
         ]
         if self.model:
@@ -431,7 +455,7 @@ class Claude:
                 self.sessions.set(player_uuid, "")
             return "(sorry, I hit an error)"
 
-        if new_session and new_session != session_id:
+        if not ephemeral and new_session and new_session != session_id:
             self.sessions.set(player_uuid, new_session)
 
         if had_error and not final_text:
@@ -509,7 +533,8 @@ def _progress_label(block: dict) -> str:
 # parsed for a markdown-lite subset (**bold**, *italic*, `code`) and rendered
 # as styled tellraw components.
 # ---------------------------------------------------------------------------
-def broadcast(rcon: RCON, who: str, text: str, max_chars: int) -> None:
+def broadcast(rcon: RCON, who: str, text: str, max_chars: int,
+              prefix: str | None = None, target: str = "@a") -> None:
     text = text.strip().replace("\r", "")
     if len(text) > max_chars:
         text = text[: max_chars - 1].rstrip() + "…"
@@ -517,12 +542,13 @@ def broadcast(rcon: RCON, who: str, text: str, max_chars: int) -> None:
     # Split on whitespace into ~200-char chunks so a single long reply still
     # renders cleanly on default-width chat. tellraw itself can take longer
     # strings, but client-side wrap gets ugly past ~220.
+    head_prefix = prefix if prefix is not None else f"[Claude → {who}]"
     chunks = list(_chunk(text, 200))
     for i, chunk in enumerate(chunks):
-        prefix = f"[Claude → {who}]" if i == 0 else "[…]"
-        components = [{"text": prefix + " ", "color": "aqua", "bold": True}]
+        line_prefix = head_prefix if i == 0 else "[…]"
+        components = [{"text": line_prefix + " ", "color": "aqua", "bold": True}]
         components.extend(_markdown_to_components(chunk))
-        rcon.send(f"tellraw @a {json.dumps(components)}")
+        rcon.send(f"tellraw {target} {json.dumps(components)}")
 
 
 # Markdown-lite → tellraw components.
@@ -665,11 +691,81 @@ def stream_minecraft_logs(cfg: Config) -> Iterable[str]:
 UUID_RE = re.compile(r"\[Server thread/INFO\]:?\s*UUID of player (\S+) is ([0-9a-f-]{36})")
 COMMAND_RE = re.compile(r"\[ClaudeRequest\]\s+(\S+):\s+(.+)$")
 
+# Vanilla / Fabric player death messages. Each entry is the verb that
+# follows the player's name on a `[Server thread/INFO]: <Name> <verb> …`
+# line. Order matters within the alternation: more specific phrases must
+# come before shorter ones that are prefixes of them ("was killed by magic"
+# before "was killed by"; "drowned whilst trying to escape" before "drowned").
+# We deliberately omit the bare "died"/"was killed" fallbacks — they're too
+# generic and would catch arbitrary log lines.
+_DEATH_VERBS = (
+    r"was slain by",
+    r"was shot by",
+    r"was pummeled by",
+    r"was pricked to death",
+    r"drowned whilst trying to escape",
+    r"drowned",
+    r"experienced kinetic energy",
+    r"was blown up by",
+    r"blew up",
+    r"was killed by magic",
+    r"was killed using magic",
+    r"was killed by",
+    r"hit the ground too hard",
+    r"fell from a high place",
+    r"fell off scaffolding",
+    r"fell off (?:some )?\S+",
+    r"fell while climbing",
+    r"was doomed to fall",
+    r"was impaled on a stalagmite",
+    r"was impaled by",
+    r"was squashed by a falling anvil",
+    r"was squashed by a falling block",
+    r"was squished too much",
+    r"went up in flames",
+    r"walked into fire",
+    r"burned to death",
+    r"was burnt to a crisp",
+    r"tried to swim in lava",
+    r"was struck by lightning",
+    r"discovered the floor was lava",
+    r"walked into (?:the )?danger zone",
+    r"froze to death",
+    r"was frozen to death",
+    r"was fireballed by",
+    r"was stung to death",
+    r"was poked to death by",
+    r"starved to death",
+    r"suffocated in a wall",
+    r"fell out of the world",
+    r"didn't want to live in the same world",
+    r"withered away",
+    r"walked into a cactus",
+)
+DEATH_RE = re.compile(
+    r"\[Server thread/INFO\]:?\s+([A-Za-z0-9_]{3,16})\s+("
+    + r"|".join(_DEATH_VERBS) + r")(.*)$"
+)
+
+
+@dataclass
+class WorkItem:
+    player: str
+    prompt: str
+    kind: str   # "claude" (the /claude slash command) or "death"
+    death_message: str = ""   # full server-side death text, for "death" kind
+
 
 def main() -> None:
     rcon = RCON(CFG.rcon_host, CFG.rcon_port, CFG.rcon_password)
     whitelist = Whitelist(rcon)
     limiter = RateLimiter(CFG.rate_limit_requests, CFG.rate_limit_window)
+    # Separate, more-lenient limiter for death advice — a player that
+    # rapid-respawns and dies again shouldn't burn N Claude turns. Default
+    # 2/120s is loose enough for a real progression-ramp death-and-retry
+    # but blocks lava-pit-loop spam.
+    death_limiter = RateLimiter(CFG.death_rate_limit_requests,
+                                CFG.death_rate_limit_window)
     sessions = SessionStore(CFG.state_dir / "sessions.json")
     claude = Claude(sessions, CFG.system_prompt, CFG.model, CFG.request_timeout)
 
@@ -679,36 +775,63 @@ def main() -> None:
     # known UUID still work — we fall back to the name as the session key.
     name_to_uuid: dict[str, str] = {}
 
-    work_q: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=32)
+    work_q: queue.Queue[WorkItem] = queue.Queue(maxsize=32)
 
     def worker() -> None:
         while True:
-            player, prompt = work_q.get()
+            item = work_q.get()
+            player, prompt, kind = item.player, item.prompt, item.kind
+
+            # Bossbar is only useful for the /claude path — the player is
+            # actively waiting and watching. Death advice fires while they're
+            # still on the death screen / mid-respawn; a bossbar there would
+            # be noise. Skip it for kind=="death".
             bossbar_active = False
-            try:
+            if kind == "claude":
                 try:
                     bossbar_create(rcon, player, "Claude is thinking…")
                     bossbar_active = True
                 except Exception as e:
                     log.warning("bossbar create failed for %s: %s", player, e)
 
-                def on_progress(label: str) -> None:
-                    if not bossbar_active:
-                        return
-                    try:
-                        bossbar_update(rcon, player, f"Claude: {label}…")
-                    except Exception as e:
-                        log.warning("bossbar update failed for %s: %s", player, e)
-
-                key = name_to_uuid.get(player.lower(), player.lower())
-                reply = claude.ask(key, player, prompt, on_progress=on_progress)
-                broadcast(rcon, player, reply, CFG.max_response_chars)
-            except Exception as e:
-                log.exception("worker error for %s: %s", player, e)
+            def on_progress(label: str) -> None:
+                if not bossbar_active:
+                    return
                 try:
-                    broadcast(rcon, player, "(sorry, something broke)", CFG.max_response_chars)
-                except Exception:
-                    pass
+                    bossbar_update(rcon, player, f"Claude: {label}…")
+                except Exception as e:
+                    log.warning("bossbar update failed for %s: %s", player, e)
+
+            try:
+                key = name_to_uuid.get(player.lower(), player.lower())
+                if kind == "death":
+                    log.info("death-advice trigger player=%s msg=%r",
+                             player, item.death_message)
+                    reply = claude.ask(
+                        key, player, prompt,
+                        extra_system=CFG.death_advice_system_prompt,
+                        ephemeral=True,
+                    )
+                    # Targeted only at the dying player — others don't need
+                    # the post-mortem in their chat. Same aqua-bold styling
+                    # as /claude replies, just a different prefix.
+                    broadcast(rcon, player, reply, CFG.max_response_chars,
+                              prefix=f"[Claude → {player} (RIP)]",
+                              target=player)
+                else:
+                    reply = claude.ask(key, player, prompt, on_progress=on_progress)
+                    broadcast(rcon, player, reply, CFG.max_response_chars)
+            except Exception as e:
+                log.exception("worker error for %s (%s): %s", player, kind, e)
+                # Don't bother spamming the player on death-advice failures —
+                # they're already dealing with respawning. /claude failures
+                # we surface so the player isn't left hanging.
+                if kind == "claude":
+                    try:
+                        broadcast(rcon, player, "(sorry, something broke)",
+                                  CFG.max_response_chars)
+                    except Exception:
+                        pass
             finally:
                 if bossbar_active:
                     try:
@@ -721,8 +844,8 @@ def main() -> None:
 
     whitelist.start_background_refresh()
 
-    log.info("bridge ready; trigger=/claude whitelist=%s workers=%d",
-             CFG.enforce_whitelist, CFG.worker_count)
+    log.info("bridge ready; trigger=/claude whitelist=%s workers=%d death_advice=%s",
+             CFG.enforce_whitelist, CFG.worker_count, CFG.death_advice_enabled)
 
     for line in stream_minecraft_logs(CFG):
         m = UUID_RE.search(line)
@@ -731,6 +854,38 @@ def main() -> None:
             name_to_uuid[name.lower()] = uuid
             log.debug("learned UUID for %s = %s", name, uuid)
             continue
+
+        # Death advice — server-emitted "<Player> <verb> [killer]" lines.
+        # Gated by whitelist (so a stray modded log line about an NPC named
+        # something death-y can't trigger a Claude turn) and by a separate
+        # rate limiter so a respawn-and-die loop doesn't blow tokens.
+        if CFG.death_advice_enabled:
+            dm = DEATH_RE.search(line)
+            if dm:
+                d_player = dm.group(1)
+                d_full = f"{d_player} {dm.group(2)}{dm.group(3)}".strip()
+                if not whitelist.contains(d_player):
+                    log.debug("death for non-whitelisted name %s — ignoring", d_player)
+                elif not death_limiter.allow(d_player.lower()):
+                    log.info("death-advice rate-limited for %s", d_player)
+                else:
+                    # The user prompt is intentionally terse; the bulk of
+                    # the steering is in CFG.death_advice_system_prompt
+                    # (appended via extra_system in the worker).
+                    death_prompt = (
+                        f'I just died in Minecraft. The server\'s death '
+                        f'message was: "{d_full}". Give me one piece of '
+                        f"advice specific to how I died."
+                    )
+                    try:
+                        work_q.put_nowait(WorkItem(
+                            player=d_player, prompt=death_prompt,
+                            kind="death", death_message=d_full,
+                        ))
+                    except queue.Full:
+                        log.warning("work queue full; dropping death advice for %s",
+                                    d_player)
+                continue
 
         m = COMMAND_RE.search(line)
         if not m:
@@ -774,7 +929,7 @@ def main() -> None:
             continue
 
         try:
-            work_q.put_nowait((player, prompt))
+            work_q.put_nowait(WorkItem(player=player, prompt=prompt, kind="claude"))
         except queue.Full:
             log.warning("work queue full; dropping prompt from %s", player)
             try:

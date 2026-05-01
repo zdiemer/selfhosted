@@ -29,6 +29,14 @@ Plus: when a player expresses a feature wish, Claude calls a tiny MCP
 tool that appends the request to `FEEDBACK.md`, commits, and pushes to
 this repo.
 
+Death advice: when a player dies, the bridge sees the vanilla death
+message in the log stream (`<Name> was slain by …`, `<Name> burned to
+death`, etc.) and whispers one piece of tailored advice to the dying
+player only — the killer's weakness, an item to carry, terrain to
+avoid. Runs in an ephemeral Claude session so it doesn't bleed into
+their regular `/claude` context. Toggle via `bridge.deathAdvice.enabled`
+in values.yaml.
+
 Container reorganization is also wired up: when a player asks "organize
 this chest" or "sort my inventory," Claude reads the current contents
 via the bridge's MCP tools, computes a new layout, previews the diff in

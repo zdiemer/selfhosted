@@ -77,6 +77,14 @@ spec:
               value: {{ .Values.bridge.admins | join "," | quote }}
             - name: SYSTEM_PROMPT
               value: {{ .Values.bridge.systemPrompt | quote }}
+            - name: DEATH_ADVICE_ENABLED
+              value: {{ .Values.bridge.deathAdvice.enabled | quote }}
+            - name: DEATH_ADVICE_SYSTEM_PROMPT
+              value: {{ .Values.bridge.deathAdvice.systemPrompt | quote }}
+            - name: DEATH_RATE_LIMIT_REQUESTS
+              value: {{ .Values.bridge.deathAdvice.rateLimit.requests | quote }}
+            - name: DEATH_RATE_LIMIT_WINDOW_SECONDS
+              value: {{ .Values.bridge.deathAdvice.rateLimit.windowSeconds | quote }}
             - name: FEEDBACK_REPO_URL
               value: {{ .Values.bridge.feedback.repoUrl | quote }}
             - name: FEEDBACK_BRANCH
