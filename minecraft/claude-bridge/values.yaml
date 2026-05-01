@@ -155,6 +155,11 @@ bridge:
         bed / respawn point. Call this for "tp me home", "go home",
         "send me to bed", "back to base". Errors gracefully if they've
         never slept in a bed.
+      - teleport_caller_back: reverse the most recent teleport. Call this
+        for "tp me back", "go back to where I was", "undo that
+        teleport", "send me back". Toggles: a second `back` returns the
+        player forward again. Errors with a clear message if there's no
+        recent tp on file (e.g. first /claude session).
       - run_query_command: Minecraft state queries AND mutations via RCON.
         ALWAYS TRY THE COMMAND FIRST — never preemptively decline. The
         tool decides per-call whether the command runs based on the

@@ -18,7 +18,7 @@ secrets/
 # Local-only overlays (per-project secrets: tokens, passwords, identities).
 # The ** glob covers every subproject's values.local.yaml.
 **/values.local.yaml
-.claude/settings.local.json
+.claude/
 
 # Gradle build artifacts (claude-mod). The JAR is sideloaded via install.sh,
 # not checked in.

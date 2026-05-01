@@ -4,7 +4,7 @@ Stdio MCP server bundling the bridge's tools.
 Tools (read-only and writes; caller identity comes from $CALLER_PLAYER
 env so Claude can't spoof it):
   - record_feature_request: append to FEEDBACK.md, commit, push.
-  - teleport_caller_to_player / teleport_caller_home
+  - teleport_caller_to_player / teleport_caller_home / teleport_caller_back
   - run_query_command: gated RCON dispatcher (allowlist for non-admins).
   - add_bluemap_marker
   - read_container / read_inventory / read_backpack: dump container state.
@@ -43,6 +43,11 @@ BRANCH = os.environ.get("FEEDBACK_BRANCH", "main")
 SNAPSHOT_DIR = STATE_DIR / "container-snapshots"
 SNAPSHOTS_PER_PLAYER = 5
 PREVIEW_TTL_S = 60
+# Per-player most-recent pre-tp position, persisted so `teleport_caller_back`
+# survives bridge restarts. Single entry per player — toggle semantics: each
+# tp (including a `back`) replaces the snapshot with the position the player
+# is leaving, so a second `back` returns them forward again.
+TP_SNAPSHOT_DIR = STATE_DIR / "tp-snapshots"
 
 # Source RCON request payloads top out around 1413 bytes; framing overhead
 # for a chunked write command ("claudemod write txn_slot_part <txn_id>
@@ -114,7 +119,64 @@ def record_feature_request(player_name: str, summary: str, verbatim: str = "") -
 # Teleport — caller-only. The CALLER_PLAYER env var is set by the bridge per
 # request and is the only acceptable identity; an LLM-supplied caller arg
 # would let players ask Claude to teleport someone else.
+# Each successful tp persists the pre-tp pos+dim to a per-player file so
+# `teleport_caller_back` can reverse the move (toggle: a second `back` returns
+# the player forward again). Single most-recent entry per player.
 # ---------------------------------------------------------------------------
+def _capture_caller_pos_dim(caller: str) -> dict[str, Any] | None:
+    """Resolve the caller's current pos + dim. Returns None on any failure."""
+    try:
+        pos_out = _rcon(f"data get entity {caller} Pos")
+    except Exception as e:
+        print(f"_capture_caller_pos_dim: pos lookup failed: {e}", file=sys.stderr)
+        return None
+    pm = _POS_RE.search(pos_out or "")
+    if not pm:
+        return None
+    x, y, z = float(pm.group(1)), float(pm.group(2)), float(pm.group(3))
+    dim = "minecraft:overworld"
+    try:
+        dim_out = _rcon(f"data get entity {caller} Dimension")
+        dm = _DIM_RE.search(dim_out or "")
+        if dm:
+            dim = dm.group("dim")
+    except Exception:
+        pass
+    return {"x": x, "y": y, "z": z, "dim": dim}
+
+
+def _tp_snapshot_path(caller: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_\-]", "_", caller)
+    return TP_SNAPSHOT_DIR / safe / "last.json"
+
+
+def _save_tp_snapshot(caller: str, snap: dict[str, Any], trigger: str) -> None:
+    """Atomically persist the most-recent pre-tp position for `caller`."""
+    path = _tp_snapshot_path(caller)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "taken_at": datetime.now(timezone.utc).isoformat(),
+        "caller": caller,
+        "trigger": trigger,
+        "x": snap["x"], "y": snap["y"], "z": snap["z"],
+        "dim": snap["dim"],
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload))
+    os.replace(tmp, path)
+
+
+def _load_tp_snapshot(caller: str) -> dict[str, Any] | None:
+    path = _tp_snapshot_path(caller)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception as e:
+        print(f"_load_tp_snapshot: read failed: {e}", file=sys.stderr)
+        return None
+
+
 @mcp.tool()
 def teleport_caller_to_player(target_player: str) -> str:
     """
@@ -154,11 +216,17 @@ def teleport_caller_to_player(target_player: str) -> str:
         return f"{target} is not online right now."
 
     canonical = online_lc[target.lower()]
+    pre_snap = _capture_caller_pos_dim(caller)
     try:
         _rcon(f"tp {caller} {canonical}")
     except Exception as e:
         print(f"tp failed: {e}", file=sys.stderr)
         return "(teleport failed; the server rejected the command)"
+    if pre_snap is not None:
+        try:
+            _save_tp_snapshot(caller, pre_snap, trigger="to_player")
+        except Exception as e:
+            print(f"tp snapshot save failed: {e}", file=sys.stderr)
     return f"Teleported {caller} → {canonical}."
 
 
@@ -280,11 +348,81 @@ def teleport_caller_home() -> str:
     caller = os.environ.get("CALLER_PLAYER", "").strip()
     if not caller:
         return "(error: caller name not available; refusing teleport)"
+    pre_snap = _capture_caller_pos_dim(caller)
     try:
-        return _rcon(f"claudemod home {caller}")
+        out = _rcon(f"claudemod home {caller}")
     except Exception as e:
         print(f"teleport_caller_home: rcon failed: {e}", file=sys.stderr)
         return f"(home teleport failed: {e})"
+    # Mod returns JSON {ok, ...}; only persist the pre-tp snapshot if the
+    # tp actually happened. On parse failure (mod responded with something
+    # unexpected) skip the snapshot rather than guessing.
+    if pre_snap is not None:
+        try:
+            parsed = json.loads(out or "{}")
+            if parsed.get("ok"):
+                _save_tp_snapshot(caller, pre_snap, trigger="home")
+        except Exception as e:
+            print(f"home snapshot decision failed: {e}", file=sys.stderr)
+    return out
+
+
+@mcp.tool()
+def teleport_caller_back() -> str:
+    """
+    Reverse the requesting player's most recent teleport.
+
+    Use when the player asks to undo a teleport ("tp me back", "go back to
+    where I was", "undo that teleport", "send me back"). Restores the
+    position + dimension the player was at right before their last
+    teleport_caller_to_player or teleport_caller_home (or the previous
+    teleport_caller_back — calling this twice in a row toggles the player
+    forward and back).
+
+    Returns an error if no recent teleport is recorded — e.g. the player
+    has never used the bridge to teleport, or the bridge's state was
+    wiped. There's no way to recover from that case; the player just has
+    to use a regular tp / home command instead.
+
+    Args:
+        (none — caller identity comes from CALLER_PLAYER env)
+
+    Returns:
+        Confirmation including coords + dimension on success, or an error
+        message starting with "(" on failure.
+    """
+    caller = os.environ.get("CALLER_PLAYER", "").strip()
+    if not caller:
+        return "(error: caller name not available; refusing teleport)"
+    snap = _load_tp_snapshot(caller)
+    if snap is None:
+        return ("(no recent teleport to reverse — I only remember the most "
+                "recent tp, and there isn't one on file for you yet)")
+
+    # Capture current pos BEFORE moving so a second `back` returns the
+    # player forward. If the capture fails (player offline, etc.) we still
+    # attempt the restore but won't persist a new snapshot — the failure
+    # mode is "back works once, second back is a no-op", which is fine.
+    cur_snap = _capture_caller_pos_dim(caller)
+
+    x, y, z, dim = snap["x"], snap["y"], snap["z"], snap["dim"]
+    # `execute in <dim> run tp <player> <x> <y> <z>` handles cross-dim
+    # teleports; vanilla `tp` alone can't change dimension.
+    cmd = f"execute in {dim} run tp {caller} {x:.2f} {y:.2f} {z:.2f}"
+    try:
+        _rcon(cmd)
+    except Exception as e:
+        print(f"teleport_caller_back: rcon failed: {e}", file=sys.stderr)
+        return f"(teleport failed: {e})"
+
+    if cur_snap is not None:
+        try:
+            _save_tp_snapshot(caller, cur_snap, trigger="back")
+        except Exception as e:
+            print(f"back snapshot save failed: {e}", file=sys.stderr)
+
+    short_dim = dim.split(":", 1)[1] if ":" in dim else dim
+    return f"Sent {caller} back to {x:.0f}, {y:.0f}, {z:.0f} in {short_dim}."
 
 
 @mcp.tool()

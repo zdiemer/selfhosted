@@ -478,6 +478,10 @@ def _progress_label(block: dict) -> str:
         return "querying server"
     if short == "teleport_caller_to_player":
         return "teleporting you"
+    if short == "teleport_caller_home":
+        return "teleporting you home"
+    if short == "teleport_caller_back":
+        return "teleporting you back"
     if short == "add_bluemap_marker":
         return "marking the map"
     if short == "record_feature_request":
