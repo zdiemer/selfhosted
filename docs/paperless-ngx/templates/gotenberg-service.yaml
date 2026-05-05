@@ -1,0 +1,19 @@
+{{- if .Values.paperless.tikaEnabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "paperless.fullname" . }}-gotenberg
+  labels:
+    {{- include "paperless.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gotenberg
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.gotenberg.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "paperless.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gotenberg
+{{- end }}

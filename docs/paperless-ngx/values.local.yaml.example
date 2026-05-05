@@ -1,0 +1,29 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored.
+
+paperless:
+  # Generate: openssl rand -hex 32
+  secretKey: "CHANGE-ME-64-hex-chars"
+
+  # Bootstrap superuser. Applied only on first start (when no users exist).
+  # Change the password in the web UI after first login, then remove the
+  # password line here so it's not sitting in values.local.yaml long-term.
+  admin:
+    user: "zachd"
+    email: "zach.diemer@gmail.com"
+    password: "CHANGE-ME"
+
+  # Optional — only needed once the DuckDNS follow-up is done.
+  # url: "https://docs.zachd.duckdns.org"
+
+postgres:
+  # Any random strong string. Paperless never sees this directly — it's read
+  # from the rendered Secret. Generate: openssl rand -hex 24
+  password: "CHANGE-ME"
+
+# OIDC — follow-up B. Leave disabled until Authelia is reachable over HTTPS.
+# paperless:
+#   oidc:
+#     enabled: true
+#     issuer: "https://auth.zachd.duckdns.org"
+#     clientId: "paperless"
+#     clientSecret: "<plaintext, matching Authelia's hashed secret>"

@@ -18,6 +18,7 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 | [`discord/vocard/`](discord/vocard/) | Vocard music bot + Lavalink + MongoDB — slash-command music player for voice channels. Bot-only (no dashboard). | [discord/vocard/README](discord/vocard/README.md) |
 | [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
 | [`auth/authelia/`](auth/authelia/) | Authelia — OIDC provider + (future) Traefik forward-auth. Shared login for every service in the cluster. | [auth/authelia/README](auth/authelia/README.md) |
+| [`docs/paperless-ngx/`](docs/paperless-ngx/) | Paperless-ngx — self-hosted document management with OCR + full-text search. Bundles Postgres, Redis, Tika, and Gotenberg inline. | [docs/paperless-ngx/README](docs/paperless-ngx/README.md) |
 
 ## Conventions
 

@@ -1,0 +1,158 @@
+image:
+  repository: ghcr.io/paperless-ngx/paperless-ngx
+  tag: "2.14.7"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+paperless:
+  # Public URL the app will be served from. Used to build absolute links in
+  # emails and the OAuth redirect path. For LAN-only first install you can
+  # leave this empty and rely on port-forward.
+  url: ""
+
+  # IANA tz name for due-date math and scheduled tasks.
+  timeZone: "America/Los_Angeles"
+
+  # Tesseract OCR language(s). Multi-language: "eng+spa". Install extra packs
+  # by adding their codes here — the image bundles ~100 languages already.
+  ocrLanguage: "eng"
+
+  # Bootstrap admin (only applied on first start, when the user table is empty).
+  # Set values in values.local.yaml. After the first login, change the password
+  # in the UI and remove these from values.local.yaml on the next upgrade.
+  admin:
+    user: ""
+    email: ""
+    password: ""
+
+  # REQUIRED — set in values.local.yaml. Generate with:
+  #   openssl rand -hex 32
+  secretKey: ""
+
+  # Match the UID/GID that owns the paperless data PVC on the node. Defaults
+  # match the upstream image (1000:1000). Only change if your storage class
+  # provisions volumes owned by a different user.
+  usermap:
+    uid: 1000
+    gid: 1000
+
+  # Office-document support is enabled by default via the bundled Tika +
+  # Gotenberg pods below. Flip to false to skip those services.
+  tikaEnabled: true
+
+  # Extra environment variables passed straight to the paperless container.
+  # Useful for advanced toggles like PAPERLESS_CONSUMER_POLLING,
+  # PAPERLESS_FILENAME_FORMAT, etc. See:
+  #   https://docs.paperless-ngx.com/configuration/
+  extraEnv: {}
+  # extraEnv:
+  #   PAPERLESS_CONSUMER_POLLING: "30"
+  #   PAPERLESS_FILENAME_FORMAT: "{created_year}/{correspondent}/{title}"
+
+  # OIDC — follow-up. Leave disabled until DuckDNS + Authelia are up. See
+  # README §Follow-up B.
+  oidc:
+    enabled: false
+    name: "Authelia"             # Display label on the login page
+    issuer: ""                   # https://auth.zachd.duckdns.org
+    clientId: ""
+    clientSecret: ""             # values.local.yaml
+
+persistence:
+  # Paperless's own state: consume/, data/, media/, export/. SubPathed in
+  # the Deployment. SQLite-style single RWO PVC keeps things simple.
+  data:
+    size: 20Gi
+    storageClass: ""             # "" → cluster default StorageClass
+    accessMode: ReadWriteOnce
+  postgres:
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+
+postgres:
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  # Database name + role. Password lives in values.local.yaml.
+  database: "paperless"
+  user: "paperless"
+  password: ""                   # REQUIRED in values.local.yaml
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+redis:
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 256Mi
+
+gotenberg:
+  # Renders Office documents (docx/xlsx/odt/...) to PDF for OCR.
+  image:
+    repository: gotenberg/gotenberg
+    tag: "8"
+    pullPolicy: IfNotPresent
+  service:
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 1Gi
+
+tika:
+  # Extracts text + metadata from Office docs paperless can't OCR directly.
+  image:
+    repository: apache/tika
+    tag: "2.9.2.1-full"
+    pullPolicy: IfNotPresent
+  service:
+    port: 9998
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+ingress:
+  # Disabled for LAN-only v1. Flip on after the DuckDNS follow-up — see README.
+  enabled: false
+  className: traefik
+  host: docs.zachd.duckdns.org
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
+    # certs must ride a wildcard SAN. See romm README §DuckDNS follow-up.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  # Paperless web + worker container. OCR is CPU-heavy; bump limits if
+  # ingestion lags.
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    memory: 2Gi

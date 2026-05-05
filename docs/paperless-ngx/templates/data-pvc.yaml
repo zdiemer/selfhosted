@@ -1,0 +1,20 @@
+{{/*
+One local PVC for paperless's state. SubPathed in the Deployment into
+/usr/src/paperless/data, /usr/src/paperless/media, /usr/src/paperless/consume,
+and /usr/src/paperless/export.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "paperless.fullname" . }}-data
+  labels:
+    {{- include "paperless.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

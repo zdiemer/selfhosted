@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "paperless.fullname" . }}
+  labels:
+    {{- include "paperless.labels" . | nindent 4 }}
+    app.kubernetes.io/component: paperless
+spec:
+  replicas: 1
+  # Recreate because we share a single RWO data PVC; never two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "paperless.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: paperless
+  template:
+    metadata:
+      annotations:
+        # Restart pod when rendered env / postgres password Secret changes.
+        checksum/env: {{ include (print $.Template.BasePath "/paperless-env.yaml") . | sha256sum }}
+        checksum/postgres: {{ include (print $.Template.BasePath "/postgres-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "paperless.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: paperless
+    spec:
+      # Kubernetes' legacy service-link env injection sets PAPERLESS_PORT to a
+      # `tcp://...` URL (the paperless Service's clusterIP), which paperless-ngx
+      # tries to bind as its listening port and crashes. Disable the injection.
+      enableServiceLinks: false
+      containers:
+        - name: paperless
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: {{ include "paperless.fullname" . }}-env
+          env:
+            # Read the DB password from a mounted file so it never appears in
+            # `kubectl describe pod` env output.
+            - name: PAPERLESS_DBPASS_FILE
+              value: /run/secrets/postgres/POSTGRES_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /usr/src/paperless/data
+              subPath: data
+            - name: data
+              mountPath: /usr/src/paperless/media
+              subPath: media
+            - name: data
+              mountPath: /usr/src/paperless/consume
+              subPath: consume
+            - name: data
+              mountPath: /usr/src/paperless/export
+              subPath: export
+            - name: postgres
+              mountPath: /run/secrets/postgres
+              readOnly: true
+          # First boot runs ~50 Django migrations + builds the search index;
+          # the gunicorn port doesn't open until that finishes. A generous
+          # startup probe keeps liveness from killing the container during
+          # init (5 min ceiling = 30 × 10s).
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "paperless.fullname" . }}-data
+        - name: postgres
+          secret:
+            secretName: {{ include "paperless.fullname" . }}-postgres
+            items:
+              - key: POSTGRES_PASSWORD
+                path: POSTGRES_PASSWORD

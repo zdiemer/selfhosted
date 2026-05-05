@@ -1,0 +1,12 @@
+apiVersion: v2
+name: paperless-ngx
+description: Paperless-ngx — self-hosted document management with OCR, full-text search, Postgres, Redis, Gotenberg, and Tika
+type: application
+version: 0.1.0
+# appVersion tracks the paperless-ngx image tag in values.yaml (image.tag).
+appVersion: "2.14.7"
+home: https://docs.paperless-ngx.com
+sources:
+  - https://github.com/paperless-ngx/paperless-ngx
+maintainers:
+  - name: zachd

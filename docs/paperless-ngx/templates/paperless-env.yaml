@@ -1,0 +1,65 @@
+{{- $fullname := include "paperless.fullname" . -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullname }}-env
+  labels:
+    {{- include "paperless.labels" . | nindent 4 }}
+    app.kubernetes.io/component: paperless
+type: Opaque
+stringData:
+  PAPERLESS_SECRET_KEY: {{ required "paperless.secretKey required in values.local.yaml" .Values.paperless.secretKey | quote }}
+
+  # Broker + result backend.
+  PAPERLESS_REDIS: "redis://{{ $fullname }}-redis:{{ .Values.redis.service.port }}"
+
+  # Postgres connection. Password is read from the postgres Secret at runtime
+  # via PAPERLESS_DBPASS_FILE (mounted as a file in the deployment).
+  PAPERLESS_DBHOST: "{{ $fullname }}-postgres"
+  PAPERLESS_DBPORT: {{ .Values.postgres.service.port | quote }}
+  PAPERLESS_DBNAME: {{ .Values.postgres.database | quote }}
+  PAPERLESS_DBUSER: {{ .Values.postgres.user | quote }}
+
+  PAPERLESS_TIME_ZONE: {{ .Values.paperless.timeZone | quote }}
+  PAPERLESS_OCR_LANGUAGE: {{ .Values.paperless.ocrLanguage | quote }}
+
+  USERMAP_UID: {{ .Values.paperless.usermap.uid | quote }}
+  USERMAP_GID: {{ .Values.paperless.usermap.gid | quote }}
+
+  {{- with .Values.paperless.url }}
+  PAPERLESS_URL: {{ . | quote }}
+  {{- end }}
+
+  {{- if .Values.paperless.tikaEnabled }}
+  PAPERLESS_TIKA_ENABLED: "1"
+  PAPERLESS_TIKA_ENDPOINT: "http://{{ $fullname }}-tika:{{ .Values.tika.service.port }}"
+  PAPERLESS_TIKA_GOTENBERG_ENDPOINT: "http://{{ $fullname }}-gotenberg:{{ .Values.gotenberg.service.port }}"
+  {{- end }}
+
+  {{- with .Values.paperless.admin }}
+  {{- if .user }}
+  PAPERLESS_ADMIN_USER: {{ .user | quote }}
+  {{- end }}
+  {{- if .email }}
+  PAPERLESS_ADMIN_MAIL: {{ .email | quote }}
+  {{- end }}
+  {{- if .password }}
+  PAPERLESS_ADMIN_PASSWORD: {{ .password | quote }}
+  {{- end }}
+  {{- end }}
+
+  {{- with .Values.paperless.oidc }}
+  {{- if .enabled }}
+  # Paperless reads OIDC config as a JSON blob through django-allauth. The
+  # APPS array is the per-provider client registration.
+  PAPERLESS_APPS: "allauth.socialaccount.providers.openid_connect"
+  PAPERLESS_SOCIALACCOUNT_PROVIDERS: |-
+    {"openid_connect":{"OAUTH_PKCE_ENABLED":true,"APPS":[{"provider_id":"authelia","name":{{ .name | quote }},"client_id":{{ .clientId | quote }},"secret":{{ .clientSecret | quote }},"settings":{"server_url":{{ printf "%s/.well-known/openid-configuration" .issuer | quote }}}}]}}
+  {{- end }}
+  {{- end }}
+
+  {{- with .Values.paperless.extraEnv }}
+  {{- range $k, $v := . }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}
