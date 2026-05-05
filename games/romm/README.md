@@ -167,39 +167,31 @@ kubectl delete pv romm-library
 
 ---
 
-## Follow-up A: DuckDNS + Ingress (public URL with TLS)
+## Follow-up A: Ingress at romm.zachd.duckdns.org
 
 Until this is done, RomM is LAN-only via port-forward.
 
-### Why a wildcard is required
+### How DNS + TLS already work in this cluster
 
-The sibling [`talaria`](../../../talaria) project runs Traefik with DNS-01
-ACME against DuckDNS. DuckDNS's TXT-update API can **only** write
-`_acme-challenge.<your-top>.duckdns.org`. Let's Encrypt, when asked for a
-cert on a sub-subdomain like `romm.zachd.duckdns.org`, looks for the
-challenge at `_acme-challenge.romm.zachd.duckdns.org` — which DuckDNS
-cannot set. The only working path is a wildcard cert
-`*.zachd.duckdns.org`, whose challenge lands at the top-level TXT that
-DuckDNS *can* write. One wildcard then covers every future sub-subdomain.
+DuckDNS resolves any `*.zachd.duckdns.org` query to the same A record as
+the parent domain, so `romm.zachd.duckdns.org` already resolves today —
+no DuckDNS account changes and no edits to talaria's `duckdns-updater`
+CronJob (which only refreshes the `zachd` record). See
+`../../minecraft/bluemap-ingress.yaml` for the same pattern in action at
+`map.zachd.duckdns.org`.
+
+For TLS, talaria's Traefik holds a wildcard `*.zachd.duckdns.org` cert
+issued via DNS-01 (the only ACME challenge DuckDNS supports — it can
+only write TXT at the account's top-level subdomain, so per-host
+sub-subdomain certs fail propagation). Every Ingress in this cluster
+requests that same wildcard SAN via the `router.tls.domains.0.main` +
+`sans` annotations, so new hosts under `*.zachd.duckdns.org` serve from
+the cached cert without a second ACME round-trip. The chart's
+`templates/ingress.yaml` already does this.
 
 ### Steps
 
-1. **Add the sub-subdomain to DuckDNS.** Log in to
-   <https://www.duckdns.org> → your account → add `romm.zachd` as an
-   additional domain. Put the same public IP as `zachd.duckdns.org`.
-
-2. **Extend talaria's DuckDNS updater** so the IP stays fresh for the
-   new subdomain. In `../talaria/helm/talaria/values-external.yaml`:
-
-   ```yaml
-   duckdns:
-     enabled: true
-     subdomain: zachd,romm.zachd   # comma-separated, DuckDNS API accepts
-   ```
-
-   Then redeploy talaria so the CronJob picks up the change.
-
-3. **Flip RomM's Ingress on.** In `games/romm/values.local.yaml`:
+1. **Flip RomM's Ingress on.** In `games/romm/values.local.yaml`:
 
    ```yaml
    ingress:
@@ -207,12 +199,13 @@ DuckDNS *can* write. One wildcard then covers every future sub-subdomain.
      host: romm.zachd.duckdns.org
    ```
 
-   Re-run `./games/romm/upgrade.sh`. Traefik will see the new Ingress,
-   read `router.tls.domains.0.main` + `sans` from the annotations, and
-   request a wildcard cert via DNS-01. First issuance takes ~30-60s;
-   watch `kubectl -n kube-system logs deploy/traefik | grep -i acme`.
+   Re-run `./games/romm/upgrade.sh`. Traefik picks up the new Ingress,
+   matches it against the cached wildcard, and starts serving. If the
+   wildcard hasn't been issued yet, the first request stalls ~30–60s
+   while DNS-01 completes; watch
+   `kubectl -n kube-system logs deploy/traefik | grep -i acme`.
 
-4. **LAN access without exposing to WAN yet.** If your router is
+2. **LAN access without exposing to WAN yet.** If your router is
    already forwarding 443 for talaria, the new subdomain will answer on
    the public internet the instant the Ingress comes up. If you want to
    keep it LAN-only while still getting a real cert, either:
