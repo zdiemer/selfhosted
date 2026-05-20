@@ -1,0 +1,8 @@
+apiVersion: v2
+name: keepass
+description: Self-hosted KeePass — WebDAV server for native clients + KeeWeb browser UI behind Authelia
+type: application
+version: 0.1.0
+appVersion: "1.0"
+maintainers:
+  - name: zachd

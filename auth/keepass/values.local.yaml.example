@@ -1,0 +1,22 @@
+# Copy to values.local.yaml and fill in. Gitignored via repo-root **/values.local.yaml.
+
+webdav:
+  auth:
+    username: "zachd"
+    password: "CHANGE-ME"             # openssl rand -hex 24
+  ingress:
+    enabled: true
+
+keeweb:
+  ingress:
+    enabled: true
+  # Optional — mount a KeePass key file as a static asset that any
+  # Authelia-authenticated browser can fetch once. Never reaches WebDAV.
+  # Skip the whole block (leave keyfile.enabled at the default false in
+  # values.yaml) if you don't use a key file.
+  keyfile:
+    enabled: true
+    filename: "keyfile.bin"
+    # base64 of the existing key file. Generate with:
+    #   base64 -w0 < /path/to/your.keyx
+    contentBase64: "CHANGE-ME"

@@ -1,0 +1,28 @@
+{{/*
+Traefik Middleware that delegates auth to Authelia. Reference it from any
+service Ingress that wants OIDC-protected access via the annotation:
+
+  traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "authelia.fullname" . }}-forwardauth@kubernetescrd
+
+Authelia 4.38 uses /api/authz/forward-auth (replaces the legacy /api/verify
+endpoint from older versions). The authResponseHeaders are passed back to
+the upstream service so it can read the authenticated user identity.
+
+apiVersion is traefik.io/v1alpha1 (Traefik v3, which ships with current
+k3s). If you're on Traefik v2, swap to traefik.containo.us/v1alpha1.
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "authelia.fullname" . }}-forwardauth
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: http://{{ include "authelia.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/api/authz/forward-auth
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email

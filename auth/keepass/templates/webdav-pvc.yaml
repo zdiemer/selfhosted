@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "keepass.fullname" . }}-webdav
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.webdav.persistence.accessMode }}
+  {{- if .Values.webdav.persistence.storageClass }}
+  storageClassName: {{ .Values.webdav.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.webdav.persistence.size }}

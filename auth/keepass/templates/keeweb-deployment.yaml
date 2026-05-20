@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keepass.fullname" . }}-keeweb
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "keepass.keeweb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- if .Values.keeweb.keyfile.enabled }}
+      annotations:
+        checksum/keyfile: {{ include (print $.Template.BasePath "/keeweb-keyfile-secret.yaml") . | sha256sum }}
+      {{- end }}
+      labels:
+        {{- include "keepass.keeweb.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: keeweb
+          image: "{{ .Values.keeweb.image.repository }}:{{ .Values.keeweb.image.tag }}"
+          imagePullPolicy: {{ .Values.keeweb.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          {{- if .Values.keeweb.keyfile.enabled }}
+          volumeMounts:
+            # Mount the key file as a single static asset in nginx's docroot.
+            # Reachable at https://<keeweb host>/<filename> behind Authelia
+            # forward-auth. subPath ensures only this one file lands; the
+            # rest of the SPA bundle baked into the image is untouched.
+            - name: keyfile
+              mountPath: /usr/share/nginx/html/{{ .Values.keeweb.keyfile.filename }}
+              subPath: {{ .Values.keeweb.keyfile.filename }}
+              readOnly: true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.keeweb.resources | nindent 12 }}
+      {{- if .Values.keeweb.keyfile.enabled }}
+      volumes:
+        - name: keyfile
+          secret:
+            secretName: {{ include "keepass.fullname" . }}-keyfile
+            defaultMode: 0444
+      {{- end }}

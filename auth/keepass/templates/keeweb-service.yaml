@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "keepass.fullname" . }}-keeweb
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.keeweb.service.port }}
+      targetPort: http
+      name: http
+  selector:
+    {{- include "keepass.keeweb.selectorLabels" . | nindent 4 }}

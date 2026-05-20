@@ -1,10 +1,13 @@
 {{/*
 Authelia's main configuration.yml. Rendered as a Secret (not a ConfigMap)
-because it contains the OIDC HMAC secret and the RSA issuer private key.
+because the OIDC client list it references can include hashed client
+secrets and other sensitive material.
 
-All app-level secret *values* (jwt, session, storage key, SMTP password) are
-referenced by file path; Kubernetes mounts them from a separate Secret at
-/secrets/. The config file itself only names the files.
+All app-level secret *values* (jwt, session, storage key, SMTP password,
+OIDC HMAC, OIDC JWKS key) come in via `*_FILE` env vars on the deployment
+that point at /secrets/<name>. Authelia 4.38 removed the `*_file:` form
+from config-file keys, so the file references live exclusively in env
+vars now. The config file itself is value-only.
 */}}
 apiVersion: v1
 kind: Secret
@@ -16,7 +19,6 @@ type: Opaque
 stringData:
   configuration.yml: |
     theme: dark
-    default_redirection_url: {{ .Values.externalUrl | quote }}
 
     server:
       address: "tcp://0.0.0.0:9091/"
@@ -43,12 +45,14 @@ stringData:
         {{- toYaml .Values.accessControl.rules | nindent 8 }}
 
     session:
-      name: authelia_session
-      domain: {{ .Values.sessionDomain | quote }}
-      same_site: lax
-      expiration: 1h
-      inactivity: 15m
-      remember_me_duration: 1M
+      cookies:
+        - name: authelia_session
+          domain: {{ .Values.sessionDomain | quote }}
+          authelia_url: {{ .Values.externalUrl | quote }}
+          same_site: lax
+          expiration: 1h
+          inactivity: 15m
+          remember_me: 1M
 
     regulation:
       max_retries: 3
@@ -64,17 +68,14 @@ stringData:
         address: "submission://{{ .Values.secrets.smtp.host }}:{{ .Values.secrets.smtp.port }}"
         username: {{ .Values.secrets.smtp.username | quote }}
         sender: {{ .Values.secrets.smtp.sender | quote }}
-        password_file: /secrets/smtp_password
 
-    {{- if .Values.oidc.enabled }}
+    {{- if and .Values.oidc.enabled (gt (len .Values.oidc.clients) 0) }}
     identity_providers:
       oidc:
-        hmac_secret_file: /secrets/oidc_hmac
         jwks:
           - key_id: default
             algorithm: RS256
             use: sig
-            key_file: /secrets/oidc_issuer_key
         clients:
           {{- toYaml .Values.oidc.clients | nindent 10 }}
     {{- end }}

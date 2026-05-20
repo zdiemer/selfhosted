@@ -1,0 +1,34 @@
+{{- if .Values.keeweb.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "keepass.fullname" . }}-keeweb
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.keeweb.ingress.tls.certResolver }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.keeweb.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.keeweb.ingress.tls.wildcardSan | quote }}
+    # Authelia forward-auth — every request hits /api/authz/forward-auth before
+    # reaching KeeWeb. policy=two_factor for keepass.zachd is set in
+    # ../authelia/values.yaml access_control.rules.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Values.keeweb.ingress.middleware | quote }}
+spec:
+  ingressClassName: {{ .Values.keeweb.ingress.className }}
+  rules:
+    - host: {{ .Values.keeweb.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "keepass.fullname" . }}-keeweb
+                port:
+                  number: {{ .Values.keeweb.service.port }}
+  tls:
+    - hosts:
+        - {{ .Values.keeweb.ingress.host }}
+{{- end }}

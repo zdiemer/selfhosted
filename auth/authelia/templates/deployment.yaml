@@ -20,24 +20,41 @@ spec:
       labels:
         {{- include "authelia.selectorLabels" . | nindent 8 }}
     spec:
+      # K8s auto-injects env vars like AUTHELIA_SERVICE_PORT for every Service
+      # in the namespace. Authelia interprets `AUTHELIA_*` as configuration
+      # overrides, so those injected vars collide with `server.address` and
+      # crash the binary. Disable the legacy service-link injection.
+      enableServiceLinks: false
       containers:
         - name: authelia
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - "--config=/config/configuration.yml"
+          # No `args:` override — the image's default CMD is `authelia`, which
+          # picks up /config/configuration.yml from the mounted Secret. Setting
+          # `args` without `command` replaces CMD entirely, so the entrypoint
+          # ends up `exec`-ing the literal "--config=..." string and dies with
+          # "illegal option --".
           ports:
             - name: http
               containerPort: 9091
           env:
-            # Authelia reads these file paths for values that mustn't land
-            # in env vars (session key, storage encryption, OIDC JWT HMAC).
-            - name: AUTHELIA_JWT_SECRET_FILE
+            # Authelia 4.38 removed the `*_file:` config-key form. Secret
+            # values now come in via `*_FILE` env vars that point at files
+            # mounted from the secrets Secret at /secrets/.
+            - name: AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE
               value: /secrets/jwt_secret
             - name: AUTHELIA_SESSION_SECRET_FILE
               value: /secrets/session_secret
             - name: AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE
               value: /secrets/storage_encryption_key
+            - name: AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE
+              value: /secrets/smtp_password
+            {{- if and .Values.oidc.enabled (gt (len .Values.oidc.clients) 0) }}
+            - name: AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE
+              value: /secrets/oidc_hmac
+            - name: AUTHELIA_IDENTITY_PROVIDERS_OIDC_JWKS_0_KEY_FILE
+              value: /secrets/oidc_issuer_key
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /config/configuration.yml

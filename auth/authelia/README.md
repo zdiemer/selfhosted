@@ -14,22 +14,24 @@ to protect, e.g., Beszel's dashboard.
 
 ## Prerequisites (must be done before `helm install`)
 
-### 1. DuckDNS follow-up from the RomM README
+### 1. DNS + TLS: nothing to do
 
-Authelia's OIDC issuer URL **must be HTTPS** — RomM's (and every other)
-OIDC client refuses HTTP issuers. That means the DuckDNS + wildcard-cert
-work described in `../../games/romm/README.md` §"Follow-up A" needs to
-land before Authelia is useful. Specifically:
+DuckDNS resolves any `*.zachd.duckdns.org` query to the same A record as
+the parent, so `auth.zachd.duckdns.org` already resolves today — no
+DuckDNS account changes and no edits to talaria's `duckdns-updater`
+CronJob (which only refreshes the `zachd` record). Traefik already holds
+a wildcard `*.zachd.duckdns.org` cert issued via DNS-01, and this
+chart's `templates/ingress.yaml` rides it via the same
+`router.tls.domains.0.main` + `sans` annotations every other service in
+the cluster uses. See `../../games/romm/README.md` §"Follow-up A" for
+the full explanation of the pattern.
 
-- `auth.zachd` added as a sub-subdomain in DuckDNS.
-- `talaria`'s DuckDNS updater CronJob extended to include
-  `auth.zachd` in its `DUCKDNS_DOMAIN` list.
-- Traefik already holds a wildcard `*.zachd.duckdns.org` cert (which it
-  will once any service Ingress asks for it).
+Authelia's OIDC issuer URL must be HTTPS (every modern OIDC client
+refuses HTTP issuers), but the wildcard cert covers that automatically
+the moment Ingress is on.
 
-You *can* `helm install` Authelia with `ingress.enabled: false` first to
-confirm the pod boots, but you can't actually sign in until the Ingress
-is on and the hostname resolves with a valid cert.
+You *can* `helm install` with `ingress.enabled: false` first to sanity-
+check the pod boots; flip Ingress on whenever you're ready.
 
 ### 2. Generate one-time secrets
 
@@ -93,13 +95,13 @@ helm install authelia ./auth/authelia -n auth \
 kubectl -n auth get pods -w
 ```
 
-### Flip the Ingress on (requires DuckDNS follow-up done)
+### Flip the Ingress on
 
-Once `auth.zachd.duckdns.org` exists in DuckDNS and resolves to your
-public IP, set `ingress.enabled: true` in `values.local.yaml` and
-`./auth/authelia/upgrade.sh`. Traefik will mint/reuse the wildcard cert
-and start routing. Open <https://auth.zachd.duckdns.org> — you should
-see Authelia's login screen.
+`auth.zachd.duckdns.org` already resolves via the DuckDNS wildcard, so
+just set `ingress.enabled: true` in `values.local.yaml` and run
+`./auth/authelia/upgrade.sh`. Traefik will reuse the cached wildcard
+cert and start routing. Open <https://auth.zachd.duckdns.org> — you
+should see Authelia's login screen.
 
 First sign-in will walk you through TOTP enrollment (Google
 Authenticator, Aegis, 1Password, etc. all work). The enrollment link

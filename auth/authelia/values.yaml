@@ -45,6 +45,11 @@ accessControl:
     # RomM — friends sign in with TOTP; admins with any 2nd factor.
     - domain: "romm.zachd.duckdns.org"
       policy: "two_factor"
+    # KeeWeb (browser KeePass client). WebDAV is NOT here — native KeePass
+    # apps can't do an OIDC redirect, so webdav.zachd uses its own static
+    # Basic auth (see ../keepass/).
+    - domain: "keepass.zachd.duckdns.org"
+      policy: "two_factor"
 
 # OIDC clients (values.local.yaml holds the real secrets). Each entry is a
 # client app that delegates auth to Authelia. Client secrets are stored
@@ -91,7 +96,7 @@ secrets:
     sender: "Authelia <noreply@zachd.duckdns.org>"
 
 ingress:
-  enabled: false                      # flip on after DuckDNS follow-up
+  enabled: false                      # flip on once secrets + users are populated
   className: traefik
   host: auth.zachd.duckdns.org
   tls:

@@ -1,0 +1,31 @@
+{{- if .Values.webdav.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "keepass.fullname" . }}-webdav
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.webdav.ingress.tls.certResolver }}
+    # Ride the wildcard SAN — DuckDNS only writes TXT at the top level.
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.webdav.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.webdav.ingress.tls.wildcardSan | quote }}
+spec:
+  ingressClassName: {{ .Values.webdav.ingress.className }}
+  rules:
+    - host: {{ .Values.webdav.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "keepass.fullname" . }}-webdav
+                port:
+                  number: {{ .Values.webdav.service.port }}
+  tls:
+    - hosts:
+        - {{ .Values.webdav.ingress.host }}
+{{- end }}

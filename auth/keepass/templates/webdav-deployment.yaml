@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keepass.fullname" . }}-webdav
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate           # single RWO PVC → never two pods at once
+  selector:
+    matchLabels:
+      {{- include "keepass.webdav.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/webdav-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "keepass.webdav.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: webdav
+          image: "{{ .Values.webdav.image.repository }}:{{ .Values.webdav.image.tag }}"
+          imagePullPolicy: {{ .Values.webdav.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: AUTH_TYPE
+              value: Basic
+            - name: USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keepass.fullname" . }}-webdav
+                  key: username
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keepass.fullname" . }}-webdav
+                  key: password
+            - name: LOCATION
+              value: /
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/dav
+          resources:
+            {{- toYaml .Values.webdav.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "keepass.fullname" . }}-webdav

@@ -1,0 +1,90 @@
+# Self-hosted KeePass: WebDAV server (for native clients) + KeeWeb (browser UI).
+# Both deploy into the `auth` namespace alongside Authelia so the KeeWeb
+# Ingress can reference Authelia's forward-auth Middleware without a
+# cross-namespace `@kubernetescrd` reference.
+
+webdav:
+  image:
+    # Apache mod_dav. Old (2018) but rock-solid for the tiny PUT/GET/PROPFIND
+    # surface KeePass clients use. Swap if you want something newer
+    # (hacdias/webdav, dgraziotin/nginx-webdav-nononsense).
+    repository: bytemark/webdav
+    tag: "2.4"
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  ingress:
+    enabled: false                        # flip on in values.local.yaml
+    className: traefik
+    host: webdav.zachd.duckdns.org
+    tls:
+      certResolver: duckdns
+      # Wildcard SAN trick — see games/romm/README.md §Follow-up A.
+      domain: zachd.duckdns.org
+      wildcardSan: "*.zachd.duckdns.org"
+  persistence:
+    # Holds the .kdbx file(s). 1Gi is wildly more than needed; KeePass DBs
+    # are typically <1MB.
+    size: 1Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  # Static HTTP Basic credentials for native KeePass clients (KeePassXC,
+  # KeePass2Android, Strongbox iOS). The plaintext password rides over HTTPS
+  # on every request. NOTE: the .kdbx itself is encrypted by your KeePass
+  # master password — this Basic auth is gatekeeping access to an already-
+  # encrypted blob. Set both fields in values.local.yaml.
+  auth:
+    username: ""
+    password: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+keeweb:
+  image:
+    # Upstream-blessed image. Hasn't been actively updated, but KeeWeb
+    # itself is mature and the SPA runs entirely client-side. Swap to
+    # lscr.io/linuxserver/keeweb if you want a more actively maintained
+    # build.
+    repository: antelle/keeweb
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  ingress:
+    enabled: false                        # flip on in values.local.yaml
+    className: traefik
+    host: keepass.zachd.duckdns.org
+    # Authelia forward-auth Middleware — full OIDC + TOTP. Format is
+    # `<namespace>-<release>-forwardauth@kubernetescrd`. If you renamed
+    # the Authelia Helm release or namespace, update accordingly.
+    middleware: "auth-authelia-forwardauth@kubernetescrd"
+    tls:
+      certResolver: duckdns
+      domain: zachd.duckdns.org
+      wildcardSan: "*.zachd.duckdns.org"
+  # Optional: mount a KeePass key file into KeeWeb's static-asset directory
+  # so any authenticated browser can fetch it once. Reachable at
+  # https://<keeweb host>/<filename>; gated by the same Authelia forward-auth
+  # as the rest of KeeWeb. NEVER mounted into the WebDAV pod — keeping the
+  # key file off the same host as the .kdbx is the whole point of a key file.
+  #
+  # Native KeePass clients (KeePassXC, KeePass2Android, Strongbox) should
+  # keep the key file on-device — do NOT pull it from this URL on a phone or
+  # desktop, since the value of a key file is "lives somewhere different
+  # from the .kdbx" and an Authelia password is not that separation.
+  keyfile:
+    enabled: false
+    filename: "keyfile.bin"
+    # base64-encoded bytes of your existing key file. Set in values.local.yaml:
+    #   contentBase64: "$(base64 -w0 < /path/to/your.keyx)"
+    contentBase64: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
