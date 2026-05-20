@@ -83,10 +83,10 @@ minecraftServer:
   # live in values.local.yaml (gitignored) so forks start with an empty roster.
   enforceWhitelist: true
 
-  # Prominence II is a large modpack (~400 mods). 6G heap is the minimum the
-  # pack authors recommend for a small server; bump if you see GC storms in
-  # the logs or lag-spikes in-game.
-  memory: "6G"
+  # Prominence II is a large modpack (~400 mods). 6G is the pack authors'
+  # minimum; bumped to 10G after moving to zachd-ubuntu-2 (12 cores / 32G RAM)
+  # for more chunk-cache and GC headroom with multiple players online.
+  memory: "10G"
 
   # Aikar's G1GC flags — widely used across modded and vanilla alike.
   # See https://docs.papermc.io/paper/aikars-flags (applies equally to Fabric)
@@ -310,17 +310,18 @@ startupProbe:
 # ----------------------------------------------------------------------------
 # Resources
 # ----------------------------------------------------------------------------
-# 6G heap + ~4G off-heap headroom. Prominence II's off-heap (Metaspace, direct
-# buffers, mod native libs, mc-backup sidecar) runs ~1.6G idle — an 8Gi limit
-# had the pod at ~95% before a single player joined, one worldgen spike away
-# from OOMKill. 10Gi gives ~2.4G of headroom on top of observed idle.
+# 10G heap + ~4G off-heap headroom on zachd-ubuntu-2 (12 cores / 32G). Prominence
+# II's off-heap (Metaspace, direct buffers, mod native libs, mc-backup sidecar)
+# runs ~1.6G idle; the 14Gi limit leaves room for that plus worldgen spikes.
+# Request matches the committed -Xms10G heap; the CPU limit is generous burst
+# room for parallel chunk gen / GC on the 12-core node.
 resources:
   requests:
-    memory: 5Gi
-    cpu: 1000m
-  limits:
     memory: 10Gi
-    cpu: 4000m
+    cpu: 2000m
+  limits:
+    memory: 14Gi
+    cpu: 8000m
 
 # ----------------------------------------------------------------------------
 # Persistent storage
@@ -332,6 +333,10 @@ persistence:
     enabled: true
     Size: 30Gi
     # storageClass: ""  # unset = cluster default
+    # Pre-created + pre-populated PVC, bound on zachd-ubuntu-2. Set during the
+    # node migration off zachd-ubuntu so the chart reuses the seeded world
+    # instead of provisioning an empty one. See node-migration runbook.
+    existingClaim: mc-data
 
 # ----------------------------------------------------------------------------
 # Backups via itzg/mc-backup sidecar
@@ -363,6 +368,9 @@ mcbackup:
     backupDir:
       enabled: true
       Size: 50Gi
+      # Pre-created PVC on zachd-ubuntu-2 (starts empty; backups regenerate
+      # hourly). Paired with persistence.dataDir.existingClaim above.
+      existingClaim: mc-backups
 
   # Local backups die with the PVC. For offsite, switch backupMethod to "rclone"
   # and mount a secret with rclone.conf. See itzg/mc-backup README for envs.
@@ -375,13 +383,9 @@ mcbackup:
 podAnnotations:
   cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
 
-# Pin to zachd-ubuntu — most RAM headroom. Node carries a control-plane
-# NoSchedule taint to keep talaria workloads off, so an explicit toleration
-# is required here.
+# Pinned to zachd-ubuntu-2 — a dedicated, untainted worker. The world data
+# lives on this node's local-path disk, and the data PV's node-affinity
+# reinforces the pin. No toleration needed: zachd-ubuntu-2 carries no taints
+# (unlike the control-plane node zachd-ubuntu we migrated off).
 nodeSelector:
-  kubernetes.io/hostname: zachd-ubuntu
-
-tolerations:
-  - key: node-role.kubernetes.io/control-plane
-    operator: Exists
-    effect: NoSchedule
+  kubernetes.io/hostname: zachd-ubuntu-2
