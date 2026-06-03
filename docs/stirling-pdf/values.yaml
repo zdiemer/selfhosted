@@ -1,0 +1,104 @@
+image:
+  repository: docker.io/stirlingtools/stirling-pdf
+  # The `-fat` variant bundles LibreOffice, qpdf, Ghostscript, Calibre, and the
+  # full Tesseract language set, so the Office<->PDF conversion and OCR tools
+  # actually work. Drop the suffix (`:2.11.0`) for the slim image if you only
+  # need the pure-PDF tools and want a smaller pull. `:2.11.0-ultra-lite` is the
+  # minimal build (no conversion, no login).
+  tag: "2.11.0-fat"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+stirling:
+  # Branding shown in the tab title / navbar.
+  appName: "Stirling PDF"
+  # UI language. en-GB, de-DE, fr-FR, ... see upstream docs.
+  defaultLocale: "en-US"
+  # Stirling phones home anonymous usage stats by default. Off.
+  enableAnalytics: false
+
+  # Native username/password login (Stirling's own user DB in /configs).
+  # OFF by default — access is gated at the ingress by Authelia forward-auth
+  # (auth.forwardAuth below), so Stirling itself stays open *inside* the
+  # cluster and we don't run a second account system. Only flip this on if you
+  # want per-user accounts/quotas managed inside Stirling. Requires
+  # persistence.configs.enabled (the DB lives there).
+  login:
+    enabled: false
+    initialUsername: ""           # values.local.yaml
+    initialPassword: ""           # values.local.yaml
+
+  # Native OIDC — Stirling renders its own login page with an "Authelia"
+  # button and does the OAuth2 dance itself. Alternative to forward-auth for
+  # when you want Stirling to know *who* each user is (per-user settings).
+  # Leave disabled unless you switch off forward-auth. See README §Follow-up B.
+  oauth2:
+    enabled: false
+    provider: "Authelia"
+    issuer: ""                    # https://auth.zachd.duckdns.org
+    clientId: "stirlingpdf"
+    clientSecret: ""              # values.local.yaml
+    scopes: "openid,profile,email,groups"
+    useAsUsername: "preferred_username"
+    autoCreateUser: true
+
+  # Extra env vars passed straight to the container. See:
+  #   https://docs.stirlingpdf.com/Configuration/
+  extraEnv: {}
+  # extraEnv:
+  #   SYSTEM_MAXFILESIZE: "100"   # MB
+
+persistence:
+  # /configs holds settings.yml, custom pipelines, generated JWT/signing keys,
+  # uploaded signing certs/keystores, and (if login is on) the user DB. Stirling
+  # does NOT persist the documents you process — those live in a temp dir and are
+  # cleaned up after each operation. A small volume is plenty.
+  configs:
+    enabled: true
+    size: 1Gi
+    storageClass: ""              # "" → cluster default StorageClass
+    accessMode: ReadWriteOnce
+
+auth:
+  # Gate public access at the Traefik ingress with Authelia forward-auth.
+  # STRONGLY recommended whenever ingress.enabled is true: Stirling ships no
+  # auth of its own, so an open DuckDNS host = a PDF processor anyone on the
+  # internet can drive (and upload arbitrary files to). This drops the Authelia
+  # Middleware in front of the Ingress so every request is bounced through the
+  # Authelia portal first — no Stirling-side config needed.
+  #
+  # The Middleware is rendered *into this chart's namespace* (pointing at the
+  # Authelia Service in its own namespace by URL), so it works without enabling
+  # Traefik's allowCrossNamespace.
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia     # Authelia release/service name
+    autheliaNamespace: auth       # namespace Authelia runs in
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+ingress:
+  # Disabled for LAN-only v1. Flip on (in values.local.yaml) after you've
+  # confirmed the pod boots — see README §Expose via DuckDNS.
+  enabled: false
+  className: traefik
+  host: pdf.zachd.duckdns.org
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
+    # certs must ride a wildcard SAN. See romm README §DuckDNS follow-up.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  # Spring Boot / JVM app. Idle is light; LibreOffice + OCR conversions spike
+  # CPU and memory hard, so keep a generous memory ceiling.
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 2Gi

@@ -19,6 +19,7 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 | [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
 | [`auth/authelia/`](auth/authelia/) | Authelia — OIDC provider + (future) Traefik forward-auth. Shared login for every service in the cluster. | [auth/authelia/README](auth/authelia/README.md) |
 | [`docs/paperless-ngx/`](docs/paperless-ngx/) | Paperless-ngx — self-hosted document management with OCR + full-text search. Bundles Postgres, Redis, Tika, and Gotenberg inline. | [docs/paperless-ngx/README](docs/paperless-ngx/README.md) |
+| [`docs/stirling-pdf/`](docs/stirling-pdf/) | Stirling PDF — locally-processed toolkit for ~50 PDF operations (merge/convert/OCR/sign/redact). Gated behind Authelia forward-auth at the Traefik ingress. | [docs/stirling-pdf/README](docs/stirling-pdf/README.md) |
 
 ## Conventions
 

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "stirling.fullname" . }}
+  labels:
+    {{- include "stirling.labels" . | nindent 4 }}
+    app.kubernetes.io/component: stirling-pdf
+spec:
+  replicas: 1
+  # Recreate: single RWO /configs PVC, never two pods mounting it at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "stirling.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: stirling-pdf
+  template:
+    metadata:
+      annotations:
+        # Restart pod when rendered env changes.
+        checksum/env: {{ include (print $.Template.BasePath "/env.yaml") . | sha256sum }}
+      labels:
+        {{- include "stirling.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: stirling-pdf
+    spec:
+      # Avoid k8s' legacy service-link env injection clobbering Stirling's own
+      # *_PORT-style config with `tcp://...` Service URLs.
+      enableServiceLinks: false
+      containers:
+        - name: stirling-pdf
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: {{ include "stirling.fullname" . }}-env
+          {{- if .Values.persistence.configs.enabled }}
+          volumeMounts:
+            - name: configs
+              mountPath: /configs
+          {{- end }}
+          # The JVM + Spring context take a while to come up (and the `-fat`
+          # image warms LibreOffice on boot). A generous startup probe keeps
+          # liveness from killing the container during init (5 min = 30 × 10s).
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.persistence.configs.enabled }}
+      volumes:
+        - name: configs
+          persistentVolumeClaim:
+            claimName: {{ include "stirling.fullname" . }}-configs
+      {{- end }}

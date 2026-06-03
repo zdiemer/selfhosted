@@ -1,0 +1,22 @@
+{{- if .Values.persistence.configs.enabled }}
+{{/*
+Holds /configs: settings.yml, custom pipelines, generated signing keys, uploaded
+certs, and the user DB when login is enabled. Processed documents are NOT stored
+here — Stirling works on them in a temp dir and deletes them after each task.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "stirling.fullname" . }}-configs
+  labels:
+    {{- include "stirling.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.configs.accessMode }}
+  {{- with .Values.persistence.configs.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.configs.size }}
+{{- end }}

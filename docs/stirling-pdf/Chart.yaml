@@ -1,0 +1,12 @@
+apiVersion: v2
+name: stirling-pdf
+description: Stirling PDF — self-hosted, locally-processed toolkit for ~50 PDF operations (merge/split, convert, OCR, sign, redact, compress). Gated behind Authelia forward-auth.
+type: application
+version: 0.1.0
+# appVersion tracks the stirling-pdf image tag in values.yaml (image.tag).
+appVersion: "2.11.0"
+home: https://docs.stirlingpdf.com
+sources:
+  - https://github.com/Stirling-Tools/Stirling-PDF
+maintainers:
+  - name: zachd

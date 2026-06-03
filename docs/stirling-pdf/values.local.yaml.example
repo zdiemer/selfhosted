@@ -1,0 +1,30 @@
+# Copy to values.local.yaml (gitignored) and fill in. For the default
+# forward-auth setup you don't actually need any secrets here — Authelia does
+# the gating and Stirling has no accounts. This file only matters if you turn
+# on Stirling's native login or native OIDC.
+
+# Flip the ingress on once the pod is healthy.
+ingress:
+  enabled: true
+
+stirling:
+  # --- Option 1: Stirling native login (per-user accounts in Stirling) ---
+  # login:
+  #   enabled: true
+  #   initialUsername: "admin"
+  #   initialPassword: "change-me-then-rotate-in-the-UI"
+
+  # --- Option 2: Stirling native OIDC via Authelia ---
+  # Register a hashed client secret in auth/authelia/values.local.yaml first
+  # (see that README §"Wiring ... any OIDC client"), and turn OFF forward-auth
+  # below so the two don't double-prompt.
+  # oauth2:
+  #   enabled: true
+  #   issuer: "https://auth.zachd.duckdns.org"
+  #   clientId: "stirlingpdf"
+  #   clientSecret: "the-plaintext-secret-you-registered-with-authelia"
+
+# If you switch to native OIDC (Option 2), disable the ingress-level gate:
+# auth:
+#   forwardAuth:
+#     enabled: false
