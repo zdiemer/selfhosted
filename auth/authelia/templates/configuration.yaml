@@ -32,6 +32,13 @@ stringData:
       skew: 1
 
     authentication_backend:
+      # The user DB is mounted read-only from the authelia-users Secret, so
+      # Authelia can't write a new hash back. Disable the portal's reset flow —
+      # it would always fail at the final write ("read-only file system").
+      # Passwords are managed via GitOps: re-hash + update values.local.yaml +
+      # ./upgrade.sh.
+      password_reset:
+        disable: true
       file:
         path: /config/users_database.yml
         password:
