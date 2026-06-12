@@ -7,6 +7,11 @@
 {{- /* Force client_id to string — Discord snowflakes are 18-19 digits and YAML would otherwise parse as int, which some libs reject. */ -}}
 {{- $clientId := required "secrets.discordClientId is required" .Values.secrets.discordClientId | toString -}}
 {{- $mongoUrl := printf "mongodb://admin:%s@%s:27017/vocard?authSource=admin" $mongoPw $mongoHost -}}
+{{- /* The @@t_...@@ label placeholders under default_controller are Vocard
+       lang-file keys; v2.7.3 namespaced them (t_buttonBack ->
+       t_player.buttons.back). Unresolvable keys render as the literal label
+       "Not found!". Cross-check against `langs/EN.json` in the image on
+       every Vocard version bump. */ -}}
 {{- $settings := dict
   "token" $token
   "client_id" $clientId
@@ -68,15 +73,15 @@
         "color" "@@default_embed_color@@"))
     "buttons" (list
       (dict
-        "back"       (dict "emoji" "⏮️" "label" "@@t_buttonBack@@")
+        "back"       (dict "emoji" "⏮️" "label" "@@t_player.buttons.back@@")
         "play-pause" (dict "states" (dict
-          "pause"  (dict "emoji" "⏸️" "label" "@@t_buttonPause@@")
-          "resume" (dict "emoji" "▶️" "label" "@@t_buttonResume@@")))
-        "skip"       (dict "emoji" "⏭️" "label" "@@t_buttonSkip@@")
-        "stop"       (dict "emoji" "⏹️" "label" "@@t_buttonLeave@@" "style" "red")
+          "pause"  (dict "emoji" "⏸️" "label" "@@t_player.buttons.pause@@")
+          "resume" (dict "emoji" "▶️" "label" "@@t_player.buttons.resume@@")))
+        "skip"       (dict "emoji" "⏭️" "label" "@@t_player.buttons.skip@@")
+        "stop"       (dict "emoji" "⏹️" "label" "@@t_player.buttons.leave@@" "style" "red")
         "add-fav"    (dict "emoji" "❤️" "label" ""))
       (dict
-        "tracks"     (dict "label" "@@t_playerDropdown@@" "max_options" 10))))
+        "tracks"     (dict "label" "@@t_player.dropdown.trackSelect@@" "max_options" 10))))
 -}}
 apiVersion: v1
 kind: Secret

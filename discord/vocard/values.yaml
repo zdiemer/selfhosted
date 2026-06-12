@@ -29,7 +29,10 @@
 images:
   bot:
     repository: ghcr.io/chocomeow/vocard
-    tag: "latest"
+    # Genuinely pinned as of v2.7.3. This was previously "latest" +
+    # IfNotPresent, which froze a *different* "latest" on each node — the bot
+    # version silently changed whenever the pod rescheduled. Don't go back.
+    tag: "v2.7.3"
     pullPolicy: IfNotPresent
   lavalink:
     repository: ghcr.io/lavalink-devs/lavalink
@@ -37,10 +40,9 @@ images:
     # (E2EE) voice protocol to our voice endpoints; older Lavalink versions
     # get close-code 4017 "E2EE/DAVE protocol required" on the voice WS and
     # silently play to an audience of nobody. 4.2.0 also added a required
-    # `channelId` field to the voice-state PATCH — Vocard 2.7.2's bundled
-    # Voicelink 1.4 doesn't send it, so the bot deployment template runs a
-    # startup patch (vocard-deployment.yaml) to inject channelId before
-    # launching the bot. Revisit the patch on every Vocard upgrade.
+    # `channelId` field to the voice-state PATCH — Vocard ≥2.7.3 sends it
+    # natively (2.7.2 needed a startup patch in vocard-deployment.yaml,
+    # removed when we pinned the bot to v2.7.3).
     tag: "4.2.2"
     pullPolicy: IfNotPresent
   mongo:
