@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gamedex.fullname" . }}
+  labels:
+    {{- include "gamedex.labels" . | nindent 4 }}
+spec:
+  # Stateless (data is held in memory + re-fetched from Dropbox), so a rolling
+  # update is safe — no shared RWO volume to serialize on.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "gamedex.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Re-roll when the Dropbox URL secret changes.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "gamedex.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gamedex
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DROPBOX_XLSX_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: dropbox-url
+            - name: DROPBOX_XLSX_FILENAME
+              value: {{ .Values.dropbox.filename | quote }}
+            - name: REFRESH_INTERVAL_SECONDS
+              value: {{ .Values.refreshIntervalSeconds | quote }}
+          # Ready only once the first Dropbox load succeeds (health returns 503
+          # until then), so traffic never hits an empty dataset.
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            # Liveness hits a static asset so a transient Dropbox outage (which
+            # keeps serving last-good data) doesn't trigger a pointless restart.
+            httpGet:
+              path: /style.css
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            # readOnlyRootFilesystem is on; give libraries a small writable
+            # scratch dir. The app itself keeps all state in memory.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

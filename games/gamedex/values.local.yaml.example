@@ -1,0 +1,13 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored.
+
+dropbox:
+  # PREFERRED: a direct shared link to the .xlsx FILE itself.
+  # In Dropbox: right-click "Games Master List - Final.xlsx" -> Copy link.
+  #   https://www.dropbox.com/scl/fi/<id>/Games-Master-List-Final.xlsx?rlkey=<key>&dl=0
+  # This downloads only the ~2.5 MB workbook on each poll.
+  url: "https://www.dropbox.com/scl/fi/XXXXXXXX/Games-Master-List-Final.xlsx?rlkey=XXXXXXXX&dl=0"
+
+  # ALSO SUPPORTED: a FOLDER link (…/scl/fo/…). The app downloads the folder as
+  # a zip and extracts `filename` from it — simpler to share, but pulls the
+  # whole folder every poll, so prefer the file link above for a big folder.
+  # filename: "Games Master List - Final.xlsx"

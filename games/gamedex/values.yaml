@@ -1,0 +1,42 @@
+image:
+  # Locally-built image, side-loaded into k3s containerd via build.sh.
+  repository: gamedex
+  tag: "0.1.0"
+  # IfNotPresent — the tag is imported locally; there is no registry to pull from.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+dropbox:
+  # REQUIRED — set in values.local.yaml. The shared *folder* link to the
+  # directory containing the workbook (…/scl/fo/…?rlkey=…). A direct file link
+  # (…/scl/fi/…) also works. See README.
+  url: ""
+  # Name of the workbook inside the shared folder (ignored for file links).
+  filename: "Games Master List - Final.xlsx"
+
+# How often the poller re-checks Dropbox for edits. Only re-parses when the
+# file content actually changes, so a short interval is cheap.
+refreshIntervalSeconds: 600
+
+ingress:
+  enabled: true
+  className: traefik
+  host: games.zachd.duckdns.org
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account top-level, so sub-subdomain
+    # certs ride the wildcard SAN. Mirrors every other service in this repo.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    # ~17k rows parsed + held in memory; 512Mi is comfortable headroom.
+    memory: 512Mi

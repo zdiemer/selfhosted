@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gamedex</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎮</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎮 <span>Gamedex</span></div>
+    <input id="search" type="search" placeholder="Search title, genre, publisher, notes…" autocomplete="off" />
+    <div class="freshness" id="freshness"></div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="games" class="active">All Games</button>
+    <button data-tab="completed">Completed</button>
+    <button data-tab="onOrder">On Order</button>
+  </nav>
+
+  <main class="layout">
+    <aside class="facets" id="facets"></aside>
+    <section class="results">
+      <div class="resultbar">
+        <span id="count">Loading…</span>
+        <button id="clear" class="linkbtn" hidden>Clear filters</button>
+      </div>
+      <div class="tablewrap">
+        <table id="table">
+          <thead><tr id="thead"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager"></div>
+    </section>
+  </main>
+
+  <div class="drawer-overlay" id="overlay" hidden>
+    <div class="drawer" id="drawer" role="dialog" aria-modal="true">
+      <button class="drawer-close" id="drawerClose" aria-label="Close">✕</button>
+      <div id="drawerBody"></div>
+    </div>
+  </div>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

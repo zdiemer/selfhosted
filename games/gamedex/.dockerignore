@@ -1,0 +1,9 @@
+**/__pycache__/
+**/*.pyc
+values.local.yaml
+values.local.yaml.example
+templates/
+Chart.yaml
+*.sh
+README.md
+.dockerignore
