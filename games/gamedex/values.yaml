@@ -1,8 +1,8 @@
 image:
-  # Locally-built image, side-loaded into k3s containerd via build.sh.
-  repository: gamedex
+  # Built + pushed to GHCR by build.sh; the package is public so every node
+  # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
+  repository: ghcr.io/zdiemer/gamedex
   tag: "0.1.0"
-  # IfNotPresent — the tag is imported locally; there is no registry to pull from.
   pullPolicy: IfNotPresent
 
 service:

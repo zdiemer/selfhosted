@@ -60,15 +60,22 @@ an acceptable trade for zero-OAuth setup.
 ## Install
 
 ```bash
-# namespace already exists (shared with romm); create it if not:
-#   kubectl create namespace games
+kubectl create namespace games                   # once (shared with romm)
 
 cp games/gamedex/values.local.yaml.example games/gamedex/values.local.yaml
-$EDITOR games/gamedex/values.local.yaml         # paste the Dropbox link
+$EDITOR games/gamedex/values.local.yaml          # paste the Dropbox link
 
-bash games/gamedex/build.sh                      # build + side-load image into k3s
-bash games/gamedex/upgrade.sh                    # helm upgrade --install + rollout
+docker login ghcr.io -u zdiemer                  # PAT with write:packages
+bash games/gamedex/build.sh                      # build + push to ghcr.io/zdiemer/gamedex
+# First push only: set the GHCR package to Public
+#   https://github.com/users/zdiemer/packages/container/gamedex/settings
+bash games/gamedex/upgrade.sh                     # helm upgrade --install + rollout
 ```
+
+The cluster is multi-node with no in-cluster registry, so the image ships via
+**GHCR** (a public package) rather than being side-loaded into each node's
+containerd — that lets the single replica schedule onto any node and pull
+anonymously.
 
 Then browse **https://games.zachd.duckdns.org**. First paint waits a few seconds
 while the pod pulls the workbook (the UI shows "Fetching spreadsheet from
@@ -76,12 +83,12 @@ Dropbox…"). `/api/health` returns `503` until that first load completes.
 
 ## Upgrading
 
-- Changed **app code / Dockerfile / static assets** → `./build.sh` then
-  `./upgrade.sh` (the image tag is `IfNotPresent`, so rebuild + re-import first).
+- Changed **app code / Dockerfile / static assets** → bump `image.tag` in
+  `values.yaml` (and `Chart.yaml` `appVersion`), then `./build.sh` (build +
+  push to GHCR) and `./upgrade.sh`. Bumping the tag guarantees every node pulls
+  the new image; reusing a tag can leave nodes on a cached layer.
 - Changed **only chart values** (e.g. the Dropbox link, refresh interval) →
   `./upgrade.sh` alone.
-- Bump `image.tag` in `values.yaml` (and `Chart.yaml` `appVersion`) when you
-  want a clean new image tag rather than overwriting the current one.
 
 ## Configuration (`values.yaml` / `values.local.yaml`)
 
