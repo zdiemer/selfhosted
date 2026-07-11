@@ -1156,7 +1156,8 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
 /* ---- Predicted rating ---------------------------------------------------- */
 .pw {
-  margin-top: 6px; border-radius: var(--r);
+  /* Needs air on BOTH sides: it sat right on top of the launch button. */
+  margin: 12px 0 18px; border-radius: var(--r);
   background: linear-gradient(135deg, var(--accent-soft), transparent 70%), var(--surface-2);
   border: 1px solid var(--accent-line);
   overflow: hidden;
@@ -1185,13 +1186,16 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
 .pw-body { padding: 2px 15px 13px; }
 .pw-row {
-  /* The BAR gets the flexible column, not the label — the bar is the point. */
-  display: grid; grid-template-columns: 62px minmax(80px, 150px) minmax(0, 1fr) 52px;
-  align-items: center; gap: 10px; padding: 5px 0;
+  /* The BAR gets the flexible column, not the label — the bar is the point.
+     The first column must fit the longest kind: "DEVELOPER" and "PUBLISHER" run
+     to ~68px at this size, and 62px + nowrap meant they bled straight into the
+     game's developer name next to them. */
+  display: grid; grid-template-columns: 80px minmax(72px, 148px) minmax(0, 1fr) 52px;
+  align-items: center; gap: 12px; padding: 5px 0;
 }
 .pw-kind {
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim);
-  white-space: nowrap;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;   /* never bleed */
 }
 .pw-label {
   font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1221,7 +1225,10 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .pw-foot { margin-top: 10px; font-size: 10.5px; color: var(--dim); line-height: 1.5; }
 
 @media (max-width: 760px) {
-  .pw-row { grid-template-columns: 50px minmax(60px, 96px) minmax(0, 1fr) 44px; gap: 7px; }
+  /* Too narrow for four columns: drop the kind label (the value speaks for
+     itself) rather than truncating it to "DEVEL…". */
+  .pw-row { grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) 44px; gap: 8px; }
+  .pw-kind { display: none; }
   .pw-score { font-size: 25px; }
 }
 
@@ -1510,7 +1517,7 @@ tr.kb { background: var(--accent-soft); }
 
 /* ---- Launch / store buttons --------------------------------------------- */
 .hero-actions, .h-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.hero-actions { margin-top: 4px; padding-bottom: 4px; }
+.hero-actions { margin-top: 6px; padding-bottom: 6px; }
 a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .btn.launch {
   background: linear-gradient(92deg, var(--accent), var(--accent-2));
