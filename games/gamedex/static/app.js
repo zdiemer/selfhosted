@@ -416,6 +416,7 @@ async function loadAllEnrichment() {
     if (changed) {
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
+      else if (activeTab === "challenges") renderChallenges();
       else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
     }
     if (j.stats && !j.stats.complete) {             // a backfill is still running
@@ -1041,11 +1042,12 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-const SPECIAL_TABS = ["stats", "pick"];
-function setSpecialMode(mode) {   // null | "stats" | "pick"
+const SPECIAL_TABS = ["stats", "pick", "challenges"];
+function setSpecialMode(mode) {   // null | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
   $("#picker").hidden = mode !== "pick";
+  $("#challenges").hidden = mode !== "challenges";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1058,6 +1060,7 @@ function setSpecialMode(mode) {   // null | "stats" | "pick"
 function renderAll() {
   if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
+  if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = filterRows(null);
@@ -1080,6 +1083,8 @@ function syncURL(push) {
   if (activeTab === "pick") {
     if (pickState.selector) p.set("sel", pickState.selector);
     if (pickState.param) p.set("pp", pickState.param);
+  } else if (activeTab === "challenges") {
+    if (chState.open) p.set("ch", chState.open);
   } else if (activeTab !== "stats") {
     const st = tabState[activeTab];
     if (viewMode !== "grid") p.set("view", viewMode);
@@ -1095,9 +1100,10 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["games", "completed", "onOrder", "stats", "pick"].includes(p.get("tab")) ? p.get("tab") : "games";
+  const tab = ["games", "completed", "onOrder", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "games";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
+    if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
     applyingState = false; switchTab(tab); return;
   }
   viewMode = p.get("view") === "table" ? "table" : "grid";
