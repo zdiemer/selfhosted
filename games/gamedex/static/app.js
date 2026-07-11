@@ -395,15 +395,24 @@ function wireCarousel(el, items) {
     const m = media[shotIdx];
     view.innerHTML = "";
     if (m.kind === "video") {
-      const frame = document.createElement("iframe");
-      frame.className = "shot-video";
-      // muted: a browser will refuse to autoplay with sound, and it would be
-      // rude anyway. Controls are on, so it can be unmuted.
-      frame.src = `https://www.youtube-nocookie.com/embed/${m.id}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
-      frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
-      frame.allowFullscreen = true;
-      frame.title = m.name;
-      view.appendChild(frame);
+      if (YT_BLOCKED) { view.appendChild(ytFallback(m)); }
+      else {
+        const frame = document.createElement("iframe");
+        frame.className = "shot-video";
+        // muted: a browser will refuse to autoplay with sound, and it would be
+        // rude anyway. Controls are on, so it can be unmuted.
+        frame.src = ytSrc(m.id, { autoplay: "1", mute: "1" });
+        frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+        frame.allowFullscreen = true;
+        frame.title = m.name;
+        view.appendChild(frame);
+        // If it never plays (YouTube's bot wall, or embedding disabled), swap in
+        // a thumbnail that opens the video on YouTube — where the user can
+        // actually sign in, or just watch it.
+        ytWatch(frame, () => {
+          if (frame.isConnected) frame.replaceWith(ytFallback(m));
+        });
+      }
     } else {
       const img = document.createElement("img");
       img.className = "shot-img";
@@ -422,6 +431,20 @@ function wireCarousel(el, items) {
   if (next) next.onclick = (e) => { e.stopPropagation(); show(shotIdx + 1); };
   show(0);
 }
+// A clickable poster that opens the trailer on YouTube in a new tab.
+function ytFallback(m) {
+  const a = document.createElement("a");
+  a.className = "shot-fallback";
+  a.href = `https://www.youtube.com/watch?v=${m.id}`;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.innerHTML =
+    `<img src="https://i.ytimg.com/vi/${escapeHtml(m.id)}/hqdefault.jpg" alt="">
+     <span class="shot-fallback-play">▶</span>
+     <span class="shot-fallback-note">YouTube won’t play this here — watch it on YouTube ↗</span>`;
+  return a;
+}
+
 function lbShow(delta) {
   if (!shotIds.length) return;
   lbIdx = (lbIdx + delta + shotIds.length) % shotIds.length;
@@ -1506,6 +1529,65 @@ function renderGrid(pageRows) {
   });
 }
 
+// ---- YouTube: know whether it actually played ----------------------------
+// YouTube serves some clients a "sign in to confirm you're not a bot" wall
+// inside the embed. We can't overrule that, and we can't read a cross-origin
+// iframe to detect it — but we CAN ask the player whether it started, using the
+// IFrame API's postMessage handshake. If it never reaches the playing state, the
+// embed is useless: tear it down and show something the user can actually click.
+const YT_ORIGIN = location.origin;
+const YT_TIMEOUT = 4500;
+let ytFailures = 0;
+let YT_BLOCKED = false;         // once YouTube is clearly refusing us, stop trying
+
+const ytSrc = (id, opts = {}) => {
+  const p = new URLSearchParams({
+    rel: "0", modestbranding: "1", playsinline: "1",
+    enablejsapi: "1", origin: YT_ORIGIN, ...opts,
+  });
+  return `https://www.youtube.com/embed/${id}?${p}`;
+};
+
+// Watch a player: call onFail() if it hasn't started within YT_TIMEOUT.
+function ytWatch(frame, onFail) {
+  let done = false;
+  const onMsg = (e) => {
+    if (!/youtube(-nocookie)?\.com$/.test(new URL(e.origin).hostname.replace(/^www\./, ""))) return;
+    if (e.source !== frame.contentWindow) return;
+    let d;
+    try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (_) { return; }
+    const state = d && d.info && d.info.playerState;
+    if (state === 1 || state === 3) {      // playing / buffering: it's alive
+      done = true;
+      ytFailures = 0;
+      cleanup();
+    }
+  };
+  const cleanup = () => {
+    window.removeEventListener("message", onMsg);
+    clearTimeout(timer);
+    clearInterval(poke);
+  };
+  window.addEventListener("message", onMsg);
+
+  // The player only starts reporting once we say hello.
+  const poke = setInterval(() => {
+    try {
+      frame.contentWindow.postMessage('{"event":"listening","id":1,"channel":"widget"}', "*");
+    } catch (_) { /* not loaded yet */ }
+  }, 400);
+
+  const timer = setTimeout(() => {
+    cleanup();
+    if (done) return;
+    // Two strikes and we stop asking: if YouTube is blocking this client, every
+    // further embed is just another wall.
+    if (++ytFailures >= 2) YT_BLOCKED = true;
+    onFail();
+  }, YT_TIMEOUT);
+  return cleanup;
+}
+
 // ---- hover-to-play trailer previews --------------------------------------
 // Hover a card and its trailer plays, muted, from a random point in the middle —
 // the opening seconds of a trailer are logos, so starting at 0 would show you a
@@ -1529,6 +1611,7 @@ function stopPreview() {
 }
 
 function startPreview(card) {
+  if (YT_BLOCKED) return;                 // YouTube isn't letting this client play
   const row = CARD_ROW.get(card);
   const vid = row && (ENRICH[row._k] || {}).video;
   if (!vid || card === previewCard) return;
@@ -1539,14 +1622,18 @@ function startPreview(card) {
   const start = 15 + Math.floor(Math.random() * 45);
   const frame = document.createElement("iframe");
   frame.className = "card-preview";
-  frame.src = `https://www.youtube-nocookie.com/embed/${vid}` +
-    `?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0` +
-    `&disablekb=1&iv_load_policy=3&fs=0&start=${start}`;
+  frame.src = ytSrc(vid, {
+    autoplay: "1", mute: "1", controls: "0", disablekb: "1",
+    iv_load_policy: "3", fs: "0", start: String(start),
+  });
   frame.allow = "autoplay; encrypted-media";
   frame.tabIndex = -1;
   frame.setAttribute("aria-hidden", "true");
   card.appendChild(frame);
   card.classList.add("previewing");
+  // If YouTube shows a bot wall instead of playing, a dead iframe over the box
+  // art is worse than no preview at all. Put the art back.
+  ytWatch(frame, () => { if (previewCard === card) stopPreview(); });
 }
 
 function wirePreview(card) {
