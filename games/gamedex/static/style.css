@@ -185,6 +185,9 @@ tbody tr:hover { background: var(--panel-2); }
   position: fixed; inset: 0; background: rgba(0,0,0,.55);
   display: flex; justify-content: flex-end; z-index: 40;
 }
+/* display:flex above would otherwise defeat the [hidden] attribute, leaving the
+   drawer stuck open+empty on load. Restore hidden's display:none. */
+.drawer-overlay[hidden] { display: none; }
 .drawer {
   width: min(560px, 92vw); height: 100%;
   background: var(--panel); border-left: 1px solid var(--border);
