@@ -76,7 +76,8 @@ _GAMES = [
     ("Playable",             "text",   True,  False, False),
     ("VR",                   "bool",   True,  False, False),
     ("DLC",                  "bool",   True,  False, False),
-    ("English",              "bool",   True,  False, False),
+    # Tri-state translation status, not a bool (see _VALUE_LABELS).
+    ("English",              "text",   True,  False, False),
     ("Condition",            "text",   False, False, False),
     ("Date Purchased",       "date",   False, False, False),
     ("Purchase Price",       "money",  False, False, False),
@@ -128,12 +129,26 @@ _EXCLUDE = {"Order #", "Address on Order", "Tracking #"}
 
 # Map coded cell values to human labels (applies to column, facet, and drawer).
 # Keyed by the slugged column key.
+_REGIONS = {
+    "NA": "North America", "EU": "Europe", "JP": "Japan", "AS": "Asia",
+    "BR": "Brazil", "DE": "Germany", "FR": "France", "KO": "Korea",
+    "SP": "Spain", "TW": "Taiwan", "IT": "Italy", "CN": "China",
+    "SE": "Sweden", "AU": "Australia", "YU": "Yugoslavia",
+}
+
+# Coded columns → human labels. These mirror the enums in zdiemer/GamesMaster;
+# several were previously coerced to bool, which silently collapsed states.
 _VALUE_LABELS = {
     "playingStatus": {"1": "Playing", "0": "On Hold", "-1": "Up Next"},
-    # Playability is tri-state (matches zdiemer/GamesMaster's Playability enum:
-    # UNKNOWN=0, PLAYABLE=1, UNPLAYABLE=-1). Coercing it to bool made bool(-1)
-    # True, so unplayable games read as "Yes" and unknown ones as "No".
+    # Playability: UNKNOWN=0, PLAYABLE=1, UNPLAYABLE=-1. As a bool, bool(-1) was
+    # True → unplayable games read "Yes" and unknown ones "No".
     "playable": {"1": "Yes", "0": "Unknown", "-1": "No"},
+    # TranslationStatus: NONE=0, PARTIAL=1, COMPLETE=2. As a bool, Partial and
+    # Full both collapsed to True. Blank = natively English (no entry).
+    "english": {"0": "None", "1": "Partial", "2": "Full"},
+    # ExcelRegion codes → full names.
+    "releaseRegion": _REGIONS,
+    "region": _REGIONS,
 }
 
 
