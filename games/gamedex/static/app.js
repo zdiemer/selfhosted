@@ -50,6 +50,10 @@ function fmtCell(value, type) {
       return escapeHtml(fmtDate(value));
     case "number":
       return typeof value === "number" ? escapeHtml(value.toLocaleString()) : escapeHtml(String(value));
+    case "money":
+      return typeof value === "number"
+        ? "$" + escapeHtml(value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+        : escapeHtml(String(value));
     default:
       return escapeHtml(String(value));
   }
@@ -140,7 +144,7 @@ function detailHtml(d) {
     ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
         `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
   const text = d.summary || d.storyline;
-  return `<div class="igdb-head">${cover}<div class="igdb-side">${badge}${rating}
+  return `<div class="igdb-head">${cover}<div class="igdb-side">${badge ? `<div class="badges">${badge}</div>` : ""}${rating}
        ${chips([...(d.genres || []), ...(d.themes || [])])}
        ${chips(d.gameModes || [])}</div></div>` +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
@@ -308,6 +312,8 @@ const METACRITIC_BUCKETS = [
 const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBest; return h != null ? h : row.estimatedTime; };
 // Metacritic (0–1): scraped score where enriched, else the sheet's Metacritic Rating.
 const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
+// User rating (0–1): IGDB community rating where enriched, else sheet GameFAQs.
+const userRatingOf = (row) => { const e = ENRICH[row._k]; return e && e.userRating != null ? e.userRating : row.gamefaqsUserRating; };
 function bucketLabel(v, buckets) { for (const b of buckets) if (b.test(v)) return b.label; return null; }
 
 const igdbFacetCols = () =>
@@ -320,6 +326,7 @@ function extraFacetCols() {
   return [
     { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
     { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
+    { key: "__userrating", label: "User Rating", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: userRatingOf },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
@@ -379,10 +386,21 @@ function filterRows(skipKey) {
 }
 
 // ---- rendering: facets --------------------------------------------------
+function setFacets(open) {
+  $("#facets").classList.toggle("open", open);
+  $("#facetBackdrop").hidden = !open;
+}
+
 function renderFacets() {
   const st = tabState[activeTab];
   const host = $("#facets");
   host.innerHTML = "";
+
+  const closeBtn = document.createElement("button");   // mobile-only (CSS)
+  closeBtn.className = "facet-close";
+  closeBtn.textContent = "✕ Close filters";
+  closeBtn.onclick = () => setFacets(false);
+  host.appendChild(closeBtn);
 
   for (const col of facetCols()) {
     // Count values across rows filtered by the OTHER facets + search.
@@ -499,7 +517,7 @@ function renderFacets() {
 
 // ---- rendering: table ---------------------------------------------------
 // ---- multi-key sorting --------------------------------------------------
-const NUMERIC_TYPES = ["rating", "hours", "number", "int", "year"];
+const NUMERIC_TYPES = ["rating", "hours", "number", "money", "int", "year"];
 
 // Per-tab default sort. A spec is {key, dir, type?, kind?}; `kind` selects a
 // custom comparator. The games default: Playing-status group on top
@@ -813,7 +831,8 @@ function setView(mode) {
 }
 $("#viewTable").addEventListener("click", () => setView("table"));
 $("#viewGrid").addEventListener("click", () => setView("grid"));
-$("#facetToggle").addEventListener("click", () => $("#facets").classList.toggle("open"));
+$("#facetToggle").addEventListener("click", () => setFacets(!$("#facets").classList.contains("open")));
+$("#facetBackdrop").addEventListener("click", () => setFacets(false));
 $("#gridsort").addEventListener("change", (e) => {
   const st = tabState[activeTab];
   const k = e.target.value;

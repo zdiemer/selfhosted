@@ -277,6 +277,7 @@ tbody tr:hover { background: var(--panel-2); }
 .igdb-attr { color: var(--muted); font-size: 12px; margin-top: 14px; }
 .igdb-attr a { color: var(--accent); }
 .chip.manual { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.igdb-side .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 
 /* HowLongToBeat section */
 .hltb { margin: 12px 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
@@ -312,11 +313,17 @@ tbody tr:hover { background: var(--panel-2); }
 }
 
 .facet-toggle { display: none; }
+.facet-close { display: none; }
+.facet-backdrop { display: none; }
 
 @media (max-width: 760px) {
   .facets { position: fixed; z-index: 30; height: 100%; left: 0; top: 0; width: 84%; max-width: 320px;
     box-shadow: 2px 0 12px rgba(0,0,0,.5); transform: translateX(-100%); transition: transform .2s; }
   .facets.open { transform: none; }
+  .facet-backdrop { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,.5); }
+  .facet-close { display: block; width: 100%; margin-bottom: 8px; padding: 8px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; cursor: pointer; font-size: 13px; position: sticky; top: 0; z-index: 1; }
   .freshness { display: none; }
   .brand span { display: none; }              /* keep the 🎮, drop the word for search room */
   .topbar { gap: 10px; padding: 8px 12px; }

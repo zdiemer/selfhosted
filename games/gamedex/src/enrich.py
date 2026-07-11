@@ -22,7 +22,7 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "rating", "year", "genres", "themes", "gameModes", "name")
-_FACET_LIGHT = ("cover", "genres", "themes", "gameModes")
+_FACET_LIGHT = ("cover", "genres", "themes", "gameModes", "userRating")
 # Light fields each secondary source contributes to the cover/facet map.
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},

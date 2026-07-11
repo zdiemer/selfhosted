@@ -31,7 +31,7 @@ _IGDB = "https://api.igdb.com/v4"
 # One request pulls all candidates with everything we display, nested inline.
 _FIELDS = (
     "fields name,slug,url,category,summary,storyline,"
-    "first_release_date,total_rating,total_rating_count,"
+    "first_release_date,total_rating,total_rating_count,rating,rating_count,aggregated_rating,"
     "alternative_names.name,platforms.name,release_dates.y,"
     "genres.name,themes.name,game_modes.name,player_perspectives.name,"
     "cover.image_id,screenshots.image_id,artworks.image_id,"
@@ -218,6 +218,7 @@ class IgdbClient:
         if c.get("first_release_date"):
             year = datetime.fromtimestamp(c["first_release_date"], tz=timezone.utc).year
         rating = c.get("total_rating")
+        user_rating = c.get("rating")            # IGDB community/user rating
         return {
             "igdbId": c.get("id"),
             "name": c.get("name"),
@@ -227,6 +228,8 @@ class IgdbClient:
             "storyline": c.get("storyline"),
             "rating": round(rating / 100, 4) if rating is not None else None,
             "ratingCount": c.get("total_rating_count"),
+            "userRating": round(user_rating / 100, 4) if user_rating is not None else None,
+            "userRatingCount": c.get("rating_count"),
             "year": year,
             "genres": [g["name"] for g in c.get("genres", []) if g.get("name")],
             "themes": [t["name"] for t in c.get("themes", []) if t.get("name")],

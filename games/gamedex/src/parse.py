@@ -78,7 +78,7 @@ _GAMES = [
     ("English",              "bool",   True,  False, False),
     ("Condition",            "text",   False, False, False),
     ("Date Purchased",       "date",   False, False, False),
-    ("Purchase Price",       "number", False, False, False),
+    ("Purchase Price",       "money",  False, False, False),
     ("Date Started",         "date",   False, False, False),
     ("Date Completed",       "date",   False, False, False),
     ("Completion Time",      "hours",  False, False, False),
@@ -117,7 +117,7 @@ _ON_ORDER = [
     ("Vendor",            "text",   True,  True,  True),
     ("Status",            "text",   True,  False, True),
     ("Format",            "text",   True,  False, True),
-    ("Price",             "number", False, False, True),
+    ("Price",             "money",  False, False, True),
     ("Ordered Date",      "date",   False, False, True),
     ("Estimated Release", "date",   False, False, True),
 ]
@@ -213,7 +213,7 @@ def _coerce(value, ctype):
     if ctype == "rating":
         num = _to_number(value)
         return round(num, 4) if num is not None else None
-    if ctype in ("hours", "number"):
+    if ctype in ("hours", "number", "money"):
         num = _to_number(value)
         if num is None:
             return None
