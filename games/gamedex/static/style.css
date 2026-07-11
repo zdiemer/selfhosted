@@ -227,6 +227,8 @@ a { color: var(--accent-2); }
 .resultbar #count { white-space: nowrap; font-weight: 500; color: var(--text); }
 .resultbar .spacer { flex: 1; }
 .resultbar .ctl { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+/* Grouped so the whole cluster can be relocated into the mobile sheet. */
+.rb-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .enrichstatus { color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .linkbtn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 12.5px; font-family: inherit; }
 .linkbtn:hover { text-decoration: underline; }
@@ -578,7 +580,7 @@ td.cover { width: 46px; padding: 5px 8px; }
 .banner { padding: 9px 16px; background: rgba(251, 191, 36, .1); color: var(--warn); border-bottom: 1px solid rgba(251, 191, 36, .25); font-size: 13px; text-align: center; }
 
 /* ---- Mobile ------------------------------------------------------------- */
-.facet-toggle, .facet-close, .facet-backdrop { display: none; }
+.facet-toggle, .facet-close, .facet-backdrop, .fab, .sheet, .sheet-backdrop { display: none; }
 
 @media (max-width: 760px) {
   /* One scroll container on mobile: the page. Nested scrollers (page + grid)
@@ -615,6 +617,48 @@ td.cover { width: 46px; padding: 5px 8px; }
     background: var(--surface); color: var(--text); border: 1px solid var(--border);
     border-radius: 999px; padding: 6px 13px; cursor: pointer; font-size: 13px;
   }
+
+  /* Floating controls: the result bar scrolls away, so filters/sort/top must
+     stay reachable. Sits below the facet drawer + its backdrop (z 29/30). */
+  .fab {
+    display: flex; gap: 8px; align-items: center;
+    position: fixed; z-index: 28; left: 50%; transform: translateX(-50%);
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  .fab button {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 11px 16px; border-radius: 999px; cursor: pointer;
+    font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+    background: rgba(24, 26, 36, .82); backdrop-filter: blur(10px);
+    border: 1px solid var(--border); box-shadow: var(--sh-2);
+    transition: transform .12s var(--ease), border-color .18s;
+  }
+  .fab button:active { transform: scale(.94); }
+  .fab button:hover { border-color: var(--accent-line); }
+  #fabTop { padding: 11px 14px; font-size: 15px; }
+  .toast { bottom: 78px; }                    /* clear of the FAB */
+
+  /* Sort & view bottom sheet (hosts #rbControls on mobile). */
+  .sheet-backdrop:not([hidden]) {
+    display: block; position: fixed; inset: 0; z-index: 34;
+    background: rgba(4, 6, 10, .6); backdrop-filter: blur(2px);
+  }
+  .sheet:not([hidden]) {
+    display: block; position: fixed; z-index: 35; left: 0; right: 0; bottom: 0;
+    background: var(--bg-2); border-top: 1px solid var(--border);
+    border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: 0 -8px 32px rgba(0, 0, 0, .5);
+    padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    animation: sheetup .22s var(--ease);
+  }
+  @keyframes sheetup { from { transform: translateY(100%); } to { transform: none; } }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .sheet-head button {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px 8px;
+  }
+  .sheet .rb-controls { flex-direction: column; align-items: stretch; gap: 14px; }
+  .sheet .rb-controls .ctl { justify-content: space-between; font-size: 13px; }
+  .sheet .rb-controls select { flex: 1; max-width: 62%; }
+  .sheet .viewtoggle { align-self: center; }
   .freshness { display: none; }
   .brand span { display: none; }
   .topbar { gap: 10px; padding: 10px 12px; }

@@ -39,19 +39,21 @@
         <button id="resetsort" class="linkbtn" hidden>Reset sort</button>
         <button id="clear" class="linkbtn" hidden>Clear filters</button>
         <span class="spacer"></span>
-        <span id="gridsortwrap" class="ctl" hidden>
-          <label>Sort <select id="gridsort"></select></label>
-          <button id="gridsortdir" class="dirbtn" title="Toggle direction">▼</button>
-        </span>
-        <label class="ctl">Per page
-          <select id="pagesize">
-            <option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option>
-          </select>
-        </label>
-        <span class="viewtoggle">
-          <button id="viewTable" title="Table view" aria-label="Table view">☰</button>
-          <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view">▦</button>
-        </span>
+        <div class="rb-controls" id="rbControls">
+          <span id="gridsortwrap" class="ctl" hidden>
+            <label>Sort <select id="gridsort"></select></label>
+            <button id="gridsortdir" class="dirbtn" title="Toggle direction">▼</button>
+          </span>
+          <label class="ctl">Per page
+            <select id="pagesize">
+              <option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option>
+            </select>
+          </label>
+          <span class="viewtoggle">
+            <button id="viewTable" title="Table view" aria-label="Table view">☰</button>
+            <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view">▦</button>
+          </span>
+        </div>
       </div>
       <div class="tablewrap" id="tablewrap">
         <table id="table">
@@ -73,6 +75,18 @@
       <button class="drawer-close" id="drawerClose" aria-label="Close">✕</button>
       <div id="drawerBody"></div>
     </div>
+  </div>
+
+  <!-- Mobile: filters/sort reachable without scrolling back to the top -->
+  <div class="fab" id="fab">
+    <button id="fabFilters">☰ Filters</button>
+    <button id="fabSort">⇅ Sort &amp; view</button>
+    <button id="fabTop" title="Back to top" aria-label="Back to top">↑</button>
+  </div>
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-head"><b>Sort &amp; view</b><button id="sheetClose" aria-label="Close">✕</button></div>
+    <div class="sheet-body" id="sheetBody"></div>
   </div>
 
   <div class="lightbox" id="lightbox" hidden>

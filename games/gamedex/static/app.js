@@ -1049,7 +1049,10 @@ function setSpecialMode(mode) {   // null | "stats" | "pick"
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
-  if (special) { $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
+  // Filters/sort don't apply on Stats/Pick — leave only "back to top".
+  $("#fabFilters").hidden = special;
+  $("#fabSort").hidden = special;
+  if (special) { setSheet(false); setFacets(false); $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
 }
 
 function renderAll() {
@@ -1477,6 +1480,35 @@ function setView(mode) {
 }
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
+// ---- Mobile floating controls ------------------------------------------
+// On mobile the page is one scroller, so the result bar scrolls away. Move the
+// sort/per-page/view cluster into a bottom sheet and reach it from a FAB.
+const MOBILE = window.matchMedia("(max-width: 760px)");
+function placeControls() {
+  const ctrls = $("#rbControls");
+  const home = MOBILE.matches ? $("#sheetBody") : $(".resultbar");
+  if (ctrls.parentElement !== home) home.appendChild(ctrls);
+  if (!MOBILE.matches) setSheet(false);
+}
+function setSheet(open) {
+  $("#sheet").hidden = !open;
+  $("#sheetBackdrop").hidden = !open;
+}
+MOBILE.addEventListener("change", placeControls);
+placeControls();
+
+$("#fabFilters").addEventListener("click", () => setFacets(true));
+$("#fabSort").addEventListener("click", () => setSheet(true));
+$("#fabTop").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+$("#sheetClose").addEventListener("click", () => setSheet(false));
+$("#sheetBackdrop").addEventListener("click", () => setSheet(false));
+// Picking a sort/view is the whole point of the sheet — dismiss it so the
+// results are visible immediately. (The controls' own handlers still run.)
+$("#sheetBody").addEventListener("change", () => setSheet(false));
+$("#sheetBody").addEventListener("click", (e) => {
+  if (e.target.closest(".viewtoggle, .dirbtn")) setSheet(false);
+});
+
 // Wordmark = home: back to all games with nothing filtered/sorted.
 $("#brand").addEventListener("click", () => {
   for (const t of TABS) tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
@@ -1525,7 +1557,9 @@ document.addEventListener("keydown", (e) => {
     else if (e.key === "ArrowRight") lbShow(1);
     return;
   }
-  if (e.key === "Escape") closeDrawer();
+  if (e.key !== "Escape") return;
+  if (!$("#sheet").hidden) setSheet(false);
+  else closeDrawer();
 });
 
 function showToast(msg) {
