@@ -53,32 +53,94 @@ function isCandidate(r) {
   return !!r.releaseDate && r.releaseDate <= chToday();
 }
 
+// ---- Notes-derived fields ------------------------------------------------
+// The sheet has no columns for storefront, subscription, limited-print run or
+// required accessory — ExcelGame.__process_notes infers them all from the Notes
+// cell, matching it against these closed vocabularies. Ported as-is, including
+// the ordering: the first vocabulary that matches wins and the rest are skipped.
+
+const CH_DIGITAL_PLATFORMS = new Set([
+  "32-bit iOS", "Abandonware", "Amazon", "Battle.net", "Desura", "DRM Free", "Epic Games Store",
+  "Freeware", "GOG", "Green Man Gaming", "Humble Bundle", "itch.io", "Johren", "Legacy Games",
+  "Mojang", "Net Yaroze", "Nintendo 3DS Ambassador Program", "Oculus", "Origin", "Other",
+  "Pirated", "Playdate", "Playdate Catalog", "Playdate Season 1", "Playdate Season 2",
+  "Square Enix", "Steam", "Super NES Classic Edition", "Twitch", "uPlay", "Virtual Console",
+  "Xbox Live Indie Games",
+]);
+const CH_SUBSCRIPTIONS = new Set([
+  "Apple Arcade", "Games with Gold", "Netflix Games", "Nintendo Switch Online", "OnLive",
+  "PlayStation Plus", "Stadia Pro", "Viveport", "Xbox Game Pass",
+]);
+const CH_LIMITED_PRINT = new Set([
+  "Fangamer", "Hard Copy Games", "iam8bit", "Limited Rare Games", "Limited Run Games",
+  "PixelHeart", "Play-Asia Exclusive", "Special Reserve Games", "Strictly Limited Games",
+  "Super Rare Games",
+]);
+const CH_MEDIA_FORMATS = new Set(["LaserDisc"]);
+const CH_ACCESSORIES = new Set([
+  "Adventure Player", "Nintendo Power", "Starpath Supercharger", "Super Scope",
+]);
+
+const _chNotes = new WeakMap();
+function chNoteFacts(r) {
+  let f = _chNotes.get(r);
+  if (f) return f;
+  f = { notes: r.notes || null };
+  const n = f.notes;
+  if (n) {
+    if (CH_DIGITAL_PLATFORMS.has(n)) f.digitalPlatform = n;
+    else if (CH_SUBSCRIPTIONS.has(n)) f.subscription = n;
+    else if (n === "Delisted") f.delisted = true;
+    else if (CH_LIMITED_PRINT.has(n)) f.limitedPrint = n;
+    else {
+      // "Limited Run Games - Foo Edition": the company is stripped off and the
+      // remainder falls through to the checks below.
+      if (n.startsWith("Limited Run Games")) {
+        f.limitedPrint = "Limited Run Games";
+        f.notes = n.replace("Limited Run Games", "").replace(" - ", "").trim();
+      }
+      const rest = f.notes;
+      if (CH_MEDIA_FORMATS.has(rest)) f.mediaFormat = rest;
+      else if (CH_ACCESSORIES.has(rest)) f.accessory = rest;
+    }
+  }
+  _chNotes.set(r, f);
+  return f;
+}
+
 // ---- bucket keys ---------------------------------------------------------
 
-// get_platform_completion_id: platform, split by the distinctions that make a
-// playthrough feel different — Famicom vs NES, XBLA vs disc, MAME vs not.
-// (GamePicker also splits on subscription service, required accessory and
-// digital storefront; the sheet doesn't carry those columns, so we don't.)
+// get_platform_completion_id: the platform, split by every distinction that
+// makes a playthrough feel like a different box — Famicom vs NES, XBLA vs disc,
+// Steam vs GOG, MAME vs not. Branch order is load-bearing (a Steam game is
+// "PC (Steam)", never "PC"), so it follows the source exactly.
 const CH_STOREFRONT = {
-  "Xbox 360": "XBLA", "PlayStation 3": "PSN", "PlayStation 4": "PSN", "PlayStation 5": "PSN",
-  "PlayStation Vita": "PSN", "PlayStation Portable": "PSN", "Nintendo 3DS": "eShop",
-  "New Nintendo 3DS": "eShop", "Nintendo Wii U": "eShop", "Nintendo Switch": "eShop",
-  "Nintendo Switch 2": "eShop", "Xbox": "Digital", "Xbox One": "Digital",
-  "Xbox Series X|S": "Digital",
+  "Xbox": "Digital", "Xbox 360": "XBLA", "Xbox One": "Digital", "Xbox Series X|S": "Digital",
+  "PlayStation 3": "PSN", "PlayStation 4": "PSN", "PlayStation 5": "PSN",
+  "PlayStation Vita": "PSN", "Nintendo 3DS": "eShop", "New Nintendo 3DS": "eShop",
+  "Nintendo Wii U": "eShop", "Nintendo Switch": "eShop", "Nintendo Switch 2": "eShop",
 };
 const CH_VR_SPLIT = new Set(["PlayStation 4", "PlayStation 5"]);
 
 function platformCompletionId(r) {
   const p = r.platform;
   if (!p) return null;
+  const f = chNoteFacts(r);
+  const notes = f.notes;
+
+  // PC storefronts and Playdate sub-platforms.
+  if (f.digitalPlatform) {
+    return `${p} (${f.digitalPlatform})${r.vr ? " (VR)" : ""}${r.dlc ? " (DLC)" : ""}`;
+  }
   if (r.dlc) return `${p} (DLC)`;
   if (p === "Arcade") {
-    if (r.notes) return `${p} (${r.notes})`;
+    if (notes) return `${p} (${notes})`;                      // LaserDisc, Naomi, Triforce…
     return `${p} (${r.mameRomset ? "MAME" : "Non-MAME"})`;
   }
   if (p === "NES" && r.releaseRegion === "Japan") return `${p} (Famicom)`;
-  if ((p === "NES" || p === "Game Boy Color") && r.notes === "Bootleg") return `${p} (Bootleg)`;
-  if (p === "SNES" && r.releaseRegion === "Japan") return `${p} (Super Famicom)`;
+  if ((p === "NES" || p === "Game Boy Color") && notes === "Bootleg") return `${p} (Bootleg)`;
+  if (p === "SNES" && r.releaseRegion === "Japan" && !f.accessory) return `${p} (Super Famicom)`;
+  if (f.subscription) return `${p}${r.vr ? " (VR)" : ""} (${f.subscription})`;
 
   const store = CH_STOREFRONT[p];
   if (store) {
@@ -88,6 +150,12 @@ function platformCompletionId(r) {
     }
     if (r.format === "Digital") return `${p}${vr} (${store})`;
     return `${p}${vr} (Emulation)`;
+  }
+  if (f.accessory) return `${p} (${f.accessory})`;            // Nintendo Power, Super Scope…
+  if (p === "PlayStation Portable") {
+    if (r.format === "Physical" || r.format === "Both") return `${p} (${r.releaseRegion || "Unknown"} Retail)`;
+    if (r.format === "Digital") return `${p} (PSN)`;
+    return `${p} (Emulation)`;
   }
   if (!r.owned && p !== "PC" && p !== "Browser") return `${p} (Emulation)`;
   return p;
@@ -278,6 +346,12 @@ const CHALLENGES = [
     domain: (r) => r.purchasePrice != null && r.purchasePrice > 0,
     group: chPriceBucket,
     keySort: (k) => parseFloat(String(k).replace("$", "")) || 0,
+  },
+  {
+    id: "limitedprint", icon: "📦", name: "One Per Limited Print",
+    blurb: "Beat a game from every limited-print label — Limited Run, iam8bit, Super Rare and the rest of the boutique pressings.",
+    domain: (r) => !!chNoteFacts(r).limitedPrint,
+    group: (r) => chNoteFacts(r).limitedPrint || null,
   },
   {
     id: "translation", icon: "🈳", name: "One Per Fan Translation",
