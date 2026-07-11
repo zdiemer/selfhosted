@@ -1670,8 +1670,24 @@ function detailValue(c, v) {
   return cell;
 }
 
-function openDrawer(row, sheetKey) {
+// Opening a game FROM inside the drawer — a copy in a group, a related game, a
+// collection member — is navigation, and navigation needs a way back. Anything
+// that opens a drawer on top of an open drawer goes through here.
+let drawerStack = [];
+
+function openDrawerFrom(row, sheetKey) {
+  if (drawerRow) drawerStack.push({ row: drawerRow, sheet: drawerSheet });
+  openDrawer(row, sheetKey, true);
+}
+function drawerBack() {
+  const prev = drawerStack.pop();
+  if (prev) openDrawer(prev.row, prev.sheet, true);
+}
+const drawerTitleOf = (row) => String(row.title || row.game || "back");
+
+function openDrawer(row, sheetKey, keepStack) {
   stopPreview();
+  if (!keepStack) drawerStack = [];       // a fresh open starts a fresh history
   applyCoverAccent(row);
   drawerSheet = sheetKey || (SPECIAL_TABS.includes(activeTab) ? "games" : activeTab);
   const cols = (DATA.sheets[drawerSheet] || DATA.sheets.games).columns;
@@ -1701,19 +1717,28 @@ function openDrawer(row, sheetKey) {
   // aggregates over the members, so don't dress them up as raw data.
   if (raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
+  $("#drawer").scrollTop = 0;             // land at the top of the game you opened
+  const back = $("#drawerBack");
+  const prev = drawerStack[drawerStack.length - 1];
+  back.hidden = !prev;
+  if (prev) {
+    const t = drawerTitleOf(prev.row);
+    back.textContent = `← ${t.length > 22 ? t.slice(0, 21) + "…" : t}`;
+    back.title = `Back to ${t}`;
+  }
   wireCollections(body);
-  // A grouped card's members open individually.
+  // A grouped card's members open individually — with a way back to the group.
   body.querySelectorAll("[data-rlc]").forEach((el) => {
     el.onclick = () => {
       const m = (row._members || [])[+el.dataset.rlc];
-      if (m) openDrawer(m, "games");
+      if (m) openDrawerFrom(m, "games");
     };
   });
   $("#overlay").hidden = false;
   drawerRow = row;
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
-function closeDrawer() { $("#overlay").hidden = true; }
+function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; }
 
 // Clicking a facet-link (in the drawer) filters that field on its sheet's tab.
 function applyDrawerFacet(key, val) {
@@ -2658,7 +2683,8 @@ $("#gridsortdir").addEventListener("click", () => {
     nav();
   }
 });
-$("#drawerClose").addEventListener("click", closeDrawer);
+function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; }
+$("#drawerBack").addEventListener("click", drawerBack);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });
 $("#drawerBody").addEventListener("click", (e) => {
   const a = e.target.closest(".facet-link");
@@ -2685,6 +2711,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (cmdk.open) setCmdk(false);
   else if (!$("#sheet").hidden) setSheet(false);
+  // Esc unwinds the drawer history one step at a time, then closes.
+  else if (drawerStack.length && !$("#overlay").hidden) drawerBack();
   else closeDrawer();
 });
 

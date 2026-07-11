@@ -176,7 +176,7 @@ function wireRelations(scope) {
   scope.querySelectorAll("[data-rlk]").forEach((el) => {
     el.onclick = () => {
       const row = ((DATA.sheets.games || {}).rows || []).find((r) => String(r._k) === el.dataset.rlk);
-      if (row) openDrawer(row, "games");
+      if (row) openDrawerFrom(row, "games");     // navigation: keep a way back
     };
   });
 }

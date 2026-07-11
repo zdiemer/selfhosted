@@ -645,6 +645,18 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 @keyframes popin { from { transform: scale(.96) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 .drawer h2 { margin: 0 40px 6px 0; font-size: 24px; font-weight: 700; }
 .drawer .subtitle { margin-bottom: 18px; }
+/* Back sits beside Close, not over the hero art. */
+.drawer-back {
+  position: absolute; top: 16px; right: 56px; z-index: 2;
+  display: inline-flex; align-items: center; height: 32px; padding: 0 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text); font: 600 12px var(--display); cursor: pointer;
+  max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  transition: all .14s;
+}
+.drawer-back:hover { border-color: var(--accent-line); color: var(--accent); }
+.drawer-back[hidden] { display: none !important; }
+
 .drawer-close {
   position: absolute; top: 16px; right: 16px; z-index: 2;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
