@@ -1,22 +1,20 @@
-"""HowLongToBeat client (repurposed from zdiemer/GamesMaster HltbClient).
+"""HowLongToBeat client.
 
-HLTB has no public API and hides the search endpoint behind a per-build version
-string embedded in their Next.js bundle, so we scrape that string, then POST to
-`/api/locate/<version>`. Fragile by nature — if it breaks, matching just returns
-None and the app falls back to the sheet's Estimated Time. Rate limited to 1/s.
-
-Matching reuses the ported MatchValidator (title + platform + year).
+HLTB guards search behind a per-session anti-bot handshake: GET /api/bleed/init
+returns {token, hpKey, hpVal}; the search POST to /api/bleed must echo them as
+`x-auth-token` / `x-hp-key` / `x-hp-val` headers AND embed a honeypot body field
+`{[hpKey]: hpVal}`. The token is reused across searches and refreshed on a 403.
+Rate limited to 1/s. Matching reuses the ported MatchValidator.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
+import time
 
 import requests
-from bs4 import BeautifulSoup
 
 from excel_game import ExcelGame
 from igdb import RateLimiter, platform_from_str
@@ -25,7 +23,7 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.hltb")
 
 _BASE = "https://howlongtobeat.com"
-_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 
@@ -37,69 +35,53 @@ class HltbClient:
     def __init__(self):
         self._validator = MatchValidator()
         self._limiter = RateLimiter(1)
-        self._version = None
+        self._session = None            # {token, hpKey, hpVal}
         self._lock = threading.Lock()
 
     @property
     def configured(self):
         return True
 
-    def _headers(self):
-        return {"content-type": "application/json", "accept": "*/*",
-                "User-Agent": _UA, "referer": _BASE + "/"}
+    def _base_headers(self):
+        return {"User-Agent": _UA, "referer": _BASE + "/", "Origin": _BASE}
 
-    def _update_version(self):
-        """Scrape the current /api/locate version string out of the JS bundle."""
+    def _init_session(self):
         with self._lock:
             self._limiter.wait()
-            main = requests.get(_BASE, headers=self._headers(), timeout=30).text
-            soup = BeautifulSoup(main, "html.parser")
-            manifest = next(
-                (s["src"] for s in soup.find_all("script")
-                 if s.has_attr("src") and re.search(r"/_next/static/.*/_buildManifest\.js", s["src"])),
-                None,
-            )
-            if not manifest:
-                raise ValueError("HLTB: build manifest not found")
-            self._limiter.wait()
-            man = requests.get(_BASE + manifest, headers=self._headers(), timeout=30).text
-            m = re.search(r'"/submit":\["static/css/.*\.css","(?P<submit>static/chunks/pages/submit-[^\."]*\.js)"\]', man)
-            if not m:
-                raise ValueError("HLTB: submit chunk not found")
-            self._limiter.wait()
-            sub = requests.get(f"{_BASE}/_next/{m.group('submit')}", headers=self._headers(), timeout=30).text
-            v = re.search(r'"/api/locate/"\.concat\("(?P<a>[^"]*)"\)\.concat\("(?P<b>[^"]*)"\)', sub)
-            if not v:
-                raise ValueError("HLTB: version string not found")
-            self._version = v.group("a") + v.group("b")
-            log.info("HLTB: locate version refreshed")
+            r = requests.get(f"{_BASE}/api/bleed/init?t={int(time.time() * 1000)}",
+                             headers=self._base_headers(), timeout=30)
+            r.raise_for_status()
+            j = r.json()
+            self._session = {"token": j["token"], "hpKey": j["hpKey"], "hpVal": j["hpVal"]}
+            log.info("HLTB: search session initialized")
 
-    def _search(self, title: str, dlc: bool = False):
-        if not self._version:
-            self._update_version()
-        body = json.dumps({
-            "searchType": "games",
-            "searchTerms": [title],
-            "searchPage": 1,
-            "size": 20,
+    def _search(self, title: str):
+        if not self._session:
+            self._init_session()
+        return self._do_search(title, retry=True)
+
+    def _do_search(self, title, retry):
+        s = self._session
+        terms = [w for w in title.split(" ") if w]
+        body = {
+            "searchType": "games", "searchTerms": terms, "searchPage": 1, "size": 20,
             "searchOptions": {
-                "games": {
-                    "userId": 0, "platform": "", "sortCategory": "popular",
-                    "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
-                    "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
-                    "rangeYear": {"min": "", "max": ""}, "modifier": "only_dlc" if dlc else "hide_dlc",
-                },
+                "games": {"userId": 0, "platform": "", "sortCategory": "popular",
+                          "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
+                          "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
+                          "rangeYear": {"min": "", "max": ""}, "modifier": ""},
                 "users": {"sortCategory": "postcount"}, "lists": {"sortCategory": "follows"},
-                "filter": "", "sort": 0, "randomizer": 0,
-            },
-            "useCache": False,
-        })
+                "filter": "", "sort": 0, "randomizer": 0},
+            "useCache": True,
+        }
+        body[s["hpKey"]] = s["hpVal"]     # honeypot field
+        headers = {**self._base_headers(), "Content-Type": "application/json",
+                   "x-auth-token": s["token"], "x-hp-key": s["hpKey"], "x-hp-val": s["hpVal"]}
         self._limiter.wait()
-        resp = requests.post(f"{_BASE}/api/locate/{self._version}", data=body, headers=self._headers(), timeout=30)
-        if resp.status_code != 200:  # version rotated — refresh once and retry
-            self._update_version()
-            self._limiter.wait()
-            resp = requests.post(f"{_BASE}/api/locate/{self._version}", data=body, headers=self._headers(), timeout=30)
+        resp = requests.post(f"{_BASE}/api/bleed", data=json.dumps(body), headers=headers, timeout=30)
+        if resp.status_code == 403 and retry:   # token expired — refresh once
+            self._init_session()
+            return self._do_search(title, retry=False)
         resp.raise_for_status()
         return resp.json()
 
@@ -124,11 +106,7 @@ class HltbClient:
         allv = r.get("comp_all") or 0
         best = main or plus or hundred or allv
         return {
-            "name": r.get("game_name"),
-            "url": f"{_BASE}/game/{r.get('game_id')}",
-            "main": _hours(main),
-            "mainPlus": _hours(plus),
-            "hundred": _hours(hundred),
-            "allStyles": _hours(allv),
-            "best": _hours(best),
+            "name": r.get("game_name"), "url": f"{_BASE}/game/{r.get('game_id')}",
+            "main": _hours(main), "mainPlus": _hours(plus), "hundred": _hours(hundred),
+            "allStyles": _hours(allv), "best": _hours(best),
         }

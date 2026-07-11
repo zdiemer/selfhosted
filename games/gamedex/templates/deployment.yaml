@@ -64,6 +64,8 @@ spec:
               value: {{ .Values.igdb.backfill | quote }}
             - name: HLTB_ENABLED
               value: {{ .Values.igdb.hltb | quote }}
+            - name: METACRITIC_ENABLED
+              value: {{ .Values.igdb.metacritic | quote }}
           # Ready only once the first Dropbox load succeeds (health returns 503
           # until then), so traffic never hits an empty dataset.
           readinessProbe:

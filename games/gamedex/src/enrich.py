@@ -1,10 +1,10 @@
-"""Lazy, host-cached enrichment across two sources: IGDB (covers + metadata)
-and HowLongToBeat (playtimes). Both are on-demand + optionally backfilled, each
-with its own rate-limited worker and its own SQLite table on the PVC.
+"""Lazy, host-cached enrichment across multiple sources: IGDB (covers + metadata,
+primary, supports manual override) plus any number of secondary sources — HLTB
+(playtimes) and Metacritic (critic scores). Each source is on-demand + optionally
+backfilled, with its own rate-limited worker, queue, and SQLite table on the PVC.
 
-matchKeys (normalized title | platform | year) are stamped onto every served
-row as `_k`; the server holds the title/platform metadata so the frontend only
-sends keys. IGDB and HLTB resolve independently and are merged at read time.
+matchKeys (normalized title | platform | year) are stamped onto every served row
+as `_k`; sources resolve independently and are merged at read time.
 """
 
 from __future__ import annotations
@@ -23,24 +23,29 @@ log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "rating", "year", "genres", "themes", "gameModes", "name")
 _FACET_LIGHT = ("cover", "genres", "themes", "gameModes")
+# Light fields each secondary source contributes to the cover/facet map.
+_SECONDARY_LIGHT = {
+    "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
+    "metacritic": lambda d: {"metascore": d.get("metascore"), "metaUrl": d.get("url")},
+}
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class Enricher:
-    def __init__(self, igdb_client, db_path: str, backfill: bool = False, hltb_client=None):
+    def __init__(self, igdb_client, db_path: str, backfill: bool = False, secondary: dict = None):
         self._igdb = igdb_client
-        self._hltb = hltb_client
+        self._secondary = dict(secondary or {})     # name -> client
         self._backfill = backfill
         self._validator = MatchValidator()
         self._key_meta: dict = {}
+        self._sources = ["igdb"] + list(self._secondary)
 
         self._lock = threading.Lock()
         self._cv = threading.Condition(self._lock)
         self._stop = threading.Event()
-        # One queue + worker per source so their rate limits stay independent.
-        self._q = {"igdb": deque(), "hltb": deque()}
-        self._queued = {"igdb": set(), "hltb": set()}
+        self._q = {s: deque() for s in self._sources}
+        self._queued = {s: set() for s in self._sources}
         self._workers = {}
 
         self._db_lock = threading.Lock()
@@ -49,14 +54,18 @@ class Enricher:
             "CREATE TABLE IF NOT EXISTS enrichment(match_key TEXT PRIMARY KEY, igdb_id INTEGER,"
             " status TEXT, score INTEGER, data TEXT, updated_at TEXT, manual INTEGER DEFAULT 0)"
         )
-        self._db.execute(
-            "CREATE TABLE IF NOT EXISTS hltb(match_key TEXT PRIMARY KEY, status TEXT,"
-            " data TEXT, updated_at TEXT)"
-        )
+        for src in self._secondary:
+            self._db.execute(
+                f"CREATE TABLE IF NOT EXISTS {src}(match_key TEXT PRIMARY KEY, status TEXT,"
+                f" data TEXT, updated_at TEXT)"
+            )
         cols = {r[1] for r in self._db.execute("PRAGMA table_info(enrichment)")}
         if "manual" not in cols:
             self._db.execute("ALTER TABLE enrichment ADD COLUMN manual INTEGER DEFAULT 0")
         self._db.commit()
+
+    def _table(self, src):
+        return "enrichment" if src == "igdb" else src
 
     # -- keys / index -------------------------------------------------------
     def key_for(self, title, platform, year) -> str:
@@ -81,8 +90,8 @@ class Enricher:
             self._key_meta = key_meta
         if self._backfill:
             self.request(list(key_meta.keys()), front=False)
-        log.info("enrich: indexed %d match keys (backfill=%s, hltb=%s)",
-                 len(key_meta), self._backfill, bool(self._hltb))
+        log.info("enrich: indexed %d match keys (backfill=%s, sources=%s)",
+                 len(key_meta), self._backfill, self._sources)
 
     # -- db helpers ---------------------------------------------------------
     def _get(self, table, keys):
@@ -117,10 +126,10 @@ class Enricher:
             )
             self._db.commit()
 
-    def _save_hltb(self, key, data):
+    def _save_secondary(self, src, key, data):
         with self._db_lock:
             self._db.execute(
-                "INSERT OR REPLACE INTO hltb(match_key,status,data,updated_at) VALUES(?,?,?,?)",
+                f"INSERT OR REPLACE INTO {src}(match_key,status,data,updated_at) VALUES(?,?,?,?)",
                 (key, "matched" if data else "no_match", json.dumps(data) if data else None, _now()),
             )
             self._db.commit()
@@ -145,33 +154,48 @@ class Enricher:
             for k in keys:
                 if k not in self._key_meta:
                     continue
-                for src, tbl in (("igdb", "enrichment"), ("hltb", "hltb")):
-                    if src == "hltb" and not self._hltb:
+                for src in self._sources:
+                    if self._status(self._table(src), k):
                         continue
-                    if k in self._queued[src] or self._status(tbl, k):
+                    q = self._q[src]
+                    if k in self._queued[src]:
+                        # Already queued (e.g. by backfill at the back) — promote
+                        # an on-demand request to the front so it resolves now.
+                        if front:
+                            try:
+                                q.remove(k)
+                            except ValueError:
+                                pass
+                            q.appendleft(k)
                         continue
-                    (self._q[src].appendleft if front else self._q[src].append)(k)
+                    (q.appendleft if front else q.append)(k)
                     self._queued[src].add(k)
             self._cv.notify_all()
 
-    def _merge_hltb(self, base, hentry):
-        if hentry and hentry[0] == "matched":
-            h = hentry[1]
-            base["hltbMain"] = h.get("main")
-            base["hltbBest"] = h.get("best")
-            base["hltbUrl"] = h.get("url")
+    def _secondary_light(self, key):
+        out = {}
+        for src, extract in _SECONDARY_LIGHT.items():
+            if src not in self._secondary:
+                continue
+            entry = self._get(src, [key]).get(key)
+            if entry and entry[0] == "matched":
+                out.update(extract(entry[1]))
+        return out
 
     def get_light(self, keys):
         igdb = self._get("enrichment", keys)
-        hltb = self._get("hltb", keys)
+        sec = {src: self._get(src, keys) for src in self._secondary}
         items, pending = {}, []
         for k in keys:
             e = igdb.get(k)
             base = {f: e[1].get(f) for f in _IGDB_LIGHT} if e and e[0] == "matched" else {}
-            self._merge_hltb(base, hltb.get(k))
+            for src, extract in _SECONDARY_LIGHT.items():
+                entry = sec.get(src, {}).get(k)
+                if entry and entry[0] == "matched":
+                    base.update(extract(entry[1]))
             if base:
                 items[k] = base
-            if e is None or (self._hltb and hltb.get(k) is None):
+            if e is None or any(sec[src].get(k) is None for src in self._secondary):
                 pending.append(k)
         return items, pending
 
@@ -182,11 +206,12 @@ class Enricher:
                 if data:
                     d = json.loads(data)
                     out[mk] = {f: d.get(f) for f in _FACET_LIGHT}
-            for mk, data in self._db.execute("SELECT match_key,data FROM hltb WHERE status='matched'"):
-                if data:
-                    h = json.loads(data)
-                    out.setdefault(mk, {}).update(
-                        {"hltbMain": h.get("main"), "hltbBest": h.get("best"), "hltbUrl": h.get("url")})
+            for src, extract in _SECONDARY_LIGHT.items():
+                if src not in self._secondary:
+                    continue
+                for mk, data in self._db.execute(f"SELECT match_key,data FROM {src} WHERE status='matched'"):
+                    if data:
+                        out.setdefault(mk, {}).update(extract(json.loads(data)))
         return out
 
     def get_detail(self, key):
@@ -196,23 +221,29 @@ class Enricher:
         self.request([key])
         return "pending", None
 
-    def get_hltb(self, key):
-        h = self._get("hltb", [key]).get(key)
-        return h[1] if (h and h[0] == "matched") else None
+    def get_secondary(self, src, key):
+        if src not in self._secondary:
+            return None
+        entry = self._get(src, [key]).get(key)
+        return entry[1] if (entry and entry[0] == "matched") else None
 
     def stats(self):
         with self._db_lock:
             im = self._db.execute("SELECT COUNT(*) FROM enrichment WHERE status='matched'").fetchone()[0]
             ir = self._db.execute("SELECT COUNT(*) FROM enrichment").fetchone()[0]
-            hm = self._db.execute("SELECT COUNT(*) FROM hltb WHERE status='matched'").fetchone()[0]
-            hr = self._db.execute("SELECT COUNT(*) FROM hltb").fetchone()[0]
+            sec = {}
+            for src in self._secondary:
+                m = self._db.execute(f"SELECT COUNT(*) FROM {src} WHERE status='matched'").fetchone()[0]
+                r = self._db.execute(f"SELECT COUNT(*) FROM {src}").fetchone()[0]
+                sec[src] = {"matched": m, "resolved": r}
         with self._lock:
             total = len(self._key_meta)
-            iq, hq = len(self._queued["igdb"]), len(self._queued["hltb"])
-        complete = ir >= total and (not self._hltb or hr >= total)
+            iq = len(self._queued["igdb"])
+            for src in self._secondary:
+                sec[src]["queued"] = len(self._queued[src])
+        complete = ir >= total and all(sec[s]["resolved"] >= total for s in self._secondary)
         return {"total": total, "resolved": ir, "matched": im, "queued": iq,
-                "hltb": {"resolved": hr, "matched": hm, "queued": hq},
-                "backfill": self._backfill, "complete": complete}
+                "sources": sec, "backfill": self._backfill, "complete": complete}
 
     @property
     def ready(self):
@@ -239,7 +270,8 @@ class Enricher:
                         meta["developer"], meta["publisher"], meta["franchise"])
                     self._save_igdb(key, enrichment, score)
                 else:
-                    self._save_hltb(key, self._hltb.match(meta["title"], meta["platform"], meta["year"]))
+                    self._save_secondary(src, key, self._secondary[src].match(
+                        meta["title"], meta["platform"], meta["year"]))
             except Exception as exc:
                 log.warning("%s enrich failed for %r: %s", src, meta["title"], exc)
                 time.sleep(1.0)
@@ -248,9 +280,7 @@ class Enricher:
                     self._queued[src].discard(key)
 
     def start(self):
-        for src in ("igdb", "hltb"):
-            if src == "hltb" and not self._hltb:
-                continue
+        for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
             self._workers[src] = t
             t.start()

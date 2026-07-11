@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.4.0"
+  tag: "0.5.1"
   pullPolicy: IfNotPresent
 
 service:
@@ -31,11 +31,12 @@ igdb:
   # eventually cover the whole library. Runs at 4 req/s behind on-demand
   # requests, cached on the PVC. Also drives the HLTB backfill (1 req/s).
   backfill: true
-  # HowLongToBeat playtimes (second source, 1 req/s). Currently DISABLED: HLTB
-  # added client-side anti-bot fingerprinting (POST /api/bleed → "invalid
-  # fingerprint"), which broke the ported scraper. The Playtime facet + card
-  # fall back to the sheet's Estimated Time. Flip on if the scraper is updated.
-  hltb: false
+  # HowLongToBeat playtimes (1 req/s) — feeds the Playtime facet + card, falls
+  # back to the sheet's Estimated Time. Uses HLTB's /api/bleed token handshake.
+  hltb: true
+  # Metacritic critic scores (3 req/s) via the Fandom backend API — feeds the
+  # Metacritic facet + card, falls back to the sheet's Metacritic Rating.
+  metacritic: true
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:

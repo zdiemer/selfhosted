@@ -149,10 +149,11 @@ body {
 
 /* Results */
 .resultbar {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap;
   padding: 10px 16px; color: var(--muted);
   border-bottom: 1px solid var(--border);
 }
+.resultbar #count { white-space: nowrap; }
 .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 13px; }
 .enrichstatus { color: var(--muted); font-size: 12px; margin-left: 4px; }
 .resultbar .spacer { flex: 1; }
@@ -177,6 +178,7 @@ body {
 .card-title { font-weight: 600; font-size: 13px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-sub { color: var(--muted); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-rating { position: absolute; top: -22px; right: 8px; background: rgba(0,0,0,.7); border-radius: 5px; padding: 1px 6px; font-size: 12px; font-weight: 700; }
+.card-meta { position: absolute; top: -22px; left: 8px; background: rgba(0,0,0,.7); border-radius: 5px; padding: 1px 6px; font-size: 12px; font-weight: 700; }
 
 /* Cover thumbnails in the table */
 thead th.cover-h { width: 44px; }
@@ -309,9 +311,22 @@ tbody tr:hover { background: var(--panel-2); }
   border-bottom: 1px solid #5b431c; font-size: 13px; text-align: center;
 }
 
+.facet-toggle { display: none; }
+
 @media (max-width: 760px) {
-  .facets { position: fixed; z-index: 30; height: calc(100% - 0px); left: 0; top: 0;
+  .facets { position: fixed; z-index: 30; height: 100%; left: 0; top: 0; width: 84%; max-width: 320px;
     box-shadow: 2px 0 12px rgba(0,0,0,.5); transform: translateX(-100%); transition: transform .2s; }
   .facets.open { transform: none; }
   .freshness { display: none; }
+  .brand span { display: none; }              /* keep the 🎮, drop the word for search room */
+  .topbar { gap: 10px; padding: 8px 12px; }
+  /* Force the view/page-size/sort controls onto their own full-width line so
+     the grid toggle is always reachable. */
+  .resultbar .spacer { flex-basis: 100%; height: 0; margin: 0; }
+  .resultbar { padding: 10px 12px; }
+  .facet-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 13px;
+  }
 }

@@ -2,7 +2,7 @@
 
 // ---- config -------------------------------------------------------------
 let PAGE_SIZE = 50;
-let viewMode = "table";            // "table" | "grid"
+let viewMode = "grid";             // "table" | "grid"
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -66,6 +66,7 @@ let ENRICH_ENABLED = false;
 const ENRICH = {};                 // matchKey -> light enrichment
 const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
 const HLTBC = {};                  // matchKey -> HLTB playtimes (drawer cache)
+const MCC = {};                    // matchKey -> Metacritic score (drawer cache)
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
@@ -109,9 +110,12 @@ async function postEnrich(keys) {
 function updateEnrichStatus(stats) {
   const el = $("#enrichstatus");
   if (!el || !stats) return;
+  const src = stats.sources || {};
   const parts = [`IGDB ${(stats.matched || 0).toLocaleString()}`];
-  if (stats.hltb) parts.push(`HLTB ${(stats.hltb.matched || 0).toLocaleString()}`);
-  const queued = (stats.queued || 0) + (stats.hltb ? stats.hltb.queued || 0 : 0);
+  if (src.hltb) parts.push(`HLTB ${(src.hltb.matched || 0).toLocaleString()}`);
+  if (src.metacritic) parts.push(`MC ${(src.metacritic.matched || 0).toLocaleString()}`);
+  let queued = stats.queued || 0;
+  for (const s of Object.values(src)) queued += s.queued || 0;
   el.textContent = parts.join(" · ") + (queued ? ` · ${queued.toLocaleString()} queued` : "");
   el.hidden = false;
 }
@@ -170,14 +174,27 @@ function hltbHtml(h) {
   return "";
 }
 
-// Compose the drawer's enrichment section: IGDB content + HLTB + manual-map control.
+function metacriticHtml(key) {
+  const mc = MCC[key];
+  const sheet = drawerRow ? drawerRow.metacriticRating : null;
+  const scraped = mc && mc.metascore != null;
+  const score = scraped ? mc.metascore : (sheet != null ? Math.round(sheet * 100) : null);
+  if (score == null) return "";
+  const src = scraped
+    ? (mc.url ? `<a href="${escapeHtml(mc.url)}" target="_blank" rel="noopener">Metacritic ↗</a>` : "Metacritic")
+    : "from sheet";
+  return `<div class="hltb"><div class="hltb-row"><span>Metacritic</span>` +
+    `<b class="${ratingClass(score / 100)}">${score} <small class="muted">· ${src}</small></b></div></div>`;
+}
+
+// Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + manual-map.
 function renderIgdbSection(key, el, status, detail) {
   const content =
     status === "matched" && detail ? detailHtml(detail)
     : status === "no_match" ? `<div class="igdb-loading muted">No IGDB match for this title.</div>`
     : status === "pending-final" ? `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`
     : `<div class="igdb-loading">Loading IGDB metadata…</div>`;
-  el.innerHTML = content + hltbHtml(HLTBC[key]) + mapControlHtml(key, !!(detail && detail.manual));
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + mapControlHtml(key, !!(detail && detail.manual));
   const go = el.querySelector("[data-map-go]");
   const input = el.querySelector("[data-map-input]");
   const reset = el.querySelector("[data-map-reset]");
@@ -226,6 +243,7 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     const res = await fetch("api/enrichment/detail?key=" + encodeURIComponent(key));
     const j = await res.json();
     if ("hltb" in j) HLTBC[key] = j.hltb;
+    if ("metacritic" in j) MCC[key] = j.metacritic;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -288,6 +306,8 @@ const METACRITIC_BUCKETS = [
 ];
 // Best playtime for a row: HLTB (main→best) where enriched, else sheet estimate.
 const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBest; return h != null ? h : row.estimatedTime; };
+// Metacritic (0–1): scraped score where enriched, else the sheet's Metacritic Rating.
+const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
 function bucketLabel(v, buckets) { for (const b of buckets) if (b.test(v)) return b.label; return null; }
 
 const igdbFacetCols = () =>
@@ -299,7 +319,7 @@ function extraFacetCols() {
   if (activeTab !== "games") return [];
   return [
     { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
-    { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: (r) => r.metacriticRating },
+    { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
@@ -637,10 +657,13 @@ function renderGrid(pageRows) {
     if (pt != null) parts.push("⏱ " + fmtHours(pt));
     const sub = parts.join(" · ");
     const rating = row.rating != null
-      ? `<span class="card-rating ${ratingClass(row.rating)}">${Math.round(row.rating * 100)}</span>` : "";
+      ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";
+    const mc = metacriticOf(row);
+    const meta = mc != null
+      ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
     const card = document.createElement("div");
     card.className = "card" + (rowCompleted(row) ? " done" : "");
-    card.innerHTML = `${cover}<div class="card-body">${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${sub}</div></div>`;
+    card.innerHTML = `${cover}<div class="card-body">${meta}${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${sub}</div></div>`;
     card.onclick = () => openDrawer(row);
     grid.appendChild(card);
   }
@@ -790,6 +813,7 @@ function setView(mode) {
 }
 $("#viewTable").addEventListener("click", () => setView("table"));
 $("#viewGrid").addEventListener("click", () => setView("grid"));
+$("#facetToggle").addEventListener("click", () => $("#facets").classList.toggle("open"));
 $("#gridsort").addEventListener("change", (e) => {
   const st = tabState[activeTab];
   const k = e.target.value;

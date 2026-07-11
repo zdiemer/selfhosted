@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from enrich import Enricher
 from hltb import HltbClient
 from igdb import IgdbClient
+from metacritic import MetacriticClient
 from poller import DataStore
 
 logging.basicConfig(
@@ -44,14 +45,18 @@ IGDB_CLIENT_ID = os.environ.get("IGDB_CLIENT_ID", "")
 IGDB_CLIENT_SECRET = os.environ.get("IGDB_CLIENT_SECRET", "")
 ENRICH_DB = os.environ.get("ENRICH_DB", "/data/enrichment.sqlite")
 ENRICH_BACKFILL = os.environ.get("ENRICH_BACKFILL", "false").lower() in ("1", "true", "yes")
-HLTB_ENABLED = os.environ.get("HLTB_ENABLED", "true").lower() in ("1", "true", "yes")
+_on = lambda name, default="true": os.environ.get(name, default).lower() in ("1", "true", "yes")
 
-# Enricher is optional — only when IGDB creds are present. HLTB (playtimes) is a
-# second source, on unless disabled.
+# Enricher is optional — only when IGDB creds are present. HLTB (playtimes) and
+# Metacritic (critic scores) are secondary sources, on unless disabled.
 _igdb = IgdbClient(IGDB_CLIENT_ID, IGDB_CLIENT_SECRET)
-_hltb = HltbClient() if HLTB_ENABLED else None
+_secondary = {}
+if _on("HLTB_ENABLED"):
+    _secondary["hltb"] = HltbClient()
+if _on("METACRITIC_ENABLED"):
+    _secondary["metacritic"] = MetacriticClient()
 enricher = (
-    Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, hltb_client=_hltb)
+    Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, secondary=_secondary)
     if _igdb.configured else None
 )
 
@@ -126,7 +131,9 @@ def enrichment_detail(key: str):
     if not enricher:
         return {"enabled": False, "status": "disabled", "detail": None}
     status, detail = enricher.get_detail(key)
-    return {"enabled": True, "status": status, "detail": detail, "hltb": enricher.get_hltb(key)}
+    return {"enabled": True, "status": status, "detail": detail,
+            "hltb": enricher.get_secondary("hltb", key),
+            "metacritic": enricher.get_secondary("metacritic", key)}
 
 
 @app.get("/api/enrichment/stats")

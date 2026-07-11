@@ -26,6 +26,7 @@
     <aside class="facets" id="facets"></aside>
     <section class="results">
       <div class="resultbar">
+        <button id="facetToggle" class="facet-toggle">☰ Filters</button>
         <span id="count">Loading…</span>
         <span id="enrichstatus" class="enrichstatus" hidden></span>
         <button id="resetsort" class="linkbtn" hidden>Reset sort</button>
@@ -41,8 +42,8 @@
           </select>
         </label>
         <span class="viewtoggle">
-          <button id="viewTable" class="active" title="Table view" aria-label="Table view">☰</button>
-          <button id="viewGrid" title="Grid view" aria-label="Grid view">▦</button>
+          <button id="viewTable" title="Table view" aria-label="Table view">☰</button>
+          <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view">▦</button>
         </span>
       </div>
       <div class="tablewrap" id="tablewrap">
