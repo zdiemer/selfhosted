@@ -26,12 +26,18 @@ Working list. Checked = shipped and deployed.
       (a cached price is a stale price). First point: $55,837.69 across 1,884
       priced games.
 
+- [x] **Launch: more platforms** — the Notes column picks the storefront (it
+      says which copy you own), IGDB supplies the id. 4,001 real launch buttons
+      (Steam 3,880 · GOG 121) plus store/app links for Epic, itch, PlayStation,
+      Xbox, Google Play and the App Store (iOS works: apps.apple.com/id<appid>).
+
 ## Next
 
-- [ ] **Launch: more platforms** — RomM deep-links for emulated titles (we
-      already run RomM), plus GOG / Epic / itch handoffs. IGDB gives us those
-      storefront ids already (`external_game_source` 5 = GOG, 26 = Epic,
-      15 = itch); only Steam is wired up so far.
+- [ ] **Launch: RomM** — deep-link emulated titles into the RomM instance we
+      already run. Not an IGDB storefront, so it needs a RomM lookup by name.
+- [ ] **Launch: EA / Ubisoft / Battle.net** — not currently possible: IGDB has no
+      external_game_source for any of them, so there's no offer/app id to build a
+      URI from. Would need another source (or hand-maintained ids).
 
 ## Bugs (fixed)
 

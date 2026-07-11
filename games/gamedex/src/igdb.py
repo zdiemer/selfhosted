@@ -46,9 +46,22 @@ _FIELDS = (
     "external_games.external_game_source,external_games.uid,external_games.url;"
 )
 
-# IGDB's external_game_source enum. (It used to be `category`; the field was
-# renamed, and querying the old name silently returns nothing.)
-_STORE_SOURCE = {1: "steam", 5: "gog", 26: "epic", 15: "itch", 36: "epic"}
+# IGDB's external_game_source enum, read off live data rather than guessed —
+# the docs are thin and three of our first guesses were wrong (15 is Google Play,
+# not itch; 36 is PlayStation, not Epic). The field used to be called `category`;
+# it was renamed, and querying the old name silently returns nothing.
+_STORE_SOURCE = {
+    1: "steam",         # store.steampowered.com/app/<appid>
+    5: "gog",           # gog.com — uid is the numeric product id
+    11: "xbox",         # xbox.com/games/store — uid is the MS product id
+    13: "appstore",     # itunes.apple.com/app/id<appid>
+    15: "googleplay",   # play.google.com — uid is the package name
+    23: "amazon",       # play.amazon.com — Amazon Games / Luna
+    26: "epic",         # store.epicgames.com
+    30: "itch",         # <dev>.itch.io/<game>
+    36: "playstation",  # store.playstation.com/concept/<id>
+    54: "microsoft",    # microsoft.com/p/... — the other MS store id
+}
 
 
 def platform_from_str(value):
@@ -210,7 +223,10 @@ class IgdbClient:
         out = {}
         for i in range(0, len(igdb_ids), 500):
             chunk = [int(x) for x in igdb_ids[i:i + 500]]
-            body = ("fields id,external_games.external_game_source,external_games.uid; "
+            # .url matters: for Epic and itch there's no way to build a link from
+            # the id alone, so a record backfilled without it has no button at all.
+            body = ("fields id,external_games.external_game_source,external_games.uid,"
+                    "external_games.url; "
                     f"where id = ({','.join(str(c) for c in chunk)}); limit 500;")
             for g in self._post("games", body) or []:
                 st = self._stores(g.get("external_games") or [])
@@ -284,11 +300,16 @@ class IgdbClient:
 
     @staticmethod
     def _stores(external):
-        """{'steam': '620', 'gog': '...'} — storefront ids we can deep-link to."""
+        """{'steam': {'id': '620', 'url': '…'}, …}
+
+        The id is what a launch URI needs; the url is what we fall back to when a
+        storefront has no launch scheme (most of them).
+        """
         out = {}
         for e in external:
             name = _STORE_SOURCE.get(e.get("external_game_source"))
             uid = e.get("uid")
-            if name and uid and name not in out:
-                out[name] = str(uid)
+            if not name or not uid or name in out:
+                continue
+            out[name] = {"id": str(uid), "url": e.get("url") or None}
         return out

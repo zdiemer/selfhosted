@@ -160,7 +160,7 @@ class _Steam:
             "coverUrl": data.get("header_image"), "summary": data.get("short_description"),
             "genres": [g.get("description") for g in (data.get("genres") or []) if g.get("description")],
             "year": int(m.group(1)) if m else None,
-            "stores": {"steam": str(appid)},
+            "stores": {"steam": {"id": str(appid), "url": f"https://store.steampowered.com/app/{appid}/"}},
             "confidence": 0,
         }
 
@@ -201,7 +201,7 @@ class _Steam:
                 "coverUrl": data.get("header_image"), "summary": data.get("short_description"),
                 "genres": [g.get("description") for g in (data.get("genres") or []) if g.get("description")],
                 "year": year,
-                "stores": {"steam": str(appid)},
+                "stores": {"steam": {"id": str(appid), "url": f"https://store.steampowered.com/app/{appid}/"}},
                 "confidence": info.match_score,
             }
         return None
@@ -273,7 +273,9 @@ class _LaunchBox:
             "genres": names,
             "year": int(str(g["releaseDate"])[:4]) if str(g.get("releaseDate") or "")[:4].isdigit() else None,
             "userRating": round(float(rating) / 5, 3) if rating else None,   # 0–5 → 0–1
-            "stores": ({"steam": str(g["steamAppId"])} if g.get("steamAppId") else {}),
+            "stores": ({"steam": {"id": str(g["steamAppId"]),
+                                  "url": f"https://store.steampowered.com/app/{g['steamAppId']}/"}}
+                       if g.get("steamAppId") else {}),
             "confidence": confidence,
         }
 

@@ -650,28 +650,96 @@ const userRatingOf = (row) => {
   return row.gamefaqsUserRating;
 };
 // ---- launching a game ----------------------------------------------------
-// IGDB (and the Steam/LaunchBox sources) give us storefront ids. `steam://` is
-// handled by the Steam client, so we can hand a game straight to it.
+// IGDB's external_games gives us storefront ids; the sheet's Notes column says
+// WHICH storefront the copy you own came from. So Notes picks the target and
+// IGDB supplies the id — a game on Steam, GOG and Epic launches on the one you
+// actually bought it on.
 //
-// We only offer a real LAUNCH when the sheet says the copy you own is on that
-// storefront (Notes == "Steam"). For any other PC game we know the appid for,
-// the honest offer is a store link — telling you to "launch" something you
-// don't own would just open a shop page and look broken.
+// Only a few storefronts expose a real launch URI. The rest get an "open" link,
+// which on the right device does the next best thing: the App Store link opens
+// the App Store app (with its own Open button), the Microsoft Store link opens
+// the Store app, and so on. Pretending we can launch those would just look
+// broken, so we don't claim to.
+const STORE_LAUNCH = {
+  steam: { label: "Play on Steam", uri: (id) => `steam://rungameid/${id}` },
+  gog: { label: "Play on GOG", uri: (id) => `goggalaxy://openGameView/${id}` },
+  // Best-effort: the Amazon Games launcher registers amazon-games:// and the
+  // IGDB uid is the same amzn1.adg.product.* id it uses.
+  amazon: { label: "Play on Amazon", uri: (id) => `amazon-games://play/${id}` },
+};
+const STORE_OPEN = {
+  epic: "Epic Games Store", itch: "itch.io", appstore: "App Store",
+  googleplay: "Google Play", xbox: "Microsoft Store", microsoft: "Microsoft Store",
+  playstation: "PlayStation Store", steam: "Steam", gog: "GOG", amazon: "Amazon",
+};
+
+// The sheet's Notes vocabulary → an IGDB storefront. Only the ones IGDB can
+// actually give us an id for: Origin/EA, Ubisoft Connect and Battle.net have no
+// IGDB source at all, so there's no id to launch with and we say nothing rather
+// than offering a button that can't work.
+const NOTES_STORE = {
+  "Steam": "steam", "GOG": "gog", "Epic Games Store": "epic", "itch.io": "itch",
+  "Amazon": "amazon", "Xbox Game Pass": "xbox", "Microsoft Store": "microsoft",
+};
+// Failing that, the platform implies a storefront.
+const PLATFORM_STORE = {
+  "iOS": "appstore", "32-bit iOS": "appstore", "Android": "googleplay",
+  "Xbox One": "xbox", "Xbox Series X|S": "xbox", "Xbox 360": "xbox",
+  "PlayStation 4": "playstation", "PlayStation 5": "playstation",
+  "PlayStation 3": "playstation", "PC": "steam",
+};
+
+const storeEntry = (e, key) => {
+  const st = (e && e.stores && e.stores[key]) || null;
+  if (!st) return null;
+  return typeof st === "string" ? { id: st, url: null } : st;   // tolerate the old shape
+};
+
 function launchTarget(row) {
   const e = ENRICH[row._k];
-  const appid = e && e.stores && e.stores.steam;
-  if (!appid) return null;
-  const ownedOnSteam = (row.notes || "") === "Steam" && row.owned;
-  return ownedOnSteam
-    ? { kind: "launch", label: "▶ Play on Steam", href: `steam://rungameid/${appid}`, store: "Steam" }
-    : { kind: "store", label: "View on Steam", href: `https://store.steampowered.com/app/${appid}/`, store: "Steam" };
+  if (!e || !e.stores) return null;
+  const notes = String(row.notes || "");
+  const want = NOTES_STORE[notes] || PLATFORM_STORE[row.platform] || null;
+
+  // The storefront the sheet says you own it on — else whatever we know about.
+  const key = (want && storeEntry(e, want)) ? want
+    : Object.keys(STORE_OPEN).find((k) => storeEntry(e, k));
+  if (!key) return null;
+  const st = storeEntry(e, key);
+  const store = STORE_OPEN[key] || key;
+
+  // A launch only makes sense when the sheet says this is the copy you own.
+  const ownThisOne = row.owned && want === key && !!STORE_LAUNCH[key];
+  if (ownThisOne) {
+    return { kind: "launch", label: "▶ " + STORE_LAUNCH[key].label,
+             href: STORE_LAUNCH[key].uri(st.id), store };
+  }
+  const url = st.url || storeUrl(key, st.id);
+  if (!url) return null;
+  return { kind: "store", label: `${row.owned && want === key ? "Open in" : "View on"} ${store}`,
+           href: url, store };
 }
+
+// A few sources give an id but no url, and a couple of schemes open the native
+// store app rather than a web page, which is closer to "launch" than a link.
+function storeUrl(key, id) {
+  switch (key) {
+    case "steam": return `https://store.steampowered.com/app/${id}/`;
+    case "appstore": return `https://apps.apple.com/app/id${id}`;
+    case "googleplay": return `https://play.google.com/store/apps/details?id=${id}`;
+    case "xbox": case "microsoft": return `ms-windows-store://pdp/?ProductId=${id}`;
+    case "playstation": return `https://store.playstation.com/concept/${id}`;
+    default: return null;
+  }
+}
+
 function launchHtml(row) {
   const t = launchTarget(row);
   if (!t) return "";
+  const external = /^https?:/.test(t.href);
   return t.kind === "launch"
-    ? `<a class="btn launch" href="${escapeHtml(t.href)}">${t.label}</a>`
-    : `<a class="btn ghost" href="${escapeHtml(t.href)}" target="_blank" rel="noopener">${t.label} ↗</a>`;
+    ? `<a class="btn launch" href="${escapeHtml(t.href)}">${escapeHtml(t.label)}</a>`
+    : `<a class="btn ghost" href="${escapeHtml(t.href)}"${external ? ' target="_blank" rel="noopener"' : ""}>${escapeHtml(t.label)}${external ? " ↗" : ""}</a>`;
 }
 
 // Units sold/shipped (VGChartz estimate). Only major releases have a figure.

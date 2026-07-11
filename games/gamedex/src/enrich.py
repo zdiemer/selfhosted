@@ -57,6 +57,9 @@ _SOURCE_GATE = {
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
+# Bump when the shape or the source map of `stores` changes — the backfill
+# rebuilds every record instead of skipping the ones that already have a value.
+STORES_VERSION = "3"
 
 
 class Enricher:
@@ -544,17 +547,19 @@ class Enricher:
                 "SELECT match_key, igdb_id, data FROM enrichment WHERE status='matched' AND data IS NOT NULL"
             ).fetchall()
 
+        stale = self._kv_get("stores_version") != STORES_VERSION
         need, steam_fixed = {}, 0
         for key, igdb_id, raw in rows:
             try:
                 rec = json.loads(raw)
             except Exception:
                 continue
-            if rec.get("stores"):
+            if rec.get("stores") and not stale:
                 continue
             m = re.search(r"/app/(\d+)", rec.get("url") or "")
             if (rec.get("source") == "Steam") and m:
-                rec["stores"] = {"steam": m.group(1)}
+                rec["stores"] = {"steam": {"id": m.group(1),
+                                           "url": f"https://store.steampowered.com/app/{m.group(1)}/"}}
                 with self._db_lock:
                     self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?",
                                      (json.dumps(rec), key))
@@ -588,6 +593,7 @@ class Enricher:
                 self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
                 found += 1
             self._db.commit()
+        self._kv_set("stores_version", STORES_VERSION)
         log.info("stores backfill: %d games got storefront ids (+%d from Steam URLs)", found, steam_fixed)
 
     def start(self):
