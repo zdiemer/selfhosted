@@ -21,7 +21,7 @@
 // ---- who owns what -------------------------------------------------------
 // igdbId -> the rows in your collection that matched it.
 let _byIgdb = null;
-const resetRelations = () => { _byIgdb = null; };
+const resetRelations = () => { _byIgdb = null; _relById = null; };
 
 function rowsByIgdbId() {
   if (_byIgdb) return _byIgdb;
@@ -36,14 +36,50 @@ function rowsByIgdbId() {
 }
 
 // ---- grouped view --------------------------------------------------------
-// Collapse rows that share an IGDB id into one synthetic row. Rows with no IGDB
-// match stand alone — we can't claim two things are the same game without a key
-// that says so.
+// Rows sharing an IGDB id are the same game. So are PORTS and their parent: IGDB
+// gives a port its own id, but "Chrono Trigger (DS)" is not a different game
+// from "Chrono Trigger" — it's the same game on another machine, which is
+// exactly what this view exists to collapse.
+//
+// Remakes and remasters are deliberately NOT folded in. Resident Evil 4 (2005)
+// and Resident Evil 4 (2023) really are different games — you can beat one and
+// not the other, and you rate them separately. They stay apart, and the
+// relationship map on the detail card is where you see they're connected.
+const MERGE_TYPES = new Set(["Port"]);
+
+// Walk a port up to the game it's a port of. Bounded: a cycle in IGDB's data
+// (or a port of a port of a port) must not spin forever.
+function canonicalGameId(row) {
+  let id = (ENRICH[row._k] || {}).igdbId;
+  if (!id) return null;
+  const seen = new Set();
+  for (let hop = 0; hop < 4; hop++) {
+    if (seen.has(id)) break;
+    seen.add(id);
+    const rel = relById(id);
+    if (!rel || !MERGE_TYPES.has(rel.type) || !rel.parentId) break;
+    id = rel.parentId;
+  }
+  return id;
+}
+
+// The relation summary for an IGDB id, from whichever of our rows matched it.
+let _relById = null;
+function relById(id) {
+  if (!_relById) {
+    _relById = new Map();
+    for (const e of Object.values(ENRICH)) {
+      if (e && e.igdbId && e.rel && !_relById.has(e.igdbId)) _relById.set(e.igdbId, e.rel);
+    }
+  }
+  return _relById.get(id);
+}
+
 function groupByGame(rows) {
   const out = [], seen = new Map();
   for (const r of rows) {
-    const id = (ENRICH[r._k] || {}).igdbId;
-    if (!id) { out.push(r); continue; }
+    const id = canonicalGameId(r);
+    if (!id) { out.push(r); continue; }          // no IGDB match: can't claim it's the same game
     if (seen.has(id)) { seen.get(id).push(r); continue; }
     const members = [r];
     seen.set(id, members);
@@ -57,9 +93,13 @@ function groupByGame(rows) {
 // The synthetic row standing in for a group of editions.
 function groupRow(g) {
   const ms = g._members;
-  // Prefer the copy you've actually played, then one you own, then the newest.
-  const lead = ms.find((r) => r.completed) || ms.find((r) => r.owned) ||
-    ms.slice().sort((a, b) => String(b.releaseDate || "").localeCompare(String(a.releaseDate || "")))[0];
+  // The card should be titled after the GAME, so prefer a row that matched the
+  // canonical id itself (the original) over one of its ports. Then prefer the
+  // copy you've actually played, then one you own, then the newest.
+  const originals = ms.filter((r) => (ENRICH[r._k] || {}).igdbId === g._group);
+  const pool = originals.length ? originals : ms;
+  const lead = pool.find((r) => r.completed) || pool.find((r) => r.owned) ||
+    pool.slice().sort((a, b) => String(b.releaseDate || "").localeCompare(String(a.releaseDate || "")))[0];
   const platforms = [...new Set(ms.map((r) => r.platform).filter(Boolean))];
   return {
     ...lead,
@@ -149,12 +189,14 @@ function editionsHtml(row) {
   return `<div class="rl">
     <div class="rl-head"><h3>🗂 Your copies <span class="muted">${ms.length}</span></h3></div>
     <div class="rl-copies">${ms.map((m, i) => {
+      const e = ENRICH[m._k] || {};
+      const kind = e.rel && e.rel.type && e.rel.type !== "Main game" ? e.rel.type : "";
       const bits = [m.platform, m.releaseRegion, m.releaseYear].filter(Boolean)
         .map((x) => escapeHtml(String(x))).join(" · ");
       const mark = m.completed ? `<span class="rl-b-done">✓ Beaten</span>`
         : m.owned ? `<span class="rl-b-owned">● Owned</span>` : "";
       return `<button class="rl-copy" data-rlc="${i}">
-        <span class="rl-copy-t">${bits}</span>${mark}</button>`;
+        <span class="rl-copy-t">${bits}${kind ? ` <span class="rl-tag">${escapeHtml(kind)}</span>` : ""}</span>${mark}</button>`;
     }).join("")}</div>
   </div>`;
 }

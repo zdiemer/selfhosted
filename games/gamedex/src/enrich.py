@@ -32,11 +32,18 @@ _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRatin
 
 
 def _light_relations(rec):
-    """Just enough of the graph for the grid: what KIND of entry this is."""
+    """Just enough of the graph for the grid: what KIND of entry this is, and
+    the id of its parent — the grouped view folds ports into the game they're a
+    port OF, which needs the id, not just the name."""
     rel = (rec or {}).get("relations") or {}
     if not rel:
         return None
-    return {"type": rel.get("gameTypeLabel"), "parent": (rel.get("parent") or {}).get("name")}
+    parent = rel.get("parent") or {}
+    return {
+        "type": rel.get("gameTypeLabel"),
+        "parent": parent.get("name"),
+        "parentId": parent.get("id"),
+    }
 
 
 def _light_video(rec):
