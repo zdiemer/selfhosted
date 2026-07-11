@@ -474,6 +474,23 @@ class Enricher:
                 pending.append(k)
         return items, pending
 
+    def all_records(self):
+        """{match_key: igdb record} for every matched game. Used by the recommender,
+        which needs the `similar_games` list we've been storing all along."""
+        out = {}
+        with self._db_lock:
+            for mk, data in self._db.execute(
+                    "SELECT match_key,data FROM enrichment WHERE status='matched' AND data IS NOT NULL"):
+                try:
+                    out[mk] = json.loads(data)
+                except Exception:
+                    continue
+        return out
+
+    @property
+    def normalize(self):
+        return self._validator.normalize
+
     def get_all_light(self):
         out = {}
         with self._db_lock:

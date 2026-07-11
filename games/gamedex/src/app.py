@@ -34,6 +34,7 @@ from hltb import HltbClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
 from poller import DataStore
+import recommend
 from guides import GuideClient
 from speedrun import SpeedrunClient
 from steamx import SteamExtraClient
@@ -227,6 +228,30 @@ def enrichment_override(body: Override):
         return JSONResponse(status_code=404, content={"error": "no match found for that URL"})
     enricher.set_source_override(slot, body.key, record)
     return {"status": "matched", "source": src, "record": record}
+
+
+# Cached against the workbook hash: the answer only changes when the sheet does
+# (or when enrichment fills in more similar-games lists, which the count catches).
+_recs = {"hash": None, "matched": -1, "data": None}
+
+
+@app.get("/api/recommendations")
+def recommendations():
+    """"Because you liked …" — see recommend.py."""
+    if not enricher or not store.ready:
+        return {"enabled": False, "items": []}
+    snap = store.snapshot()
+    src_hash = snap["meta"].get("sourceHash")
+    matched = enricher.stats().get("matched", 0)
+    if _recs["data"] and _recs["hash"] == src_hash and _recs["matched"] == matched:
+        return {"enabled": True, **_recs["data"]}
+    data = recommend.build(
+        snap["data"].get("games", {}).get("rows", []),
+        enricher.all_records(),
+        enricher.normalize,
+    )
+    _recs.update({"hash": src_hash, "matched": matched, "data": data})
+    return {"enabled": True, **data}
 
 
 @app.get("/api/value-history")

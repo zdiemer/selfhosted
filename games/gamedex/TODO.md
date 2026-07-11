@@ -39,6 +39,11 @@ Working list. Checked = shipped and deployed.
       New facets: Steam Deck, ProtonDB, Steam reviews.
 - [x] **speedrun.com + StrategyWiki** — world records and walkthrough links.
 
+- [x] **Recommendations** — "because you liked …" from IGDB's similar_games
+      (stored since day one, never used), IDF-weighted and filtered for
+      relatedness. Plus a predicted rating: ridge regression trained in-browser
+      on your 1,707 rated games. MAE 9.7pts vs 10.8 for quoting Metacritic.
+
 ## Next
 
 - [ ] **Launch: RomM** — deep-link emulated titles into the RomM instance we

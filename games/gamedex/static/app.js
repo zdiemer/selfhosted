@@ -229,9 +229,21 @@ function heroStatsHtml(row) {
   if (units != null) cells.push([fmtUnits(units), "Units sold", ""]);
   const cv = collectionValueOf(row);
   if (cv != null) cells.push(["$" + cv.toFixed(0), "Value", ""]);
+  // What we think YOU'd score it — only for games you haven't rated.
+  const pred = typeof predictedCached === "function" ? predictedCached(row) : null;
+  if (pred) cells.push([`~${Math.round(pred.score * 100)}`, "Predicted", ratingClass(pred.score)]);
   if (!cells.length) return "";
   return `<div class="hero-stats">` + cells.slice(0, 6).map(([v, l, cls]) =>
     `<div class="hero-stat"><b class="${cls}">${escapeHtml(String(v))}</b><span>${escapeHtml(l)}</span></div>`).join("") + `</div>`;
+}
+
+// Show the model's working. A prediction you can't interrogate is a horoscope.
+function predictWhyHtml(row) {
+  const p = typeof predictedCached === "function" ? predictedCached(row) : null;
+  if (!p || !p.why.length) return "";
+  return `<div class="pred-why" title="Predicted from your own ratings — see predict.js">
+    <b>~${Math.round(p.score * 100)}% predicted</b> · ${p.why.map(escapeHtml).join(" · ")}
+  </div>`;
 }
 
 function heroHtml(row, titleText) {
@@ -257,6 +269,7 @@ function heroHtml(row, titleText) {
          bottom-aligned cover then slid down past the title. -->
     <div id="heroChips"></div>
     ${heroStatsHtml(row)}
+    ${predictWhyHtml(row)}
     ${launchHtml(row) ? `<div class="hero-actions">${launchHtml(row)}</div>` : ""}
   </div>`;
 }
@@ -946,6 +959,9 @@ function extraFacetCols() {
       getVals: (r) => { const e = ENRICH[r._k]; return e && e.protonTier ? [e.protonTier] : []; } },
     { key: "__steamrev", label: "Steam reviews", type: "text", facet: true, virtual: true, kind: "bucket",
       buckets: METACRITIC_BUCKETS, getVal: (r) => { const e = ENRICH[r._k]; return e && e.steamReview; } },
+    // What we think you'd score it — a filter for "things I'd probably love".
+    { key: "__predicted", label: "Predicted for you", type: "text", facet: true, virtual: true, kind: "bucket",
+      buckets: METACRITIC_BUCKETS, getVal: predictedOf },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
@@ -1771,6 +1787,7 @@ async function load() {
   resetHealth();
   resetSearchCache();
   resetSeries();
+  resetTaste();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
@@ -1780,6 +1797,7 @@ async function load() {
   applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
   loadValueHistory();           // daily collection-value snapshots (for the trend chart)
+  loadRecs();                   // "because you liked …"
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1854,6 +1872,16 @@ const bucketize = (data, buckets, val) => buckets.map(([label, lo, hi]) => ({ la
 // ---- Year in review + backlog burn-down ---------------------------------
 const statsState = { year: null };
 let VALUE_HISTORY = null;          // [{day,total,games,priced}] — daily snapshots
+let RECS = null;                   // "because you liked …" (see src/recommend.py)
+
+async function loadRecs() {
+  try {
+    const res = await fetch("api/recommendations");
+    const j = await res.json();
+    RECS = j.items || [];
+    if (activeTab === "home") renderHome();
+  } catch (_) { RECS = []; }
+}
 
 // GameEye only knows today's price, so the trend has to be recorded as it
 // happens (see enrich.snapshot_value). One point per day; useless on day one.
@@ -1957,6 +1985,37 @@ function burnDown(rows, games) {
       <b>${isFinite(yrs) ? Math.round(yrs).toLocaleString() : "∞"} years</b> — around <b>${isFinite(yrs) ? now + Math.round(yrs) : "never"}</b>.</p>
     ${statPanel("Years to clear the backlog", barsH(scen, { fmt: (v) => v.toLocaleString() + " yrs" }), "wide")}
   </section>`;
+}
+
+// Show the prediction model's homework. A model that can't state its own error
+// bar is asking to be trusted on vibes.
+function predictionPanel() {
+  const m = typeof tasteModel === "function" ? tasteModel() : null;
+  if (!m || !m.ok) return "";
+  const e = m.eval;
+  const pts = (v) => (v * 100).toFixed(1);
+  const beatsCritics = e.liftVsCritic > 0;
+  return `<h2 class="stat-sec">Predicted ratings</h2>
+    <div class="stat-grid">
+      <div class="stat-panel wide">
+        <h3>How good is the guess?</h3>
+        <p class="yr-note">
+          Trained on your <b>${m.n.toLocaleString()}</b> rated games and tested on
+          <b>${e.tested.toLocaleString()}</b> it never saw. It is off by
+          <b>${pts(e.mae)} points</b> on average — against <b>${pts(e.maeMean)}</b> if we
+          just guessed your average every time, and <b>${pts(e.maeCritic)}</b> if we simply
+          quoted Metacritic. So it is <b>${(e.liftVsMean * 100).toFixed(0)}%</b> better than
+          guessing${beatsCritics
+            ? ` and <b>${(e.liftVsCritic * 100).toFixed(0)}%</b> better than the critics`
+            : `, but <b>not</b> better than just quoting the critics — treat it with suspicion`}.
+        </p>
+        ${barsH([
+          { label: "This model", value: +pts(e.mae) },
+          { label: "Just use Metacritic", value: +pts(e.maeCritic) },
+          { label: "Guess your average", value: +pts(e.maeMean) },
+        ], { fmt: (v) => v + " pts off" })}
+      </div>
+    </div>`;
 }
 
 function renderStats() {
@@ -2115,7 +2174,8 @@ function renderStats() {
       statPanel("Most valuable owned", barsH(topValue, { fmt: usd })),
       statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
       statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
-    ]);
+    ]) +
+    predictionPanel();
   const yp = $("#yrPick");
   if (yp) yp.onchange = (e) => { statsState.year = +e.target.value; renderStats(); };
   host.querySelectorAll("[data-yg]").forEach((el) => {

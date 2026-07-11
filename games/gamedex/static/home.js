@@ -301,6 +301,20 @@ function renderHome() {
   const orders = hOrders().slice().sort(byDateDesc("orderedDate")).slice(0, 18);
   const picks = suggestions(8);
 
+  // Recommendations come from the server (IGDB's similar-games, crossed with
+  // your backlog); predictions are computed here from your own ratings.
+  const recRows = (RECS || []).map((rec) => {
+    const row = hRows().find((r) => String(r._k || "") === rec.key);
+    return row ? { row, rec } : null;
+  }).filter(Boolean).slice(0, 18);
+
+  const loved = hRows()
+    .filter((r) => !r.completed && !r.playingStatus && (typeof isCandidate !== "function" || isCandidate(r)))
+    .map((r) => ({ r, p: typeof predictedCached === "function" ? predictedCached(r) : null }))
+    .filter((x) => x.p && x.p.confidence >= 0.75)
+    .sort((a, b) => b.p.score - a.p.score)
+    .slice(0, 18);
+
   host.innerHTML =
     heroSection(playing) +
     (picks.length ? `<section class="h-sect">
@@ -309,6 +323,10 @@ function renderHome() {
       <div class="h-picks">${picks.map((p) =>
         homeCard(p.row, "games", `<span class="h-why">${escapeHtml(p.why)}</span>`)).join("")}</div>
     </section>` : "") +
+    shelf("hRecs", "💡 Because you liked…", recRows.map(({ row, rec }) =>
+      homeCard(row, "games", `<span class="h-why">Like ${escapeHtml(rec.because.slice(0, 2).join(" & "))}</span>`))) +
+    shelf("hLoved", "🔮 You'd probably love", loved.map(({ r, p }) =>
+      homeCard(r, "games", `<span class="h-why">~${Math.round(p.score * 100)}% predicted</span>`))) +
     shelf("hPlaying", "🎮 Now playing", playing.map((r) => homeCard(r, "games",
       r.playingProgress != null ? `${Math.round(+r.playingProgress * 100)}% through` : ""))) +
     shelf("hNext", "⏭️ Up next", upNext.map((r) => homeCard(r, "games"))) +
