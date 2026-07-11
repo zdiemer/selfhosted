@@ -826,7 +826,17 @@ function closeDrawer() { $("#overlay").hidden = true; }
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
+function setStatsMode(on) {
+  $("#stats").hidden = !on;
+  $(".resultbar").hidden = on;
+  $("#pager").style.display = on ? "none" : "";
+  document.querySelector(".facets").style.display = on ? "none" : "";
+  if (on) { $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
+}
+
 function renderAll() {
+  if (activeTab === "stats") { setStatsMode(true); renderStats(); return; }
+  setStatsMode(false);
   renderFacets();
   currentFiltered = filterRows(null);
   renderTable(currentFiltered);
@@ -835,7 +845,7 @@ function renderAll() {
 function switchTab(tab) {
   activeTab = tab;
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
-  $("#search").value = tabState[tab].search;
+  if (tab !== "stats") $("#search").value = tabState[tab].search;
   renderAll();
 }
 
@@ -843,24 +853,27 @@ function switchTab(tab) {
 let applyingState = false;
 function syncURL(push) {
   if (applyingState) return;
-  const st = tabState[activeTab];
   const p = new URLSearchParams();
   if (activeTab !== "games") p.set("tab", activeTab);
-  if (viewMode !== "grid") p.set("view", viewMode);
-  if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
-  if (st.search) p.set("q", st.search);
-  if (st.page > 1) p.set("page", String(st.page));
-  if (st.sort && st.sort.length) p.set("sort", st.sort.map((s) => `${s.key}:${s.dir}`).join(","));
-  for (const [k, set] of Object.entries(st.facets)) if (set && set.size) p.set("f." + k, [...set].join("~"));
+  if (activeTab !== "stats") {
+    const st = tabState[activeTab];
+    if (viewMode !== "grid") p.set("view", viewMode);
+    if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
+    if (st.search) p.set("q", st.search);
+    if (st.page > 1) p.set("page", String(st.page));
+    if (st.sort && st.sort.length) p.set("sort", st.sort.map((s) => `${s.key}:${s.dir}`).join(","));
+    for (const [k, set] of Object.entries(st.facets)) if (set && set.size) p.set("f." + k, [...set].join("~"));
+  }
   const qs = p.toString();
   history[push ? "pushState" : "replaceState"]({}, "", qs ? "?" + qs : location.pathname);
 }
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
+  const tab = ["games", "completed", "onOrder", "stats"].includes(p.get("tab")) ? p.get("tab") : "games";
+  if (tab === "stats") { applyingState = false; switchTab("stats"); return; }
   viewMode = p.get("view") === "table" ? "table" : "grid";
   PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
-  const tab = ["games", "completed", "onOrder"].includes(p.get("tab")) ? p.get("tab") : "games";
   const st = tabState[tab];
   st.search = p.get("q") || "";
   st.page = parseInt(p.get("page"), 10) || 1;
@@ -912,6 +925,107 @@ async function load() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // events
+// ---- Stats dashboard (hand-rolled SVG, no deps) -------------------------
+const PALETTE = ["#6ea8fe", "#4ade80", "#fbbf24", "#f87171", "#a78bfa", "#22d3ee", "#fb923c", "#f472b6", "#94a3b8", "#34d399", "#e879f9", "#facc15"];
+function countBy(arr) {
+  const m = new Map();
+  for (const v of arr) { if (v == null || v === "") continue; m.set(v, (m.get(v) || 0) + 1); }
+  return m;
+}
+function topCounts(arr, n) {
+  return [...countBy(arr).entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }));
+}
+function svgBarsH(data, width = 340, barH = 20, gap = 7) {
+  if (!data.length) return `<div class="s-empty">No data</div>`;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const labelW = 116, valW = 46, chartW = width - labelW - valW, h = data.length * (barH + gap);
+  let y = 0, out = "";
+  data.forEach((d, i) => {
+    const w = Math.max(2, chartW * d.value / max);
+    out += `<g transform="translate(0,${y})"><text x="${labelW - 6}" y="${barH / 2}" dy="0.35em" text-anchor="end" class="s-lbl">${escapeHtml(String(d.label))}</text>` +
+      `<rect x="${labelW}" y="1" width="${w.toFixed(1)}" height="${barH - 2}" rx="3" fill="${PALETTE[i % PALETTE.length]}"/>` +
+      `<text x="${(labelW + w + 5).toFixed(1)}" y="${barH / 2}" dy="0.35em" class="s-val">${d.value.toLocaleString()}</text></g>`;
+    y += barH + gap;
+  });
+  return `<svg viewBox="0 0 ${width} ${h}" class="s-svg" preserveAspectRatio="xMinYMin meet">${out}</svg>`;
+}
+function svgBarsV(data, width = 360, height = 170, color = PALETTE[0]) {
+  if (!data.length) return `<div class="s-empty">No data</div>`;
+  const max = Math.max(1, ...data.map((d) => d.value)), n = data.length, bw = width / n;
+  let out = "";
+  data.forEach((d, i) => {
+    const bh = (height - 26) * d.value / max;
+    out += `<g transform="translate(${(i * bw).toFixed(1)},0)">` +
+      `<rect x="${(bw * 0.15).toFixed(1)}" y="${(height - 26 - bh).toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${color}"/>` +
+      `<text x="${(bw / 2).toFixed(1)}" y="${height - 9}" text-anchor="middle" class="s-axis">${escapeHtml(String(d.label))}</text>` +
+      (d.value ? `<text x="${(bw / 2).toFixed(1)}" y="${(height - 28 - bh).toFixed(1)}" text-anchor="middle" class="s-val">${d.value}</text>` : "") + `</g>`;
+  });
+  return `<svg viewBox="0 0 ${width} ${height}" class="s-svg">${out}</svg>`;
+}
+function svgDonut(segments, size = 150) {
+  const total = segments.reduce((a, s) => a + s.value, 0) || 1, r = size / 2, rin = r * 0.58;
+  let a0 = -Math.PI / 2, paths = "";
+  segments.forEach((s, i) => {
+    if (!s.value) return;
+    const a1 = a0 + 2 * Math.PI * s.value / total, large = a1 - a0 > Math.PI ? 1 : 0;
+    const p = (ang, rad) => [(r + rad * Math.cos(ang)).toFixed(2), (r + rad * Math.sin(ang)).toFixed(2)];
+    const [x0, y0] = p(a0, r), [x1, y1] = p(a1, r), [xi0, yi0] = p(a1, rin), [xi1, yi1] = p(a0, rin);
+    paths += `<path d="M${x0},${y0} A${r},${r} 0 ${large} 1 ${x1},${y1} L${xi0},${yi0} A${rin},${rin} 0 ${large} 0 ${xi1},${yi1} Z" fill="${PALETTE[i % PALETTE.length]}"/>`;
+    a0 = a1;
+  });
+  const legend = segments.filter((s) => s.value).map((s, i) =>
+    `<div class="s-leg"><span style="background:${PALETTE[i % PALETTE.length]}"></span>${escapeHtml(String(s.label))} <b>${s.value}</b></div>`).join("");
+  return `<div class="s-donut-wrap"><svg viewBox="0 0 ${size} ${size}" class="s-donut">${paths}</svg><div class="s-legend">${legend}</div></div>`;
+}
+const statCard = (v, l) => `<div class="stat-card"><div class="s-num">${v}</div><div class="s-cap">${escapeHtml(l)}</div></div>`;
+const statPanel = (title, body) => `<div class="stat-panel"><h3>${escapeHtml(title)}</h3>${body}</div>`;
+
+function renderStats() {
+  const rows = (DATA.sheets.completed || { rows: [] }).rows;
+  const host = $("#stats");
+  if (!rows.length) { host.innerHTML = `<div class="s-empty">No completed games.</div>`; return; }
+
+  const hours = rows.reduce((a, r) => a + (r.playTime || 0), 0);
+  const rated = rows.filter((r) => r.rating != null);
+  const avg = rated.length ? rated.reduce((a, r) => a + r.rating, 0) / rated.length : null;
+  const years = rows.map((r) => (typeof r.date === "string" && /^\d{4}/.test(r.date) ? +r.date.slice(0, 4) : null)).filter(Boolean);
+  const curYear = years.length ? Math.max(...years) : 0;
+  const thisYear = years.filter((y) => y === curYear).length;
+
+  const byYear = countBy(years);
+  const yearData = [...byYear.keys()].sort((a, b) => a - b).map((y) => ({ label: `'${String(y).slice(2)}`, value: byYear.get(y) }));
+  const decades = countBy(rows.map((r) => (r.releaseYear && /^\d/.test(String(r.releaseYear)) ? Math.floor(+r.releaseYear / 10) * 10 : null)));
+  const decadeData = [...decades.keys()].sort((a, b) => a - b).map((d) => ({ label: `${d}s`, value: decades.get(d) }));
+  const RB = [["90–100", .9, 1.01], ["80–89", .8, .9], ["70–79", .7, .8], ["60–69", .6, .7], ["< 60", -1, .6]];
+  const ratingData = RB.map(([label, lo, hi]) => ({ label, value: rows.filter((r) => r.rating != null && r.rating >= lo && r.rating < hi).length }));
+  const flags = [
+    { label: "Steam Deck", value: rows.filter((r) => r.steamDeck).length },
+    { label: "Emulated", value: rows.filter((r) => r.emulated).length },
+    { label: "VR", value: rows.filter((r) => r.vr).length },
+  ];
+
+  host.innerHTML =
+    `<div class="stat-cards">
+      ${statCard(rows.length.toLocaleString(), "Games completed")}
+      ${statCard(Math.round(hours).toLocaleString() + "h", "Hours played")}
+      ${statCard(avg != null ? Math.round(avg * 100) + "%" : "—", "Avg rating")}
+      ${statCard(thisYear.toLocaleString(), "Completed in " + (curYear || "—"))}
+      ${statCard(countBy(rows.map((r) => r.platform)).size, "Platforms")}
+      ${statCard(countBy(rows.map((r) => r.franchise)).size, "Franchises")}
+    </div>
+    <div class="stat-grid">
+      ${statPanel("Completions per year", svgBarsV(yearData))}
+      ${statPanel("By release decade", svgBarsV(decadeData, 360, 170, PALETTE[4]))}
+      ${statPanel("Top platforms", svgBarsH(topCounts(rows.map((r) => r.platform), 10)))}
+      ${statPanel("Top genres", svgBarsH(topCounts(rows.map((r) => r.genre), 12)))}
+      ${statPanel("Top franchises", svgBarsH(topCounts(rows.map((r) => r.franchise), 10)))}
+      ${statPanel("Top developers", svgBarsH(topCounts(rows.map((r) => r.developer), 10)))}
+      ${statPanel("Rating distribution", svgBarsH(ratingData))}
+      ${statPanel("By region", svgDonut(topCounts(rows.map((r) => r.region), 8)))}
+      ${statPanel("How I played", svgBarsH(flags))}
+    </div>`;
+}
+
 $("#search").addEventListener("input", (e) => {
   const st = tabState[activeTab];
   st.search = e.target.value;
