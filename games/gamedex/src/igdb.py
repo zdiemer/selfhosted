@@ -193,7 +193,18 @@ class IgdbClient:
             return None, 0
         return self._to_enrichment(best, best_info), best_info.match_score
 
+    def fetch_by_slug(self, slug: str):
+        """Fetch a single game by its IGDB URL slug (for manual overrides)."""
+        safe = slug.replace('"', "")
+        res = self._post("games", f'{_FIELDS} where slug = "{safe}"; limit 1;')
+        return res[0] if res else None
+
     def _to_enrichment(self, c, info):
+        e = self.enrichment_from_result(c)
+        e["confidence"] = info.match_score
+        return e
+
+    def enrichment_from_result(self, c):
         devs, pubs = [], []
         for ic in c.get("involved_companies", []):
             nm = (ic.get("company") or {}).get("name")
@@ -231,5 +242,5 @@ class IgdbClient:
                  "cover": (s.get("cover") or {}).get("image_id")}
                 for s in c.get("similar_games", []) if s.get("name")
             ][:12],
-            "confidence": info.match_score,
+            "confidence": None,
         }

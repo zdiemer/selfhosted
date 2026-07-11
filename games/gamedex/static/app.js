@@ -64,9 +64,11 @@ function escapeHtml(s) {
 const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg` : "");
 let ENRICH_ENABLED = false;
 const ENRICH = {};                 // matchKey -> light enrichment
-const DETAIL = {};                 // matchKey -> full detail (drawer cache)
+const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
+const HLTBC = {};                  // matchKey -> HLTB playtimes (drawer cache)
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
+let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
 function coverCell(row) {
   const e = ENRICH[row._k];
@@ -107,17 +109,20 @@ async function postEnrich(keys) {
 function updateEnrichStatus(stats) {
   const el = $("#enrichstatus");
   if (!el || !stats) return;
-  const q = stats.queued ? ` · ${stats.queued} queued` : "";
-  el.textContent = `IGDB: ${stats.matched.toLocaleString()} matched${q}`;
+  const parts = [`IGDB ${(stats.matched || 0).toLocaleString()}`];
+  if (stats.hltb) parts.push(`HLTB ${(stats.hltb.matched || 0).toLocaleString()}`);
+  const queued = (stats.queued || 0) + (stats.hltb ? stats.hltb.queued || 0 : 0);
+  el.textContent = parts.join(" · ") + (queued ? ` · ${queued.toLocaleString()} queued` : "");
   el.hidden = false;
 }
 
 const chips = (arr) => (arr && arr.length
   ? `<div class="chips">${arr.map((x) => `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
 
-function renderDetail(d, el) {
-  if (!d) { el.innerHTML = ""; return; }
+function detailHtml(d) {
+  if (!d) return "";
   const cover = d.cover ? `<img class="cover-big" src="${IMG(d.cover, "cover_big")}" alt="">` : "";
+  const badge = d.manual ? `<span class="chip manual">★ Manually mapped</span>` : "";
   const rating = d.rating != null
     ? `<div class="igdb-rating ${ratingClass(d.rating)}">${Math.round(d.rating * 100)}<small>/100 IGDB</small>${d.ratingCount ? ` · ${d.ratingCount} ratings` : ""}</div>` : "";
   const meta = [];
@@ -131,8 +136,7 @@ function renderDetail(d, el) {
     ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
         `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
   const text = d.summary || d.storyline;
-  el.innerHTML =
-    `<div class="igdb-head">${cover}<div class="igdb-side">${rating}
+  return `<div class="igdb-head">${cover}<div class="igdb-side">${badge}${rating}
        ${chips([...(d.genres || []), ...(d.themes || [])])}
        ${chips(d.gameModes || [])}</div></div>` +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
@@ -140,19 +144,95 @@ function renderDetail(d, el) {
     `<div class="igdb-attr">${d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">View on IGDB ↗</a> · ` : ""}Metadata by <a href="https://www.igdb.com" target="_blank" rel="noopener">IGDB</a></div>`;
 }
 
-async function loadDetail(key, el, attempt = 0) {
-  if (DETAIL[key]) { renderDetail(DETAIL[key], el); return; }
-  if (attempt === 0) el.innerHTML = `<div class="igdb-loading">Loading IGDB metadata…</div>`;
+function mapControlHtml(key, manual) {
+  return `<div class="igdb-map">
+    ${manual ? `<div class="mapped-note"><button class="linkbtn" data-map-reset>Reset to auto-match</button></div>` : ""}
+    <div class="map-row">
+      <input type="url" placeholder="Paste an IGDB game URL to map manually…" data-map-input>
+      <button class="btn" data-map-go>Map</button>
+    </div>
+  </div>`;
+}
+
+function hltbHtml(h) {
+  const est = drawerRow ? drawerRow.estimatedTime : null;
+  if (h) {
+    const rows = [["Main Story", h.main], ["Main + Extras", h.mainPlus], ["Completionist", h.hundred], ["All Styles", h.allStyles]]
+      .filter(([, v]) => v != null);
+    if (!rows.length && est == null) return "";
+    return `<div class="hltb"><div class="hltb-head">⏱ HowLongToBeat</div>` +
+      rows.map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${fmtHours(v)}</b></div>`).join("") +
+      (h.url ? `<a class="hltb-link" href="${escapeHtml(h.url)}" target="_blank" rel="noopener">View on HowLongToBeat ↗</a>` : "") +
+      `</div>`;
+  }
+  if (est != null)
+    return `<div class="hltb"><div class="hltb-head">⏱ Playtime</div><div class="hltb-row"><span>Estimated (from sheet)</span><b>${fmtHours(est)}</b></div></div>`;
+  return "";
+}
+
+// Compose the drawer's enrichment section: IGDB content + HLTB + manual-map control.
+function renderIgdbSection(key, el, status, detail) {
+  const content =
+    status === "matched" && detail ? detailHtml(detail)
+    : status === "no_match" ? `<div class="igdb-loading muted">No IGDB match for this title.</div>`
+    : status === "pending-final" ? `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`
+    : `<div class="igdb-loading">Loading IGDB metadata…</div>`;
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + mapControlHtml(key, !!(detail && detail.manual));
+  const go = el.querySelector("[data-map-go]");
+  const input = el.querySelector("[data-map-input]");
+  const reset = el.querySelector("[data-map-reset]");
+  if (go && input) {
+    const submit = async () => {
+      const url = input.value.trim();
+      if (!url) return;
+      go.disabled = true; go.textContent = "…"; input.classList.remove("err");
+      const d = await submitOverride(key, url);
+      if (d) renderIgdbSection(key, el, "matched", d);
+      else { go.disabled = false; go.textContent = "Map"; input.classList.add("err"); }
+    };
+    go.onclick = submit;
+    input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  }
+  if (reset) reset.onclick = async () => { await submitOverride(key, ""); delete DETAIL[key]; loadDetail(key, el); };
+}
+
+async function submitOverride(key, url) {
+  try {
+    const res = await fetch("api/enrichment/override", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, url }),
+    });
+    if (!res.ok) return false;
+    const j = await res.json();
+    if (url && j.detail) {
+      DETAIL[key] = j.detail;
+      ENRICH[key] = Object.assign(ENRICH[key] || {}, {
+        cover: j.detail.cover, genres: j.detail.genres, themes: j.detail.themes, gameModes: j.detail.gameModes,
+      });
+      renderTable(currentFiltered);
+      return j.detail;
+    }
+    delete ENRICH[key];              // cleared → back to auto
+    renderTable(currentFiltered);
+    return null;
+  } catch (_) { return false; }
+}
+
+async function loadDetail(key, el, attempt = 0, row = null) {
+  if (row) drawerRow = row;
+  if (DETAIL[key]) { renderIgdbSection(key, el, "matched", DETAIL[key]); return; }
+  if (attempt === 0) renderIgdbSection(key, el, "loading", null);
   try {
     const res = await fetch("api/enrichment/detail?key=" + encodeURIComponent(key));
     const j = await res.json();
-    if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderDetail(j.detail, el); }
-    else if (j.status === "no_match") { el.innerHTML = `<div class="igdb-loading muted">No IGDB match for this title.</div>`; }
+    if ("hltb" in j) HLTBC[key] = j.hltb;
+    if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
+    else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
-      if (attempt >= 15) { el.innerHTML = `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`; return; }
-      setTimeout(() => loadDetail(key, el, attempt + 1), 2500);
-    } else el.innerHTML = "";
-  } catch (_) { el.innerHTML = ""; }
+      if (attempt >= 15) renderIgdbSection(key, el, "pending-final", null);
+      else setTimeout(() => loadDetail(key, el, attempt + 1), 2500);
+    }
+  } catch (_) { /* keep prior content */ }
 }
 
 // Bulk-load the light cover/facet map for every already-matched game (powers
@@ -171,7 +251,7 @@ async function loadAllEnrichment() {
     }
     if (j.stats) updateEnrichStatus(j.stats);
     if (changed) renderAll();                       // covers + facets fill in
-    if (j.stats && j.stats.resolved < j.stats.total) {  // backfill still running
+    if (j.stats && !j.stats.complete) {             // IGDB or HLTB backfill still running
       clearTimeout(allTimer);
       allTimer = setTimeout(loadAllEnrichment, 45000);
     }
@@ -190,15 +270,49 @@ const IGDB_FACET_DEFS = [
   { key: "__igdb_theme", label: "Theme", source: "themes" },
   { key: "__igdb_mode", label: "Game Mode", source: "gameModes" },
 ];
+const PLAYTIME_BUCKETS = [
+  { label: "< 2h", test: (h) => h < 2 },
+  { label: "2–5h", test: (h) => h >= 2 && h < 5 },
+  { label: "5–10h", test: (h) => h >= 5 && h < 10 },
+  { label: "10–20h", test: (h) => h >= 10 && h < 20 },
+  { label: "20–40h", test: (h) => h >= 20 && h < 40 },
+  { label: "40–80h", test: (h) => h >= 40 && h < 80 },
+  { label: "80h+", test: (h) => h >= 80 },
+];
+const METACRITIC_BUCKETS = [
+  { label: "90–100", test: (v) => v >= 0.9 },
+  { label: "80–89", test: (v) => v >= 0.8 && v < 0.9 },
+  { label: "70–79", test: (v) => v >= 0.7 && v < 0.8 },
+  { label: "60–69", test: (v) => v >= 0.6 && v < 0.7 },
+  { label: "< 60", test: (v) => v < 0.6 },
+];
+// Best playtime for a row: HLTB (main→best) where enriched, else sheet estimate.
+const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBest; return h != null ? h : row.estimatedTime; };
+function bucketLabel(v, buckets) { for (const b of buckets) if (b.test(v)) return b.label; return null; }
+
 const igdbFacetCols = () =>
   ENRICH_ENABLED
     ? IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true }))
     : [];
-const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols()];
+// Bucketed facets available on the Games tab (playtime + Metacritic).
+function extraFacetCols() {
+  if (activeTab !== "games") return [];
+  return [
+    { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
+    { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: (r) => r.metacriticRating },
+  ];
+}
+const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
 const facetColByKey = (key) => facetCols().find((c) => c.key === key);
 
-// A row's facet values as [{key, raw}] — scalar → one, IGDB arrays → many.
+// A row's facet values as [{key, raw}] — scalar → one, arrays → many, bucket → one label.
 function rowFacetItems(row, col) {
+  if (col.kind === "bucket") {
+    const v = col.getVal(row);
+    if (v === undefined || v === null || v === "") return [];
+    const lbl = bucketLabel(Number(v), col.buckets);
+    return lbl ? [{ key: lbl, raw: lbl }] : [];
+  }
   let v;
   if (col.virtual) { const e = ENRICH[row._k]; v = e ? e[col.source] : undefined; }
   else v = row[col.key];
@@ -269,12 +383,17 @@ function renderFacets() {
       label: facetLabel(col, col.type === "bool" ? k === "true" : k),
       count: n,
     }));
-    const numeric = col.type === "year" || col.type === "int" || col.type === "number";
-    // For year facets, non-numeric labels (e.g. "Early Access") sort as newest.
-    const nkey = (k) => { const n = Number(k); return isNaN(n) ? Infinity : n; };
-    values.sort((a, b) =>
-      numeric ? nkey(b.key) - nkey(a.key) : b.count - a.count || a.label.localeCompare(b.label)
-    );
+    if (col.buckets) {                                   // fixed bucket order
+      const ord = new Map(col.buckets.map((b, i) => [b.label, i]));
+      values.sort((a, b) => (ord.get(a.key) ?? 99) - (ord.get(b.key) ?? 99));
+    } else {
+      const numeric = col.type === "year" || col.type === "int" || col.type === "number";
+      // For year facets, non-numeric labels (e.g. "Early Access") sort as newest.
+      const nkey = (k) => { const n = Number(k); return isNaN(n) ? Infinity : n; };
+      values.sort((a, b) =>
+        numeric ? nkey(b.key) - nkey(a.key) : b.count - a.count || a.label.localeCompare(b.label)
+      );
+    }
 
     const group = document.createElement("div");
     group.className = "facet" + (st.expanded[col.key] === false ? " collapsed" : "");
@@ -368,12 +487,7 @@ const NUMERIC_TYPES = ["rating", "hours", "number", "int", "year"];
 // newest release year, with newest release date (Early Access = newest) as the
 // final tiebreaker.
 const DEFAULT_SORT = {
-  games: [
-    { key: "playingStatus", kind: "playingRank", dir: "desc" },
-    { key: "completed", dir: "asc", type: "bool" },
-    { key: "releaseYear", dir: "desc", type: "year" },
-    { key: "releaseDate", kind: "releaseDateDesc", dir: "desc" },
-  ],
+  games: [{ key: "releaseDate", kind: "releaseDateDesc", dir: "desc" }],
   completed: [{ key: "date", dir: "desc", type: "date" }],
   onOrder: [{ key: "orderedDate", dir: "desc", type: "date" }],
 };
@@ -498,6 +612,14 @@ function renderTableView(pageRows) {
   }
 }
 
+// Completed games get a green-bordered card. The Completed tab is all finished;
+// on the Games tab it's the per-row Completed flag.
+function rowCompleted(row) {
+  if (activeTab === "completed") return true;
+  if (activeTab === "games") return !!row.completed;
+  return false;
+}
+
 function renderGrid(pageRows) {
   const grid = $("#grid");
   const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
@@ -508,12 +630,16 @@ function renderGrid(pageRows) {
       ? `<img class="card-cover" loading="lazy" src="${IMG(e.cover, "cover_big")}" alt="">`
       : `<div class="card-cover ph">🎮</div>`;
     const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
-    const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
-      .map((x) => escapeHtml(String(x))).join(" · ");
+    const rel = row.releaseDate || row.release;                 // full date, else year
+    const relDisp = rel ? fmtDate(rel) : row.releaseYear;
+    const pt = playtimeOf(row);
+    const parts = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
+    if (pt != null) parts.push("⏱ " + fmtHours(pt));
+    const sub = parts.join(" · ");
     const rating = row.rating != null
       ? `<span class="card-rating ${ratingClass(row.rating)}">${Math.round(row.rating * 100)}</span>` : "";
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = "card" + (rowCompleted(row) ? " done" : "");
     card.innerHTML = `${cover}<div class="card-body">${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${sub}</div></div>`;
     card.onclick = () => openDrawer(row);
     grid.appendChild(card);
@@ -579,7 +705,8 @@ function openDrawer(row) {
   }
   body.innerHTML = html;
   $("#overlay").hidden = false;
-  if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"));
+  drawerRow = row;
+  if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
 function closeDrawer() { $("#overlay").hidden = true; }
 
@@ -682,5 +809,33 @@ $("#gridsortdir").addEventListener("click", () => {
 $("#drawerClose").addEventListener("click", closeDrawer);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+function showToast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.hidden = false;
+  requestAnimationFrame(() => t.classList.add("show"));
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.classList.remove("show"); setTimeout(() => (t.hidden = true), 250); }, 2500);
+}
+
+$("#refresh").addEventListener("click", async () => {
+  const btn = $("#refresh");
+  btn.classList.add("spinning"); btn.disabled = true;
+  try {
+    const res = await fetch("api/refresh", { method: "POST" });
+    const j = await res.json();
+    if (res.ok) {
+      const dres = await fetch("api/data", { cache: "no-store" });
+      if (dres.ok) {
+        DATA = await dres.json();
+        const en = DATA.meta && DATA.meta.enrichment;
+        ENRICH_ENABLED = !!(en && en.enabled !== false);
+        setFreshness(); renderAll(); loadAllEnrichment();
+      }
+      showToast(j.changed ? "Spreadsheet updated ✓" : "Already up to date");
+    } else showToast("Refresh failed: " + (j.error || res.status));
+  } catch (_) { showToast("Refresh failed"); }
+  finally { btn.classList.remove("spinning"); btn.disabled = false; }
+});
 
 load().catch((err) => { console.error(err); $("#count").textContent = "Error: " + err.message; });

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from enrich import Enricher
+from hltb import HltbClient
 from igdb import IgdbClient
 from poller import DataStore
 
@@ -42,10 +44,16 @@ IGDB_CLIENT_ID = os.environ.get("IGDB_CLIENT_ID", "")
 IGDB_CLIENT_SECRET = os.environ.get("IGDB_CLIENT_SECRET", "")
 ENRICH_DB = os.environ.get("ENRICH_DB", "/data/enrichment.sqlite")
 ENRICH_BACKFILL = os.environ.get("ENRICH_BACKFILL", "false").lower() in ("1", "true", "yes")
+HLTB_ENABLED = os.environ.get("HLTB_ENABLED", "true").lower() in ("1", "true", "yes")
 
-# Enricher is optional — only when IGDB creds are present.
+# Enricher is optional — only when IGDB creds are present. HLTB (playtimes) is a
+# second source, on unless disabled.
 _igdb = IgdbClient(IGDB_CLIENT_ID, IGDB_CLIENT_SECRET)
-enricher = Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL) if _igdb.configured else None
+_hltb = HltbClient() if HLTB_ENABLED else None
+enricher = (
+    Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, hltb_client=_hltb)
+    if _igdb.configured else None
+)
 
 store = DataStore(
     DROPBOX_URL, XLSX_FILENAME, REFRESH_INTERVAL,
@@ -118,7 +126,7 @@ def enrichment_detail(key: str):
     if not enricher:
         return {"enabled": False, "status": "disabled", "detail": None}
     status, detail = enricher.get_detail(key)
-    return {"enabled": True, "status": status, "detail": detail}
+    return {"enabled": True, "status": status, "detail": detail, "hltb": enricher.get_hltb(key)}
 
 
 @app.get("/api/enrichment/stats")
@@ -126,6 +134,41 @@ def enrichment_stats():
     if not enricher:
         return {"enabled": False}
     return {"enabled": True, **enricher.stats()}
+
+
+class Override(BaseModel):
+    key: str
+    url: str | None = None
+
+
+@app.post("/api/enrichment/override")
+def enrichment_override(body: Override):
+    if not enricher:
+        return JSONResponse(status_code=400, content={"error": "enrichment disabled"})
+    if not body.url or not body.url.strip():          # clear → back to auto-match
+        enricher.clear_override(body.key)
+        return {"status": "pending", "detail": None}
+    m = re.search(r"/games/([^/?#]+)", body.url)
+    if not m:
+        return JSONResponse(status_code=400, content={"error": "not an IGDB game URL (…/games/<slug>)"})
+    result = _igdb.fetch_by_slug(m.group(1))
+    if not result:
+        return JSONResponse(status_code=404, content={"error": f"no IGDB game found for '{m.group(1)}'"})
+    enrichment = _igdb.enrichment_from_result(result)
+    enricher.set_override(body.key, enrichment)
+    return {"status": "matched", "detail": {**enrichment, "manual": True}}
+
+
+@app.post("/api/refresh")
+def refresh():
+    """Eagerly re-check Dropbox now (instead of waiting for the poll interval)."""
+    try:
+        changed = store.refresh_once()
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+    meta = dict(store.snapshot()["meta"])
+    meta["enrichment"] = enricher.stats() if enricher else {"enabled": False}
+    return {"changed": changed, "meta": meta}
 
 
 # Static UI last so /api/* wins. html=True serves index.html at "/".

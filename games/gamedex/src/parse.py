@@ -55,8 +55,8 @@ def _slug(header: str) -> str:
 _GAMES = [
     ("Title",                "text",   False, True,  True),
     ("Platform",             "text",   True,  False, True),
-    ("Release Year",         "year",   True,  False, True),
-    ("Release Date",         "date",   False, False, False),
+    ("Release Date",         "date",   False, False, True),
+    ("Release Year",         "year",   True,  False, False),
     ("Release Region",       "text",   True,  False, False),
     ("Genre",                "text",   True,  True,  True),
     ("Franchise",            "text",   True,  True,  False),

@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.2.2"
+  tag: "0.4.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -29,8 +29,13 @@ igdb:
   clientSecret: ""        # Twitch app Client Secret (values.local.yaml)
   # Slowly enrich every game in the background so the IGDB facets + cover map
   # eventually cover the whole library. Runs at 4 req/s behind on-demand
-  # requests, cached on the PVC.
+  # requests, cached on the PVC. Also drives the HLTB backfill (1 req/s).
   backfill: true
+  # HowLongToBeat playtimes (second source, 1 req/s). Currently DISABLED: HLTB
+  # added client-side anti-bot fingerprinting (POST /api/bleed → "invalid
+  # fingerprint"), which broke the ported scraper. The Playtime facet + card
+  # fall back to the sheet's Estimated Time. Flip on if the scraper is updated.
+  hltb: false
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:
