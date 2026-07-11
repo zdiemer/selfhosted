@@ -492,6 +492,7 @@ function renderFacets() {
         else delete st.facets[col.key];
         st.page = 1;
         renderAll();
+        nav();
       };
       body.appendChild(opt);
     }
@@ -594,6 +595,7 @@ function onHeaderClick(col, shift) {
   st.sort = cur.length ? cur : null;
   st.page = 1;
   renderAll();
+  nav();
 }
 
 // Dispatcher: sort → paginate → render as table or grid.
@@ -713,6 +715,7 @@ function renderPager(pages) {
     b.onclick = () => {
       st.page = page; renderTable(currentFiltered);
       $("#tablewrap").scrollTop = 0; $("#gridwrap").scrollTop = 0;
+      nav();
     };
     return b;
   };
@@ -766,6 +769,44 @@ function switchTab(tab) {
   renderAll();
 }
 
+// ---- URL state: back/forward + shareable/refreshable links ---------------
+let applyingState = false;
+function syncURL(push) {
+  if (applyingState) return;
+  const st = tabState[activeTab];
+  const p = new URLSearchParams();
+  if (activeTab !== "games") p.set("tab", activeTab);
+  if (viewMode !== "grid") p.set("view", viewMode);
+  if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
+  if (st.search) p.set("q", st.search);
+  if (st.page > 1) p.set("page", String(st.page));
+  if (st.sort && st.sort.length) p.set("sort", st.sort.map((s) => `${s.key}:${s.dir}`).join(","));
+  for (const [k, set] of Object.entries(st.facets)) if (set && set.size) p.set("f." + k, [...set].join("~"));
+  const qs = p.toString();
+  history[push ? "pushState" : "replaceState"]({}, "", qs ? "?" + qs : location.pathname);
+}
+function applyStateFromURL() {
+  applyingState = true;
+  const p = new URLSearchParams(location.search);
+  viewMode = p.get("view") === "table" ? "table" : "grid";
+  PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
+  const tab = ["games", "completed", "onOrder"].includes(p.get("tab")) ? p.get("tab") : "games";
+  const st = tabState[tab];
+  st.search = p.get("q") || "";
+  st.page = parseInt(p.get("page"), 10) || 1;
+  const sort = p.get("sort");
+  st.sort = sort ? sort.split(",").map((s) => { const [key, dir] = s.split(":"); return { key, dir: dir === "asc" ? "asc" : "desc" }; }) : null;
+  st.facets = {};
+  for (const [k, v] of p.entries()) if (k.startsWith("f.")) st.facets[k.slice(2)] = new Set(v.split("~"));
+  $("#pagesize").value = String(PAGE_SIZE);
+  $("#viewTable").classList.toggle("active", viewMode === "table");
+  $("#viewGrid").classList.toggle("active", viewMode === "grid");
+  applyingState = false;
+  switchTab(tab);
+}
+const nav = () => syncURL(true);
+window.addEventListener("popstate", applyStateFromURL);
+
 function setFreshness() {
   const m = DATA.meta || {};
   const el = $("#freshness");
@@ -794,7 +835,7 @@ async function load() {
   ENRICH_ENABLED = !!(en && en.enabled !== false);
   if (ENRICH_ENABLED) updateEnrichStatus(en);
   setFreshness();
-  switchTab("games");
+  applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -805,23 +846,27 @@ $("#search").addEventListener("input", (e) => {
   st.search = e.target.value;
   st.page = 1;
   renderAll();
+  syncURL(false);          // replace so typing doesn't flood history
 });
-$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) switchTab(e.target.dataset.tab); });
+$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { switchTab(e.target.dataset.tab); nav(); } });
 $("#clear").addEventListener("click", () => {
   const st = tabState[activeTab];
   st.search = ""; st.facets = {}; st.page = 1;
   $("#search").value = "";
   renderAll();
+  nav();
 });
 $("#resetsort").addEventListener("click", () => {
   tabState[activeTab].sort = null;
   tabState[activeTab].page = 1;
   renderAll();
+  nav();
 });
 $("#pagesize").addEventListener("change", (e) => {
   PAGE_SIZE = parseInt(e.target.value, 10) || 50;
   tabState[activeTab].page = 1;
   renderTable(currentFiltered);
+  nav();
 });
 function setView(mode) {
   viewMode = mode;
@@ -829,8 +874,8 @@ function setView(mode) {
   $("#viewGrid").classList.toggle("active", mode === "grid");
   renderTable(currentFiltered);
 }
-$("#viewTable").addEventListener("click", () => setView("table"));
-$("#viewGrid").addEventListener("click", () => setView("grid"));
+$("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
+$("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
 $("#facetToggle").addEventListener("click", () => setFacets(!$("#facets").classList.contains("open")));
 $("#facetBackdrop").addEventListener("click", () => setFacets(false));
 $("#gridsort").addEventListener("change", (e) => {
@@ -840,6 +885,7 @@ $("#gridsort").addEventListener("change", (e) => {
   else { const c = colByKey(k); st.sort = [{ key: k, dir: c && c.type === "text" ? "asc" : "desc", type: c && c.type }]; }
   st.page = 1;
   renderTable(currentFiltered);
+  nav();
 });
 $("#gridsortdir").addEventListener("click", () => {
   const st = tabState[activeTab];
@@ -847,6 +893,7 @@ $("#gridsortdir").addEventListener("click", () => {
     st.sort[0].dir = st.sort[0].dir === "asc" ? "desc" : "asc";
     st.page = 1;
     renderTable(currentFiltered);
+    nav();
   }
 });
 $("#drawerClose").addEventListener("click", closeDrawer);
