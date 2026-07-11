@@ -257,6 +257,12 @@ tbody tr:hover { background: var(--panel-2); }
 .detail-row.notes { grid-template-columns: 1fr; }
 .detail-row.notes .k { margin-bottom: 4px; }
 .detail-row.notes .v { white-space: pre-wrap; line-height: 1.55; }
+.facet-link { color: var(--accent); cursor: pointer; text-decoration: none; }
+.facet-link:hover { text-decoration: underline; }
+.chip.facet-link { color: var(--text); }
+.chip.facet-link:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.pill.facet-link { cursor: pointer; }
+.pill.facet-link:hover { background: var(--accent-dim); }
 
 /* IGDB detail section in the drawer */
 .igdb-detail { margin: 4px 0 8px; }
@@ -317,6 +323,7 @@ tbody tr:hover { background: var(--panel-2); }
 .stat-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; }
 .stat-card .s-num { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1; }
 .stat-card .s-cap { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.stat-sec { font-size: 15px; margin: 22px 2px 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .stat-panel { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .stat-panel h3 { margin: 0 0 12px; font-size: 14px; }

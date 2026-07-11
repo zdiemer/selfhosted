@@ -127,8 +127,10 @@ function updateEnrichStatus(stats) {
   el.hidden = false;
 }
 
-const chips = (arr) => (arr && arr.length
-  ? `<div class="chips">${arr.map((x) => `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
+const chips = (arr, fk) => (arr && arr.length
+  ? `<div class="chips">${arr.map((x) => fk
+      ? `<span class="chip facet-link" data-fk="${fk}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`
+      : `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
 
 function detailHtml(d) {
   if (!d) return "";
@@ -149,8 +151,9 @@ function detailHtml(d) {
         `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
   const text = d.summary || d.storyline;
   return `<div class="igdb-head">${cover}<div class="igdb-side">${badge ? `<div class="badges">${badge}</div>` : ""}${rating}
-       ${chips([...(d.genres || []), ...(d.themes || [])])}
-       ${chips(d.gameModes || [])}</div></div>` +
+       ${chips(d.genres, "__igdb_genre")}
+       ${chips(d.themes, "__igdb_theme")}
+       ${chips(d.gameModes, "__igdb_mode")}</div></div>` +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
     meta.join("") + shots + simHtml +
     igdbAttr(d);
@@ -798,23 +801,33 @@ function renderPager(pages) {
 }
 
 // ---- detail drawer ------------------------------------------------------
-function openDrawer(row) {
-  const cols = columns();
+let drawerSheet = "games";
+// Value cell, made a clickable filter link for facetable text/year columns.
+function detailValue(c, v) {
+  const facetable = c.facet && (c.type === "text" || c.type === "year");
+  const cell = fmtCell(v, c.type);
+  if (facetable) return `<a class="facet-link" data-fk="${c.key}" data-fv="${escapeHtml(String(v))}" title="Filter by ${escapeHtml(c.label)}">${cell}</a>`;
+  return cell;
+}
+
+function openDrawer(row, sheetKey) {
+  drawerSheet = sheetKey || (SPECIAL_TABS.includes(activeTab) ? "games" : activeTab);
+  const cols = (DATA.sheets[drawerSheet] || DATA.sheets.games).columns;
   const titleCol = cols[0];
   const body = $("#drawerBody");
-  const platform = row["platform"] ? `<span class="pill">${escapeHtml(String(row["platform"]))}</span>` : "";
+  const platform = row["platform"] ? `<span class="pill facet-link" data-fk="platform" data-fv="${escapeHtml(String(row.platform))}">${escapeHtml(String(row.platform))}</span>` : "";
   let html = `<h2>${escapeHtml(String(row[titleCol.key] ?? "Untitled"))}</h2><div class="subtitle">${platform}</div>`;
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
   for (const c of cols) {
-    if (c.key === titleCol.key) continue;
+    if (c.key === titleCol.key || c.key === "platform") continue;
     const v = row[c.key];
     if (v === undefined || v === null || v === "") continue;
     const isNotes = c.type === "text" && String(v).length > 140;
     if (isNotes) {
       html += `<div class="detail-row notes"><div class="k">${escapeHtml(c.label)}</div><div class="v">${escapeHtml(String(v))}</div></div>`;
     } else {
-      html += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${fmtCell(v, c.type)}</div></div>`;
+      html += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
     }
   }
   body.innerHTML = html;
@@ -823,6 +836,17 @@ function openDrawer(row) {
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
 function closeDrawer() { $("#overlay").hidden = true; }
+
+// Clicking a facet-link (in the drawer) filters that field on its sheet's tab.
+function applyDrawerFacet(key, val) {
+  const st = tabState[drawerSheet];
+  if (!st) return;
+  st.facets = { [key]: new Set([String(val)]) };
+  st.search = ""; st.page = 1;
+  closeDrawer();
+  switchTab(drawerSheet);
+  nav();
+}
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
@@ -945,16 +969,16 @@ function countBy(arr) {
 function topCounts(arr, n) {
   return [...countBy(arr).entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }));
 }
-function svgBarsH(data, width = 340, barH = 20, gap = 7) {
+function svgBarsH(data, width = 340, barH = 20, gap = 7, fmt = (v) => v.toLocaleString()) {
   if (!data.length) return `<div class="s-empty">No data</div>`;
   const max = Math.max(1, ...data.map((d) => d.value));
-  const labelW = 116, valW = 46, chartW = width - labelW - valW, h = data.length * (barH + gap);
+  const labelW = 130, valW = 52, chartW = width - labelW - valW, h = data.length * (barH + gap);
   let y = 0, out = "";
   data.forEach((d, i) => {
     const w = Math.max(2, chartW * d.value / max);
     out += `<g transform="translate(0,${y})"><text x="${labelW - 6}" y="${barH / 2}" dy="0.35em" text-anchor="end" class="s-lbl">${escapeHtml(String(d.label))}</text>` +
       `<rect x="${labelW}" y="1" width="${w.toFixed(1)}" height="${barH - 2}" rx="3" fill="${PALETTE[i % PALETTE.length]}"/>` +
-      `<text x="${(labelW + w + 5).toFixed(1)}" y="${barH / 2}" dy="0.35em" class="s-val">${d.value.toLocaleString()}</text></g>`;
+      `<text x="${(labelW + w + 5).toFixed(1)}" y="${barH / 2}" dy="0.35em" class="s-val">${escapeHtml(fmt(d.value))}</text></g>`;
     y += barH + gap;
   });
   return `<svg viewBox="0 0 ${width} ${h}" class="s-svg" preserveAspectRatio="xMinYMin meet">${out}</svg>`;
@@ -990,59 +1014,107 @@ function svgDonut(segments, size = 150) {
 const statCard = (v, l) => `<div class="stat-card"><div class="s-num">${v}</div><div class="s-cap">${escapeHtml(l)}</div></div>`;
 const statPanel = (title, body) => `<div class="stat-panel"><h3>${escapeHtml(title)}</h3>${body}</div>`;
 
+const usd = (v) => "$" + Math.round(v).toLocaleString();
+const yr2 = (y) => `'${String(y).slice(2)}`;
+const yearOf = (iso) => (typeof iso === "string" && /^\d{4}/.test(iso) ? +iso.slice(0, 4) : null);
+const bucketize = (data, buckets, val) => buckets.map(([label, lo, hi]) => ({ label, value: data.filter((r) => { const v = val(r); return v != null && v >= lo && v < hi; }).length }));
+
 function renderStats() {
   const rows = (DATA.sheets.completed || { rows: [] }).rows;
+  const games = ((DATA.sheets.games || {}).rows) || [];
   const host = $("#stats");
-  if (!rows.length) { host.innerHTML = `<div class="s-empty">No completed games.</div>`; return; }
+  if (!rows.length && !games.length) { host.innerHTML = `<div class="s-empty">No data.</div>`; return; }
 
+  // --- completed ---
   const hours = rows.reduce((a, r) => a + (r.playTime || 0), 0);
   const rated = rows.filter((r) => r.rating != null);
   const avg = rated.length ? rated.reduce((a, r) => a + r.rating, 0) / rated.length : null;
-  const years = rows.map((r) => (typeof r.date === "string" && /^\d{4}/.test(r.date) ? +r.date.slice(0, 4) : null)).filter(Boolean);
+  const critRated = rows.filter((r) => r.criticScore != null);
+  const avgCrit = critRated.length ? critRated.reduce((a, r) => a + r.criticScore, 0) / critRated.length : null;
+  const years = rows.map((r) => yearOf(r.date)).filter(Boolean);
   const curYear = years.length ? Math.max(...years) : 0;
   const thisYear = years.filter((y) => y === curYear).length;
-
   const byYear = countBy(years);
-  const yearData = [...byYear.keys()].sort((a, b) => a - b).map((y) => ({ label: `'${String(y).slice(2)}`, value: byYear.get(y) }));
+  const yearData = [...byYear.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: byYear.get(y) }));
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const bm = new Array(12).fill(0);
+  rows.forEach((r) => { if (typeof r.date === "string" && /^\d{4}-\d{2}/.test(r.date)) bm[+r.date.slice(5, 7) - 1]++; });
+  const monthData = MONTHS.map((m, i) => ({ label: m, value: bm[i] }));
   const decades = countBy(rows.map((r) => (r.releaseYear && /^\d/.test(String(r.releaseYear)) ? Math.floor(+r.releaseYear / 10) * 10 : null)));
   const decadeData = [...decades.keys()].sort((a, b) => a - b).map((d) => ({ label: `${d}s`, value: decades.get(d) }));
-  const RB = [["90–100", .9, 1.01], ["80–89", .8, .9], ["70–79", .7, .8], ["60–69", .6, .7], ["< 60", -1, .6]];
-  const ratingData = RB.map(([label, lo, hi]) => ({ label, value: rows.filter((r) => r.rating != null && r.rating >= lo && r.rating < hi).length }));
+  const ratingData = bucketize(rows, [["90–100", .9, 1.01], ["80–89", .8, .9], ["70–79", .7, .8], ["60–69", .6, .7], ["< 60", -1, .6]], (r) => r.rating);
+  const longest = rows.filter((r) => r.playTime).sort((a, b) => b.playTime - a.playTime).slice(0, 10).map((r) => ({ label: r.game, value: Math.round(r.playTime) }));
+  const gaps = rows.filter((r) => r.criticScore != null && r.rating != null).map((r) => ({ label: r.game, value: Math.round((r.rating - r.criticScore) * 100) }))
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
   const flags = [
     { label: "Steam Deck", value: rows.filter((r) => r.steamDeck).length },
     { label: "Emulated", value: rows.filter((r) => r.emulated).length },
     { label: "VR", value: rows.filter((r) => r.vr).length },
   ];
-  // Backlog stats (from the games sheet) — inspired by the picker's selectors.
-  const games = ((DATA.sheets.games || {}).rows) || [];
+
+  // --- backlog ---
   const backlog = games.filter((r) => !r.completed);
   const backlogHours = backlog.reduce((a, r) => a + (playtimeOf(r) || 0), 0);
   const complPct = games.length ? Math.round(100 * games.filter((r) => r.completed).length / games.length) : 0;
+  const backlogTime = bucketize(backlog, [["< 2h", -1, 2], ["2–5h", 2, 5], ["5–10h", 5, 10], ["10–20h", 10, 20], ["20–40h", 20, 40], ["40h+", 40, 1e9]], playtimeOf);
 
+  // --- purchases & value ---
+  const purchases = games.filter((r) => r.purchasePrice != null && yearOf(r.datePurchased));
+  const spendMap = new Map(), boughtMap = new Map();
+  purchases.forEach((r) => { const y = yearOf(r.datePurchased); spendMap.set(y, (spendMap.get(y) || 0) + r.purchasePrice); boughtMap.set(y, (boughtMap.get(y) || 0) + 1); });
+  const spendData = [...spendMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: spendMap.get(y) }));
+  const boughtData = [...boughtMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: boughtMap.get(y) }));
+  const totalSpent = purchases.reduce((a, r) => a + r.purchasePrice, 0);
+  const dayGaps = games.filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
+    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5).filter((d) => d >= 0);
+  const avgGapMo = dayGaps.length ? Math.round(dayGaps.reduce((a, b) => a + b, 0) / dayGaps.length / 30) : null;
+  const ownedPhys = games.filter((r) => r.owned && (r.format || "").toLowerCase() === "physical");
+  const valued = ownedPhys.map((r) => ({ r, v: collectionValueOf(r) })).filter((x) => x.v != null);
+  const collectionVal = valued.reduce((a, x) => a + x.v, 0);
+  const topValue = valued.sort((a, b) => b.v - a.v).slice(0, 10).map((x) => ({ label: x.r.title, value: x.v }));
+
+  const sect = (title, panels) => `<h2 class="stat-sec">${title}</h2><div class="stat-grid">${panels.join("")}</div>`;
   host.innerHTML =
     `<div class="stat-cards">
-      ${statCard(rows.length.toLocaleString(), "Games completed")}
+      ${statCard(rows.length.toLocaleString(), "Completed")}
       ${statCard(Math.round(hours).toLocaleString() + "h", "Hours played")}
       ${statCard(avg != null ? Math.round(avg * 100) + "%" : "—", "Avg rating")}
-      ${statCard(thisYear.toLocaleString(), "Completed in " + (curYear || "—"))}
-      ${statCard(countBy(rows.map((r) => r.platform)).size, "Platforms")}
-      ${statCard(countBy(rows.map((r) => r.franchise)).size, "Franchises")}
+      ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics")}
+      ${statCard(thisYear.toLocaleString(), "Done in " + (curYear || "—"))}
       ${statCard(backlog.length.toLocaleString(), "In backlog")}
       ${statCard(Math.round(backlogHours).toLocaleString() + "h", "Backlog hours")}
-      ${statCard(complPct + "%", "Library completed")}
-    </div>
-    <div class="stat-grid">
-      ${statPanel("Completions per year", svgBarsV(yearData))}
-      ${statPanel("Backlog by platform", svgBarsH(topCounts(backlog.map((r) => r.platform), 10)))}
-      ${statPanel("By release decade", svgBarsV(decadeData, 360, 170, PALETTE[4]))}
-      ${statPanel("Top platforms", svgBarsH(topCounts(rows.map((r) => r.platform), 10)))}
-      ${statPanel("Top genres", svgBarsH(topCounts(rows.map((r) => r.genre), 12)))}
-      ${statPanel("Top franchises", svgBarsH(topCounts(rows.map((r) => r.franchise), 10)))}
-      ${statPanel("Top developers", svgBarsH(topCounts(rows.map((r) => r.developer), 10)))}
-      ${statPanel("Rating distribution", svgBarsH(ratingData))}
-      ${statPanel("By region", svgDonut(topCounts(rows.map((r) => r.region), 8)))}
-      ${statPanel("How I played", svgBarsH(flags))}
-    </div>`;
+      ${statCard(complPct + "%", "Library done")}
+      ${statCard(usd(totalSpent), "Total spent")}
+      ${statCard(usd(collectionVal), "Collection value")}
+      ${statCard(avgGapMo != null ? avgGapMo + " mo" : "—", "Avg buy→finish")}
+    </div>` +
+    sect("Completed games", [
+      statPanel("Completions per year", svgBarsV(yearData)),
+      statPanel("Completions by month", svgBarsV(monthData, 360, 170, PALETTE[1])),
+      statPanel("By release decade", svgBarsV(decadeData, 360, 170, PALETTE[4])),
+      statPanel("Top platforms", svgBarsH(topCounts(rows.map((r) => r.platform), 10))),
+      statPanel("Top genres", svgBarsH(topCounts(rows.map((r) => r.genre), 12))),
+      statPanel("Top franchises", svgBarsH(topCounts(rows.map((r) => r.franchise), 10))),
+      statPanel("Top developers", svgBarsH(topCounts(rows.map((r) => r.developer), 10))),
+      statPanel("Top publishers", svgBarsH(topCounts(rows.map((r) => r.publisher), 10))),
+      statPanel("Rating distribution", svgBarsH(ratingData)),
+      statPanel("By region", svgDonut(topCounts(rows.map((r) => r.region), 8))),
+      statPanel("How I played", svgBarsH(flags)),
+      statPanel("Longest playthroughs", svgBarsH(longest, 340, 20, 7, (v) => v + "h")),
+      statPanel("Biggest me-vs-critic gaps", svgBarsH(gaps, 340, 20, 7, (v) => (v > 0 ? "+" : "") + v)),
+    ]) +
+    sect("Backlog", [
+      statPanel("Backlog by platform", svgBarsH(topCounts(backlog.map((r) => r.platform), 10))),
+      statPanel("Backlog by genre", svgBarsH(topCounts(backlog.map((r) => r.genre), 12))),
+      statPanel("Backlog by length", svgBarsH(backlogTime)),
+      statPanel("Backlog by status", svgDonut(topCounts(backlog.map((r) => r.playingStatus), 6))),
+    ]) +
+    sect("Purchases & collection", [
+      statPanel("Spending per year", svgBarsV(spendData.map((d) => ({ label: d.label, value: Math.round(d.value) })), 360, 170, PALETTE[3])),
+      statPanel("Games bought per year", svgBarsV(boughtData, 360, 170, PALETTE[5])),
+      statPanel("Most valuable owned", svgBarsH(topValue, 340, 20, 7, usd)),
+      statPanel("Purchases by platform", svgBarsH(topCounts(purchases.map((r) => r.platform), 10))),
+    ]);
 }
 
 // ---- "Pick my next game" ------------------------------------------------
@@ -1131,7 +1203,7 @@ function renderPicker() {
   $("#pickBtn").onclick = () => { pickGame(); nav(); };
   const card = host.querySelector(".pick-card");
   if (card) {
-    card.onclick = () => openDrawer(pickState.picked);
+    card.onclick = () => openDrawer(pickState.picked, "games");
     $("#pickReroll").onclick = (e) => { e.stopPropagation(); pickGame(); nav(); };
   }
 }
@@ -1193,6 +1265,12 @@ $("#gridsortdir").addEventListener("click", () => {
 });
 $("#drawerClose").addEventListener("click", closeDrawer);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });
+$("#drawerBody").addEventListener("click", (e) => {
+  const a = e.target.closest(".facet-link");
+  if (!a) return;
+  e.preventDefault(); e.stopPropagation();
+  applyDrawerFacet(a.dataset.fk, a.dataset.fv);
+});
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
 function showToast(msg) {
