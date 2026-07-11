@@ -189,13 +189,62 @@ function detailHtml(d) {
     ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
         `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
   const text = d.summary || d.storyline;
-  return `<div class="igdb-head">${cover}<div class="igdb-side">${badge ? `<div class="badges">${badge}</div>` : ""}${rating}
-       ${chips(d.genres, "__igdb_genre")}
-       ${chips(d.themes, "__igdb_theme")}
-       ${chips(d.gameModes, "__igdb_mode")}</div></div>` +
+  // The cover, score and chips live in the hero now — this is just the prose.
+  return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
     meta.join("") + shots + simHtml +
     igdbAttr(d);
+}
+
+// ---- cinematic hero ------------------------------------------------------
+// A screenshot, blurred and dimmed, sits behind the cover and title; the numbers
+// that matter become a stat strip. Built from the light enrichment immediately,
+// then upgraded in place when the full detail lands.
+function heroStatsHtml(row) {
+  const e = ENRICH[row._k] || {};
+  const pct = (v) => `${Math.round(v * 100)}`;
+  const cells = [];
+  const mine = row.rating != null ? row.rating : null;
+  if (mine != null) cells.push([pct(mine), "My rating", ratingClass(mine)]);
+  const mc = metacriticOf(row);
+  if (mc != null) cells.push([pct(mc), "Critics", ratingClass(mc)]);
+  const ur = userRatingOf(row);
+  if (ur != null) cells.push([pct(ur), "Players", ratingClass(ur)]);
+  const pt = playtimeOf(row);
+  if (pt != null) cells.push([fmtHours(pt), e.hltbBest != null ? "HowLongToBeat" : "Est. playtime", ""]);
+  const units = salesOf(row);
+  if (units != null) cells.push([fmtUnits(units), "Units sold", ""]);
+  const cv = collectionValueOf(row);
+  if (cv != null) cells.push(["$" + cv.toFixed(0), "Value", ""]);
+  if (!cells.length) return "";
+  return `<div class="hero-stats">` + cells.slice(0, 6).map(([v, l, cls]) =>
+    `<div class="hero-stat"><b class="${cls}">${escapeHtml(String(v))}</b><span>${escapeHtml(l)}</span></div>`).join("") + `</div>`;
+}
+
+function heroHtml(row, titleText) {
+  const cs = coverSrc(ENRICH[row._k], "cover_big");
+  const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
+  const cover = cs
+    ? `<img class="cover-big${pixel}" id="heroCover" src="${escapeHtml(cs)}" alt="">`
+    : `<div class="cover-big skel" id="heroCover"></div>`;
+  const bits = [row.platform, row.releaseYear || row.releaseDate || row.release, row.genre]
+    .filter((x) => x != null && x !== "")
+    .map((x) => `<span class="pill facet-link" data-fk="${x === row.platform ? "platform" : x === row.genre ? "genre" : "releaseYear"}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`);
+  return `<div class="hero" id="drawerHero">
+    <div class="hero-bg" id="heroBg"></div>
+    <div class="hero-inner">
+      ${cover}
+      <div class="hero-txt">
+        <h2>${titleText}</h2>
+        <div class="subtitle">${bits.join("")}</div>
+      </div>
+    </div>
+    <!-- Chips sit BELOW the cover+title row, not inside the text column: on a
+         narrow screen they made that column taller than the cover, and the
+         bottom-aligned cover then slid down past the title. -->
+    <div id="heroChips"></div>
+    ${heroStatsHtml(row)}
+  </div>`;
 }
 
 function igdbAttr(d) {
@@ -396,24 +445,45 @@ function thumbyHtml(key) {
 }
 
 // Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
+// Push the full detail up into the hero: a screenshot becomes the backdrop, the
+// cover sharpens, the IGDB score and chips appear.
+function fillHero(detail) {
+  const bg = $("#heroBg"), coverEl = $("#heroCover"), chipsEl = $("#heroChips");
+  if (!detail) return;
+  const shot = (detail.screenshots || [])[0];
+  if (bg && shot) {
+    bg.style.backgroundImage = `url("${IMG(shot, "screenshot_med")}")`;
+    bg.classList.add("on");
+  }
+  const cs = coverSrc(detail, "cover_big");
+  if (coverEl && cs && coverEl.tagName !== "IMG") {
+    const img = document.createElement("img");
+    img.className = "cover-big"; img.id = "heroCover"; img.alt = ""; img.src = cs;
+    coverEl.replaceWith(img);
+  }
+  if (chipsEl) {
+    const rating = detail.rating != null
+      ? `<span class="chip score ${ratingClass(detail.rating)}">★ ${Math.round(detail.rating * 100)} IGDB</span>` : "";
+    chipsEl.innerHTML = rating
+      + chips(detail.genres, "__igdb_genre") + chips(detail.themes, "__igdb_theme")
+      + chips(detail.gameModes, "__igdb_mode");
+  }
+}
+
 function renderIgdbSection(key, el, status, detail) {
   let content;
-  if (status === "matched" && detail) content = detailHtml(detail);
+  if (status === "matched" && detail) { content = detailHtml(detail); fillHero(detail); }
   else if (status === "no_match") content = `<div class="igdb-loading muted">No IGDB match for this title.</div>`;
   else {
-    // Loading / pending / error — show the real cover if the light data already
-    // has one, otherwise shimmer. Never a bare "Loading" line.
-    const cs = coverSrc(ENRICH[key], "cover_big");
+    // Loading / pending / error. The hero already carries the cover and title,
+    // so this is only the prose area — shimmer lines, never a bare "Loading".
     const msg = status === "pending-final" ? "Metadata still resolving — reopen shortly."
       : status === "error" ? "Couldn’t load extra details." : "";
-    content = `<div class="igdb-head">` +
-      (cs ? `<img class="cover-big" src="${cs}" alt="">` : `<div class="cover-big skel"></div>`) +
-      `<div class="igdb-side">` +
-      (msg ? `<div class="igdb-loading muted">${msg}</div>`
-           : `<div class="skel skel-line" style="height:24px;width:65%"></div>
-              <div class="skel skel-line"></div><div class="skel skel-line"></div>
-              <div class="skel skel-line short"></div>`) +
-      `</div></div>`;
+    content = msg
+      ? `<div class="igdb-loading muted">${msg}</div>`
+      : `<div class="skel skel-line" style="height:18px;width:40%"></div>
+         <div class="skel skel-line"></div><div class="skel skel-line"></div>
+         <div class="skel skel-line short"></div>`;
   }
   el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + arcadeHtml(key) + vndbHtml(key)
     + thumbyHtml(key) + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
@@ -949,7 +1019,16 @@ function renderTable(rows) {
   $("#gridwrap").hidden = viewMode !== "grid";
   $("#gridsortwrap").hidden = false;    // sort control in both views (reaches
   populateGridSort();                   // non-primary columns like Date Added)
-  if (viewMode === "grid") renderGrid(pageRows);
+  if (!sorted.length) {
+    const filtered = st.search || Object.keys(st.facets).length;
+    const host = viewMode === "grid" ? $("#grid") : $("#tbody");
+    host.innerHTML = viewMode === "grid"
+      ? emptyState("No games match", filtered ? "Try loosening a filter or clearing the search." : "Nothing here yet.", filtered ? "Clear filters" : null)
+      : `<tr><td colspan="99">${emptyState("No games match", "Try loosening a filter.", null)}</td></tr>`;
+    if (viewMode === "grid") $("#thead").innerHTML = "";
+    const act = $("#emptyAction");
+    if (act) act.onclick = () => { st.search = ""; st.facets = {}; st.page = 1; $("#search").value = ""; renderAll(); nav(); };
+  } else if (viewMode === "grid") renderGrid(pageRows);
   else renderTableView(pageRows);
 
   maybeEnrich(pageRows);
@@ -1042,14 +1121,22 @@ function cardBodyHtml(row) {
   const mc = metacriticOf(row);
   const meta = mc != null
     ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
+  // Title + platform/year always visible on the scrim; the rest (playtime,
+  // value, sales, sorted-by field, collection badge) unfurls on hover.
+  const head = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
+  const extra = parts.slice(head.length);
   return `${meta}${rating}<div class="card-title" title="${title}">${title}</div>` +
-    `<div class="card-sub">${parts.join(" · ")}</div>${collectionBadgeHtml(row)}${sortValueHtml(row)}`;
+    `<div class="card-sub">${head.join(" · ")}</div>` +
+    `<div class="card-extra"><div>` +
+      (extra.length ? `<div class="card-sub">${extra.join(" · ")}</div>` : "") +
+      collectionBadgeHtml(row) + sortValueHtml(row) +
+    `</div></div>`;
 }
 
 function renderGrid(pageRows) {
   const grid = $("#grid");
   grid.innerHTML = "";
-  for (const row of pageRows) {
+  pageRows.forEach((row, i) => {
     const cs = coverSrc(ENRICH[row._k], "cover_big");
     const pend = coverPending(row);
     const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
@@ -1057,6 +1144,7 @@ function renderGrid(pageRows) {
       ? `<img class="card-cover${pixel}" loading="lazy" src="${cs}" alt="">`
       : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : "🎮"}</div>`;
     const card = document.createElement("div");
+    card.style.setProperty("--i", Math.min(i, 24) * 22 + "ms");   // fan-in stagger
     // A part-finished collection is yellow, and that beats the green "done"
     // ring — the compilation itself isn't finished even on the Completed tab.
     const cstat = collectionStatus(row);
@@ -1067,7 +1155,7 @@ function renderGrid(pageRows) {
     card.innerHTML = `${cover}<div class="card-body">${cardBodyHtml(row)}</div>`;
     card.onclick = () => openDrawer(row);
     grid.appendChild(card);
-  }
+  });
 }
 
 // Enrichment arrived: update covers/badges IN PLACE. A full re-render would
@@ -1120,23 +1208,49 @@ function renderPager(pages) {
   const el = $("#pager");
   el.innerHTML = "";
   if (pages <= 1) return;
-  const mk = (label, page, disabled) => {
+  const go = (page) => {
+    st.page = Math.min(pages, Math.max(1, page));
+    renderTable(currentFiltered);
+    $("#tablewrap").scrollTop = 0; $("#gridwrap").scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    nav();
+  };
+  const mk = (label, page, disabled, title) => {
     const b = document.createElement("button");
     b.textContent = label;
     b.disabled = disabled;
-    b.onclick = () => {
-      st.page = page; renderTable(currentFiltered);
-      $("#tablewrap").scrollTop = 0; $("#gridwrap").scrollTop = 0;
-      nav();
-    };
+    if (title) b.title = title;
+    b.onclick = () => go(page);
     return b;
   };
+  el.appendChild(mk("«", 1, st.page <= 1, "First page"));
   el.appendChild(mk("‹ Prev", st.page - 1, st.page <= 1));
-  const info = document.createElement("span");
-  info.className = "page-info";
-  info.textContent = `Page ${st.page} of ${pages}`;
-  el.appendChild(info);
+
+  // Jump straight to a page — at 295 pages, paging one at a time is useless.
+  const jump = document.createElement("span");
+  jump.className = "page-jump";
+  jump.innerHTML = `Page <input type="number" min="1" max="${pages}" value="${st.page}" aria-label="Page number"> of ${pages.toLocaleString()}`;
+  const input = jump.querySelector("input");
+  const commit = () => {
+    const n = parseInt(input.value, 10);
+    if (isFinite(n) && n !== st.page) go(n); else input.value = String(st.page);
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } };
+  input.onblur = commit;
+  el.appendChild(jump);
+
   el.appendChild(mk("Next ›", st.page + 1, st.page >= pages));
+  el.appendChild(mk("»", pages, st.page >= pages, "Last page"));
+}
+
+// A real empty state beats an empty grid.
+function emptyState(title, hint, action) {
+  return `<div class="empty">
+    <div class="empty-art">🕹️</div>
+    <h3>${escapeHtml(title)}</h3>
+    <p>${escapeHtml(hint)}</p>
+    ${action ? `<button class="btn" id="emptyAction">${escapeHtml(action)}</button>` : ""}
+  </div>`;
 }
 
 // ---- detail drawer ------------------------------------------------------
@@ -1154,8 +1268,8 @@ function openDrawer(row, sheetKey) {
   const cols = (DATA.sheets[drawerSheet] || DATA.sheets.games).columns;
   const titleCol = cols[0];
   const body = $("#drawerBody");
-  const platform = row["platform"] ? `<span class="pill facet-link" data-fk="platform" data-fv="${escapeHtml(String(row.platform))}">${escapeHtml(String(row.platform))}</span>` : "";
-  let html = `<h2>${escapeHtml(String(row[titleCol.key] ?? "Untitled"))}</h2><div class="subtitle">${platform}</div>`;
+  const titleText = escapeHtml(String(row[titleCol.key] ?? "Untitled"));
+  let html = heroHtml(row, titleText);
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
   let raw = "";
@@ -1304,6 +1418,7 @@ async function load() {
   if (!payload) { $("#count").textContent = "Could not load data — is the Dropbox link set?"; return; }
   DATA = payload;
   resetCollections();
+  for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
   ENRICH_SOURCES = en && en.sources ? Object.keys(en.sources) : [];
@@ -1367,8 +1482,15 @@ function svgDonut(segments, size = 150) {
     `<div class="s-leg"><span style="background:${PALETTE[i % PALETTE.length]}"></span>${escapeHtml(String(s.label))} <b>${s.value}</b></div>`).join("");
   return `<div class="s-donut-wrap"><svg viewBox="0 0 ${size} ${size}" class="s-donut">${paths}</svg><div class="s-legend">${legend}</div></div>`;
 }
-const statCard = (v, l) => `<div class="stat-card"><div class="s-num">${v}</div><div class="s-cap">${escapeHtml(l)}</div></div>`;
-const statPanel = (title, body) => `<div class="stat-panel"><h3>${escapeHtml(title)}</h3>${body}</div>`;
+// A numeric value counts up on scroll-in (data-n); anything else renders as-is.
+const statCard = (v, l, pre = "", post = "") => {
+  const num = typeof v === "number" && isFinite(v);
+  const body = num
+    ? `<div class="s-num" data-n="${v}" data-pre="${escapeHtml(pre)}" data-post="${escapeHtml(post)}">${escapeHtml(pre)}0${escapeHtml(post)}</div>`
+    : `<div class="s-num">${v == null ? "—" : escapeHtml(String(v))}</div>`;
+  return `<div class="stat-card">${body}<div class="s-cap">${escapeHtml(l)}</div></div>`;
+};
+const statPanel = (title, body, cls = "") => `<div class="stat-panel ${cls}"><h3>${escapeHtml(title)}</h3>${body}</div>`;
 
 const usd = (v) => "$" + Math.round(v).toLocaleString();
 const yr2 = (y) => `'${String(y).slice(2)}`;
@@ -1379,7 +1501,12 @@ function renderStats() {
   const rows = (DATA.sheets.completed || { rows: [] }).rows;
   const games = ((DATA.sheets.games || {}).rows) || [];
   const host = $("#stats");
-  if (!rows.length && !games.length) { host.innerHTML = `<div class="s-empty">No data.</div>`; return; }
+  if (!rows.length && !games.length) { host.innerHTML = emptyState("No data yet", "The spreadsheet hasn’t loaded."); return; }
+  resetChartLinks();
+
+  // Counts of a field, as bars that filter that tab when clicked.
+  const countBars = (src, field, n, tab) =>
+    topCounts(src.map((r) => r[field]), n).map((d) => ({ ...d, link: facetLink(tab, field, d.label) }));
 
   // --- completed ---
   const hours = rows.reduce((a, r) => a + (r.playTime || 0), 0);
@@ -1399,9 +1526,15 @@ function renderStats() {
   const decades = countBy(rows.map((r) => (r.releaseYear && /^\d/.test(String(r.releaseYear)) ? Math.floor(+r.releaseYear / 10) * 10 : null)));
   const decadeData = [...decades.keys()].sort((a, b) => a - b).map((d) => ({ label: `${d}s`, value: decades.get(d) }));
   const ratingData = bucketize(rows, [["90–100", .9, 1.01], ["80–89", .8, .9], ["70–79", .7, .8], ["60–69", .6, .7], ["< 60", -1, .6]], (r) => r.rating);
-  const longest = rows.filter((r) => r.playTime).sort((a, b) => b.playTime - a.playTime).slice(0, 10).map((r) => ({ label: r.game, value: Math.round(r.playTime) }));
-  const gaps = rows.filter((r) => r.criticScore != null && r.rating != null).map((r) => ({ label: r.game, value: Math.round((r.rating - r.criticScore) * 100) }))
+
+  // Game-level charts link straight to the game.
+  const longest = rows.filter((r) => r.playTime).sort((a, b) => b.playTime - a.playTime).slice(0, 10)
+    .map((r) => ({ label: r.game, value: Math.round(r.playTime), link: gameLink(r, "completed") }));
+  const gaps = rows.filter((r) => r.criticScore != null && r.rating != null)
+    .map((r) => ({ label: r.game, value: Math.round((r.rating - r.criticScore) * 100), link: gameLink(r, "completed") }))
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
+  const best = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 10)
+    .map((r) => ({ label: r.game, value: Math.round(r.rating * 100), link: gameLink(r, "completed") }));
   const flags = [
     { label: "Steam Deck", value: rows.filter((r) => r.steamDeck).length },
     { label: "Emulated", value: rows.filter((r) => r.emulated).length },
@@ -1418,7 +1551,7 @@ function renderStats() {
   const purchases = games.filter((r) => r.purchasePrice != null && yearOf(r.datePurchased));
   const spendMap = new Map(), boughtMap = new Map();
   purchases.forEach((r) => { const y = yearOf(r.datePurchased); spendMap.set(y, (spendMap.get(y) || 0) + r.purchasePrice); boughtMap.set(y, (boughtMap.get(y) || 0) + 1); });
-  const spendData = [...spendMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: spendMap.get(y) }));
+  const spendData = [...spendMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: Math.round(spendMap.get(y)) }));
   const boughtData = [...boughtMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: boughtMap.get(y) }));
   const totalSpent = purchases.reduce((a, r) => a + r.purchasePrice, 0);
   const dayGaps = games.filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
@@ -1427,50 +1560,57 @@ function renderStats() {
   const ownedPhys = games.filter((r) => r.owned && (r.format || "").toLowerCase() === "physical");
   const valued = ownedPhys.map((r) => ({ r, v: collectionValueOf(r) })).filter((x) => x.v != null);
   const collectionVal = valued.reduce((a, x) => a + x.v, 0);
-  const topValue = valued.sort((a, b) => b.v - a.v).slice(0, 10).map((x) => ({ label: x.r.title, value: x.v }));
+  const topValue = valued.sort((a, b) => b.v - a.v).slice(0, 10)
+    .map((x) => ({ label: x.r.title, value: Math.round(x.v), link: gameLink(x.r, "games") }));
+  const topSales = games.map((r) => ({ r, v: salesOf(r) })).filter((x) => x.v != null)
+    .sort((a, b) => b.v - a.v).slice(0, 10)
+    .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
 
   const sect = (title, panels) => `<h2 class="stat-sec">${title}</h2><div class="stat-grid">${panels.join("")}</div>`;
   host.innerHTML =
     `<div class="stat-cards">
-      ${statCard(rows.length.toLocaleString(), "Completed")}
-      ${statCard(Math.round(hours).toLocaleString() + "h", "Hours played")}
-      ${statCard(avg != null ? Math.round(avg * 100) + "%" : "—", "Avg rating")}
+      ${statCard(rows.length, "Completed")}
+      ${statCard(Math.round(hours), "Hours played", "", "h")}
+      ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%")}
       ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics")}
-      ${statCard(thisYear.toLocaleString(), "Done in " + (curYear || "—"))}
-      ${statCard(backlog.length.toLocaleString(), "In backlog")}
-      ${statCard(Math.round(backlogHours).toLocaleString() + "h", "Backlog hours")}
-      ${statCard(complPct + "%", "Library done")}
-      ${statCard(usd(totalSpent), "Total spent")}
-      ${statCard(usd(collectionVal), "Collection value")}
-      ${statCard(avgGapMo != null ? avgGapMo + " mo" : "—", "Avg buy→finish")}
+      ${statCard(thisYear, "Done in " + (curYear || "—"))}
+      ${statCard(backlog.length, "In backlog")}
+      ${statCard(Math.round(backlogHours), "Backlog hours", "", "h")}
+      ${statCard(complPct, "Library done", "", "%")}
+      ${statCard(Math.round(totalSpent), "Total spent", "$")}
+      ${statCard(Math.round(collectionVal), "Collection value", "$")}
+      ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo")}
     </div>` +
     sect("Completed games", [
-      statPanel("Completions per year", svgBarsV(yearData)),
-      statPanel("Completions by month", svgBarsV(monthData, 360, 170, PALETTE[1])),
-      statPanel("By release decade", svgBarsV(decadeData, 360, 170, PALETTE[4])),
-      statPanel("Top platforms", svgBarsH(topCounts(rows.map((r) => r.platform), 10))),
-      statPanel("Top genres", svgBarsH(topCounts(rows.map((r) => r.genre), 12))),
-      statPanel("Top franchises", svgBarsH(topCounts(rows.map((r) => r.franchise), 10))),
-      statPanel("Top developers", svgBarsH(topCounts(rows.map((r) => r.developer), 10))),
-      statPanel("Top publishers", svgBarsH(topCounts(rows.map((r) => r.publisher), 10))),
-      statPanel("Rating distribution", svgBarsH(ratingData)),
-      statPanel("By region", svgDonut(topCounts(rows.map((r) => r.region), 8))),
-      statPanel("How I played", svgBarsH(flags)),
-      statPanel("Longest playthroughs", svgBarsH(longest, 340, 20, 7, (v) => v + "h")),
-      statPanel("Biggest me-vs-critic gaps", svgBarsH(gaps, 340, 20, 7, (v) => (v > 0 ? "+" : "") + v)),
+      statPanel("Completions per year", barsV(yearData), "wide"),
+      statPanel("Completions by month", barsV(monthData, { color: 1 })),
+      statPanel("By release decade", barsV(decadeData, { color: 4 })),
+      statPanel("Highest rated", barsH(best, { fmt: (v) => v + "%" })),
+      statPanel("Top platforms", barsH(countBars(rows, "platform", 10, "completed"))),
+      statPanel("Top genres", barsH(countBars(rows, "genre", 12, "completed"))),
+      statPanel("Top franchises", barsH(countBars(rows, "franchise", 10, "completed"))),
+      statPanel("Top developers", barsH(countBars(rows, "developer", 10, "completed"))),
+      statPanel("Top publishers", barsH(countBars(rows, "publisher", 10, "completed"))),
+      statPanel("Rating distribution", barsH(ratingData)),
+      statPanel("By region", donut(countBars(rows, "region", 8, "completed"))),
+      statPanel("How I played", barsH(flags)),
+      statPanel("Longest playthroughs", barsH(longest, { fmt: (v) => v + "h" })),
+      statPanel("Biggest me-vs-critic gaps", barsH(gaps, { fmt: (v) => (v > 0 ? "+" : "") + v })),
     ]) +
     sect("Backlog", [
-      statPanel("Backlog by platform", svgBarsH(topCounts(backlog.map((r) => r.platform), 10))),
-      statPanel("Backlog by genre", svgBarsH(topCounts(backlog.map((r) => r.genre), 12))),
-      statPanel("Backlog by length", svgBarsH(backlogTime)),
-      statPanel("Backlog by status", svgDonut(topCounts(backlog.map((r) => r.playingStatus), 6))),
+      statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),
+      statPanel("Backlog by genre", barsH(countBars(backlog, "genre", 12, "games"))),
+      statPanel("Backlog by length", barsH(backlogTime)),
+      statPanel("Backlog by status", donut(countBars(backlog, "playingStatus", 6, "games"))),
     ]) +
     sect("Purchases & collection", [
-      statPanel("Spending per year", svgBarsV(spendData.map((d) => ({ label: d.label, value: Math.round(d.value) })), 360, 170, PALETTE[3])),
-      statPanel("Games bought per year", svgBarsV(boughtData, 360, 170, PALETTE[5])),
-      statPanel("Most valuable owned", svgBarsH(topValue, 340, 20, 7, usd)),
-      statPanel("Purchases by platform", svgBarsH(topCounts(purchases.map((r) => r.platform), 10))),
+      statPanel("Spending per year", barsV(spendData, { color: 3, fmt: usd }), "wide"),
+      statPanel("Games bought per year", barsV(boughtData, { color: 5 })),
+      statPanel("Most valuable owned", barsH(topValue, { fmt: usd })),
+      statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
+      statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
     ]);
+  wireCharts(host);
 }
 
 // ---- "Pick my next game" ------------------------------------------------
@@ -1670,6 +1810,156 @@ $("#sheetBody").addEventListener("click", (e) => {
   if (e.target.closest(".viewtoggle, .dirbtn")) setSheet(false);
 });
 
+// ---- theme ---------------------------------------------------------------
+// An explicit choice wins and persists; otherwise follow the OS.
+const THEME_KEY = "gamedex.theme";
+// data-theme is ALWAYS set explicitly. Leaving it off means "dark" to the CSS
+// but "whatever the OS says" to JS, and the two disagree the moment the OS
+// prefers light — the toggle then computes light→dark and appears to do nothing.
+function currentTheme() {
+  return localStorage.getItem(THEME_KEY)
+    || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  $("#theme").textContent = t === "dark" ? "☀" : "☾";
+  $("#theme").title = t === "dark" ? "Switch to light" : "Switch to dark";
+}
+applyTheme(currentTheme());
+$("#theme").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+  if (activeTab === "stats") renderStats();     // recolour the charts' text
+});
+
+// ---- command palette (⌘K / Ctrl-K) ---------------------------------------
+// 14.7k games is too many to browse to. Type a few letters, hit enter.
+const cmdk = { open: false, sel: 0, results: [] };
+
+function cmdkCandidates(q) {
+  const out = [];
+  const needle = q.toLowerCase().trim();
+  if (!needle) {
+    return [
+      { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
+      { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
+      { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
+      { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
+      { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
+      { kind: "Tab", label: "🎯 Challenges", run: () => switchTab("challenges") },
+    ];
+  }
+  // Tabs
+  const tabs = [["games", "🎮 All Games"], ["completed", "🏆 Completed"], ["onOrder", "📦 On Order"],
+                ["stats", "📊 Stats"], ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"]];
+  for (const [id, label] of tabs) {
+    if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
+  }
+  // Games — prefix matches first, then substring. Capped, so typing stays fast.
+  const rows = (DATA.sheets.games || {}).rows || [];
+  const pre = [], sub = [];
+  for (const r of rows) {
+    const t = String(r.title || "").toLowerCase();
+    if (!t) continue;
+    const i = t.indexOf(needle);
+    if (i === 0) pre.push(r);
+    else if (i > 0) sub.push(r);
+    if (pre.length >= 30) break;
+  }
+  for (const r of [...pre, ...sub].slice(0, 24)) {
+    out.push({
+      kind: "Game", label: String(r.title), sub: [r.platform, r.releaseYear].filter(Boolean).join(" · "),
+      row: r, run: () => { switchTab("games"); openDrawer(r, "games"); },
+    });
+  }
+  // Facet values on the current tab (platform / genre / franchise / …)
+  for (const f of cmdkFacetIndex()) {
+    if (out.length > 40) break;
+    if (!f.lower.includes(needle)) continue;
+    out.push({
+      kind: f.label, label: f.val,
+      run: () => {
+        const st = tabState[activeTab];
+        st.facets[f.key] = new Set([f.val]);
+        st.page = 1;
+        renderAll(); nav();
+      },
+    });
+  }
+  return out.slice(0, 40);
+}
+
+// Distinct facet values for the active tab, computed once. Scanning 14.7k rows
+// on every keystroke would make the palette crawl.
+const _cmdkFacets = {};
+function cmdkFacetIndex() {
+  if (_cmdkFacets[activeTab]) return _cmdkFacets[activeTab];
+  const out = [];
+  const rows = (sheet() || { rows: [] }).rows || [];
+  for (const col of facetCols()) {
+    if (col.virtual) continue;
+    const seen = new Set();
+    for (const row of rows) {
+      for (const it of rowFacetItems(row, col)) {
+        if (seen.has(it.key)) continue;
+        seen.add(it.key);
+        out.push({ key: col.key, label: col.label, val: String(it.key), lower: String(it.key).toLowerCase() });
+      }
+    }
+  }
+  return (_cmdkFacets[activeTab] = out);
+}
+
+function cmdkRender() {
+  const host = $("#cmdkResults");
+  if (!cmdk.results.length) {
+    host.innerHTML = `<div class="cmdk-none">No matches</div>`;
+    return;
+  }
+  host.innerHTML = cmdk.results.map((r, i) => {
+    const cover = r.row ? coverSrc(ENRICH[r.row._k], "cover_small") : "";
+    const art = r.row
+      ? (cover ? `<img src="${escapeHtml(cover)}" alt="">` : `<span class="cmdk-ph">🎮</span>`)
+      : "";
+    return `<button class="cmdk-item${i === cmdk.sel ? " sel" : ""}" data-i="${i}">
+      ${art}<span class="cmdk-txt"><b>${escapeHtml(r.label)}</b>${r.sub ? `<span>${escapeHtml(r.sub)}</span>` : ""}</span>
+      <span class="cmdk-kind">${escapeHtml(r.kind)}</span></button>`;
+  }).join("");
+  const sel = host.querySelector(".cmdk-item.sel");
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+  host.querySelectorAll(".cmdk-item").forEach((el) => {
+    el.onclick = () => cmdkRun(+el.dataset.i);
+  });
+}
+function cmdkSearch() {
+  cmdk.results = DATA ? cmdkCandidates($("#cmdkInput").value) : [];
+  cmdk.sel = 0;
+  cmdkRender();
+}
+function cmdkRun(i) {
+  const r = cmdk.results[i];
+  setCmdk(false);
+  if (r) r.run();
+}
+function setCmdk(open) {
+  cmdk.open = open;
+  $("#cmdkOverlay").hidden = !open;
+  if (open) {
+    $("#cmdkInput").value = "";
+    cmdkSearch();
+    $("#cmdkInput").focus();
+  }
+}
+$("#cmdk").addEventListener("click", () => setCmdk(true));
+$("#cmdkOverlay").addEventListener("click", (e) => { if (e.target === $("#cmdkOverlay")) setCmdk(false); });
+$("#cmdkInput").addEventListener("input", cmdkSearch);
+$("#cmdkInput").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); cmdk.sel = Math.min(cmdk.results.length - 1, cmdk.sel + 1); cmdkRender(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); cmdk.sel = Math.max(0, cmdk.sel - 1); cmdkRender(); }
+  else if (e.key === "Enter") { e.preventDefault(); cmdkRun(cmdk.sel); }
+});
+
 // Wordmark = home: back to all games with nothing filtered/sorted.
 $("#brand").addEventListener("click", () => {
   for (const t of TABS) tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
@@ -1718,8 +2008,14 @@ document.addEventListener("keydown", (e) => {
     else if (e.key === "ArrowRight") lbShow(1);
     return;
   }
+  if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    setCmdk(!cmdk.open);
+    return;
+  }
   if (e.key !== "Escape") return;
-  if (!$("#sheet").hidden) setSheet(false);
+  if (cmdk.open) setCmdk(false);
+  else if (!$("#sheet").hidden) setSheet(false);
   else closeDrawer();
 });
 

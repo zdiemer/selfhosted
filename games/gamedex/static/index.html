@@ -15,6 +15,10 @@
     <button id="brand" class="brand" title="Back to all games (clears filters)" aria-label="Home">🎮 <span>Gamedex</span></button>
     <input id="search" type="search" placeholder="Search title, genre, publisher, notes…" autocomplete="off" />
     <div class="freshness" id="freshness"></div>
+    <button id="cmdk" class="kbdbtn" title="Search everything (Ctrl K)" aria-label="Command palette">
+      <span>⌘K</span>
+    </button>
+    <button id="theme" class="refreshbtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
     <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data">⟳</button>
   </header>
   <div class="progress" id="progress" hidden><div class="progress-bar" id="progressBar"></div></div>
@@ -101,7 +105,16 @@
 
   <div id="banner" class="banner" hidden></div>
 
+  <div class="cmdk" id="cmdkOverlay" hidden>
+    <div class="cmdk-box" role="dialog" aria-modal="true" aria-label="Command palette">
+      <input id="cmdkInput" type="text" placeholder="Jump to a game, tab or filter…" autocomplete="off" spellcheck="false" />
+      <div class="cmdk-results" id="cmdkResults"></div>
+      <div class="cmdk-foot"><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd> close</div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
+  <script src="charts.js"></script>
   <script src="collections.js"></script>
   <script src="challenges.js"></script>
 </body>
