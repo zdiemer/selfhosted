@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.9.0"
+  tag: "0.9.1"
   pullPolicy: IfNotPresent
 
 service:
@@ -39,10 +39,13 @@ igdb:
   metacritic: true
   # Fallback metadata for games IGDB doesn't match: IGN → GameSpot → Steam(PC).
   fallback: true
-  # GameSpot API key (values.local.yaml) — without it, only IGN + Steam run.
-  gamespotKey: ""
   # GameEye market values (Loose/CIB/New) for owned physical games only, 500/hr.
   gameye: true
+
+# GameSpot API key for the fallback chain (set apiKey in values.local.yaml).
+# Without it, only IGN + Steam fallbacks run.
+gamespot:
+  apiKey: ""
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:

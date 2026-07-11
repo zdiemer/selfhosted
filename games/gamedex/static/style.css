@@ -322,7 +322,8 @@ tbody tr:hover { background: var(--panel-2); }
   .facets { position: fixed; z-index: 30; height: 100%; left: 0; top: 0; width: 84%; max-width: 320px;
     box-shadow: 2px 0 12px rgba(0,0,0,.5); transform: translateX(-100%); transition: transform .2s; }
   .facets.open { transform: none; }
-  .facet-backdrop { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,.5); }
+  /* :not([hidden]) so the closed backdrop doesn't cover the page and block taps */
+  .facet-backdrop:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,.5); }
   .facet-close { display: block; width: 100%; margin-bottom: 8px; padding: 8px;
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; cursor: pointer; font-size: 13px; position: sticky; top: 0; z-index: 1; }
