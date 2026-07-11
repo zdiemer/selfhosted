@@ -8,7 +8,7 @@ const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many
 
 // ---- state --------------------------------------------------------------
 let DATA = null;            // {meta, sheets}
-let activeTab = "games";
+let activeTab = "home";
 const TABS = ["games", "completed", "onOrder"];
 // Per-tab UI state, isolated so switching tabs preserves filters.
 const tabState = {};
@@ -579,6 +579,7 @@ async function loadAllEnrichment() {
     if (changed) {
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
+      else if (activeTab === "home") renderHome();
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
     }
@@ -1310,12 +1311,13 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-const SPECIAL_TABS = ["stats", "pick", "challenges"];
-function setSpecialMode(mode) {   // null | "stats" | "pick" | "challenges"
+const SPECIAL_TABS = ["home", "stats", "pick", "challenges"];
+function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
   $("#picker").hidden = mode !== "pick";
   $("#challenges").hidden = mode !== "challenges";
+  $("#home").hidden = mode !== "home";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1326,6 +1328,7 @@ function setSpecialMode(mode) {   // null | "stats" | "pick" | "challenges"
 }
 
 function renderAll() {
+  if (activeTab === "home") { setSpecialMode("home"); renderHome(); return; }
   if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
@@ -1347,7 +1350,7 @@ let applyingState = false;
 function syncURL(push) {
   if (applyingState) return;
   const p = new URLSearchParams();
-  if (activeTab !== "games") p.set("tab", activeTab);
+  if (activeTab !== "home") p.set("tab", activeTab);
   if (activeTab === "pick") {
     if (pickState.selector) p.set("sel", pickState.selector);
     if (pickState.param) p.set("pp", pickState.param);
@@ -1368,7 +1371,7 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["games", "completed", "onOrder", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "games";
+  const tab = ["home", "games", "completed", "onOrder", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
@@ -1842,6 +1845,7 @@ function cmdkCandidates(q) {
   const needle = q.toLowerCase().trim();
   if (!needle) {
     return [
+      { kind: "Tab", label: "🏠 Home", run: () => switchTab("home") },
       { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
       { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
       { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
@@ -1851,8 +1855,9 @@ function cmdkCandidates(q) {
     ];
   }
   // Tabs
-  const tabs = [["games", "🎮 All Games"], ["completed", "🏆 Completed"], ["onOrder", "📦 On Order"],
-                ["stats", "📊 Stats"], ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"]];
+  const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
+                ["onOrder", "📦 On Order"], ["stats", "📊 Stats"], ["pick", "🎲 Pick"],
+                ["challenges", "🎯 Challenges"]];
   for (const [id, label] of tabs) {
     if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
   }
@@ -1960,13 +1965,13 @@ $("#cmdkInput").addEventListener("keydown", (e) => {
   else if (e.key === "Enter") { e.preventDefault(); cmdkRun(cmdk.sel); }
 });
 
-// Wordmark = home: back to all games with nothing filtered/sorted.
+// Wordmark = home: back to the landing page with nothing filtered/sorted.
 $("#brand").addEventListener("click", () => {
   for (const t of TABS) tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
   pickState.selector = "backlog"; pickState.param = ""; pickState.picked = null;
   $("#search").value = "";
   setFacets(false);
-  switchTab("games");
+  switchTab("home");
   nav();
 });
 $("#facetToggle").addEventListener("click", () => setFacets(!$("#facets").classList.contains("open")));
