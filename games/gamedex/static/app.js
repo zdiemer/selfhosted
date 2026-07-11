@@ -139,9 +139,11 @@ function detailHtml(d) {
   const badge = d.manual ? `<span class="chip manual">★ Manually mapped</span>` : "";
   const rating = d.rating != null
     ? `<div class="igdb-rating ${ratingClass(d.rating)}">${Math.round(d.rating * 100)}<small>/100 IGDB</small>${d.ratingCount ? ` · ${d.ratingCount} ratings` : ""}</div>` : "";
+  const linkList = (arr, fk) => arr.map((x) =>
+    `<a class="facet-link" data-fk="${fk}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</a>`).join(", ");
   const meta = [];
-  if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${escapeHtml(d.developers.join(", "))}</div></div>`);
-  if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${escapeHtml(d.publishers.join(", "))}</div></div>`);
+  if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(d.developers, "developer")}</div></div>`);
+  if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(d.publishers, "publisher")}</div></div>`);
   const shots = (d.screenshots || []).length
     ? `<div class="shots">${d.screenshots.map((s) =>
         `<a href="${IMG(s, "screenshot_huge")}" target="_blank" rel="noopener"><img loading="lazy" src="${IMG(s, "screenshot_med")}" alt=""></a>`).join("")}</div>` : "";
@@ -1124,34 +1126,75 @@ const completedFranchises = () => (_completedFranchises ||=
   new Set(((DATA.sheets.completed || {}).rows || []).map((r) => r.franchise).filter(Boolean)));
 const pickYear = () => new Date().getFullYear();
 
-// Each selector filters the backlog (games not completed). param selectors take
-// a value (platform/genre). Curated from zdiemer/GamePicker's selector library.
+const quickF = (r) => { const p = playtimeOf(r); return p != null && p < 5; };
+const acclaimedF = (r) => { const m = metacriticOf(r); return m != null && m >= 0.8; };
+const retroF = (r) => { const y = +r.releaseYear; return y && y < 2000; };
+const modeIncludes = (r, m) => { const e = ENRICH[r._k]; return !!(e && e.gameModes && e.gameModes.some((x) => x.toLowerCase().includes(m))); };
+
+// Each selector filters the backlog (games not completed). `param` selectors
+// take a value (platform/genre/…); `topBy` narrows to extremes before the roll.
+// Curated + expanded from zdiemer/GamePicker's selector library.
 const SELECTORS = [
   { id: "backlog", label: "Anything in my backlog", group: "General", filter: () => true },
+  { id: "neverstarted", label: "Never started", group: "General", filter: (r) => r.owned && !r.dateStarted && !r.playingStatus },
+  { id: "unfinished", label: "Started but unfinished", group: "General", filter: (r) => r.dateStarted && !r.completed },
+  { id: "recentadd", label: "Recently added", group: "General", filter: (r) => !!r.dateAdded, topBy: { by: (r) => r.dateAdded, desc: true, take: 150 } },
+  { id: "aging", label: "Longest in my backlog", group: "General", filter: (r) => !!(r.datePurchased || r.dateAdded), topBy: { by: (r) => r.datePurchased || r.dateAdded, desc: false, take: 150 } },
+
   { id: "playing", label: "Currently playing", group: "Status", filter: (r) => r.playingStatus === "Playing" },
   { id: "upnext", label: "Up next", group: "Status", filter: (r) => r.playingStatus === "Up Next" },
   { id: "onhold", label: "On hold", group: "Status", filter: (r) => r.playingStatus === "On Hold" },
   { id: "priority", label: "High priority", group: "Status", filter: (r) => Number(r.priority) >= 4 },
-  { id: "quick", label: "Quick (under 5h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 5; } },
+  { id: "maxpriority", label: "Top priority", group: "Status", filter: (r) => Number(r.priority) >= 5 },
+
+  { id: "onesit", label: "One sitting (under 2h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 2; } },
+  { id: "quick", label: "Quick (under 5h)", group: "Playtime", filter: quickF },
   { id: "medium", label: "Medium (5–15h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 5 && p < 15; } },
-  { id: "long", label: "Long haul (15h+)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 15; } },
-  { id: "acclaimed", label: "Critically acclaimed (80+)", group: "Rating", filter: (r) => { const m = metacriticOf(r); return m != null && m >= 0.8; } },
+  { id: "long", label: "Long haul (15–40h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 15 && p < 40; } },
+  { id: "marathon", label: "Marathon (40h+)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 40; } },
+
+  { id: "acclaimed", label: "Critically acclaimed (80+)", group: "Rating", filter: acclaimedF },
+  { id: "masterpiece", label: "Masterpieces (90+)", group: "Rating", filter: (r) => { const m = metacriticOf(r); return m != null && m >= 0.9; } },
   { id: "beloved", label: "Beloved by players (80+)", group: "Rating", filter: (r) => { const m = userRatingOf(r); return m != null && m >= 0.8; } },
-  { id: "owned", label: "Owned & unplayed", group: "Ownership", filter: (r) => !!r.owned },
-  { id: "physical", label: "Physical copies", group: "Ownership", filter: (r) => r.owned && (r.format || "").toLowerCase() === "physical" },
-  { id: "wishlist", label: "Wishlisted", group: "Ownership", filter: (r) => !!r.wishlisted },
-  { id: "vr", label: "VR games", group: "Kind", filter: (r) => !!r.vr },
-  { id: "retro", label: "Retro (before 2000)", group: "Era", filter: (r) => { const y = +r.releaseYear; return y && y < 2000; } },
+  { id: "shortsweet", label: "Short & sweet (< 5h, 80+)", group: "Rating", filter: (r) => quickF(r) && acclaimedF(r) },
+  { id: "retrogem", label: "Retro gems (pre-2000, 80+)", group: "Rating", filter: (r) => retroF(r) && acclaimedF(r) },
+
+  { id: "owned", label: "Owned & unplayed", group: "Ownership & price", filter: (r) => !!r.owned },
+  { id: "physical", label: "Physical copies", group: "Ownership & price", filter: (r) => r.owned && (r.format || "").toLowerCase() === "physical" },
+  { id: "digital", label: "Digital copies", group: "Ownership & price", filter: (r) => r.owned && (r.format || "").toLowerCase() === "digital" },
+  { id: "wishlist", label: "Wishlisted", group: "Ownership & price", filter: (r) => !!r.wishlisted },
+  { id: "free", label: "Free games", group: "Ownership & price", filter: (r) => r.owned && r.purchasePrice === 0 },
+  { id: "cheap", label: "Cheap (under $10)", group: "Ownership & price", filter: (r) => r.purchasePrice != null && r.purchasePrice > 0 && r.purchasePrice < 10 },
+  { id: "unplayedbuy", label: "Unplayed purchases", group: "Ownership & price", filter: (r) => r.owned && r.purchasePrice != null },
+
+  { id: "coop", label: "Co-op", group: "Play style", filter: (r) => modeIncludes(r, "co-op") || modeIncludes(r, "cooperative") },
+  { id: "multi", label: "Multiplayer", group: "Play style", filter: (r) => modeIncludes(r, "multiplayer") },
+  { id: "solo", label: "Single-player", group: "Play style", filter: (r) => modeIncludes(r, "single player") },
+  { id: "vr", label: "VR games", group: "Play style", filter: (r) => !!r.vr },
+  { id: "dlc", label: "DLC & expansions", group: "Play style", filter: (r) => !!r.dlc },
+
+  { id: "retro", label: "Retro (before 2000)", group: "Era", filter: retroF },
   { id: "recent", label: "Recent (last 3 years)", group: "Era", filter: (r) => { const y = +r.releaseYear; return y && y >= pickYear() - 3; } },
+  { id: "thisyear", label: "This year's releases", group: "Era", filter: (r) => +r.releaseYear === pickYear() },
+
   { id: "franchise", label: "Continue a franchise I've played", group: "Progress", filter: (r) => r.franchise && completedFranchises().has(r.franchise) },
+
   { id: "platform", label: "By platform…", group: "By…", param: "platform", filter: (r, v) => r.platform === v },
   { id: "genre", label: "By genre…", group: "By…", param: "genre", filter: (r, v) => r.genre === v },
+  { id: "byfranchise", label: "By franchise…", group: "By…", param: "franchise", filter: (r, v) => r.franchise === v },
+  { id: "bydev", label: "By developer…", group: "By…", param: "developer", filter: (r, v) => r.developer === v },
+  { id: "bypub", label: "By publisher…", group: "By…", param: "publisher", filter: (r, v) => r.publisher === v },
 ];
 
 const pickEligible = () => ((DATA.sheets.games || {}).rows || []).filter((r) => !r.completed && r.title);
 function pickPool() {
   const sel = SELECTORS.find((s) => s.id === pickState.selector) || SELECTORS[0];
-  const pool = pickEligible().filter((r) => (sel.param ? pickState.param && sel.filter(r, pickState.param) : sel.filter(r)));
+  let pool = pickEligible().filter((r) => (sel.param ? pickState.param && sel.filter(r, pickState.param) : sel.filter(r)));
+  if (sel.topBy && pool.length) {   // narrow to extremes (recent/oldest) before rolling
+    pool = [...pool].sort((a, b) => { const x = sel.topBy.by(a) || "", y = sel.topBy.by(b) || ""; return x < y ? -1 : x > y ? 1 : 0; });
+    if (sel.topBy.desc) pool.reverse();
+    pool = pool.slice(0, sel.topBy.take);
+  }
   return { sel, pool };
 }
 function pickGame() {
@@ -1183,7 +1226,8 @@ function renderPicker() {
     `<optgroup label="${g}">${ss.map((s) => `<option value="${s.id}" ${s.id === sel.id ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}</optgroup>`).join("");
   let paramHtml = "";
   if (sel.param) {
-    const vals = [...new Set(pickEligible().map((r) => r[sel.param]).filter(Boolean))].sort();
+    // Rank values by how many backlog games each has (keeps big lists usable).
+    const vals = topCounts(pickEligible().map((r) => r[sel.param]), 200).map((x) => `${x.label}`);
     if (!vals.includes(pickState.param)) pickState.param = vals[0] || "";
     paramHtml = `<select id="pickParam">${vals.map((v) => `<option ${v === pickState.param ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}</select>`;
   }
