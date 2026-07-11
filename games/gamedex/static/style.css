@@ -1141,12 +1141,75 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .poster-note { font-size: 10.5px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 
 /* ---- Predicted rating ---------------------------------------------------- */
-.pred-why {
-  margin-top: 2px; padding: 9px 12px; border-radius: var(--r-sm);
-  background: var(--accent-soft); border: 1px solid var(--accent-line);
-  font-size: 12px; color: var(--muted); line-height: 1.5;
+.pw {
+  margin-top: 6px; border-radius: var(--r);
+  background: linear-gradient(135deg, var(--accent-soft), transparent 70%), var(--surface-2);
+  border: 1px solid var(--accent-line);
+  overflow: hidden;
 }
-.pred-why b { color: var(--text); }
+.pw > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 13px 15px; cursor: pointer; list-style: none;
+}
+.pw > summary::-webkit-details-marker { display: none; }
+.pw-head { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.pw-eyebrow {
+  font: 700 10px/1 var(--display); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent-2); white-space: nowrap;
+}
+.pw-score {
+  font: 800 30px/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+.pw-score small { font-size: 15px; font-weight: 600; opacity: .55; margin-left: 1px; }
+.pw-conf {
+  flex: none; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.pw-high { background: var(--good-soft); color: var(--good); }
+.pw-fair { background: rgba(251, 191, 36, .14); color: var(--warn); }
+.pw-low { background: var(--surface-3); color: var(--muted); }
+
+.pw-body { padding: 2px 15px 13px; }
+.pw-row {
+  /* The BAR gets the flexible column, not the label — the bar is the point. */
+  display: grid; grid-template-columns: 62px minmax(80px, 150px) minmax(0, 1fr) 52px;
+  align-items: center; gap: 10px; padding: 5px 0;
+}
+.pw-kind {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim);
+  white-space: nowrap;
+}
+.pw-label {
+  font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The bar is read against the baseline marker, not against zero. */
+.pw-track {
+  position: relative; height: 6px; border-radius: 999px;
+  background: var(--surface-3); overflow: visible;
+}
+.pw-fill {
+  display: block; height: 100%; width: 0; border-radius: 999px;
+  animation: pwgrow .7s var(--ease) forwards;
+}
+@keyframes pwgrow { to { width: var(--w); } }
+.pw-fill.up { background: linear-gradient(90deg, var(--accent), var(--good)); }
+.pw-fill.down { background: linear-gradient(90deg, var(--surface-3), var(--warn)); }
+.pw-base {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: var(--text); opacity: .45; border-radius: 1px;
+}
+.pw-val {
+  text-align: right; font: 700 12.5px var(--display); font-variant-numeric: tabular-nums;
+}
+.pw-val.up { color: var(--good); }
+.pw-val.down { color: var(--muted); }
+.pw-val i { font-style: normal; font-weight: 500; font-size: 10px; color: var(--dim); margin-left: 3px; }
+.pw-foot { margin-top: 10px; font-size: 10.5px; color: var(--dim); line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .pw-row { grid-template-columns: 50px minmax(60px, 96px) minmax(0, 1fr) 44px; gap: 7px; }
+  .pw-score { font-size: 25px; }
+}
 
 /* ---- Series (franchise pages) -------------------------------------------- */
 .series { flex: 1; overflow-y: auto; padding: 26px 20px 40px; }

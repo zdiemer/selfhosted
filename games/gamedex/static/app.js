@@ -238,12 +238,42 @@ function heroStatsHtml(row) {
 }
 
 // Show the model's working. A prediction you can't interrogate is a horoscope.
+// Each signal is a bar read against your own average, so it's obvious at a glance
+// what pulled the number up and what dragged it down.
 function predictWhyHtml(row) {
   const p = typeof predictedCached === "function" ? predictedCached(row) : null;
-  if (!p || !p.why.length) return "";
-  return `<div class="pred-why" title="Predicted from your own ratings — see predict.js">
-    <b>~${Math.round(p.score * 100)}% predicted</b> · ${p.why.map(escapeHtml).join(" · ")}
-  </div>`;
+  if (!p || !p.signals || !p.signals.length) return "";
+  const base = p.baseline;
+  const conf = p.confidence >= 0.75 ? "high" : p.confidence >= 0.5 ? "fair" : "low";
+
+  const rows = p.signals.map((sg) => {
+    const above = sg.value >= base;
+    const pct = Math.max(2, sg.value * 100);
+    return `<div class="pw-row">
+      <span class="pw-kind">${escapeHtml(sg.kind)}</span>
+      <span class="pw-label" title="${escapeHtml(sg.label)}">${escapeHtml(sg.label)}</span>
+      <span class="pw-track">
+        <span class="pw-fill ${above ? "up" : "down"}" style="--w:${pct.toFixed(1)}%"></span>
+        <span class="pw-base" style="left:${(base * 100).toFixed(1)}%" title="Your average, ${Math.round(base * 100)}%"></span>
+      </span>
+      <span class="pw-val ${above ? "up" : "down"}">${Math.round(sg.value * 100)}${sg.n ? `<i>×${sg.n}</i>` : ""}</span>
+    </div>`;
+  }).join("");
+
+  return `<details class="pw" open>
+    <summary>
+      <span class="pw-head">
+        <span class="pw-eyebrow">🔮 Predicted for you</span>
+        <span class="pw-score ${ratingClass(p.score)}">${Math.round(p.score * 100)}<small>%</small></span>
+      </span>
+      <span class="pw-conf pw-${conf}">${conf} confidence</span>
+    </summary>
+    <div class="pw-body">
+      ${rows}
+      <p class="pw-foot">Learned from your ${(tasteModel().n || 0).toLocaleString()} rated games.
+        The line is your own average, ${Math.round(base * 100)}%.</p>
+    </div>
+  </details>`;
 }
 
 function heroHtml(row, titleText) {

@@ -205,23 +205,33 @@ function predictRating(row) {
 
   const score = Math.max(0, Math.min(1, m.predict(m.featurise(row, null))));
 
-  // Dedupe: developer and publisher are frequently the same company, and saying
+  // Structured, not a sentence: the UI renders these as bars against your
+  // baseline, so you can see at a glance which signals pulled the number up and
+  // which dragged it down.
+  //
+  // Deduped, because developer and publisher are frequently the same company and
   // "80% on Blizzard" twice makes the model look like it's padding.
-  const why = [];
+  const signals = [];
   const said = new Set();
+  const KIND = {
+    franchise: "Series", developer: "Developer", publisher: "Publisher",
+    genre: "Genre", platform: "Platform",
+  };
   for (const f of have) {
     const e = m.stats[f].get(row[f]);
     if (e.n < 2 || said.has(row[f])) continue;
     said.add(row[f]);
-    const label = { franchise: "", developer: " games", publisher: " games", genre: "", platform: " games" }[f];
-    why.push(`${Math.round((e.sum / e.n) * 100)}% avg on ${row[f]}${label} (${e.n})`);
+    signals.push({ kind: KIND[f], label: String(row[f]), value: e.sum / e.n, n: e.n });
   }
-  if (mc != null) why.push(`critics said ${Math.round(mc * 100)}`);
+  if (mc != null) {
+    signals.push({ kind: "Critics", label: "Metacritic", value: mc, n: null });
+  }
 
   return {
     score,
+    baseline: m.global,          // your average score — the line everything is read against
     confidence: Math.min(1, (have.length + (mc != null ? 1 : 0)) / 4),
-    why: why.slice(0, 3),
+    signals: signals.sort((a, b) => Math.abs(b.value - m.global) - Math.abs(a.value - m.global)).slice(0, 4),
   };
 }
 
