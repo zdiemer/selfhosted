@@ -336,6 +336,53 @@ td.cover { width: 46px; padding: 5px 8px; }
 }
 .card.done:hover { border-color: var(--good); box-shadow: 0 10px 30px rgba(52, 211, 153, .18); }
 
+/* Part-finished collection = amber ring + half-moon. Beats the green ring: the
+   compilation itself isn't done, however many of its games are. */
+.card.partial { border-color: rgba(251, 191, 36, .55); }
+.card.partial::after {
+  content: "◐"; position: absolute; top: 8px; right: 8px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--warn); color: #2a1f02;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
+}
+.card.partial:hover { border-color: var(--warn); box-shadow: 0 10px 30px rgba(251, 191, 36, .18); }
+
+/* Collection badge on the card body */
+.card-collection {
+  display: inline-block; margin-top: 6px; padding: 2px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .01em;
+  background: var(--good-soft); color: var(--good);
+}
+.card-collection.partial { background: rgba(251, 191, 36, .14); color: var(--warn); }
+
+/* Table rows carry the same signal on their leading edge */
+tr.row-col-complete td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
+/* ---- Collections (drawer) ----------------------------------------------- */
+.col-section { margin: 22px 0 4px; }
+.col-section h3 { font-size: 15px; margin-bottom: 8px; }
+.col-section h3 .muted { font-size: 12.5px; font-weight: 400; }
+.col-state { display: block; font-size: 12px; margin-bottom: 10px; }
+.col-state.done { color: var(--good); }
+.col-state.partial { color: var(--warn); }
+.col-members { display: flex; flex-direction: column; gap: 5px; }
+.col-member, .col-parent {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 12px; cursor: pointer; font-family: inherit; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  transition: border-color .14s, background .14s;
+}
+.col-member:hover, .col-parent:hover { border-color: var(--accent-line); background: var(--surface-3); }
+.col-member-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.col-member-txt b { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-member-txt .muted { font-size: 11.5px; }
+.col-member > span:not(.col-member-txt), .col-member > .muted { flex: none; font-size: 12px; }
+.col-parent { justify-content: space-between; }
+.col-parent span:first-child { font-weight: 600; }
+.col-parent .muted { font-size: 12px; white-space: nowrap; }
+
 /* ---- Pager -------------------------------------------------------------- */
 .pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px; border-top: 1px solid var(--border-soft); }
 .pager button {

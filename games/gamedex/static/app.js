@@ -852,6 +852,8 @@ function renderTableView(pageRows) {
   for (const row of pageRows) {
     const tr = document.createElement("tr");
     if (row._k) tr.dataset.k = row._k;
+    const cstat = collectionStatus(row);
+    if (cstat) tr.className = "row-col-" + cstat;
     const cover = ENRICH_ENABLED ? `<td class="cover">${coverCell(row)}</td>` : "";
     tr.innerHTML = cover + cols.map((c) => `<td>${fmtCell(row[c.key], c.type)}</td>`).join("");
     tr.onclick = () => openDrawer(row);
@@ -901,7 +903,7 @@ function cardBodyHtml(row) {
   const meta = mc != null
     ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
   return `${meta}${rating}<div class="card-title" title="${title}">${title}</div>` +
-    `<div class="card-sub">${parts.join(" · ")}</div>${sortValueHtml(row)}`;
+    `<div class="card-sub">${parts.join(" · ")}</div>${collectionBadgeHtml(row)}${sortValueHtml(row)}`;
 }
 
 function renderGrid(pageRows) {
@@ -914,7 +916,11 @@ function renderGrid(pageRows) {
       ? `<img class="card-cover" loading="lazy" src="${cs}" alt="">`
       : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : "🎮"}</div>`;
     const card = document.createElement("div");
-    card.className = "card" + (rowCompleted(row) ? " done" : "");
+    // A part-finished collection is yellow, and that beats the green "done"
+    // ring — the compilation itself isn't finished even on the Completed tab.
+    const cstat = collectionStatus(row);
+    card.className = "card" + (cstat === "partial" ? " partial"
+      : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
     if (row._k) card.dataset.k = row._k;
     CARD_ROW.set(card, row);
     card.innerHTML = `${cover}<div class="card-body">${cardBodyHtml(row)}</div>`;
@@ -1020,9 +1026,13 @@ function openDrawer(row, sheetKey) {
       raw += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
     }
   }
-  // Sheet fields collapse behind a "Raw data" disclosure — the enriched view leads.
-  if (raw) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
+  html += collectionSectionHtml(row);
+  // Sheet fields collapse behind a "Raw data" disclosure — the enriched view
+  // leads. A grouped collection card has no sheet row of its own; its values are
+  // aggregates over the members, so don't dress them up as raw data.
+  if (raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
+  wireCollections(body);
   $("#overlay").hidden = false;
   drawerRow = row;
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
@@ -1063,7 +1073,7 @@ function renderAll() {
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
   setSpecialMode(null);
   renderFacets();
-  currentFiltered = filterRows(null);
+  currentFiltered = groupCollections(filterRows(null));
   renderTable(currentFiltered);
 }
 
@@ -1149,6 +1159,7 @@ async function load() {
   }
   if (!payload) { $("#count").textContent = "Could not load data — is the Dropbox link set?"; return; }
   DATA = payload;
+  resetCollections();
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
   ENRICH_SOURCES = en && en.sources ? Object.keys(en.sources) : [];
@@ -1586,6 +1597,7 @@ $("#refresh").addEventListener("click", async () => {
       const dres = await fetch("api/data", { cache: "no-store" });
       if (dres.ok) {
         DATA = await dres.json();
+        resetCollections();
         const en = DATA.meta && DATA.meta.enrichment;
         ENRICH_ENABLED = !!(en && en.enabled !== false);
         setFreshness(); renderAll(); loadAllEnrichment();
