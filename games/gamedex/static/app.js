@@ -197,10 +197,26 @@ function detailHtml(d) {
     ? `<div class="shots"><div class="shot-view"></div>` +
       (nShots > 1 ? `<button class="shot-nav prev" aria-label="Previous">‹</button><button class="shot-nav next" aria-label="Next">›</button>` : "") +
       `<div class="shot-count"></div><div class="shot-cap"></div></div>` : "";
-  const similar = (d.similar || []).filter((s) => s.cover).slice(0, 8);
+  // Only the ones you actually own. IGDB's similar list is mostly games you've
+  // never heard of and don't have; as an external link it was a store aisle.
+  // Filtered to the collection it becomes a real "you have this, and it's like
+  // this" — and every entry opens in-app instead of navigating away.
+  const similar = (typeof similarInCollection === "function" ? similarInCollection(d) : [])
+    .slice(0, 12);
   const simHtml = similar.length
-    ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
-        `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
+    ? `<div class="detail-row notes"><div class="k">Similar games you own <span class="muted">${similar.length}</span></div>
+        <div class="similar">${similar.map((s) => {
+          const cover = s.cover ? IMG(s.cover, "cover_small") : coverSrc(ENRICH[s.row._k], "cover_small");
+          const mark = s.row.completed ? `<i class="sim-done" title="Beaten">✓</i>`
+            : s.row.owned ? `<i class="sim-owned" title="Owned">●</i>` : "";
+          return `<button class="sim" data-simk="${escapeHtml(String(s.row._k || ""))}" title="${escapeHtml(s.name)}">
+            ${cover ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">` : `<span class="sim-ph">🎮</span>`}
+            ${mark}
+            <span>${escapeHtml(s.name)}</span>
+          </button>`;
+        }).join("")}</div></div>`
+    : "";
+
   const text = d.summary || d.storyline;
   // The cover, score and chips live in the hero now — this is just the prose.
   return (badge ? `<div class="badges">${badge}</div>` : "") +
@@ -685,6 +701,12 @@ function renderIgdbSection(key, el, status, detail) {
   });
 
   wireCarousel(el, detail ? mediaOf(detail) : []);
+  el.querySelectorAll("[data-simk]").forEach((btn) => {
+    btn.onclick = () => {
+      const row = ((DATA.sheets.games || {}).rows || []).find((r) => String(r._k) === btn.dataset.simk);
+      if (row) openDrawerFrom(row, "games");        // navigation: keep a way back
+    };
+  });
 }
 
 async function submitOverride(key, url, source = "igdb", remove = false) {

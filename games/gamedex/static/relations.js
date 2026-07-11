@@ -21,7 +21,7 @@
 // ---- who owns what -------------------------------------------------------
 // igdbId -> the rows in your collection that matched it.
 let _byIgdb = null;
-const resetRelations = () => { _byIgdb = null; _relById = null; };
+const resetRelations = () => { _byIgdb = null; _relById = null; _byName = null; };
 
 function rowsByIgdbId() {
   if (_byIgdb) return _byIgdb;
@@ -33,6 +33,43 @@ function rowsByIgdbId() {
     m.get(id).push(r);
   }
   return (_byIgdb = m);
+}
+
+// The collection indexed by IGDB name. IGDB's similar_games entries carry a
+// name and a cover but no id, so name is the only key we can join on — and both
+// sides are IGDB names, which makes it a clean join rather than a fuzzy one.
+const relNorm = (s) => String(s || "").toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]/g, "");
+
+let _byName = null;
+function rowsByGameName() {
+  if (_byName) return _byName;
+  const m = new Map();
+  for (const r of ((DATA.sheets.games || {}).rows || [])) {
+    const e = ENRICH[r._k] || {};
+    const key = relNorm(e.name || r.title);
+    if (!key) continue;
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(r);
+  }
+  return (_byName = m);
+}
+
+// IGDB's "similar games", narrowed to the ones you actually have. The rest are
+// shopping suggestions, and this is a collection browser, not a store.
+function similarInCollection(detail) {
+  const out = [];
+  const seen = new Set();
+  for (const s of (detail.similar || [])) {
+    const key = relNorm(s.name);
+    const rows = rowsByGameName().get(key);
+    if (!rows || !rows.length || seen.has(key)) continue;
+    seen.add(key);
+    const row = rows.find((r) => r.completed) || rows.find((r) => r.owned) || rows[0];
+    out.push({ ...s, row });
+  }
+  return out;
 }
 
 // ---- grouped view --------------------------------------------------------
