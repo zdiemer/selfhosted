@@ -70,7 +70,7 @@ _GAMES = [
     ("Priority",             "text",   True,  False, False),
     ("Format",               "text",   True,  False, False),
     ("Owned",                "bool",   True,  False, True),
-    ("Completed",            "bool",   True,  False, False),
+    ("Completed",            "bool",   True,  False, True),
     ("Wishlisted",           "bool",   True,  False, False),
     ("Playable",             "bool",   True,  False, False),
     ("VR",                   "bool",   True,  False, False),
@@ -124,6 +124,27 @@ _ON_ORDER = [
 
 # Never emit these — private info that must not reach an unauthenticated page.
 _EXCLUDE = {"Order #", "Address on Order", "Tracking #"}
+
+# Map coded cell values to human labels (applies to column, facet, and drawer).
+# Keyed by the slugged column key.
+_VALUE_LABELS = {
+    "playingStatus": {"1": "Playing", "0": "On Hold", "-1": "Up Next"},
+}
+
+
+def _apply_label(key, value):
+    mapping = _VALUE_LABELS.get(key)
+    if not mapping:
+        return value
+    # Normalize numeric-ish cells ("1.0"/1.0/1 -> "1") before lookup.
+    lookup = str(value)
+    try:
+        f = float(value)
+        if f == int(f):
+            lookup = str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return mapping.get(lookup, value)
 
 # Match workbook sheets to our logical keys (by name, with positional fallback).
 _SHEET_MAP = {
@@ -248,6 +269,8 @@ def _parse_sheet(ws, schema):
             coerced = _coerce(value, ctype)
             if coerced is None or coerced == "":
                 continue
+            if key in _VALUE_LABELS:
+                coerced = _apply_label(key, coerced)
             record[key] = coerced
             if idx == 0:
                 has_title = True

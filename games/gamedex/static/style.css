@@ -150,6 +150,7 @@ thead th {
 }
 thead th:hover { color: var(--accent); }
 thead th .arrow { color: var(--accent); font-size: 11px; }
+thead th .arrow sub { font-size: 9px; font-weight: 600; }
 tbody td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);

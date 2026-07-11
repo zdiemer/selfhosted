@@ -217,27 +217,86 @@ function renderFacets() {
 }
 
 // ---- rendering: table ---------------------------------------------------
-function sortRows(rows) {
+// ---- multi-key sorting --------------------------------------------------
+const NUMERIC_TYPES = ["rating", "hours", "number", "int", "year"];
+
+// Per-tab default sort. A spec is {key, dir, type?, kind?}; `kind` selects a
+// custom comparator. The games default: Playing-status group on top
+// (Playing→On Hold→Up Next→none), then uncompleted before completed, then
+// newest release year, with newest release date (Early Access = newest) as the
+// final tiebreaker.
+const DEFAULT_SORT = {
+  games: [
+    { key: "playingStatus", kind: "playingRank", dir: "desc" },
+    { key: "completed", dir: "asc", type: "bool" },
+    { key: "releaseYear", dir: "desc", type: "year" },
+    { key: "releaseDate", kind: "releaseDateDesc", dir: "desc" },
+  ],
+  completed: [{ key: "date", dir: "desc", type: "date" }],
+  onOrder: [{ key: "orderedDate", dir: "desc", type: "date" }],
+};
+
+const PLAYING_RANK = { "Playing": 0, "On Hold": 1, "Up Next": 2 };
+const isBlank = (v) => v === undefined || v === null || v === "";
+
+function playingRank(v) {
+  if (isBlank(v)) return 3;
+  if (v in PLAYING_RANK) return PLAYING_RANK[v];
+  const n = Number(v);                 // tolerate raw codes 1/0/-1 too
+  return n === 1 ? 0 : n === 0 ? 1 : n === -1 ? 2 : 3;
+}
+function releaseDateScore(v) {
+  if (isBlank(v)) return -Infinity;                        // no date → oldest
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return new Date(v + "T00:00:00").getTime();
+  return Infinity;                                          // Early Access/TBD → newest
+}
+function cmpBy(a, b, spec) {
+  const x = a[spec.key], y = b[spec.key];
+  if (spec.kind === "playingRank") return playingRank(x) - playingRank(y);
+  if (spec.kind === "releaseDateDesc") return releaseDateScore(y) - releaseDateScore(x);
+  const xm = isBlank(x), ym = isBlank(y);
+  if (xm && ym) return 0;
+  if (xm) return 1;   // blanks always sink, regardless of direction
+  if (ym) return -1;
+  const dir = spec.dir === "desc" ? -1 : 1;
+  const type = spec.type || (colByKey(spec.key) || {}).type;
+  if (NUMERIC_TYPES.includes(type)) return (Number(x) - Number(y)) * dir;
+  if (type === "bool") return ((x ? 1 : 0) - (y ? 1 : 0)) * dir;
+  return String(x).localeCompare(String(y), undefined, { sensitivity: "base" }) * dir;
+}
+function effectiveSort() {
   const st = tabState[activeTab];
-  let sort = st.sort;
-  if (!sort) {
-    const first = columns().find((c) => c.primary) || columns()[0];
-    sort = { key: first.key, dir: "asc" };
-  }
-  const col = colByKey(sort.key) || {};
-  const numeric = ["rating", "hours", "number", "int", "year"].includes(col.type);
-  const dir = sort.dir === "desc" ? -1 : 1;
+  if (st.sort && st.sort.length) return st.sort;
+  return DEFAULT_SORT[activeTab] ||
+    [{ key: (columns().find((c) => c.primary) || columns()[0]).key, dir: "asc" }];
+}
+function sortRows(rows) {
+  const spec = effectiveSort();
   return [...rows].sort((a, b) => {
-    let x = a[sort.key], y = b[sort.key];
-    const xm = x === undefined || x === null || x === "";
-    const ym = y === undefined || y === null || y === "";
-    if (xm && ym) return 0;
-    if (xm) return 1;   // blanks always sink
-    if (ym) return -1;
-    if (numeric) return (Number(x) - Number(y)) * dir;
-    if (col.type === "bool") return ((x ? 1 : 0) - (y ? 1 : 0)) * dir;
-    return String(x).localeCompare(String(y), undefined, { sensitivity: "base" }) * dir;
+    for (const s of spec) { const c = cmpBy(a, b, s); if (c) return c; }
+    return 0;
   });
+}
+
+// Click a header to sort by it (toggles dir); Shift-click to add/toggle it as
+// an additional sort level (or remove it on a third shift-click).
+function onHeaderClick(col, shift) {
+  const st = tabState[activeTab];
+  const cur = st.sort && st.sort.length ? st.sort.slice() : [];
+  const idx = cur.findIndex((s) => s.key === col.key);
+  const defDir = col.type === "text" ? "asc" : "desc";
+  if (shift) {
+    if (idx === -1) cur.push({ key: col.key, dir: defDir, type: col.type });
+    else if (cur[idx].dir === defDir) cur[idx] = { key: col.key, dir: defDir === "asc" ? "desc" : "asc", type: col.type };
+    else cur.splice(idx, 1);                       // third shift-click drops this level
+  } else {
+    if (cur.length === 1 && cur[0].key === col.key)
+      cur.splice(0, 1, { key: col.key, dir: cur[0].dir === "asc" ? "desc" : "asc", type: col.type });
+    else { cur.length = 0; cur.push({ key: col.key, dir: defDir, type: col.type }); }
+  }
+  st.sort = cur.length ? cur : null;
+  st.page = 1;
+  renderAll();
 }
 
 function renderTable(rows) {
@@ -245,19 +304,23 @@ function renderTable(rows) {
   const cols = columns().filter((c) => c.primary);
   const sorted = sortRows(rows);
 
-  // header
+  // header — show sort direction + precedence number for each active level
   const thead = $("#thead");
   thead.innerHTML = "";
-  const sort = st.sort || { key: (columns().find((c) => c.primary) || columns()[0]).key, dir: "asc" };
+  const spec = effectiveSort();
+  const specByKey = new Map(spec.map((s, i) => [s.key, { dir: s.dir, ord: i }]));
+  const multi = spec.length > 1;
   for (const c of cols) {
     const th = document.createElement("th");
-    const arrow = sort.key === c.key ? `<span class="arrow">${sort.dir === "asc" ? "▲" : "▼"}</span>` : "";
-    th.innerHTML = `${escapeHtml(c.label)} ${arrow}`;
-    th.onclick = () => {
-      if (st.sort && st.sort.key === c.key) st.sort.dir = st.sort.dir === "asc" ? "desc" : "asc";
-      else st.sort = { key: c.key, dir: c.type === "text" ? "asc" : "desc" };
-      renderAll();
-    };
+    const s = specByKey.get(c.key);
+    let ind = "";
+    if (s) {
+      const glyph = s.dir === "asc" ? "▲" : "▼";
+      ind = `<span class="arrow">${glyph}${multi ? `<sub>${s.ord + 1}</sub>` : ""}</span>`;
+    }
+    th.innerHTML = `${escapeHtml(c.label)} ${ind}`;
+    th.title = "Click to sort · Shift-click to add a sort level";
+    th.onclick = (e) => onHeaderClick(c, e.shiftKey);
     thead.appendChild(th);
   }
 
@@ -279,6 +342,7 @@ function renderTable(rows) {
   // count + pager
   $("#count").textContent = `${sorted.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
   $("#clear").hidden = !(st.search || Object.keys(st.facets).length);
+  $("#resetsort").hidden = !(st.sort && st.sort.length);
   renderPager(pages);
 }
 
@@ -382,6 +446,11 @@ $("#clear").addEventListener("click", () => {
   const st = tabState[activeTab];
   st.search = ""; st.facets = {}; st.page = 1;
   $("#search").value = "";
+  renderAll();
+});
+$("#resetsort").addEventListener("click", () => {
+  tabState[activeTab].sort = null;
+  tabState[activeTab].page = 1;
   renderAll();
 });
 $("#drawerClose").addEventListener("click", closeDrawer);
