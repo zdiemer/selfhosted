@@ -63,10 +63,11 @@ class Enricher:
         for src in self._secondary:
             self._db.execute(
                 f"CREATE TABLE IF NOT EXISTS {src}(match_key TEXT PRIMARY KEY, status TEXT,"
-                f" data TEXT, updated_at TEXT)"
+                f" data TEXT, updated_at TEXT, manual INTEGER DEFAULT 0)"
             )
-        cols = {r[1] for r in self._db.execute("PRAGMA table_info(enrichment)")}
-        if "manual" not in cols:
+            if "manual" not in {r[1] for r in self._db.execute(f"PRAGMA table_info({src})")}:
+                self._db.execute(f"ALTER TABLE {src} ADD COLUMN manual INTEGER DEFAULT 0")
+        if "manual" not in {r[1] for r in self._db.execute("PRAGMA table_info(enrichment)")}:
             self._db.execute("ALTER TABLE enrichment ADD COLUMN manual INTEGER DEFAULT 0")
         self._db.commit()
 
@@ -140,11 +141,16 @@ class Enricher:
             )
             self._db.commit()
 
-    def _save_secondary(self, src, key, data):
+    def _save_secondary(self, src, key, data, manual=False):
         with self._db_lock:
+            if not manual:   # don't let an auto result clobber a manual override
+                row = self._db.execute(f"SELECT manual FROM {src} WHERE match_key=?", (key,)).fetchone()
+                if row and row[0]:
+                    return
             self._db.execute(
-                f"INSERT OR REPLACE INTO {src}(match_key,status,data,updated_at) VALUES(?,?,?,?)",
-                (key, "matched" if data else "no_match", json.dumps(data) if data else None, _now()),
+                f"INSERT OR REPLACE INTO {src}(match_key,status,data,updated_at,manual) VALUES(?,?,?,?,?)",
+                (key, "matched" if data else "no_match", json.dumps(data) if data else None,
+                 _now(), 1 if manual else 0),
             )
             self._db.commit()
 
@@ -161,6 +167,29 @@ class Enricher:
             self._db.execute("DELETE FROM enrichment WHERE match_key=?", (key,))
             self._db.commit()
         self.request([key])
+
+    def meta_for(self, key):
+        return self._key_meta.get(key)
+
+    def set_source_override(self, source, key, record):
+        """Pin any source (igdb or a secondary) to a manually chosen record."""
+        if source == "igdb":
+            self.set_override(key, record)
+        elif source in self._secondary:
+            rec = dict(record)
+            rec["manual"] = True
+            self._save_secondary(source, key, rec, manual=True)
+            with self._lock:
+                self._queued[source].discard(key)
+
+    def clear_source_override(self, source, key):
+        if source == "igdb":
+            self.clear_override(key)
+        elif source in self._secondary:
+            with self._db_lock:
+                self._db.execute(f"DELETE FROM {source} WHERE match_key=?", (key,))
+                self._db.commit()
+            self.request([key])
 
     # -- request / read -----------------------------------------------------
     def request(self, keys, front=True):

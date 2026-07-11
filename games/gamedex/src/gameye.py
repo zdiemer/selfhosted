@@ -9,6 +9,7 @@ come back in cents; we return dollars. Matching reuses the ported validator.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 import requests
@@ -52,6 +53,25 @@ class GameEyeClient:
                          headers={"User-Agent": _UA}, timeout=30)
         r.raise_for_status()
         return r.json().get("records") or []
+
+    def override_from_url(self, title, url):
+        """Manual mapping: fetch a GameEye item directly by its encyclopedia id."""
+        m = re.search(r"/encyclopedia/(\d+)", url)
+        if not m:
+            return None
+        iid = m.group(1)
+        self._lim.wait()
+        it = requests.get(f"{_BASE}/items/{iid}", headers={"User-Agent": _UA}, timeout=30).json()
+        price = it.get("price") or {}
+        if not (price.get("Loose") or price.get("CIB") or price.get("New")):
+            return None
+        return {
+            "source": "gameye", "name": it.get("title"),
+            "url": f"https://www.gameye.app/encyclopedia/{iid}",
+            "priceLoose": _dollars(price.get("Loose")), "priceCib": _dollars(price.get("CIB")),
+            "priceNew": _dollars(price.get("New")), "priceManual": _dollars(price.get("ManualPrice")),
+            "priceBox": _dollars(price.get("BoxPrice")),
+        }
 
     def match(self, title, platform=None, year=None):
         game = ExcelGame(title=title, platform=platform_from_str(platform), release_year=year)

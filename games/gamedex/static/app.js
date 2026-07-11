@@ -69,6 +69,7 @@ const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${s
 // Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
 const coverSrc = (e, size) => (e && e.coverUrl ? e.coverUrl : (e && e.cover ? IMG(e.cover, size) : ""));
 let ENRICH_ENABLED = false;
+let ENRICH_SOURCES = [];           // enabled secondary sources (hltb, metacritic, gameye)
 const ENRICH = {};                 // matchKey -> light enrichment
 const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
 const HLTBC = {};                  // matchKey -> HLTB playtimes (drawer cache)
@@ -164,14 +165,17 @@ function igdbAttr(d) {
   return `<div class="igdb-attr">${link}${by}</div>`;
 }
 
-function mapControlHtml(key, manual) {
-  return `<div class="igdb-map">
-    ${manual ? `<div class="mapped-note"><button class="linkbtn" data-map-reset>Reset to auto-match</button></div>` : ""}
-    <div class="map-row">
-      <input type="url" placeholder="Paste an IGDB game URL to map manually…" data-map-input>
-      <button class="btn" data-map-go>Map</button>
-    </div>
-  </div>`;
+function mapControlHtml(key) {
+  const rows = [{ id: "igdb", label: "Metadata (IGDB)", ph: "IGDB game URL" }];
+  if (ENRICH_SOURCES.includes("hltb")) rows.push({ id: "hltb", label: "HowLongToBeat", ph: "HLTB game URL" });
+  if (ENRICH_SOURCES.includes("metacritic")) rows.push({ id: "metacritic", label: "Metacritic", ph: "Metacritic game URL" });
+  const ownedPhys = drawerRow && drawerRow.owned && (drawerRow.format || "").toLowerCase() === "physical";
+  if (ENRICH_SOURCES.includes("gameye") && ownedPhys) rows.push({ id: "gameye", label: "GameEye value", ph: "GameEye encyclopedia URL" });
+  return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
+    rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
+      <div class="map-row"><input type="url" placeholder="${s.ph}" data-map-input>
+      <button class="btn" data-map-go>Map</button><button class="linkbtn" data-map-reset title="Reset to auto">Auto</button></div></div>`).join("") +
+    `</details>`;
 }
 
 function hltbHtml(h) {
@@ -224,49 +228,60 @@ function gameyeHtml(key) {
 
 // Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
 function renderIgdbSection(key, el, status, detail) {
-  const content =
-    status === "matched" && detail ? detailHtml(detail)
-    : status === "no_match" ? `<div class="igdb-loading muted">No IGDB match for this title.</div>`
-    : status === "pending-final" ? `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`
-    : `<div class="igdb-loading">Loading IGDB metadata…</div>`;
-  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + gameyeHtml(key) + mapControlHtml(key, !!(detail && detail.manual));
-  const go = el.querySelector("[data-map-go]");
-  const input = el.querySelector("[data-map-input]");
-  const reset = el.querySelector("[data-map-reset]");
-  if (go && input) {
+  let content;
+  if (status === "matched" && detail) content = detailHtml(detail);
+  else if (status === "no_match") content = `<div class="igdb-loading muted">No IGDB match for this title.</div>`;
+  else {
+    // loading / pending / error — show the cover from the light data immediately
+    // so we never display a bare "Loading" when we already have metadata.
+    const cs = coverSrc(ENRICH[key], "cover_big");
+    const msg = status === "pending-final" ? "Metadata still resolving — reopen shortly."
+      : status === "error" ? "Couldn’t load extra details."
+      : "Loading details…";
+    content = (cs ? `<div class="igdb-head"><img class="cover-big" src="${cs}" alt=""></div>` : "") +
+      `<div class="igdb-loading muted">${msg}</div>`;
+  }
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+
+  el.querySelectorAll(".map-src").forEach((rowEl) => {
+    const src = rowEl.dataset.src;
+    const go = rowEl.querySelector("[data-map-go]");
+    const input = rowEl.querySelector("[data-map-input]");
+    const reset = rowEl.querySelector("[data-map-reset]");
     const submit = async () => {
       const url = input.value.trim();
       if (!url) return;
       go.disabled = true; go.textContent = "…"; input.classList.remove("err");
-      const d = await submitOverride(key, url);
-      if (d) renderIgdbSection(key, el, "matched", d);
-      else { go.disabled = false; go.textContent = "Map"; input.classList.add("err"); }
+      const ok = await submitOverride(key, url, src);
+      go.disabled = false; go.textContent = "Map";
+      if (ok) loadDetail(key, el); else input.classList.add("err");
     };
     go.onclick = submit;
     input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
-  }
-  if (reset) reset.onclick = async () => { await submitOverride(key, ""); delete DETAIL[key]; loadDetail(key, el); };
+    reset.onclick = async () => { await submitOverride(key, "", src); loadDetail(key, el); };
+  });
 }
 
-async function submitOverride(key, url) {
+async function submitOverride(key, url, source = "igdb") {
   try {
     const res = await fetch("api/enrichment/override", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, url }),
+      body: JSON.stringify({ key, url, source }),
     });
     if (!res.ok) return false;
     const j = await res.json();
-    if (url && j.detail) {
-      DETAIL[key] = j.detail;
-      ENRICH[key] = Object.assign(ENRICH[key] || {}, {
-        cover: j.detail.cover, genres: j.detail.genres, themes: j.detail.themes, gameModes: j.detail.gameModes,
+    // Clear caches so the refetch shows the new mapping.
+    delete DETAIL[key]; delete HLTBC[key]; delete MCC[key]; delete GEC[key];
+    if (source === "igdb") {
+      const r = j.record;
+      if (r) ENRICH[key] = Object.assign(ENRICH[key] || {}, {
+        cover: r.cover, coverUrl: r.coverUrl, source: r.source, genres: r.genres,
+        themes: r.themes, gameModes: r.gameModes, userRating: r.userRating,
       });
-      renderTable(currentFiltered);
-      return j.detail;
+      else delete ENRICH[key];
     }
-    delete ENRICH[key];              // cleared → back to auto
-    renderTable(currentFiltered);
-    return null;
+    renderTable(currentFiltered);   // refresh cover/facets on the grid
+    return true;
   } catch (_) { return false; }
 }
 
@@ -285,8 +300,8 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     else if (j.status === "pending") {
       if (attempt >= 15) renderIgdbSection(key, el, "pending-final", null);
       else setTimeout(() => loadDetail(key, el, attempt + 1), 2500);
-    }
-  } catch (_) { /* keep prior content */ }
+    } else renderIgdbSection(key, el, "error", null);
+  } catch (_) { renderIgdbSection(key, el, "error", null); }
 }
 
 // Bulk-load the light cover/facet map for every already-matched game (powers
@@ -888,6 +903,7 @@ async function load() {
   DATA = payload;
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
+  ENRICH_SOURCES = en && en.sources ? Object.keys(en.sources) : [];
   if (ENRICH_ENABLED) updateEnrichStatus(en);
   setFreshness();
   applyStateFromURL();          // restore tab/filters/sort/view from the URL

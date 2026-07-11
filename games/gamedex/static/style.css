@@ -289,10 +289,13 @@ tbody tr:hover { background: var(--panel-2); }
 .hltb-row.mine { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 6px; }
 .hltb-row.mine b { color: var(--good); }
 
-/* Manual IGDB mapping control */
-.igdb-map { margin: 12px 0 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
-.mapped-note { margin-bottom: 6px; }
-.map-row { display: flex; gap: 6px; }
+/* Manual mapping menu */
+.map-menu { margin: 14px 0 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.map-menu summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+.map-menu[open] summary { margin-bottom: 8px; color: var(--text); }
+.map-src { margin-bottom: 8px; }
+.map-src > label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.map-row { display: flex; gap: 6px; align-items: center; }
 .map-row input {
   flex: 1; min-width: 0; padding: 6px 9px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px;

@@ -153,24 +153,26 @@ def enrichment_stats():
 class Override(BaseModel):
     key: str
     url: str | None = None
+    source: str = "igdb"
 
 
 @app.post("/api/enrichment/override")
 def enrichment_override(body: Override):
     if not enricher:
         return JSONResponse(status_code=400, content={"error": "enrichment disabled"})
-    if not body.url or not body.url.strip():          # clear → back to auto-match
-        enricher.clear_override(body.key)
-        return {"status": "pending", "detail": None}
-    m = re.search(r"/games/([^/?#]+)", body.url)
-    if not m:
-        return JSONResponse(status_code=400, content={"error": "not an IGDB game URL (…/games/<slug>)"})
-    result = _igdb.fetch_by_slug(m.group(1))
-    if not result:
-        return JSONResponse(status_code=404, content={"error": f"no IGDB game found for '{m.group(1)}'"})
-    enrichment = _igdb.enrichment_from_result(result)
-    enricher.set_override(body.key, enrichment)
-    return {"status": "matched", "detail": {**enrichment, "manual": True}}
+    src = body.source or "igdb"
+    client = _igdb if src == "igdb" else _secondary.get(src)
+    if client is None or not hasattr(client, "override_from_url"):
+        return JSONResponse(status_code=400, content={"error": f"source '{src}' can't be mapped"})
+    if not body.url or not body.url.strip():          # clear → back to auto
+        enricher.clear_source_override(src, body.key)
+        return {"status": "cleared", "source": src}
+    meta = enricher.meta_for(body.key) or {}
+    record = client.override_from_url(meta.get("title", ""), body.url)
+    if not record:
+        return JSONResponse(status_code=404, content={"error": "no match found for that URL"})
+    enricher.set_source_override(src, body.key, record)
+    return {"status": "matched", "source": src, "record": record}
 
 
 @app.post("/api/refresh")

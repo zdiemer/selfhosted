@@ -10,6 +10,7 @@ no confident match is found.
 from __future__ import annotations
 
 import logging
+import re
 import urllib.parse
 
 import requests
@@ -48,6 +49,23 @@ class MetacriticClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def override_from_url(self, title, url):
+        """Manual mapping: pick the Metacritic search item whose slug matches."""
+        m = re.search(r"/game/([^/?#]+)", url)
+        if not m:
+            return None
+        slug = m.group(1)
+        data = self._search(title)
+        comp = next((c for c in data.get("components", [])
+                     if c.get("meta", {}).get("componentName") == "search"), None)
+        for it in (((comp or {}).get("data") or {}).get("items") or []):
+            if it.get("slug") == slug and (it.get("criticScoreSummary") or {}).get("score"):
+                score = it["criticScoreSummary"]["score"]
+                return {"metascore": score, "metascoreFraction": round(score / 100, 4),
+                        "name": it.get("title"), "year": it.get("premiereYear"),
+                        "url": f"{_SITE}/game/{slug}/"}
+        return None
 
     def match(self, title, platform=None, year=None):
         game = ExcelGame(title=title, platform=platform_from_str(platform), release_year=year)

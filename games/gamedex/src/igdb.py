@@ -13,6 +13,7 @@ here, so a simple monotonic-spacing limiter is enough.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import unicodedata
@@ -198,6 +199,14 @@ class IgdbClient:
         safe = slug.replace('"', "")
         res = self._post("games", f'{_FIELDS} where slug = "{safe}"; limit 1;')
         return res[0] if res else None
+
+    def override_from_url(self, title, url):
+        """Manual mapping: build an enrichment record from a pasted IGDB URL."""
+        m = re.search(r"/games/([^/?#]+)", url)
+        if not m:
+            return None
+        result = self.fetch_by_slug(m.group(1))
+        return self.enrichment_from_result(result) if result else None
 
     def _to_enrichment(self, c, info):
         e = self.enrichment_from_result(c)

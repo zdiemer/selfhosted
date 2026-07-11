@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 
@@ -96,6 +97,17 @@ class HltbClient:
             years = [r["release_world"]] if r.get("release_world") else []
             info = self._validator.validate(game, names, plats, years)
             if info.likely_match or (info.matched and not any(plats)):
+                return self._to_hltb(r)
+        return None
+
+    def override_from_url(self, title, url):
+        """Manual mapping: pick the HLTB result whose game id matches the URL."""
+        m = re.search(r"/game/(\d+)", url)
+        if not m:
+            return None
+        gid = m.group(1)
+        for r in (self._search(title) or {}).get("data", []):
+            if str(r.get("game_id")) == gid:
                 return self._to_hltb(r)
         return None
 
