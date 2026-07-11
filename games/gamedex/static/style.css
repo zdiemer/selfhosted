@@ -376,6 +376,18 @@ td.cover { width: 46px; padding: 5px 8px; }
   object-fit: cover; display: block;
   background: var(--bg-2); transition: transform .5s var(--ease);
 }
+/* Hover-to-play trailer preview: sits over the art, under the scrim, so the
+   title stays readable while the video runs. */
+.card-preview {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; pointer-events: none; z-index: 0;
+  opacity: 0; animation: previewin .5s var(--ease) .35s forwards;
+  /* A 16:9 video in a 3:4 box: fill it and crop, rather than letterbox. */
+  transform: scale(1.9);
+}
+@keyframes previewin { to { opacity: 1; } }
+.card.previewing .card-cover { opacity: 0; transition: opacity .5s var(--ease) .35s; }
+
 .card-cover.ph {
   background: var(--surface-2);
   display: flex; align-items: center; justify-content: center;
@@ -463,34 +475,17 @@ td.cover { width: 46px; padding: 5px 8px; }
 tr.row-col-complete td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
-/* ---- Trailers ------------------------------------------------------------ */
-.trailers { display: flex; gap: 10px; overflow-x: auto; padding: 2px 0 8px; }
-.trailer {
-  position: relative; flex: 0 0 200px; cursor: pointer; padding: 0; border: none;
-  background: none; font-family: inherit; color: var(--text); text-align: left;
-}
-.trailer img {
-  width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-sm);
-  border: 1px solid var(--border); background: var(--matte); display: block;
-  transition: transform .18s var(--ease), border-color .18s;
-}
-.trailer:hover img { transform: translateY(-3px); border-color: var(--accent-line); }
-.trailer-play {
-  position: absolute; top: 32%; left: 50%; transform: translate(-50%, -50%);
-  width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center;
-  justify-content: center; font-size: 15px; color: #fff;
-  background: rgba(8, 10, 14, .72); backdrop-filter: blur(4px);
-  border: 1px solid rgba(255, 255, 255, .3); transition: background .16s, transform .16s;
-}
-.trailer:hover .trailer-play { background: var(--accent); transform: translate(-50%, -50%) scale(1.08); }
-.trailer-cap {
-  display: block; margin-top: 6px; font-size: 11px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.trailer-frame {
-  width: 100%; max-width: 560px; aspect-ratio: 16 / 9; border: 1px solid var(--border);
+/* ---- Carousel media (trailers + stills) ---------------------------------- */
+.shot-video {
+  width: 100%; aspect-ratio: 16 / 9; border: 0; display: block;
   border-radius: var(--r-sm); background: #000;
 }
+.shot-cap {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2;
+  padding: 3px 10px; border-radius: 999px; font-size: 11px;
+  background: var(--glass-btn); color: var(--on-glass); backdrop-filter: blur(6px);
+}
+.shot-cap:empty { display: none; }
 
 /* ---- Steam Deck / ProtonDB badges --------------------------------------- */
 .deck, .proton { font-weight: 700; }

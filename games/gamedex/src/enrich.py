@@ -29,6 +29,17 @@ _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genre
 # ones, and spot games with no metadata at all.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
                 "igdbId", "source", "stores")
+
+
+def _light_video(rec):
+    """The first trailer id, for the hover-to-play preview on the grid.
+
+    Derived rather than stored: `videos` has been in every enrichment record from
+    the start, so pulling the id out here means the whole library gets previews
+    with no re-enrichment at all.
+    """
+    vids = (rec or {}).get("videos") or []
+    return vids[0].get("id") if vids and vids[0].get("id") else None
 # Light fields each secondary source contributes to the cover/facet map.
 # Sources keyed on the Steam appid, which lives in the IGDB *enrichment* record
 # rather than the sheet — so their worker has to wait for IGDB to resolve first.
@@ -451,6 +462,8 @@ class Enricher:
         for k in keys:
             e = igdb.get(k)
             base = {f: e[1].get(f) for f in _IGDB_LIGHT} if e and e[0] == "matched" else {}
+            if e and e[0] == "matched":
+                base["video"] = _light_video(e[1])
             for src, extract in _SECONDARY_LIGHT.items():
                 entry = sec.get(src, {}).get(k)
                 if entry and entry[0] == "matched":
@@ -468,6 +481,7 @@ class Enricher:
                 if data:
                     d = json.loads(data)
                     out[mk] = {f: d.get(f) for f in _FACET_LIGHT}
+                    out[mk]["video"] = _light_video(d)
             for src, extract in _SECONDARY_LIGHT.items():
                 if src not in self._secondary:
                     continue

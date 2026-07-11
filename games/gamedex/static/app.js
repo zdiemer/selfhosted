@@ -170,16 +170,14 @@ const chips = (arr, fk) => (arr && arr.length
       ? `<span class="chip facet-link" data-fk="${fk}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`
       : `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
 
-function videoHtml(d) {
-  const vids = (d.videos || []).slice(0, 6);
-  if (!vids.length) return "";
-  return `<div class="detail-row notes"><div class="k">Trailers</div>
-    <div class="trailers">${vids.map((v) => `
-      <button class="trailer" data-yt="${escapeHtml(v.id)}" title="${escapeHtml(v.name || "Trailer")}">
-        <img loading="lazy" src="https://i.ytimg.com/vi/${escapeHtml(v.id)}/mqdefault.jpg" alt="">
-        <span class="trailer-play">▶</span>
-        <span class="trailer-cap">${escapeHtml(v.name || "Trailer")}</span>
-      </button>`).join("")}</div></div>`;
+// The carousel's contents: trailers first (they autoplay, muted, when their
+// slide is showing), then screenshots, then key art.
+function mediaOf(d) {
+  return [
+    ...(d.videos || []).slice(0, 6).map((v) => ({ kind: "video", id: v.id, name: v.name || "Trailer" })),
+    ...(d.screenshots || []).map((id) => ({ kind: "image", id })),
+    ...(d.artworks || []).map((id) => ({ kind: "image", id, art: true })),
+  ];
 }
 
 function detailHtml(d) {
@@ -194,12 +192,11 @@ function detailHtml(d) {
   const meta = [];
   if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(d.developers, "developer")}</div></div>`);
   if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(d.publishers, "publisher")}</div></div>`);
-  const gallery = [...(d.screenshots || []), ...(d.artworks || [])];
-  const nShots = gallery.length;
+  const nShots = mediaOf(d).length;
   const shots = nShots
-    ? `<div class="shots"><div class="shot-view"><img class="shot-img" alt="" loading="lazy"></div>` +
+    ? `<div class="shots"><div class="shot-view"></div>` +
       (nShots > 1 ? `<button class="shot-nav prev" aria-label="Previous">‹</button><button class="shot-nav next" aria-label="Next">›</button>` : "") +
-      `<div class="shot-count"></div></div>` : "";
+      `<div class="shot-count"></div><div class="shot-cap"></div></div>` : "";
   const similar = (d.similar || []).filter((s) => s.cover).slice(0, 8);
   const simHtml = similar.length
     ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
@@ -208,7 +205,7 @@ function detailHtml(d) {
   // The cover, score and chips live in the hero now — this is just the prose.
   return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
-    meta.join("") + videoHtml(d) + shots + simHtml +
+    meta.join("") + shots + simHtml +
     igdbAttr(d);
 }
 
@@ -337,23 +334,49 @@ function hltbHtml(h) {
   return "";
 }
 
-// ---- screenshot carousel + lightbox -------------------------------------
-let shotIds = [], shotIdx = 0, lbIdx = 0;
-function wireCarousel(el, ids) {
+// ---- media carousel + lightbox ------------------------------------------
+// Slides are trailers and stills. A trailer autoplays (muted) as soon as it's
+// the visible slide — it's the first thing you see when you open a game.
+let media = [], shotIds = [], shotIdx = 0, lbIdx = 0;
+function wireCarousel(el, items) {
   const wrap = el.querySelector(".shots");
-  shotIds = ids || [];
-  if (!wrap || !shotIds.length) return;
-  const img = wrap.querySelector(".shot-img");
+  media = items || [];
+  shotIds = media.filter((m) => m.kind === "image").map((m) => m.id);   // lightbox = stills only
+  if (!wrap || !media.length) return;
+  const view = wrap.querySelector(".shot-view");
   const count = wrap.querySelector(".shot-count");
+  const cap = wrap.querySelector(".shot-cap");
+
   const show = (i) => {
-    shotIdx = (i + shotIds.length) % shotIds.length;
-    img.src = IMG(shotIds[shotIdx], "screenshot_med");
-    count.textContent = `${shotIdx + 1} / ${shotIds.length}`;
+    shotIdx = (i + media.length) % media.length;
+    const m = media[shotIdx];
+    view.innerHTML = "";
+    if (m.kind === "video") {
+      const frame = document.createElement("iframe");
+      frame.className = "shot-video";
+      // muted: a browser will refuse to autoplay with sound, and it would be
+      // rude anyway. Controls are on, so it can be unmuted.
+      frame.src = `https://www.youtube-nocookie.com/embed/${m.id}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
+      frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+      frame.allowFullscreen = true;
+      frame.title = m.name;
+      view.appendChild(frame);
+    } else {
+      const img = document.createElement("img");
+      img.className = "shot-img";
+      img.loading = "lazy";
+      img.alt = "";
+      img.src = IMG(m.id, m.art ? "1080p" : "screenshot_med");
+      img.onclick = () => openLightbox(shotIds.indexOf(m.id));
+      view.appendChild(img);
+    }
+    count.textContent = `${shotIdx + 1} / ${media.length}`;
+    cap.textContent = m.kind === "video" ? m.name : (m.art ? "Artwork" : "");
   };
+
   const prev = wrap.querySelector(".prev"), next = wrap.querySelector(".next");
   if (prev) prev.onclick = (e) => { e.stopPropagation(); show(shotIdx - 1); };
   if (next) next.onclick = (e) => { e.stopPropagation(); show(shotIdx + 1); };
-  img.onclick = () => openLightbox(shotIdx);
   show(0);
 }
 function lbShow(delta) {
@@ -584,20 +607,7 @@ function renderIgdbSection(key, el, status, detail) {
     };
   });
 
-  wireCarousel(el, detail ? [...(detail.screenshots || []), ...(detail.artworks || [])] : []);
-  // Trailers: swap the thumbnail for the player only when it's actually clicked.
-  el.querySelectorAll("[data-yt]").forEach((btn) => {
-    btn.onclick = () => {
-      const id = btn.dataset.yt;
-      const frame = document.createElement("iframe");
-      frame.className = "trailer-frame";
-      frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
-      frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
-      frame.allowFullscreen = true;
-      frame.title = "Trailer";
-      btn.replaceWith(frame);
-    };
-  });
+  wireCarousel(el, detail ? mediaOf(detail) : []);
 }
 
 async function submitOverride(key, url, source = "igdb", remove = false) {
@@ -1334,6 +1344,7 @@ function cardBodyHtml(row) {
 
 function renderGrid(pageRows) {
   const grid = $("#grid");
+  stopPreview();                 // the card it was attached to is about to vanish
   grid.innerHTML = "";
   pageRows.forEach((row, i) => {
     const cs = coverSrc(ENRICH[row._k], "cover_big");
@@ -1353,7 +1364,67 @@ function renderGrid(pageRows) {
     CARD_ROW.set(card, row);
     card.innerHTML = `${cover}<div class="card-body">${cardBodyHtml(row)}</div>`;
     card.onclick = () => openDrawer(row);
+    wirePreview(card);
     grid.appendChild(card);
+  });
+}
+
+// ---- hover-to-play trailer previews --------------------------------------
+// Hover a card and its trailer plays, muted, from a random point in the middle —
+// the opening seconds of a trailer are logos, so starting at 0 would show you a
+// publisher ident every time. Leaving the card puts the box art back.
+//
+// Guarded by hover-intent (a moment's dwell), so scrolling across the grid
+// doesn't spawn twenty iframes; by a pointer check, since there's no hover on
+// touch; and by prefers-reduced-motion.
+const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
+let previewTimer = null, previewCard = null;
+
+function stopPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = null;
+  if (!previewCard) return;
+  const frame = previewCard.querySelector(".card-preview");
+  if (frame) frame.remove();
+  previewCard.classList.remove("previewing");
+  previewCard = null;
+}
+
+function startPreview(card) {
+  const row = CARD_ROW.get(card);
+  const vid = row && (ENRICH[row._k] || {}).video;
+  if (!vid || card === previewCard) return;
+  stopPreview();
+  previewCard = card;
+  // Somewhere in the middle: trailers run ~1–2 minutes and the interesting part
+  // is never at the front. We can't know the duration, so pick a safe window.
+  const start = 15 + Math.floor(Math.random() * 45);
+  const frame = document.createElement("iframe");
+  frame.className = "card-preview";
+  frame.src = `https://www.youtube-nocookie.com/embed/${vid}` +
+    `?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0` +
+    `&disablekb=1&iv_load_policy=3&fs=0&start=${start}`;
+  frame.allow = "autoplay; encrypted-media";
+  frame.tabIndex = -1;
+  frame.setAttribute("aria-hidden", "true");
+  card.appendChild(frame);
+  card.classList.add("previewing");
+}
+
+function wirePreview(card) {
+  if (!WANTS_MOTION) return;
+  // pointerenter tells us WHAT is hovering. A media query doesn't: headless
+  // Chrome and plenty of real desktops report (hover: none), and a touch that
+  // lingers would otherwise trigger a preview you never asked for.
+  card.addEventListener("pointerenter", (e) => {
+    if (e.pointerType !== "mouse") return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => startPreview(card), PREVIEW_DELAY);
+  });
+  card.addEventListener("pointerleave", () => {
+    if (previewCard === card) stopPreview();
+    else clearTimeout(previewTimer);
   });
 }
 
@@ -1463,6 +1534,7 @@ function detailValue(c, v) {
 }
 
 function openDrawer(row, sheetKey) {
+  stopPreview();
   drawerSheet = sheetKey || (SPECIAL_TABS.includes(activeTab) ? "games" : activeTab);
   const cols = (DATA.sheets[drawerSheet] || DATA.sheets.games).columns;
   const titleCol = cols[0];
