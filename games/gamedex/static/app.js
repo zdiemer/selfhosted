@@ -144,9 +144,11 @@ function detailHtml(d) {
   const meta = [];
   if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(d.developers, "developer")}</div></div>`);
   if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(d.publishers, "publisher")}</div></div>`);
-  const shots = (d.screenshots || []).length
-    ? `<div class="shots">${d.screenshots.map((s) =>
-        `<a href="${IMG(s, "screenshot_huge")}" target="_blank" rel="noopener"><img loading="lazy" src="${IMG(s, "screenshot_med")}" alt=""></a>`).join("")}</div>` : "";
+  const nShots = (d.screenshots || []).length;
+  const shots = nShots
+    ? `<div class="shots"><div class="shot-view"><img class="shot-img" alt="" loading="lazy"></div>` +
+      (nShots > 1 ? `<button class="shot-nav prev" aria-label="Previous">‹</button><button class="shot-nav next" aria-label="Next">›</button>` : "") +
+      `<div class="shot-count"></div></div>` : "";
   const similar = (d.similar || []).filter((s) => s.cover).slice(0, 8);
   const simHtml = similar.length
     ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
@@ -198,6 +200,38 @@ function hltbHtml(h) {
     return `<div class="hltb"><div class="hltb-head">⏱ Playtime</div><div class="hltb-row"><span>Estimated (from sheet)</span><b>${fmtHours(est)}</b></div></div>`;
   return "";
 }
+
+// ---- screenshot carousel + lightbox -------------------------------------
+let shotIds = [], shotIdx = 0, lbIdx = 0;
+function wireCarousel(el, ids) {
+  const wrap = el.querySelector(".shots");
+  shotIds = ids || [];
+  if (!wrap || !shotIds.length) return;
+  const img = wrap.querySelector(".shot-img");
+  const count = wrap.querySelector(".shot-count");
+  const show = (i) => {
+    shotIdx = (i + shotIds.length) % shotIds.length;
+    img.src = IMG(shotIds[shotIdx], "screenshot_med");
+    count.textContent = `${shotIdx + 1} / ${shotIds.length}`;
+  };
+  const prev = wrap.querySelector(".prev"), next = wrap.querySelector(".next");
+  if (prev) prev.onclick = (e) => { e.stopPropagation(); show(shotIdx - 1); };
+  if (next) next.onclick = (e) => { e.stopPropagation(); show(shotIdx + 1); };
+  img.onclick = () => openLightbox(shotIdx);
+  show(0);
+}
+function lbShow(delta) {
+  if (!shotIds.length) return;
+  lbIdx = (lbIdx + delta + shotIds.length) % shotIds.length;
+  $("#lbImg").src = IMG(shotIds[lbIdx], "screenshot_huge");
+  $("#lbCount").textContent = `${lbIdx + 1} / ${shotIds.length}`;
+  const multi = shotIds.length > 1;
+  $("#lbPrev").hidden = !multi;
+  $("#lbNext").hidden = !multi;
+}
+function openLightbox(i) { lbIdx = i; $("#lightbox").hidden = false; lbShow(0); }
+function closeLightbox() { $("#lightbox").hidden = true; }
+const lightboxOpen = () => !$("#lightbox").hidden;
 
 function metacriticHtml(key) {
   const mc = MCC[key];
@@ -265,6 +299,8 @@ function renderIgdbSection(key, el, status, detail) {
     input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
     reset.onclick = async () => { await submitOverride(key, "", src); loadDetail(key, el); };
   });
+
+  wireCarousel(el, (detail && detail.screenshots) || []);
 }
 
 async function submitOverride(key, url, source = "igdb") {
@@ -1315,7 +1351,19 @@ $("#drawerBody").addEventListener("click", (e) => {
   e.preventDefault(); e.stopPropagation();
   applyDrawerFacet(a.dataset.fk, a.dataset.fv);
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+$("#lbClose").addEventListener("click", closeLightbox);
+$("#lbPrev").addEventListener("click", (e) => { e.stopPropagation(); lbShow(-1); });
+$("#lbNext").addEventListener("click", (e) => { e.stopPropagation(); lbShow(1); });
+$("#lightbox").addEventListener("click", (e) => { if (e.target.id === "lightbox") closeLightbox(); });
+document.addEventListener("keydown", (e) => {
+  if (lightboxOpen()) {                       // lightbox owns the keys while open
+    if (e.key === "Escape") closeLightbox();
+    else if (e.key === "ArrowLeft") lbShow(-1);
+    else if (e.key === "ArrowRight") lbShow(1);
+    return;
+  }
+  if (e.key === "Escape") closeDrawer();
+});
 
 function showToast(msg) {
   const t = $("#toast");
