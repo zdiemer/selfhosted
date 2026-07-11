@@ -43,6 +43,14 @@
   --on-glass: #fff;
   --matte: #000;                        /* letterbox behind contain-fit art */
   --scrim: linear-gradient(to top, rgba(6, 8, 12, .96) 22%, rgba(6, 8, 12, .78) 52%, rgba(6, 8, 12, 0));
+  /* The drawer hero's scrim. Directional, not a blanket dim: it protects the
+     text on the LEFT and lets the artwork breathe on the right. */
+  --hero-scrim:
+    linear-gradient(100deg, var(--surface) 4%, rgba(21, 25, 34, .93) 34%,
+                    rgba(21, 25, 34, .60) 66%, rgba(21, 25, 34, .28) 100%),
+    /* Solid by the time it reaches the stat strip — numbers on top of a bright
+       patch of artwork are unreadable, however pretty the artwork is. */
+    linear-gradient(0deg, var(--surface) 24%, rgba(21, 25, 34, .55) 52%, transparent 82%);
   --glow-1: rgba(124, 92, 255, .10);
   --glow-2: rgba(34, 211, 238, .06);
 
@@ -99,6 +107,10 @@
   /* The scrim stays dark in both themes — it sits on box art, not on the page. */
   --glow-1: rgba(99, 56, 245, .07);
   --glow-2: rgba(14, 139, 168, .05);
+  --hero-scrim:
+    linear-gradient(100deg, var(--surface) 4%, rgba(255, 255, 255, .94) 34%,
+                    rgba(255, 255, 255, .66) 66%, rgba(255, 255, 255, .34) 100%),
+    linear-gradient(0deg, var(--surface) 24%, rgba(255, 255, 255, .62) 52%, transparent 82%);
 
   --sh-1: 0 1px 2px rgba(16, 24, 40, .06);
   --sh-2: 0 8px 24px rgba(16, 24, 40, .10);
@@ -502,26 +514,28 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
 /* ---- Cinematic hero (drawer header) ------------------------------------- */
 .hero {
-  position: relative; margin: -28px -28px 20px; padding: 26px 28px 0;
+  position: relative; margin: -28px -28px 20px; padding: 34px 28px 0;
   border-radius: var(--r-lg) var(--r-lg) 0 0; overflow: hidden;
-  isolation: isolate;
+  isolation: isolate; min-height: 260px;
 }
 .hero-bg {
-  position: absolute; inset: 0; z-index: -1;
-  background-size: cover; background-position: center;
-  opacity: 0; transform: scale(1.1); filter: blur(18px) saturate(1.2);
-  transition: opacity .7s var(--ease);
+  position: absolute; inset: 0; z-index: -2;
+  background-size: cover; background-position: center 22%;
+  /* Barely blurred and barely dimmed. The previous version put 18px of blur and
+     0.38 opacity UNDER a near-opaque gradient, which added up to a blank panel:
+     the artwork was loading correctly and you simply couldn't see it. */
+  opacity: 0; transform: scale(1.04);
+  filter: blur(1.5px) saturate(1.15);
+  transition: opacity .8s var(--ease), transform 1.2s var(--ease);
 }
-.hero-bg.on { opacity: .38; }
-/* Always legible: the art is decoration, the text is the content. */
+.hero-bg.on { opacity: .92; transform: none; }
+:root[data-theme="light"] .hero-bg.on { opacity: .8; }
+/* The text still has to win. A directional scrim protects the left, where the
+   cover and title live, and lets the art through on the right. */
 .hero::after {
   content: ""; position: absolute; inset: 0; z-index: -1;
-  background: linear-gradient(180deg, rgba(6, 8, 12, .55), var(--bg-2) 96%);
+  background: var(--hero-scrim);
 }
-:root[data-theme="light"] .hero::after {
-  background: linear-gradient(180deg, rgba(255, 255, 255, .60), var(--surface) 96%);
-}
-:root[data-theme="light"] .hero-bg.on { opacity: .22; }
 .hero-inner { display: flex; gap: 20px; align-items: flex-end; }
 .hero-inner .cover-big {
   width: 132px; flex: none; border-radius: var(--r-sm);

@@ -585,12 +585,16 @@ function fillHero(detail) {
   const bg = $("#heroBg"), coverEl = $("#heroCover"), chipsEl = $("#heroChips");
   if (!detail) return;
   // Artwork first: it's cinematic key art, made to be looked at. A screenshot is
-  // a fallback — it's a picture of a HUD.
+  // a fallback — it's a picture of a HUD. Ask for the big version: this is a
+  // full-bleed banner now, not a blurred wash, so a low-res source would show.
   const art = (detail.artworks || [])[0] || (detail.screenshots || [])[0];
-  const size = (detail.artworks || []).length ? "1080p" : "screenshot_med";
   if (bg && art) {
-    bg.style.backgroundImage = `url("${IMG(art, size)}")`;
-    bg.classList.add("on");
+    const img = new Image();          // fade it in only once it's actually there
+    img.onload = () => {
+      bg.style.backgroundImage = `url("${IMG(art, "1080p")}")`;
+      bg.classList.add("on");
+    };
+    img.src = IMG(art, "1080p");
   }
   const cs = coverSrc(detail, "cover_big");
   if (coverEl && cs && coverEl.tagName !== "IMG") {
