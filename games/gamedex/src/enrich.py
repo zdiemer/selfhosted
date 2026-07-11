@@ -32,9 +32,25 @@ _SECONDARY_LIGHT = {
     "metacritic": lambda d: {"metascore": d.get("metascore"), "metaUrl": d.get("url")},
     "gameye": lambda d: {"geLoose": d.get("priceLoose"), "geCib": d.get("priceCib"),
                          "geNew": d.get("priceNew"), "geUrl": d.get("url")},
+    # Arcade art doubles as a cover for games IGDB has no box art for.
+    "arcadedb": lambda d: {"adbCover": d.get("cabinet") or d.get("flyer") or d.get("titleScreen"),
+                           "adbPlayers": d.get("playersDetail"), "adbOrientation": d.get("orientation"),
+                           "adbUrl": d.get("url")},
+    "vndb": lambda d: {"vnRating": d.get("rating"), "vnHours": d.get("hours"),
+                       "vnCover": d.get("cover"), "vnUrl": d.get("url")},
+    "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url")},
+    "thumby": lambda d: {"thumbyUrl": d.get("url")},
 }
-# Sources that only apply to owned physical games (gated in request()).
-_OWNED_PHYSICAL_ONLY = {"gameye"}
+
+# Not every source applies to every game. These gates keep the queues honest:
+# an arcade scraper has nothing to say about a Switch game, and asking anyway
+# would just burn rate limit and write thousands of no_match rows.
+_SOURCE_GATE = {
+    "gameye": lambda m: m.get("owned") and (m.get("format") or "").lower() == "physical",
+    "arcadedb": lambda m: bool(m.get("mameRomset")),
+    "thumby": lambda m: m.get("platform") in ("Thumby", "Thumby Color"),
+    "vndb": lambda m: m.get("genre") in ("Visual Novel", "Adventure"),
+}
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -95,8 +111,10 @@ class Enricher:
                         "title": title, "platform": r.get("platform"), "year": r.get("releaseYear"),
                         "developer": r.get("developer"), "publisher": r.get("publisher"),
                         "franchise": r.get("franchise"),
-                        # For the owned-physical gate (GameEye).
+                        # For the per-source gates in _SOURCE_GATE, and for
+                        # ArcadeDB, which looks up by romset rather than title.
                         "owned": bool(r.get("owned")), "format": r.get("format"),
+                        "mameRomset": r.get("mameRomset"), "genre": r.get("genre"),
                     }
         with self._lock:
             self._key_meta = key_meta
@@ -213,9 +231,9 @@ class Enricher:
                 if k not in self._key_meta:
                     continue
                 meta = self._key_meta[k]
-                owned_phys = meta.get("owned") and (meta.get("format") or "").lower() == "physical"
                 for src in self._sources:
-                    if src in _OWNED_PHYSICAL_ONLY and not owned_phys:
+                    gate = _SOURCE_GATE.get(src)
+                    if gate and not gate(meta):
                         continue
                     if self._status(self._table(src), k):
                         continue
@@ -303,7 +321,15 @@ class Enricher:
             iq = len(self._queued["igdb"])
             for src in self._secondary:
                 sec[src]["queued"] = len(self._queued[src])
-        complete = ir >= total and all(sec[s]["resolved"] >= total for s in self._secondary)
+                # A gated source is only ever asked about the games it applies to,
+                # so measure it against THAT total — otherwise ArcadeDB (584 of
+                # 14.9k games) would sit at 4% forever and never read as complete.
+                gate = _SOURCE_GATE.get(src)
+                sec[src]["total"] = (
+                    sum(1 for m in self._key_meta.values() if gate(m)) if gate else total
+                )
+        complete = ir >= total and all(
+            sec[s]["resolved"] >= sec[s]["total"] for s in self._secondary)
         return {"total": total, "resolved": ir, "matched": im, "queued": iq,
                 "sources": sec, "backfill": self._backfill, "complete": complete}
 
@@ -336,8 +362,12 @@ class Enricher:
                             enrichment, score = fb, fb.get("confidence") or 0
                     self._save_igdb(key, enrichment, score)
                 else:
-                    self._save_secondary(src, key, self._secondary[src].match(
-                        meta["title"], meta["platform"], meta["year"]))
+                    client = self._secondary[src]
+                    # ArcadeDB keys on the MAME romset and Thumby/VNDB on
+                    # platform/genre — a bare (title, platform, year) isn't enough.
+                    rec = (client.match_meta(meta) if hasattr(client, "match_meta")
+                           else client.match(meta["title"], meta["platform"], meta["year"]))
+                    self._save_secondary(src, key, rec)
             except Exception as exc:
                 log.warning("%s enrich failed for %r: %s", src, meta["title"], exc)
                 time.sleep(1.0)

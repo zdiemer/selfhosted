@@ -67,7 +67,13 @@ function escapeHtml(s) {
 // ---- IGDB enrichment (lazy, per visible page) ---------------------------
 const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg` : "");
 // Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
-const coverSrc = (e, size) => (e && e.coverUrl ? e.coverUrl : (e && e.cover ? IMG(e.cover, size) : ""));
+// Cover: IGDB image id, else a fallback source's full URL, else the art the
+// gated sources bring — an arcade cabinet scan or a VN cover beats a blank box.
+const coverSrc = (e, size) => (
+  !e ? "" :
+  e.coverUrl ? e.coverUrl :
+  e.cover ? IMG(e.cover, size) :
+  e.vnCover || e.adbCover || "");
 let ENRICH_ENABLED = false;
 let ENRICH_COMPLETE = false;       // all sources backfilled → stop shimmering covers
 let ENRICH_SOURCES = [];           // enabled secondary sources (hltb, metacritic, gameye)
@@ -76,6 +82,10 @@ const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache
 const HLTBC = {};                  // matchKey -> HLTB playtimes (drawer cache)
 const MCC = {};                    // matchKey -> Metacritic score (drawer cache)
 const GEC = {};                    // matchKey -> GameEye prices (drawer cache)
+const ADBC = {};                   // matchKey -> Arcade Database record
+const VNC = {};                    // matchKey -> VNDB record
+const VGC = {};                    // matchKey -> VGChartz record
+const THC = {};                    // matchKey -> Thumby record
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
@@ -203,20 +213,29 @@ function mapControlHtml(key) {
     igdb: primary === "igdb" ? d.url || "" : "",
     steam: primary === "steam" ? d.url || "" : "",
     ign: primary === "ign" ? d.url || "" : "",
+    launchbox: primary === "launchbox" ? d.url || "" : "",
     hltb: (HLTBC[key] || {}).url || "",
     metacritic: (MCC[key] || {}).url || "",
     gameye: (GEC[key] || {}).url || "",
+    arcadedb: (ADBC[key] || {}).url || "",
+    vndb: (VNC[key] || {}).url || "",
+    vgchartz: (VGC[key] || {}).url || "",
   };
   // IGDB / Steam / IGN all fill the same "primary metadata" slot.
   const rows = [
     { id: "igdb", label: "Metadata — IGDB", ph: "IGDB game URL" },
     { id: "steam", label: "Metadata — Steam", ph: "Steam store URL (…/app/<id>/)" },
     { id: "ign", label: "Metadata — IGN", ph: "IGN game URL" },
+    { id: "launchbox", label: "Metadata — LaunchBox", ph: "LaunchBox game URL" },
   ];
   if (ENRICH_SOURCES.includes("hltb")) rows.push({ id: "hltb", label: "HowLongToBeat", ph: "HLTB game URL" });
   if (ENRICH_SOURCES.includes("metacritic")) rows.push({ id: "metacritic", label: "Metacritic", ph: "Metacritic game URL" });
   const ownedPhys = drawerRow && drawerRow.owned && (drawerRow.format || "").toLowerCase() === "physical";
   if (ENRICH_SOURCES.includes("gameye") && ownedPhys) rows.push({ id: "gameye", label: "GameEye value", ph: "GameEye encyclopedia URL" });
+  // Gated sources: only offer the mapping box where the source could apply.
+  if (ENRICH_SOURCES.includes("arcadedb") && (drawerRow || {}).mameRomset) rows.push({ id: "arcadedb", label: "Arcade Database", ph: "adb.arcadeitalia.net/?mame=<romset>" });
+  if (ENRICH_SOURCES.includes("vndb") && ["Visual Novel", "Adventure"].includes((drawerRow || {}).genre)) rows.push({ id: "vndb", label: "VNDB", ph: "vndb.org/v<id>" });
+  if (ENRICH_SOURCES.includes("vgchartz")) rows.push({ id: "vgchartz", label: "VGChartz sales", ph: "vgchartz.com/games/game.php?id=<id>" });
   return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
       <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
@@ -307,6 +326,65 @@ function gameyeHtml(key) {
     `</div>`;
 }
 
+// Arcade Database: cabinet/marquee scans plus the cabinet's own specs. Matched
+// on the MAME romset, so if it's here at all it's the right machine.
+function arcadeHtml(key) {
+  const a = ADBC[key];
+  if (!a) return "";
+  const shots = [["Cabinet", a.cabinet], ["Marquee", a.marquee], ["Flyer", a.flyer], ["Title", a.titleScreen]]
+    .filter(([, u]) => u)
+    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .join("");
+  const spec = [
+    ["Players", a.playersDetail || (a.players != null ? String(a.players) : null)],
+    ["Controls", a.controls], ["Buttons", a.buttons != null ? String(a.buttons) : null],
+    ["Screen", [a.orientation, a.resolution].filter(Boolean).join(" · ") || null],
+    ["Manufacturer", a.manufacturer], ["Year", a.year],
+  ].filter(([, v]) => v)
+    .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
+  return `<div class="hltb"><div class="hltb-head">🕹️ Arcade cabinet${a.romset ? ` <span class="muted">${escapeHtml(a.romset)}</span>` : ""}</div>` +
+    (shots ? `<div class="adb-arts">${shots}</div>` : "") + spec +
+    (a.history ? `<details class="adb-history"><summary>MAME history</summary><p>${escapeHtml(a.history)}</p></details>` : "") +
+    (a.url ? `<a class="hltb-link" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">View on Arcade Database ↗</a>` : "") +
+    `</div>`;
+}
+
+function vndbHtml(key) {
+  const v = VNC[key];
+  if (!v) return "";
+  const rows = [
+    ["Rating", v.rating != null ? `${Math.round(v.rating * 100)}%${v.votes ? ` (${v.votes.toLocaleString()} votes)` : ""}` : null],
+    ["Median length", v.hours != null ? fmtHours(v.hours) : null],
+    ["Released", v.released || null],
+  ].filter(([, x]) => x)
+    .map(([l, x]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(x))}</b></div>`).join("");
+  if (!rows) return "";
+  return `<div class="hltb"><div class="hltb-head">📖 Visual novel (VNDB)</div>${rows}` +
+    (v.url ? `<a class="hltb-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">View on VNDB ↗</a>` : "") +
+    `</div>`;
+}
+
+function salesHtml(key) {
+  const v = VGC[key];
+  if (!v || v.units == null) return "";
+  const rows = [["Shipped", v.shipped], ["Sold", v.sold]].filter(([, x]) => x != null)
+    .map(([l, x]) => `<div class="hltb-row"><span>${l}</span><b>${x.toLocaleString()}</b></div>`).join("");
+  return `<div class="hltb"><div class="hltb-head">📈 Sales (VGChartz)</div>${rows}` +
+    `<div class="hltb-note muted">VGChartz estimate${v.console ? ` · ${escapeHtml(v.console)}` : ""}</div>` +
+    (v.url ? `<a class="hltb-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">View on VGChartz ↗</a>` : "") +
+    `</div>`;
+}
+
+// Thumby/Thumby Color: TinyCircuits' list is the only place these exist.
+function thumbyHtml(key) {
+  const t = THC[key];
+  if (!t) return "";
+  return `<div class="hltb"><div class="hltb-head">🔬 ${escapeHtml(t.platform || "Thumby")}</div>` +
+    (t.description ? `<p class="thumby-desc">${escapeHtml(t.description)}</p>` : "") +
+    (t.url ? `<a class="hltb-link" href="${escapeHtml(t.url)}" target="_blank" rel="noopener">View on GitHub ↗</a>` : "") +
+    `</div>`;
+}
+
 // Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
 function renderIgdbSection(key, el, status, detail) {
   let content;
@@ -327,7 +405,8 @@ function renderIgdbSection(key, el, status, detail) {
               <div class="skel skel-line short"></div>`) +
       `</div></div>`;
   }
-  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + arcadeHtml(key) + vndbHtml(key)
+    + thumbyHtml(key) + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
 
   el.querySelectorAll(".map-src").forEach((rowEl) => {
     const src = rowEl.dataset.src;
@@ -389,6 +468,10 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     if ("hltb" in j) HLTBC[key] = j.hltb;
     if ("metacritic" in j) MCC[key] = j.metacritic;
     if ("gameye" in j) GEC[key] = j.gameye;
+    if ("arcadedb" in j) ADBC[key] = j.arcadedb;
+    if ("vndb" in j) VNC[key] = j.vndb;
+    if ("vgchartz" in j) VGC[key] = j.vgchartz;
+    if ("thumby" in j) THC[key] = j.thumby;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -447,6 +530,13 @@ const PLAYTIME_BUCKETS = [
   { label: "40–80h", test: (h) => h >= 40 && h < 80 },
   { label: "80h+", test: (h) => h >= 80 },
 ];
+const SALES_BUCKETS = [
+  { label: "10m+", test: (v) => v >= 10e6 },
+  { label: "5–10m", test: (v) => v >= 5e6 && v < 10e6 },
+  { label: "1–5m", test: (v) => v >= 1e6 && v < 5e6 },
+  { label: "500k–1m", test: (v) => v >= 5e5 && v < 1e6 },
+  { label: "< 500k", test: (v) => v < 5e5 },
+];
 const METACRITIC_BUCKETS = [
   { label: "90–100", test: (v) => v >= 0.9 },
   { label: "80–89", test: (v) => v >= 0.8 && v < 0.9 },
@@ -458,8 +548,18 @@ const METACRITIC_BUCKETS = [
 const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBest; return h != null ? h : row.estimatedTime; };
 // Metacritic (0–1): scraped score where enriched, else the sheet's Metacritic Rating.
 const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
-// User rating (0–1): IGDB community rating where enriched, else sheet GameFAQs.
-const userRatingOf = (row) => { const e = ENRICH[row._k]; return e && e.userRating != null ? e.userRating : row.gamefaqsUserRating; };
+// User rating (0–1): IGDB community rating where enriched, else VNDB's (visual
+// novels are the one place VNDB's vote count dwarfs everyone's), else GameFAQs.
+const userRatingOf = (row) => {
+  const e = ENRICH[row._k];
+  if (e && e.userRating != null) return e.userRating;
+  if (e && e.vnRating != null) return e.vnRating;
+  return row.gamefaqsUserRating;
+};
+// Units sold/shipped (VGChartz estimate). Only major releases have a figure.
+const salesOf = (row) => { const e = ENRICH[row._k]; return e && e.units != null ? e.units : null; };
+const fmtUnits = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "m"
+  : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n));
 
 // Quantity of copies owned, parsed from the notes ("Two copies owned" → 2).
 const _NUMWORD = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
@@ -487,9 +587,10 @@ const metaOf = (row) => {
   const e = ENRICH[row._k] || null;
   return {
     igdb: !!(e && e.igdbId),                        // IGDB proper
-    fallback: e && e.source ? e.source : null,      // IGN / Steam / GameSpot
+    fallback: e && e.source ? e.source : null,      // IGN / Steam / LaunchBox
     hltb: !!(e && e.hltbBest != null),
     mc: !!(e && e.metascore != null),
+    art: !!(e && (e.coverUrl || e.cover || e.vnCover || e.adbCover)),
   };
 };
 // Which source supplied the game's primary metadata.
@@ -502,10 +603,10 @@ function missingOf(row) {
   const m = metaOf(row);
   const out = [];
   if (!m.igdb) out.push("No IGDB");
-  if (!m.igdb && !m.fallback) out.push("No cover / art");
+  if (!m.art) out.push("No cover / art");
   if (!m.hltb) out.push("No HLTB");
   if (!m.mc) out.push("No Metacritic");
-  if (!m.igdb && !m.fallback && !m.hltb && !m.mc) out.push("Nothing at all");
+  if (!m.igdb && !m.fallback && !m.art && !m.hltb && !m.mc) out.push("Nothing at all");
   return out;
 }
 
@@ -524,6 +625,12 @@ function extraFacetCols() {
     { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
     { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
     { key: "__userrating", label: "User Rating", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: userRatingOf },
+    { key: "__sales", label: "Sales (VGChartz)", type: "text", facet: true, virtual: true, kind: "bucket", buckets: SALES_BUCKETS, getVal: salesOf },
+    // Arcade-only, from the MAME romset lookup — blank for everything else.
+    { key: "__adbplayers", label: "Arcade players", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.adbPlayers ? [e.adbPlayers] : []; } },
+    { key: "__adborient", label: "Arcade screen", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.adbOrientation ? [e.adbOrientation] : []; } },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
@@ -897,6 +1004,8 @@ function cardBodyHtml(row) {
   if (pt != null) parts.push("⏱ " + fmtHours(pt));
   const cv = collectionValueOf(row);
   if (cv != null) parts.push("💵 $" + cv.toFixed(2));
+  const units = salesOf(row);
+  if (units != null) parts.push("📈 " + fmtUnits(units));
   const rating = row.rating != null
     ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";
   const mc = metacriticOf(row);

@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from arcadedb import ArcadeDbClient
 from enrich import Enricher
 from fallback import FallbackClient
 from gameye import GameEyeClient
@@ -33,6 +34,9 @@ from hltb import HltbClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
 from poller import DataStore
+from thumby import ThumbyClient
+from vgchartz import VgChartzClient
+from vndb import VndbClient
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -59,6 +63,16 @@ if _on("METACRITIC_ENABLED"):
     _secondary["metacritic"] = MetacriticClient()
 if _on("GAMEEYE_ENABLED"):
     _secondary["gameye"] = GameEyeClient()
+# Gated sources (see _SOURCE_GATE in enrich.py): each is only asked about the
+# games it can actually speak to.
+if _on("ARCADEDB_ENABLED"):
+    _secondary["arcadedb"] = ArcadeDbClient()      # MAME romset -> cabinet art
+if _on("VNDB_ENABLED"):
+    _secondary["vndb"] = VndbClient()              # visual novels / adventure
+if _on("THUMBY_ENABLED"):
+    _secondary["thumby"] = ThumbyClient()          # Thumby / Thumby Color
+if _on("VGCHARTZ_ENABLED"):
+    _secondary["vgchartz"] = VgChartzClient()      # sales figures
 # Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
 # off by default — its API is Cloudflare-blocked (see fallback.py).
 _fallback = (
@@ -144,7 +158,11 @@ def enrichment_detail(key: str):
     return {"enabled": True, "status": status, "detail": detail,
             "hltb": enricher.get_secondary("hltb", key),
             "metacritic": enricher.get_secondary("metacritic", key),
-            "gameye": enricher.get_secondary("gameye", key)}
+            "gameye": enricher.get_secondary("gameye", key),
+            "arcadedb": enricher.get_secondary("arcadedb", key),
+            "vndb": enricher.get_secondary("vndb", key),
+            "vgchartz": enricher.get_secondary("vgchartz", key),
+            "thumby": enricher.get_secondary("thumby", key)}
 
 
 @app.get("/api/enrichment/stats")
@@ -163,7 +181,7 @@ class Override(BaseModel):
 
 # IGN/GameSpot/Steam supply the *primary* metadata record, so mapping them
 # writes to the same slot as IGDB.
-_PRIMARY_FALLBACKS = ("ign", "steam", "gamespot")
+_PRIMARY_FALLBACKS = ("ign", "steam", "gamespot", "launchbox")
 
 
 @app.post("/api/enrichment/override")

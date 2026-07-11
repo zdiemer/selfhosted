@@ -70,6 +70,14 @@ spec:
               value: {{ .Values.igdb.fallback | quote }}
             - name: GAMEEYE_ENABLED
               value: {{ .Values.igdb.gameye | quote }}
+            - name: ARCADEDB_ENABLED
+              value: {{ .Values.igdb.arcadedb | quote }}
+            - name: VNDB_ENABLED
+              value: {{ .Values.igdb.vndb | quote }}
+            - name: THUMBY_ENABLED
+              value: {{ .Values.igdb.thumby | quote }}
+            - name: VGCHARTZ_ENABLED
+              value: {{ .Values.igdb.vgchartz | quote }}
             - name: GAMESPOT_API_KEY
               valueFrom:
                 secretKeyRef:

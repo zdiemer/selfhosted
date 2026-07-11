@@ -360,6 +360,21 @@ td.cover { width: 46px; padding: 5px 8px; }
 tr.row-col-complete td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
+/* ---- Arcade / VNDB / sales / Thumby (drawer) ----------------------------- */
+.hltb-note { font-size: 11px; margin-top: 6px; }
+.adb-arts { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
+.adb-art { margin: 0; flex: 0 1 116px; }
+.adb-art img {
+  width: 100%; height: 88px; object-fit: contain; border-radius: var(--r-sm);
+  background: #000; border: 1px solid var(--border); cursor: zoom-in;
+}
+.adb-art figcaption { margin-top: 4px; font-size: 10.5px; color: var(--dim); text-align: center; }
+.adb-history { margin-top: 10px; }
+.adb-history summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.adb-history summary:hover { color: var(--accent); }
+.adb-history p { margin-top: 8px; font-size: 12.5px; line-height: 1.65; color: var(--muted); white-space: pre-wrap; }
+.thumby-desc { font-size: 12.5px; line-height: 1.65; color: var(--muted); white-space: pre-wrap; margin: 2px 0 8px; }
+
 /* ---- Collections (drawer) ----------------------------------------------- */
 .col-section { margin: 22px 0 4px; }
 .col-section h3 { font-size: 15px; margin-bottom: 8px; }

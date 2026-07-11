@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.24.0"
+  tag: "0.25.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -37,10 +37,25 @@ igdb:
   # Metacritic critic scores (3 req/s) via the Fandom backend API — feeds the
   # Metacritic facet + card, falls back to the sheet's Metacritic Rating.
   metacritic: true
-  # Fallback metadata for games IGDB doesn't match: IGN → GameSpot → Steam(PC).
+  # Fallback metadata for games IGDB doesn't match:
+  # IGN → GameSpot → Steam(PC) → LaunchBox. LaunchBox goes last: deepest retro
+  # catalogue, but a page fetch per candidate, so it's the slowest of the four.
   fallback: true
   # GameEye market values (Loose/CIB/New) for owned physical games only, 500/hr.
   gameye: true
+  # Arcade Database (4 req/s) — an EXACT lookup by MAME romset, so it cannot
+  # mismatch. Cabinet/marquee/flyer art, player count, controls, orientation.
+  # Gated to the games that carry a romset.
+  arcadedb: true
+  # VNDB (1 req/s) — community rating, vote count and median length for visual
+  # novels. Gated to the Visual Novel + Adventure genres.
+  vndb: true
+  # TinyCircuits' own game lists — the only metadata that exists for these.
+  # Gated to the Thumby / Thumby Color platforms.
+  thumby: true
+  # VGChartz (1 req/s) — unit sales, scraped from the sales table. Estimates,
+  # and coverage skews hard to major retail releases; most games have no entry.
+  vgchartz: true
 
 # GameSpot for the fallback chain (apiKey goes in values.local.yaml).
 # DISABLED: the API now 301s to a Cloudflare-protected page (403 "Just a
