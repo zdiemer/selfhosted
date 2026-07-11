@@ -826,17 +826,21 @@ function closeDrawer() { $("#overlay").hidden = true; }
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-function setStatsMode(on) {
-  $("#stats").hidden = !on;
-  $(".resultbar").hidden = on;
-  $("#pager").style.display = on ? "none" : "";
-  document.querySelector(".facets").style.display = on ? "none" : "";
-  if (on) { $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
+const SPECIAL_TABS = ["stats", "pick"];
+function setSpecialMode(mode) {   // null | "stats" | "pick"
+  const special = SPECIAL_TABS.includes(mode);
+  $("#stats").hidden = mode !== "stats";
+  $("#picker").hidden = mode !== "pick";
+  $(".resultbar").hidden = special;
+  $("#pager").style.display = special ? "none" : "";
+  document.querySelector(".facets").style.display = special ? "none" : "";
+  if (special) { $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
 }
 
 function renderAll() {
-  if (activeTab === "stats") { setStatsMode(true); renderStats(); return; }
-  setStatsMode(false);
+  if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
+  if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
+  setSpecialMode(null);
   renderFacets();
   currentFiltered = filterRows(null);
   renderTable(currentFiltered);
@@ -845,7 +849,7 @@ function renderAll() {
 function switchTab(tab) {
   activeTab = tab;
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
-  if (tab !== "stats") $("#search").value = tabState[tab].search;
+  if (!SPECIAL_TABS.includes(tab)) $("#search").value = tabState[tab].search;
   renderAll();
 }
 
@@ -855,7 +859,10 @@ function syncURL(push) {
   if (applyingState) return;
   const p = new URLSearchParams();
   if (activeTab !== "games") p.set("tab", activeTab);
-  if (activeTab !== "stats") {
+  if (activeTab === "pick") {
+    if (pickState.selector) p.set("sel", pickState.selector);
+    if (pickState.param) p.set("pp", pickState.param);
+  } else if (activeTab !== "stats") {
     const st = tabState[activeTab];
     if (viewMode !== "grid") p.set("view", viewMode);
     if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
@@ -870,8 +877,11 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["games", "completed", "onOrder", "stats"].includes(p.get("tab")) ? p.get("tab") : "games";
-  if (tab === "stats") { applyingState = false; switchTab("stats"); return; }
+  const tab = ["games", "completed", "onOrder", "stats", "pick"].includes(p.get("tab")) ? p.get("tab") : "games";
+  if (SPECIAL_TABS.includes(tab)) {
+    if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
+    applyingState = false; switchTab(tab); return;
+  }
   viewMode = p.get("view") === "table" ? "table" : "grid";
   PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   const st = tabState[tab];
@@ -1003,6 +1013,11 @@ function renderStats() {
     { label: "Emulated", value: rows.filter((r) => r.emulated).length },
     { label: "VR", value: rows.filter((r) => r.vr).length },
   ];
+  // Backlog stats (from the games sheet) — inspired by the picker's selectors.
+  const games = ((DATA.sheets.games || {}).rows) || [];
+  const backlog = games.filter((r) => !r.completed);
+  const backlogHours = backlog.reduce((a, r) => a + (playtimeOf(r) || 0), 0);
+  const complPct = games.length ? Math.round(100 * games.filter((r) => r.completed).length / games.length) : 0;
 
   host.innerHTML =
     `<div class="stat-cards">
@@ -1012,9 +1027,13 @@ function renderStats() {
       ${statCard(thisYear.toLocaleString(), "Completed in " + (curYear || "—"))}
       ${statCard(countBy(rows.map((r) => r.platform)).size, "Platforms")}
       ${statCard(countBy(rows.map((r) => r.franchise)).size, "Franchises")}
+      ${statCard(backlog.length.toLocaleString(), "In backlog")}
+      ${statCard(Math.round(backlogHours).toLocaleString() + "h", "Backlog hours")}
+      ${statCard(complPct + "%", "Library completed")}
     </div>
     <div class="stat-grid">
       ${statPanel("Completions per year", svgBarsV(yearData))}
+      ${statPanel("Backlog by platform", svgBarsH(topCounts(backlog.map((r) => r.platform), 10)))}
       ${statPanel("By release decade", svgBarsV(decadeData, 360, 170, PALETTE[4]))}
       ${statPanel("Top platforms", svgBarsH(topCounts(rows.map((r) => r.platform), 10)))}
       ${statPanel("Top genres", svgBarsH(topCounts(rows.map((r) => r.genre), 12)))}
@@ -1024,6 +1043,97 @@ function renderStats() {
       ${statPanel("By region", svgDonut(topCounts(rows.map((r) => r.region), 8)))}
       ${statPanel("How I played", svgBarsH(flags))}
     </div>`;
+}
+
+// ---- "Pick my next game" ------------------------------------------------
+const pickState = { selector: "backlog", param: "", picked: null };
+let _completedFranchises = null;
+const completedFranchises = () => (_completedFranchises ||=
+  new Set(((DATA.sheets.completed || {}).rows || []).map((r) => r.franchise).filter(Boolean)));
+const pickYear = () => new Date().getFullYear();
+
+// Each selector filters the backlog (games not completed). param selectors take
+// a value (platform/genre). Curated from zdiemer/GamePicker's selector library.
+const SELECTORS = [
+  { id: "backlog", label: "Anything in my backlog", group: "General", filter: () => true },
+  { id: "playing", label: "Currently playing", group: "Status", filter: (r) => r.playingStatus === "Playing" },
+  { id: "upnext", label: "Up next", group: "Status", filter: (r) => r.playingStatus === "Up Next" },
+  { id: "onhold", label: "On hold", group: "Status", filter: (r) => r.playingStatus === "On Hold" },
+  { id: "priority", label: "High priority", group: "Status", filter: (r) => Number(r.priority) >= 4 },
+  { id: "quick", label: "Quick (under 5h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 5; } },
+  { id: "medium", label: "Medium (5–15h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 5 && p < 15; } },
+  { id: "long", label: "Long haul (15h+)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p >= 15; } },
+  { id: "acclaimed", label: "Critically acclaimed (80+)", group: "Rating", filter: (r) => { const m = metacriticOf(r); return m != null && m >= 0.8; } },
+  { id: "beloved", label: "Beloved by players (80+)", group: "Rating", filter: (r) => { const m = userRatingOf(r); return m != null && m >= 0.8; } },
+  { id: "owned", label: "Owned & unplayed", group: "Ownership", filter: (r) => !!r.owned },
+  { id: "physical", label: "Physical copies", group: "Ownership", filter: (r) => r.owned && (r.format || "").toLowerCase() === "physical" },
+  { id: "wishlist", label: "Wishlisted", group: "Ownership", filter: (r) => !!r.wishlisted },
+  { id: "vr", label: "VR games", group: "Kind", filter: (r) => !!r.vr },
+  { id: "retro", label: "Retro (before 2000)", group: "Era", filter: (r) => { const y = +r.releaseYear; return y && y < 2000; } },
+  { id: "recent", label: "Recent (last 3 years)", group: "Era", filter: (r) => { const y = +r.releaseYear; return y && y >= pickYear() - 3; } },
+  { id: "franchise", label: "Continue a franchise I've played", group: "Progress", filter: (r) => r.franchise && completedFranchises().has(r.franchise) },
+  { id: "platform", label: "By platform…", group: "By…", param: "platform", filter: (r, v) => r.platform === v },
+  { id: "genre", label: "By genre…", group: "By…", param: "genre", filter: (r, v) => r.genre === v },
+];
+
+const pickEligible = () => ((DATA.sheets.games || {}).rows || []).filter((r) => !r.completed && r.title);
+function pickPool() {
+  const sel = SELECTORS.find((s) => s.id === pickState.selector) || SELECTORS[0];
+  const pool = pickEligible().filter((r) => (sel.param ? pickState.param && sel.filter(r, pickState.param) : sel.filter(r)));
+  return { sel, pool };
+}
+function pickGame() {
+  const { pool } = pickPool();
+  pickState.picked = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+  renderPicker();
+}
+
+function pickCard(row) {
+  const cs = coverSrc(ENRICH[row._k], "cover_big");
+  const cover = cs ? `<img src="${cs}" alt="">` : `<div class="pick-ph">🎮</div>`;
+  const pt = playtimeOf(row), mc = metacriticOf(row);
+  const bits = [row.platform, row.releaseYear, row.genre].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
+  if (pt != null) bits.push("⏱ " + fmtHours(pt));
+  if (mc != null) bits.push("★ " + Math.round(mc * 100));
+  return `<div class="pick-card">${cover}<div class="pick-info"><h2>${escapeHtml(String(row.title))}</h2>
+    <div class="pick-meta">${bits.join(" · ")}</div>
+    <div class="pick-actions"><button class="pick-reroll" id="pickReroll">🎲 Re-roll</button>
+    <span class="muted">Tap the card for full details</span></div></div></div>`;
+}
+
+function renderPicker() {
+  const host = $("#picker");
+  const sel = SELECTORS.find((s) => s.id === pickState.selector) || SELECTORS[0];
+  pickState.selector = sel.id;
+  const groups = {};
+  SELECTORS.forEach((s) => { (groups[s.group] = groups[s.group] || []).push(s); });
+  const opts = Object.entries(groups).map(([g, ss]) =>
+    `<optgroup label="${g}">${ss.map((s) => `<option value="${s.id}" ${s.id === sel.id ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}</optgroup>`).join("");
+  let paramHtml = "";
+  if (sel.param) {
+    const vals = [...new Set(pickEligible().map((r) => r[sel.param]).filter(Boolean))].sort();
+    if (!vals.includes(pickState.param)) pickState.param = vals[0] || "";
+    paramHtml = `<select id="pickParam">${vals.map((v) => `<option ${v === pickState.param ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}</select>`;
+  }
+  const { pool } = pickPool();
+  host.innerHTML = `
+    <div class="pick-controls">
+      <label>Pick <select id="pickSel">${opts}</select></label>${paramHtml}
+      <button id="pickBtn" class="pick-btn">🎲 Pick for me</button>
+      <span class="pick-count">${pool.length.toLocaleString()} game${pool.length === 1 ? "" : "s"} in pool</span>
+    </div>
+    <div class="pick-result" id="pickResult">${pickState.picked && pool.includes(pickState.picked)
+      ? pickCard(pickState.picked)
+      : `<div class="pick-empty">${pool.length ? "Hit “Pick for me” to roll a game." : "No backlog games match this selector."}</div>`}</div>`;
+  $("#pickSel").onchange = (e) => { pickState.selector = e.target.value; pickState.param = ""; pickState.picked = null; renderPicker(); nav(); };
+  const pp = $("#pickParam");
+  if (pp) pp.onchange = (e) => { pickState.param = e.target.value; pickState.picked = null; renderPicker(); nav(); };
+  $("#pickBtn").onclick = () => { pickGame(); nav(); };
+  const card = host.querySelector(".pick-card");
+  if (card) {
+    card.onclick = () => openDrawer(pickState.picked);
+    $("#pickReroll").onclick = (e) => { e.stopPropagation(); pickGame(); nav(); };
+  }
 }
 
 $("#search").addEventListener("input", (e) => {
