@@ -578,11 +578,16 @@ async function loadAllEnrichment() {
     }
     if (j.stats) updateEnrichStatus(j.stats);
     if (changed) {
+      // Several health checks read the enrichment map (missing metadata, HLTB
+      // mismatches), and its results are cached — so they must be recomputed
+      // once enrichment lands, or "no metadata" reads as "all 14,747 games".
+      resetHealth();
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
       else if (activeTab === "home") patchHomeCovers();   // in place: a full re-render flickers
       else if (activeTab === "reviews") patchReviewCovers();
       else if (activeTab === "challenges") renderChallenges();
+      else if (activeTab === "health") renderHealth();
       else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
     }
     if (j.stats && !j.stats.complete) {             // a backfill is still running
@@ -1338,7 +1343,7 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges"];
+const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
@@ -1346,6 +1351,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   $("#challenges").hidden = mode !== "challenges";
   $("#home").hidden = mode !== "home";
   $("#reviews").hidden = mode !== "reviews";
+  $("#health").hidden = mode !== "health";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1361,6 +1367,7 @@ function renderAll() {
   if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
+  if (activeTab === "health") { setSpecialMode("health"); renderHealth(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = groupCollections(filterRows(null));
@@ -1400,7 +1407,7 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["home", "games", "completed", "onOrder", "reviews", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "home";
+  const tab = ["home", "games", "completed", "onOrder", "reviews", "stats", "pick", "challenges", "health"].includes(p.get("tab")) ? p.get("tab") : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
@@ -1450,6 +1457,7 @@ async function load() {
   if (!payload) { $("#count").textContent = "Could not load data — is the Dropbox link set?"; return; }
   DATA = payload;
   resetCollections();
+  resetHealth();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
@@ -1529,6 +1537,102 @@ const yr2 = (y) => `'${String(y).slice(2)}`;
 const yearOf = (iso) => (typeof iso === "string" && /^\d{4}/.test(iso) ? +iso.slice(0, 4) : null);
 const bucketize = (data, buckets, val) => buckets.map(([label, lo, hi]) => ({ label, value: data.filter((r) => { const v = val(r); return v != null && v >= lo && v < hi; }).length }));
 
+// ---- Year in review + backlog burn-down ---------------------------------
+const statsState = { year: null };
+
+function yearInReview(rows, games) {
+  const years = [...new Set(rows.map((r) => yearOf(r.date)).filter(Boolean))].sort((a, b) => b - a);
+  if (!years.length) return "";
+  if (statsState.year == null || !years.includes(statsState.year)) statsState.year = years[0];
+  const y = statsState.year;
+  const mine = rows.filter((r) => yearOf(r.date) === y);
+  const prev = rows.filter((r) => yearOf(r.date) === y - 1);
+
+  const hours = mine.reduce((a, r) => a + (r.playTime || 0), 0);
+  const rated = mine.filter((r) => r.rating != null);
+  const avg = rated.length ? rated.reduce((a, r) => a + r.rating, 0) / rated.length : null;
+  const best = rated.slice().sort((a, b) => b.rating - a.rating)[0];
+  const worst = rated.slice().sort((a, b) => a.rating - b.rating)[0];
+  const longest = mine.filter((r) => r.playTime).sort((a, b) => b.playTime - a.playTime)[0];
+  const delta = prev.length ? mine.length - prev.length : null;
+  const deltaTxt = delta == null ? "" :
+    `<span class="yr-delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} vs ${y - 1}</span>`;
+
+  const gameChip = (r, label) => r
+    ? `<button class="yr-game" data-yg="${escapeHtml(String(r._k || ""))}">
+         <span class="yr-game-l">${escapeHtml(label)}</span>
+         <b>${escapeHtml(String(r.game))}</b>
+         <span class="muted">${r.rating != null ? Math.round(r.rating * 100) + "%" : ""}${r.playTime ? ` · ${fmtHours(r.playTime)}` : ""}</span>
+       </button>` : "";
+
+  // Day-by-day, not month-by-month: monthly bars hid the fact that completions
+  // come in bursts.
+  const byDay = {};
+  mine.forEach((r) => { if (/^\d{4}-\d{2}-\d{2}/.test(String(r.date))) byDay[String(r.date).slice(0, 10)] = (byDay[String(r.date).slice(0, 10)] || 0) + 1; });
+  const showDay = (iso) => {
+    const st = tabState.completed;
+    st.facets = {}; st.search = ""; st.sort = null; st.page = 1;
+    switchTab("completed");
+    nav();
+  };
+  const top = rated.slice().sort((a, b) => b.rating - a.rating).slice(0, 10);
+
+  return `<section class="yr">
+    <div class="yr-head">
+      <h2>${y} in review</h2>
+      <label class="ctl">Year
+        <select id="yrPick">${years.map((v) => `<option value="${v}"${v === y ? " selected" : ""}>${v}</option>`).join("")}</select>
+      </label>
+    </div>
+    <div class="yr-grid">
+      <div class="yr-cards">
+        ${statCard(mine.length, "Games finished")}
+        ${statCard(Math.round(hours), "Hours played", "", "h")}
+        ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%")}
+        ${statCard(mine.filter((r) => r.vr).length, "In VR")}
+      </div>
+      ${deltaTxt}
+      <div class="yr-games">
+        ${gameChip(best, "Favourite")}
+        ${gameChip(longest, "Longest")}
+        ${gameChip(worst, "Least favourite")}
+      </div>
+    </div>
+    ${statPanel(`Every day of ${y}`, heatmap(byDay, y, { onDay: showDay }), "wide")}
+    ${statPanel(`The best of ${y}`, posterRow(top, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide")}
+    ${statPanel(`What you played in ${y}`, donut(topCounts(mine.map((r) => r.genre), 7)))}
+    ${statPanel(`Where you played in ${y}`, barsH(topCounts(mine.map((r) => r.platform), 8)))}
+  </section>`;
+}
+
+// At your recent pace, how long does the backlog actually take?
+function burnDown(rows, games) {
+  const years = [...new Set(rows.map((r) => yearOf(r.date)).filter(Boolean))].sort((a, b) => b - a);
+  const recent = years.slice(0, 3);
+  if (!recent.length) return "";
+  const rate = recent.reduce((a, y) => a + rows.filter((r) => yearOf(r.date) === y).length, 0) / recent.length;
+  const backlog = games.filter((r) => !r.completed).length;
+  const yrs = rate ? backlog / rate : Infinity;
+  const now = new Date().getFullYear();
+
+  // The same backlog, if you were choosier about length.
+  const scen = [
+    ["Everything", backlog],
+    ["Under 20h only", games.filter((r) => !r.completed && (playtimeOf(r) ?? 99) < 20).length],
+    ["Under 10h only", games.filter((r) => !r.completed && (playtimeOf(r) ?? 99) < 10).length],
+    ["Under 5h only", games.filter((r) => !r.completed && (playtimeOf(r) ?? 99) < 5).length],
+    ["Owned only", games.filter((r) => !r.completed && r.owned).length],
+  ].map(([label, n]) => ({ label, value: Math.round(n / rate), n }));
+
+  return `<section class="yr">
+    <div class="yr-head"><h2>Backlog burn-down</h2></div>
+    <p class="yr-note">You finished <b>${Math.round(rate)}</b> games a year over ${recent.length === 1 ? "the last year" : `${recent.length} years`}.
+      At that pace the <b>${backlog.toLocaleString()}</b>-game backlog runs out in
+      <b>${isFinite(yrs) ? Math.round(yrs).toLocaleString() : "∞"} years</b> — around <b>${isFinite(yrs) ? now + Math.round(yrs) : "never"}</b>.</p>
+    ${statPanel("Years to clear the backlog", barsH(scen, { fmt: (v) => v.toLocaleString() + " yrs" }), "wide")}
+  </section>`;
+}
+
 function renderStats() {
   const rows = (DATA.sheets.completed || { rows: [] }).rows;
   const games = ((DATA.sheets.games || {}).rows) || [];
@@ -1567,6 +1671,29 @@ function renderStats() {
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
   const best = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 10)
     .map((r) => ({ label: r.game, value: Math.round(r.rating * 100), link: gameLink(r, "completed") }));
+  // Running total of everything ever finished.
+  const cumYears = [...new Set(rows.map((r) => yearOf(r.date)).filter(Boolean))].sort((a, b) => a - b);
+  let run = 0;
+  const cumulative = cumYears.map((yy) => {
+    run += rows.filter((r) => yearOf(r.date) === yy).length;
+    return { label: yr2(yy), value: run };
+  });
+  // Every rated game as a dot against the critics.
+  const scatterPts = rows
+    .filter((r) => r.rating != null && r.criticScore != null)
+    .map((r) => ({ x: r.criticScore, y: r.rating, label: String(r.game), link: gameLink(r, "completed") }));
+  // Taste profile: average score per genre, for genres you've played enough of.
+  const gSum = new Map(), gN = new Map();
+  for (const r of rows) {
+    if (!r.genre || r.rating == null) continue;
+    gSum.set(r.genre, (gSum.get(r.genre) || 0) + r.rating);
+    gN.set(r.genre, (gN.get(r.genre) || 0) + 1);
+  }
+  const genreRadar = [...gN.entries()].filter(([, n]) => n >= 15)
+    .map(([g, n]) => ({ label: g, value: gSum.get(g) / n, hint: `${Math.round((gSum.get(g) / n) * 100)}% over ${n} games` }))
+    .sort((a, b) => b.value - a.value).slice(0, 8);
+  const bestRows = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 12);
+
   const flags = [
     { label: "Steam Deck", value: rows.filter((r) => r.steamDeck).length },
     { label: "Emulated", value: rows.filter((r) => r.emulated).length },
@@ -1594,12 +1721,21 @@ function renderStats() {
   const collectionVal = valued.reduce((a, x) => a + x.v, 0);
   const topValue = valued.sort((a, b) => b.v - a.v).slice(0, 10)
     .map((x) => ({ label: x.r.title, value: Math.round(x.v), link: gameLink(x.r, "games") }));
+  let runSpend = 0;
+  const cumSpend = [...spendMap.keys()].sort((a, b) => a - b).map((yy) => {
+    runSpend += spendMap.get(yy);
+    return { label: yr2(yy), value: Math.round(runSpend) };
+  });
+  const topValueRows = valued.slice(0, 12).map((x) => x.r);
   const topSales = games.map((r) => ({ r, v: salesOf(r) })).filter((x) => x.v != null)
     .sort((a, b) => b.v - a.v).slice(0, 10)
     .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
 
   const sect = (title, panels) => `<h2 class="stat-sec">${title}</h2><div class="stat-grid">${panels.join("")}</div>`;
   host.innerHTML =
+    yearInReview(rows, games) +
+    burnDown(rows, games) +
+    `<h2 class="stat-sec">All time</h2>` +
     `<div class="stat-cards">
       ${statCard(rows.length, "Completed")}
       ${statCard(Math.round(hours), "Hours played", "", "h")}
@@ -1614,10 +1750,13 @@ function renderStats() {
       ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo")}
     </div>` +
     sect("Completed games", [
+      statPanel("Games finished, cumulatively", areaLine(cumulative, { color: 0, label: `${rows.length.toLocaleString()} all told` }), "wide"),
+      statPanel("Your hall of fame", posterRow(bestRows, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide"),
+      statPanel("You vs the critics", scatter(scatterPts, { xLabel: "Critics", yLabel: "You" })),
+      statPanel("Your taste, by genre", radar(genreRadar, { color: 4 })),
       statPanel("Completions per year", barsV(yearData), "wide"),
       statPanel("Completions by month", barsV(monthData, { color: 1 })),
       statPanel("By release decade", barsV(decadeData, { color: 4 })),
-      statPanel("Highest rated", barsH(best, { fmt: (v) => v + "%" })),
       statPanel("Top platforms", barsH(countBars(rows, "platform", 10, "completed"))),
       statPanel("Top genres", barsH(countBars(rows, "genre", 12, "completed"))),
       statPanel("Top franchises", barsH(countBars(rows, "franchise", 10, "completed"))),
@@ -1638,10 +1777,20 @@ function renderStats() {
     sect("Purchases & collection", [
       statPanel("Spending per year", barsV(spendData, { color: 3, fmt: usd }), "wide"),
       statPanel("Games bought per year", barsV(boughtData, { color: 5 })),
+      statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, label: usd(totalSpent) + " all in" }), "wide"),
+      statPanel("The crown jewels", posterRow(topValueRows, { note: (r) => usd(collectionValueOf(r)) }), "wide"),
       statPanel("Most valuable owned", barsH(topValue, { fmt: usd })),
       statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
       statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
     ]);
+  const yp = $("#yrPick");
+  if (yp) yp.onchange = (e) => { statsState.year = +e.target.value; renderStats(); };
+  host.querySelectorAll("[data-yg]").forEach((el) => {
+    el.onclick = () => {
+      const row = rows.find((r) => String(r._k || "") === el.dataset.yg);
+      if (row) openDrawer(row, "completed");
+    };
+  });
   wireCharts(host);
 }
 
@@ -1882,12 +2031,13 @@ function cmdkCandidates(q) {
       { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
       { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
       { kind: "Tab", label: "🎯 Challenges", run: () => switchTab("challenges") },
+      { kind: "Tab", label: "🩺 Health", run: () => switchTab("health") },
     ];
   }
   // Tabs
   const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
                 ["onOrder", "📦 On Order"], ["reviews", "📝 Reviews"], ["stats", "📊 Stats"],
-                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"]];
+                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"], ["health", "🩺 Health"]];
   for (const [id, label] of tabs) {
     if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
   }

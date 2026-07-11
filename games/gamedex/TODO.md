@@ -12,12 +12,19 @@ Working list. Checked = shipped and deployed.
       old name silently returns nothing); source 1 = Steam.
 - [ ] **Launch: more platforms** — RomM deep-links for emulated titles (we run
       RomM already), GOG / Epic / itch handoffs.
-- [ ] **Data health tab** — port the validators from GamesMaster/GamePicker.
+- [x] **Data health tab** — shipped. 14 checks; 58 duplicates, 451 completed
+      with no date, 724 with no time, 1,185 owned with no price, 4 wishlisted+
+      owned. Clickable rows open the game.
+- [x] **Stats: more varied charts + imagery** — shipped. Cumulative area chart,
+      calendar heatmap (370 day cells), scatter of you-vs-critics (1,232 dots,
+      each clickable), genre radar, and cover-art poster walls. — port the validators from GamesMaster/GamePicker.
       Known counts: 24 potential duplicates · 724 completed with no completion
       time · 451 completed with no date · 304 unknown playability · 1,185 owned
       with no purchase price · 23 started-but-never-finished. Plus HLTB
       mismatches and big me-vs-critic gaps.
-- [ ] **Year in review** — per-year recap (finished, hours, best/worst, longest,
+- [x] **Year in review** — shipped, with the burn-down: 107 games/yr, 13,078
+      backlog, ~123 years, i.e. the year 2149.
+- [ ] ~~Year in review~~ — per-year recap (finished, hours, best/worst, longest,
       genre mix, vs prior years) with a year picker, plus the backlog burn-down
       projection: at 162 completions/yr the 13,078-game backlog takes ~81 years.
 - [ ] **PWA** — manifest + service worker: installable on the phone, offline
