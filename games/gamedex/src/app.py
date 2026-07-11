@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from enrich import Enricher
+from fallback import FallbackClient
 from hltb import HltbClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
@@ -55,8 +56,10 @@ if _on("HLTB_ENABLED"):
     _secondary["hltb"] = HltbClient()
 if _on("METACRITIC_ENABLED"):
     _secondary["metacritic"] = MetacriticClient()
+# Fallback metadata (IGN/GameSpot/Steam) for games IGDB doesn't match.
+_fallback = FallbackClient(os.environ.get("GAMESPOT_API_KEY", "")) if _on("FALLBACK_ENABLED") else None
 enricher = (
-    Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, secondary=_secondary)
+    Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, secondary=_secondary, fallback=_fallback)
     if _igdb.configured else None
 )
 

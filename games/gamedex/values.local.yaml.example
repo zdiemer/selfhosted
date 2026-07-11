@@ -17,3 +17,6 @@ dropbox:
 igdb:
   clientId: "CHANGE-ME"
   clientSecret: "CHANGE-ME"
+  # Optional — GameSpot API key (https://www.gamespot.com/api/) for the fallback
+  # metadata chain. IGN + Steam fallbacks work without it.
+  gamespotKey: ""

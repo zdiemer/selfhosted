@@ -66,6 +66,13 @@ spec:
               value: {{ .Values.igdb.hltb | quote }}
             - name: METACRITIC_ENABLED
               value: {{ .Values.igdb.metacritic | quote }}
+            - name: FALLBACK_ENABLED
+              value: {{ .Values.igdb.fallback | quote }}
+            - name: GAMESPOT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: gamespot-api-key
           # Ready only once the first Dropbox load succeeds (health returns 503
           # until then), so traffic never hits an empty dataset.
           readinessProbe:

@@ -66,6 +66,8 @@ function escapeHtml(s) {
 
 // ---- IGDB enrichment (lazy, per visible page) ---------------------------
 const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg` : "");
+// Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
+const coverSrc = (e, size) => (e && e.coverUrl ? e.coverUrl : (e && e.cover ? IMG(e.cover, size) : ""));
 let ENRICH_ENABLED = false;
 const ENRICH = {};                 // matchKey -> light enrichment
 const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
@@ -76,9 +78,8 @@ let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
 function coverCell(row) {
-  const e = ENRICH[row._k];
-  if (e && e.cover) return `<img class="cover-thumb" loading="lazy" src="${IMG(e.cover, "cover_small")}" alt="">`;
-  return `<span class="cover-ph">🎮</span>`;
+  const src = coverSrc(ENRICH[row._k], "cover_small");
+  return src ? `<img class="cover-thumb" loading="lazy" src="${src}" alt="">` : `<span class="cover-ph">🎮</span>`;
 }
 
 // Queue enrichment for any on-screen rows we haven't asked about yet.
@@ -129,7 +130,8 @@ const chips = (arr) => (arr && arr.length
 
 function detailHtml(d) {
   if (!d) return "";
-  const cover = d.cover ? `<img class="cover-big" src="${IMG(d.cover, "cover_big")}" alt="">` : "";
+  const cs = coverSrc(d, "cover_big");
+  const cover = cs ? `<img class="cover-big" src="${cs}" alt="">` : "";
   const badge = d.manual ? `<span class="chip manual">★ Manually mapped</span>` : "";
   const rating = d.rating != null
     ? `<div class="igdb-rating ${ratingClass(d.rating)}">${Math.round(d.rating * 100)}<small>/100 IGDB</small>${d.ratingCount ? ` · ${d.ratingCount} ratings` : ""}</div>` : "";
@@ -149,7 +151,16 @@ function detailHtml(d) {
        ${chips(d.gameModes || [])}</div></div>` +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
     meta.join("") + shots + simHtml +
-    `<div class="igdb-attr">${d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">View on IGDB ↗</a> · ` : ""}Metadata by <a href="https://www.igdb.com" target="_blank" rel="noopener">IGDB</a></div>`;
+    igdbAttr(d);
+}
+
+function igdbAttr(d) {
+  const name = d.source || "IGDB";
+  const link = d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">View on ${escapeHtml(name)} ↗</a> · ` : "";
+  const by = d.source
+    ? `Metadata via ${escapeHtml(name)}`
+    : `Metadata by <a href="https://www.igdb.com" target="_blank" rel="noopener">IGDB</a>`;
+  return `<div class="igdb-attr">${link}${by}</div>`;
 }
 
 function mapControlHtml(key, manual) {
@@ -666,8 +677,9 @@ function renderGrid(pageRows) {
   grid.innerHTML = "";
   for (const row of pageRows) {
     const e = ENRICH[row._k];
-    const cover = e && e.cover
-      ? `<img class="card-cover" loading="lazy" src="${IMG(e.cover, "cover_big")}" alt="">`
+    const cs = coverSrc(e, "cover_big");
+    const cover = cs
+      ? `<img class="card-cover" loading="lazy" src="${cs}" alt="">`
       : `<div class="card-cover ph">🎮</div>`;
     const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
     const rel = row.releaseDate || row.release;                 // full date, else year

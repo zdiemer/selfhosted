@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.7.0"
+  tag: "0.8.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -37,6 +37,10 @@ igdb:
   # Metacritic critic scores (3 req/s) via the Fandom backend API — feeds the
   # Metacritic facet + card, falls back to the sheet's Metacritic Rating.
   metacritic: true
+  # Fallback metadata for games IGDB doesn't match: IGN → GameSpot → Steam(PC).
+  fallback: true
+  # GameSpot API key (values.local.yaml) — without it, only IGN + Steam run.
+  gamespotKey: ""
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:

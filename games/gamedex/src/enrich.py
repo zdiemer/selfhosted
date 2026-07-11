@@ -21,8 +21,8 @@ from match_validator import MatchValidator
 
 log = logging.getLogger("gamedex.enrich")
 
-_IGDB_LIGHT = ("igdbId", "cover", "rating", "year", "genres", "themes", "gameModes", "name")
-_FACET_LIGHT = ("cover", "genres", "themes", "gameModes", "userRating")
+_IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes", "name")
+_FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating")
 # Light fields each secondary source contributes to the cover/facet map.
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
@@ -33,9 +33,11 @@ _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class Enricher:
-    def __init__(self, igdb_client, db_path: str, backfill: bool = False, secondary: dict = None):
+    def __init__(self, igdb_client, db_path: str, backfill: bool = False,
+                 secondary: dict = None, fallback=None):
         self._igdb = igdb_client
         self._secondary = dict(secondary or {})     # name -> client
+        self._fallback = fallback                   # tried when IGDB misses
         self._backfill = backfill
         self._validator = MatchValidator()
         self._key_meta: dict = {}
@@ -88,6 +90,12 @@ class Enricher:
                     }
         with self._lock:
             self._key_meta = key_meta
+        # Give previously-unmatched games a shot at the fallback sources by
+        # clearing their no_match rows so the backfill reprocesses them.
+        if self._fallback:
+            with self._db_lock:
+                self._db.execute("DELETE FROM enrichment WHERE status='no_match'")
+                self._db.commit()
         if self._backfill:
             self.request(list(key_meta.keys()), front=False)
         log.info("enrich: indexed %d match keys (backfill=%s, sources=%s)",
@@ -268,6 +276,10 @@ class Enricher:
                     enrichment, score = self._igdb.match(
                         meta["title"], meta["platform"], meta["year"],
                         meta["developer"], meta["publisher"], meta["franchise"])
+                    if enrichment is None and self._fallback:   # IGDB miss → fallbacks
+                        fb = self._fallback.match(meta["title"], meta["platform"], meta["year"])
+                        if fb:
+                            enrichment, score = fb, fb.get("confidence") or 0
                     self._save_igdb(key, enrichment, score)
                 else:
                     self._save_secondary(src, key, self._secondary[src].match(
