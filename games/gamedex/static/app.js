@@ -857,17 +857,20 @@ function openDrawer(row, sheetKey) {
   let html = `<h2>${escapeHtml(String(row[titleCol.key] ?? "Untitled"))}</h2><div class="subtitle">${platform}</div>`;
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
+  let raw = "";
   for (const c of cols) {
     if (c.key === titleCol.key || c.key === "platform") continue;
     const v = row[c.key];
     if (v === undefined || v === null || v === "") continue;
     const isNotes = c.type === "text" && String(v).length > 140;
     if (isNotes) {
-      html += `<div class="detail-row notes"><div class="k">${escapeHtml(c.label)}</div><div class="v">${escapeHtml(String(v))}</div></div>`;
+      raw += `<div class="detail-row notes"><div class="k">${escapeHtml(c.label)}</div><div class="v">${escapeHtml(String(v))}</div></div>`;
     } else {
-      html += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
+      raw += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
     }
   }
+  // Sheet fields collapse behind a "Raw data" disclosure — the enriched view leads.
+  if (raw) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
   $("#overlay").hidden = false;
   drawerRow = row;

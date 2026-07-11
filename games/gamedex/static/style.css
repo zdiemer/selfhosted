@@ -330,6 +330,12 @@ tbody tr:hover { background: var(--panel-2); }
 .hltb-row.mine { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 6px; }
 .hltb-row.mine b { color: var(--good); }
 
+/* Raw sheet fields (collapsed by default — the enriched view leads) */
+.raw-data { margin-top: 16px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.raw-data summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+.raw-data summary:hover { color: var(--text); }
+.raw-data[open] summary { margin-bottom: 8px; color: var(--text); }
+
 /* Manual mapping menu */
 .map-menu { margin: 14px 0 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .map-menu summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
