@@ -136,6 +136,13 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 13px; }
+.enrichstatus { color: var(--muted); font-size: 12px; margin-left: 4px; }
+
+/* Cover thumbnails in the table */
+thead th.cover-h { width: 44px; }
+td.cover { width: 44px; padding: 4px 6px; }
+.cover-thumb { width: 34px; height: 45px; object-fit: cover; border-radius: 3px; display: block; background: var(--panel-2); }
+.cover-ph { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 45px; border-radius: 3px; background: var(--panel-2); font-size: 14px; opacity: .5; }
 .tablewrap { flex: 1; overflow: auto; }
 table { width: 100%; border-collapse: collapse; }
 thead th {
@@ -208,6 +215,25 @@ tbody tr:hover { background: var(--panel-2); }
 .detail-row.notes { grid-template-columns: 1fr; }
 .detail-row.notes .k { margin-bottom: 4px; }
 .detail-row.notes .v { white-space: pre-wrap; line-height: 1.55; }
+
+/* IGDB detail section in the drawer */
+.igdb-detail { margin: 4px 0 8px; }
+.igdb-loading { color: var(--muted); padding: 10px 0; }
+.igdb-head { display: flex; gap: 14px; margin-bottom: 10px; }
+.cover-big { width: 120px; border-radius: 6px; flex-shrink: 0; background: var(--panel-2); }
+.igdb-side { flex: 1; min-width: 0; }
+.igdb-rating { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.igdb-rating small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 10px 0; }
+.shots img { width: 100%; border-radius: 5px; display: block; }
+.similar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; }
+.similar a { text-decoration: none; color: var(--text); font-size: 11px; text-align: center; }
+.similar img { width: 100%; border-radius: 4px; background: var(--panel-2); }
+.similar span { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.igdb-attr { color: var(--muted); font-size: 12px; margin-top: 14px; }
+.igdb-attr a { color: var(--accent); }
 
 /* Banner (errors / stale) */
 .banner {

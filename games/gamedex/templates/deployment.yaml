@@ -5,11 +5,10 @@ metadata:
   labels:
     {{- include "gamedex.labels" . | nindent 4 }}
 spec:
-  # Stateless (data is held in memory + re-fetched from Dropbox), so a rolling
-  # update is safe — no shared RWO volume to serialize on.
+  # Recreate: the IGDB cache PVC is RWO, so never two pods mounting it at once.
   replicas: 1
   strategy:
-    type: RollingUpdate
+    type: Recreate
   selector:
     matchLabels:
       {{- include "gamedex.selectorLabels" . | nindent 6 }}
@@ -49,6 +48,20 @@ spec:
               value: {{ .Values.dropbox.filename | quote }}
             - name: REFRESH_INTERVAL_SECONDS
               value: {{ .Values.refreshIntervalSeconds | quote }}
+            - name: IGDB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: igdb-client-id
+            - name: IGDB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: igdb-client-secret
+            - name: ENRICH_DB
+              value: /data/enrichment.sqlite
+            - name: ENRICH_BACKFILL
+              value: {{ .Values.igdb.backfill | quote }}
           # Ready only once the first Dropbox load succeeds (health returns 503
           # until then), so traffic never hits an empty dataset.
           readinessProbe:
@@ -67,9 +80,12 @@ spec:
             periodSeconds: 30
           volumeMounts:
             # readOnlyRootFilesystem is on; give libraries a small writable
-            # scratch dir. The app itself keeps all state in memory.
+            # scratch dir. The games data itself stays in memory.
             - name: tmp
               mountPath: /tmp
+            # Persistent IGDB enrichment cache (SQLite).
+            - name: data
+              mountPath: /data
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -77,3 +93,6 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 64Mi
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "gamedex.fullname" . }}-data

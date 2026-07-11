@@ -36,8 +36,35 @@ Key files:
 - `src/parse.py` — xlsx → normalized JSON (Excel-serial dates, 0–1 ratings, 0/1
   booleans, decimal-hour times; PII stripped). Column schemas live here.
 - `src/poller.py` — Dropbox fetch loop, folder-zip/file detection, hash diffing.
-- `src/app.py` — FastAPI: `/api/data`, `/api/health`, static UI.
+- `src/app.py` — FastAPI: `/api/data`, `/api/health`, enrichment endpoints, UI.
+- `src/igdb.py` — IGDB client (Twitch auth, one nested request per title) + matcher.
+- `src/enrich.py` — lazy, host-cached enrichment (SQLite on the PVC).
+- `src/match_validator.py`, `src/constants.py`, `src/excel_game.py` — title
+  matcher ported near-verbatim from [zdiemer/GamesMaster](https://github.com/zdiemer/GamesMaster).
 - `static/` — `index.html`, `app.js`, `style.css` (no build step).
+
+## IGDB metadata enrichment
+
+Set `igdb.clientId`/`igdb.clientSecret` (Twitch app, in `values.local.yaml`) to
+enable cover art + rich metadata. It's **lazy and host-cached**:
+
+- Only games you actually browse get matched — the frontend requests IGDB data
+  for the ~50 rows on screen, they resolve at IGDB's 4 req/s limit (~12s/page),
+  and results are cached in a SQLite file on the PVC (`/data`) **forever**.
+- Matching reuses the GamesMaster `MatchValidator` (normalization, roman
+  numerals, article/subtitle handling, platform aliases) scored against
+  platform + release year. **Blank on low confidence** — an uncertain title is
+  left un-enriched rather than shown a wrong cover.
+- The detail drawer shows cover, IGDB rating, summary, genres/themes/modes,
+  dev/publisher, screenshots, similar games, and an IGDB link (attribution
+  required by IGDB's terms).
+
+Optional **backfill** (`igdb.backfill: true`) slowly enriches *every* game in the
+background to build a complete dataset — off by default to respect rate limits.
+
+Endpoints: `POST /api/enrichment` (batch of matchKeys → light covers/facets),
+`GET /api/enrichment/detail?key=` (full detail for the drawer),
+`GET /api/enrichment/stats`. Each served row carries a `_k` matchKey.
 
 ## Getting the Dropbox link
 
@@ -97,8 +124,11 @@ Dropbox…"). `/api/health` returns `503` until that first load completes.
 | `dropbox.url` | local | — (required) | Shared folder (or file) link |
 | `dropbox.filename` | either | `Games Master List - Final.xlsx` | Workbook name inside a shared folder |
 | `refreshIntervalSeconds` | either | `600` | Poll cadence; re-parses only on change |
+| `igdb.clientId` / `igdb.clientSecret` | local | — | Twitch app creds; enables enrichment |
+| `igdb.backfill` | either | `false` | Slowly enrich every game in the background |
+| `persistence.size` | either | `1Gi` | PVC for the SQLite IGDB cache |
 | `ingress.host` | either | `games.zachd.duckdns.org` | Public hostname |
-| `image.tag` | either | `0.1.0` | Must match the tag `build.sh` imports |
+| `image.tag` | either | `0.2.0` | GHCR image tag `build.sh` pushes |
 
 ## Troubleshooting
 

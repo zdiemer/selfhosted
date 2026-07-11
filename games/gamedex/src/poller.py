@@ -73,10 +73,13 @@ def _extract_workbook(content: bytes, filename: str) -> bytes:
 class DataStore:
     """Thread-safe holder for the parsed dataset and its metadata."""
 
-    def __init__(self, url: str, filename: str, interval: int):
+    def __init__(self, url: str, filename: str, interval: int, on_update=None):
         self._url = _force_direct_download(url) if url else ""
         self._filename = filename
         self._interval = max(30, int(interval))
+        # Called with the freshly parsed dataset before it's stored/served, so a
+        # consumer (the enricher) can stamp per-row keys onto it.
+        self._on_update = on_update
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -135,6 +138,11 @@ class DataStore:
             return False
 
         parsed = parse_workbook(workbook)
+        if self._on_update:
+            try:
+                self._on_update(parsed)   # stamp _k / rebuild match index
+            except Exception as exc:
+                log.warning("on_update hook failed: %s", exc)
         now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         with self._lock:
             self._data = parsed

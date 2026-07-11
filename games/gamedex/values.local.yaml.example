@@ -11,3 +11,9 @@ dropbox:
   # a zip and extracts `filename` from it — simpler to share, but pulls the
   # whole folder every poll, so prefer the file link above for a big folder.
   # filename: "Games Master List - Final.xlsx"
+
+# IGDB (Twitch) credentials for metadata enrichment. Create an app at
+# https://dev.twitch.tv/console/apps — same key you use for RomM works.
+igdb:
+  clientId: "CHANGE-ME"
+  clientSecret: "CHANGE-ME"

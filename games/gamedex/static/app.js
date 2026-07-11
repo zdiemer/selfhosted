@@ -59,6 +59,98 @@ function escapeHtml(s) {
   );
 }
 
+// ---- IGDB enrichment (lazy, per visible page) ---------------------------
+const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg` : "");
+let ENRICH_ENABLED = false;
+const ENRICH = {};                 // matchKey -> light enrichment
+const DETAIL = {};                 // matchKey -> full detail (drawer cache)
+const ENRICH_REQUESTED = new Set();
+let enrichTimer = null;
+
+function coverCell(row) {
+  const e = ENRICH[row._k];
+  if (e && e.cover) return `<img class="cover-thumb" loading="lazy" src="${IMG(e.cover, "cover_small")}" alt="">`;
+  return `<span class="cover-ph">🎮</span>`;
+}
+
+// Queue enrichment for any on-screen rows we haven't asked about yet.
+function maybeEnrich(rows) {
+  if (!ENRICH_ENABLED) return;
+  const need = [...new Set(rows.map((r) => r._k).filter(Boolean))]
+    .filter((k) => !(k in ENRICH) && !ENRICH_REQUESTED.has(k));
+  if (need.length) postEnrich(need);
+}
+
+async function postEnrich(keys) {
+  keys.forEach((k) => ENRICH_REQUESTED.add(k));
+  try {
+    const res = await fetch("api/enrichment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys }),
+    });
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j.enabled === false) { ENRICH_ENABLED = false; return; }
+    let changed = false;
+    for (const [k, v] of Object.entries(j.items || {})) { ENRICH[k] = v; changed = true; }
+    updateEnrichStatus(j.stats);
+    if (changed) renderTable(currentFiltered);              // fill covers in place
+    if (j.pending && j.pending.length) {                    // still resolving — poll
+      clearTimeout(enrichTimer);
+      enrichTimer = setTimeout(() => postEnrich(j.pending), 2500);
+    }
+  } catch (_) { /* transient */ }
+}
+
+function updateEnrichStatus(stats) {
+  const el = $("#enrichstatus");
+  if (!el || !stats) return;
+  const q = stats.queued ? ` · ${stats.queued} queued` : "";
+  el.textContent = `IGDB: ${stats.matched.toLocaleString()} matched${q}`;
+  el.hidden = false;
+}
+
+const chips = (arr) => (arr && arr.length
+  ? `<div class="chips">${arr.map((x) => `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
+
+function renderDetail(d, el) {
+  if (!d) { el.innerHTML = ""; return; }
+  const cover = d.cover ? `<img class="cover-big" src="${IMG(d.cover, "cover_big")}" alt="">` : "";
+  const rating = d.rating != null
+    ? `<div class="igdb-rating ${ratingClass(d.rating)}">${Math.round(d.rating * 100)}<small>/100 IGDB</small>${d.ratingCount ? ` · ${d.ratingCount} ratings` : ""}</div>` : "";
+  const meta = [];
+  if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${escapeHtml(d.developers.join(", "))}</div></div>`);
+  if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${escapeHtml(d.publishers.join(", "))}</div></div>`);
+  const shots = (d.screenshots || []).length
+    ? `<div class="shots">${d.screenshots.map((s) =>
+        `<a href="${IMG(s, "screenshot_huge")}" target="_blank" rel="noopener"><img loading="lazy" src="${IMG(s, "screenshot_med")}" alt=""></a>`).join("")}</div>` : "";
+  const similar = (d.similar || []).filter((s) => s.cover).slice(0, 8);
+  const simHtml = similar.length
+    ? `<div class="detail-row notes"><div class="k">Similar games</div><div class="similar">${similar.map((s) =>
+        `<a href="${escapeHtml(s.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(s.name)}"><img loading="lazy" src="${IMG(s.cover, "cover_small")}" alt=""><span>${escapeHtml(s.name)}</span></a>`).join("")}</div></div>` : "";
+  const text = d.summary || d.storyline;
+  el.innerHTML =
+    `<div class="igdb-head">${cover}<div class="igdb-side">${rating}
+       ${chips([...(d.genres || []), ...(d.themes || [])])}
+       ${chips(d.gameModes || [])}</div></div>` +
+    (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
+    meta.join("") + shots + simHtml +
+    `<div class="igdb-attr">${d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">View on IGDB ↗</a> · ` : ""}Metadata by <a href="https://www.igdb.com" target="_blank" rel="noopener">IGDB</a></div>`;
+}
+
+async function loadDetail(key, el) {
+  if (DETAIL[key]) { renderDetail(DETAIL[key], el); return; }
+  el.innerHTML = `<div class="igdb-loading">Loading IGDB metadata…</div>`;
+  try {
+    const res = await fetch("api/enrichment/detail?key=" + encodeURIComponent(key));
+    const j = await res.json();
+    if (j.detail) { DETAIL[key] = j.detail; renderDetail(j.detail, el); }
+    else if (j.pending) { setTimeout(() => loadDetail(key, el), 2500); }
+    else el.innerHTML = `<div class="igdb-loading muted">No IGDB match.</div>`;
+  } catch (_) { el.innerHTML = ""; }
+}
+
 // ---- data access --------------------------------------------------------
 const sheet = () => DATA.sheets[activeTab];
 const columns = () => sheet().columns;
@@ -307,6 +399,7 @@ function renderTable(rows) {
   // header — show sort direction + precedence number for each active level
   const thead = $("#thead");
   thead.innerHTML = "";
+  if (ENRICH_ENABLED) thead.appendChild(document.createElement("th")).className = "cover-h";
   const spec = effectiveSort();
   const specByKey = new Map(spec.map((s, i) => [s.key, { dir: s.dir, ord: i }]));
   const multi = spec.length > 1;
@@ -334,10 +427,12 @@ function renderTable(rows) {
   tbody.innerHTML = "";
   for (const row of pageRows) {
     const tr = document.createElement("tr");
-    tr.innerHTML = cols.map((c) => `<td>${fmtCell(row[c.key], c.type)}</td>`).join("");
+    const cover = ENRICH_ENABLED ? `<td class="cover">${coverCell(row)}</td>` : "";
+    tr.innerHTML = cover + cols.map((c) => `<td>${fmtCell(row[c.key], c.type)}</td>`).join("");
     tr.onclick = () => openDrawer(row);
     tbody.appendChild(tr);
   }
+  maybeEnrich(pageRows);
 
   // count + pager
   $("#count").textContent = `${sorted.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
@@ -373,6 +468,7 @@ function openDrawer(row) {
   const body = $("#drawerBody");
   const platform = row["platform"] ? `<span class="pill">${escapeHtml(String(row["platform"]))}</span>` : "";
   let html = `<h2>${escapeHtml(String(row[titleCol.key] ?? "Untitled"))}</h2><div class="subtitle">${platform}</div>`;
+  if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
   for (const c of cols) {
     if (c.key === titleCol.key) continue;
@@ -387,6 +483,7 @@ function openDrawer(row) {
   }
   body.innerHTML = html;
   $("#overlay").hidden = false;
+  if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"));
 }
 function closeDrawer() { $("#overlay").hidden = true; }
 
@@ -429,6 +526,9 @@ async function load() {
   }
   if (!payload) { $("#count").textContent = "Could not load data — is the Dropbox link set?"; return; }
   DATA = payload;
+  const en = DATA.meta && DATA.meta.enrichment;
+  ENRICH_ENABLED = !!(en && en.enabled !== false);
+  if (ENRICH_ENABLED) updateEnrichStatus(en);
   setFreshness();
   switchTab("games");
 }
