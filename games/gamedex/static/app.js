@@ -545,7 +545,12 @@ const METACRITIC_BUCKETS = [
   { label: "< 60", test: (v) => v < 0.6 },
 ];
 // Best playtime for a row: HLTB (main→best) where enriched, else sheet estimate.
-const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBest; return h != null ? h : row.estimatedTime; };
+const playtimeOf = (row) => {
+  const e = ENRICH[row._k];
+  if (e && e.hltbBest != null) return e.hltbBest;
+  if (e && e.vnHours != null) return e.vnHours;   // HLTB barely covers VNs
+  return row.estimatedTime;
+};
 // Metacritic (0–1): scraped score where enriched, else the sheet's Metacritic Rating.
 const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
 // User rating (0–1): IGDB community rating where enriched, else VNDB's (visual
@@ -593,6 +598,21 @@ const metaOf = (row) => {
     art: !!(e && (e.coverUrl || e.cover || e.vnCover || e.adbCover)),
   };
 };
+// Which of the extra sources have data for this row (multi-valued).
+function extraSourcesOf(row) {
+  const e = ENRICH[row._k];
+  if (!e) return [];
+  const out = [];
+  if (e.adbUrl) out.push("Arcade Database");
+  if (e.vnUrl) out.push("VNDB");
+  if (e.units != null) out.push("VGChartz sales");
+  if (e.thumbyUrl) out.push("Thumby");
+  if (e.hltbUrl) out.push("HowLongToBeat");
+  if (e.metaUrl) out.push("Metacritic");
+  if (e.geUrl) out.push("GameEye");
+  return out;
+}
+
 // Which source supplied the game's primary metadata.
 function metaSourceOf(row) {
   const m = metaOf(row);
@@ -615,6 +635,7 @@ const igdbFacetCols = () =>
     ? [
         ...IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true })),
         { key: "__meta_src", label: "Metadata source", type: "text", facet: true, virtual: true, kind: "fn", getVals: (r) => [metaSourceOf(r)] },
+        { key: "__extra_src", label: "Enriched by", type: "text", facet: true, virtual: true, kind: "fn", getVals: extraSourcesOf },
         { key: "__missing", label: "Missing data", type: "text", facet: true, virtual: true, kind: "fn", getVals: missingOf },
       ]
     : [];
