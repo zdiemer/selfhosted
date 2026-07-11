@@ -28,12 +28,29 @@
         <span id="enrichstatus" class="enrichstatus" hidden></span>
         <button id="resetsort" class="linkbtn" hidden>Reset sort</button>
         <button id="clear" class="linkbtn" hidden>Clear filters</button>
+        <span class="spacer"></span>
+        <span id="gridsortwrap" class="ctl" hidden>
+          <label>Sort <select id="gridsort"></select></label>
+          <button id="gridsortdir" class="dirbtn" title="Toggle direction">▼</button>
+        </span>
+        <label class="ctl">Per page
+          <select id="pagesize">
+            <option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option>
+          </select>
+        </label>
+        <span class="viewtoggle">
+          <button id="viewTable" class="active" title="Table view" aria-label="Table view">☰</button>
+          <button id="viewGrid" title="Grid view" aria-label="Grid view">▦</button>
+        </span>
       </div>
-      <div class="tablewrap">
+      <div class="tablewrap" id="tablewrap">
         <table id="table">
           <thead><tr id="thead"></tr></thead>
           <tbody id="tbody"></tbody>
         </table>
+      </div>
+      <div class="gridwrap" id="gridwrap" hidden>
+        <div class="grid" id="grid"></div>
       </div>
       <div class="pager" id="pager"></div>
     </section>

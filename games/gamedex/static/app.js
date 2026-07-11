@@ -1,7 +1,8 @@
 "use strict";
 
 // ---- config -------------------------------------------------------------
-const PAGE_SIZE = 50;
+let PAGE_SIZE = 50;
+let viewMode = "table";            // "table" | "grid"
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -443,12 +444,30 @@ function onHeaderClick(col, shift) {
   renderAll();
 }
 
+// Dispatcher: sort → paginate → render as table or grid.
 function renderTable(rows) {
   const st = tabState[activeTab];
-  const cols = columns().filter((c) => c.primary);
   const sorted = sortRows(rows);
+  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  if (st.page > pages) st.page = pages;
+  const start = (st.page - 1) * PAGE_SIZE;
+  const pageRows = sorted.slice(start, start + PAGE_SIZE);
 
-  // header — show sort direction + precedence number for each active level
+  $("#tablewrap").hidden = viewMode !== "table";
+  $("#gridwrap").hidden = viewMode !== "grid";
+  $("#gridsortwrap").hidden = viewMode !== "grid";
+  if (viewMode === "grid") { populateGridSort(); renderGrid(pageRows); }
+  else renderTableView(pageRows);
+
+  maybeEnrich(pageRows);
+  $("#count").textContent = `${sorted.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
+  $("#clear").hidden = !(st.search || Object.keys(st.facets).length);
+  $("#resetsort").hidden = !(st.sort && st.sort.length);
+  renderPager(pages);
+}
+
+function renderTableView(pageRows) {
+  const cols = columns().filter((c) => c.primary);
   const thead = $("#thead");
   thead.innerHTML = "";
   if (ENRICH_ENABLED) thead.appendChild(document.createElement("th")).className = "cover-h";
@@ -468,13 +487,6 @@ function renderTable(rows) {
     th.onclick = (e) => onHeaderClick(c, e.shiftKey);
     thead.appendChild(th);
   }
-
-  // page slice
-  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  if (st.page > pages) st.page = pages;
-  const start = (st.page - 1) * PAGE_SIZE;
-  const pageRows = sorted.slice(start, start + PAGE_SIZE);
-
   const tbody = $("#tbody");
   tbody.innerHTML = "";
   for (const row of pageRows) {
@@ -484,13 +496,42 @@ function renderTable(rows) {
     tr.onclick = () => openDrawer(row);
     tbody.appendChild(tr);
   }
-  maybeEnrich(pageRows);
+}
 
-  // count + pager
-  $("#count").textContent = `${sorted.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
-  $("#clear").hidden = !(st.search || Object.keys(st.facets).length);
-  $("#resetsort").hidden = !(st.sort && st.sort.length);
-  renderPager(pages);
+function renderGrid(pageRows) {
+  const grid = $("#grid");
+  const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
+  grid.innerHTML = "";
+  for (const row of pageRows) {
+    const e = ENRICH[row._k];
+    const cover = e && e.cover
+      ? `<img class="card-cover" loading="lazy" src="${IMG(e.cover, "cover_big")}" alt="">`
+      : `<div class="card-cover ph">🎮</div>`;
+    const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
+    const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
+      .map((x) => escapeHtml(String(x))).join(" · ");
+    const rating = row.rating != null
+      ? `<span class="card-rating ${ratingClass(row.rating)}">${Math.round(row.rating * 100)}</span>` : "";
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `${cover}<div class="card-body">${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${sub}</div></div>`;
+    card.onclick = () => openDrawer(row);
+    grid.appendChild(card);
+  }
+}
+
+// Grid has no clickable headers — a Sort dropdown + direction toggle stand in.
+function populateGridSort() {
+  const sel = $("#gridsort");
+  const cols = columns().filter((c) => c.primary && c.sort);
+  const eff = effectiveSort();
+  const usingDefault = !(tabState[activeTab].sort && tabState[activeTab].sort.length);
+  const cur = usingDefault ? "__default" : eff[0].key;
+  sel.innerHTML = `<option value="__default">Default</option>` +
+    cols.map((c) => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join("");
+  sel.value = cols.some((c) => c.key === cur) ? cur : "__default";
+  $("#gridsortdir").textContent = eff[0].dir === "asc" ? "▲" : "▼";
+  $("#gridsortdir").disabled = usingDefault;
 }
 
 function renderPager(pages) {
@@ -502,7 +543,10 @@ function renderPager(pages) {
     const b = document.createElement("button");
     b.textContent = label;
     b.disabled = disabled;
-    b.onclick = () => { st.page = page; renderTable(currentFiltered); window.scrollTo(0, 0); $(".tablewrap").scrollTop = 0; };
+    b.onclick = () => {
+      st.page = page; renderTable(currentFiltered);
+      $("#tablewrap").scrollTop = 0; $("#gridwrap").scrollTop = 0;
+    };
     return b;
   };
   el.appendChild(mk("‹ Prev", st.page - 1, st.page <= 1));
@@ -605,6 +649,35 @@ $("#resetsort").addEventListener("click", () => {
   tabState[activeTab].sort = null;
   tabState[activeTab].page = 1;
   renderAll();
+});
+$("#pagesize").addEventListener("change", (e) => {
+  PAGE_SIZE = parseInt(e.target.value, 10) || 50;
+  tabState[activeTab].page = 1;
+  renderTable(currentFiltered);
+});
+function setView(mode) {
+  viewMode = mode;
+  $("#viewTable").classList.toggle("active", mode === "table");
+  $("#viewGrid").classList.toggle("active", mode === "grid");
+  renderTable(currentFiltered);
+}
+$("#viewTable").addEventListener("click", () => setView("table"));
+$("#viewGrid").addEventListener("click", () => setView("grid"));
+$("#gridsort").addEventListener("change", (e) => {
+  const st = tabState[activeTab];
+  const k = e.target.value;
+  if (k === "__default") st.sort = null;
+  else { const c = colByKey(k); st.sort = [{ key: k, dir: c && c.type === "text" ? "asc" : "desc", type: c && c.type }]; }
+  st.page = 1;
+  renderTable(currentFiltered);
+});
+$("#gridsortdir").addEventListener("click", () => {
+  const st = tabState[activeTab];
+  if (st.sort && st.sort.length) {
+    st.sort[0].dir = st.sort[0].dir === "asc" ? "desc" : "asc";
+    st.page = 1;
+    renderTable(currentFiltered);
+  }
 });
 $("#drawerClose").addEventListener("click", closeDrawer);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });

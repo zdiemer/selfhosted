@@ -11,8 +11,10 @@ edited on any machine, the change flows through to the site on the next poll.
 - **Privacy:** the order sheet's **Address on Order**, **Order #**, and
   **Tracking #** columns are stripped server-side and never sent to the browser.
 - **UI:** three tabs, a faceted sidebar (platform, region, publisher, developer,
-  franchise, genre, year, format, status, and boolean toggles), full-text
-  search, a sortable/paginated table, and a click-through detail drawer.
+  franchise, genre, year, format, status, boolean toggles, and — with IGDB —
+  genre/theme/game-mode), full-text search, **table or cover-grid views**, a
+  page-size selector (25–500), multi-key sorting, and a click-through detail
+  drawer with rich IGDB metadata.
 
 Served publicly at **https://games.zachd.duckdns.org** via Traefik + DuckDNS,
 matching the ingress pattern used by the rest of the cluster.

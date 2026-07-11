@@ -137,6 +137,28 @@ body {
 }
 .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 13px; }
 .enrichstatus { color: var(--muted); font-size: 12px; margin-left: 4px; }
+.resultbar .spacer { flex: 1; }
+.resultbar .ctl { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.resultbar select {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 6px; font-size: 12px;
+}
+.dirbtn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; padding: 3px 7px; }
+.viewtoggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.viewtoggle button { background: var(--panel-2); color: var(--muted); border: none; cursor: pointer; padding: 5px 10px; font-size: 14px; }
+.viewtoggle button.active { background: var(--accent-dim); color: var(--text); }
+
+/* Grid view */
+.gridwrap { flex: 1; overflow: auto; padding: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
+.card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: border-color .12s, transform .12s; }
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card-cover { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: var(--bg); }
+.card-cover.ph { display: flex; align-items: center; justify-content: center; font-size: 34px; opacity: .35; }
+.card-body { padding: 8px 9px; position: relative; }
+.card-title { font-weight: 600; font-size: 13px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.card-sub { color: var(--muted); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-rating { position: absolute; top: -22px; right: 8px; background: rgba(0,0,0,.7); border-radius: 5px; padding: 1px 6px; font-size: 12px; font-weight: 700; }
 
 /* Cover thumbnails in the table */
 thead th.cover-h { width: 44px; }
