@@ -185,6 +185,18 @@ class Enricher:
             with self._lock:
                 self._queued[source].discard(key)
 
+    def remove_source(self, source, key):
+        """Pin a source as 'no match' (manual), so auto-matching won't re-fill it.
+        Different from clear_source_override, which hands the key back to auto."""
+        if source == "igdb":
+            self._save_igdb(key, None, 0, manual=True)
+        elif source in self._secondary:
+            self._save_secondary(source, key, None, manual=True)
+        else:
+            return
+        with self._lock:
+            self._queued[source].discard(key)
+
     def clear_source_override(self, source, key):
         if source == "igdb":
             self.clear_override(key)

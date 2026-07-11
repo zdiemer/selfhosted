@@ -220,7 +220,10 @@ function mapControlHtml(key) {
   return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
       <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
-      <button class="btn" data-map-go>Map</button><button class="linkbtn" data-map-reset title="Reset to auto">Auto</button></div></div>`).join("") +
+      <button class="btn" data-map-go>Map</button>
+      <button class="linkbtn" data-map-reset title="Re-run auto-matching">Auto</button>
+      <button class="linkbtn danger" data-map-remove title="Pin as no match — auto-matching won't re-fill it">Remove</button>
+      </div></div>`).join("") +
     `</details>`;
 }
 
@@ -331,6 +334,7 @@ function renderIgdbSection(key, el, status, detail) {
     const go = rowEl.querySelector("[data-map-go]");
     const input = rowEl.querySelector("[data-map-input]");
     const reset = rowEl.querySelector("[data-map-reset]");
+    const remove = rowEl.querySelector("[data-map-remove]");
     const submit = async () => {
       const url = input.value.trim();
       if (!url) return;
@@ -342,23 +346,28 @@ function renderIgdbSection(key, el, status, detail) {
     go.onclick = submit;
     input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
     reset.onclick = async () => { await submitOverride(key, "", src); loadDetail(key, el); };
+    remove.onclick = async () => {
+      await submitOverride(key, "", src, true);   // pin as no match
+      input.value = "";
+      loadDetail(key, el);
+    };
   });
 
   wireCarousel(el, (detail && detail.screenshots) || []);
 }
 
-async function submitOverride(key, url, source = "igdb") {
+async function submitOverride(key, url, source = "igdb", remove = false) {
   try {
     const res = await fetch("api/enrichment/override", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, url, source }),
+      body: JSON.stringify({ key, url, source, remove }),
     });
     if (!res.ok) return false;
     const j = await res.json();
     // Clear caches so the refetch shows the new mapping.
     delete DETAIL[key]; delete HLTBC[key]; delete MCC[key]; delete GEC[key];
     if (["igdb", "steam", "ign", "gamespot"].includes(source)) {   // primary slot
-      const r = j.record;
+      const r = remove ? null : j.record;
       if (r) ENRICH[key] = Object.assign(ENRICH[key] || {}, {
         cover: r.cover, coverUrl: r.coverUrl, source: r.source, igdbId: r.igdbId,
         genres: r.genres, themes: r.themes, gameModes: r.gameModes, userRating: r.userRating,

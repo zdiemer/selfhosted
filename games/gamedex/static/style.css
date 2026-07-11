@@ -230,6 +230,7 @@ a { color: var(--accent-2); }
 .enrichstatus { color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .linkbtn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 12.5px; font-family: inherit; }
 .linkbtn:hover { text-decoration: underline; }
+.linkbtn.danger { color: var(--bad); }
 select, .dirbtn {
   background: var(--surface); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 6px 9px; font-size: 12.5px; font-family: inherit;

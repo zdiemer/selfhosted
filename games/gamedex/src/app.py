@@ -158,6 +158,7 @@ class Override(BaseModel):
     key: str
     url: str | None = None
     source: str = "igdb"
+    remove: bool = False      # pin as "no match" instead of re-auto-matching
 
 
 # IGN/GameSpot/Steam supply the *primary* metadata record, so mapping them
@@ -170,6 +171,13 @@ def enrichment_override(body: Override):
     if not enricher:
         return JSONResponse(status_code=400, content={"error": "enrichment disabled"})
     src = body.source or "igdb"
+    # A primary-metadata source (igdb or a fallback) occupies the igdb slot.
+    slot = "igdb" if (src == "igdb" or src in _PRIMARY_FALLBACKS) else src
+
+    if body.remove:                                   # pin as no match, don't re-match
+        enricher.remove_source(slot, body.key)
+        return {"status": "removed", "source": src}
+
     if src == "igdb":
         client = _igdb
     elif src in _PRIMARY_FALLBACKS:
@@ -179,8 +187,6 @@ def enrichment_override(body: Override):
     if client is None or not hasattr(client, "override_from_url"):
         return JSONResponse(status_code=400, content={"error": f"source '{src}' can't be mapped"})
 
-    # A primary-metadata source (igdb or a fallback) occupies the igdb slot.
-    slot = "igdb" if (src == "igdb" or src in _PRIMARY_FALLBACKS) else src
     if not body.url or not body.url.strip():          # clear → back to auto
         enricher.clear_source_override(slot, body.key)
         return {"status": "cleared", "source": src}
