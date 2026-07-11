@@ -244,6 +244,7 @@ function heroHtml(row, titleText) {
          bottom-aligned cover then slid down past the title. -->
     <div id="heroChips"></div>
     ${heroStatsHtml(row)}
+    ${launchHtml(row) ? `<div class="hero-actions">${launchHtml(row)}</div>` : ""}
   </div>`;
 }
 
@@ -579,7 +580,8 @@ async function loadAllEnrichment() {
     if (changed) {
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
-      else if (activeTab === "home") renderHome();
+      else if (activeTab === "home") patchHomeCovers();   // in place: a full re-render flickers
+      else if (activeTab === "reviews") patchReviewCovers();
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
     }
@@ -642,6 +644,31 @@ const userRatingOf = (row) => {
   if (e && e.vnRating != null) return e.vnRating;
   return row.gamefaqsUserRating;
 };
+// ---- launching a game ----------------------------------------------------
+// IGDB (and the Steam/LaunchBox sources) give us storefront ids. `steam://` is
+// handled by the Steam client, so we can hand a game straight to it.
+//
+// We only offer a real LAUNCH when the sheet says the copy you own is on that
+// storefront (Notes == "Steam"). For any other PC game we know the appid for,
+// the honest offer is a store link — telling you to "launch" something you
+// don't own would just open a shop page and look broken.
+function launchTarget(row) {
+  const e = ENRICH[row._k];
+  const appid = e && e.stores && e.stores.steam;
+  if (!appid) return null;
+  const ownedOnSteam = (row.notes || "") === "Steam" && row.owned;
+  return ownedOnSteam
+    ? { kind: "launch", label: "▶ Play on Steam", href: `steam://rungameid/${appid}`, store: "Steam" }
+    : { kind: "store", label: "View on Steam", href: `https://store.steampowered.com/app/${appid}/`, store: "Steam" };
+}
+function launchHtml(row) {
+  const t = launchTarget(row);
+  if (!t) return "";
+  return t.kind === "launch"
+    ? `<a class="btn launch" href="${escapeHtml(t.href)}">${t.label}</a>`
+    : `<a class="btn ghost" href="${escapeHtml(t.href)}" target="_blank" rel="noopener">${t.label} ↗</a>`;
+}
+
 // Units sold/shipped (VGChartz estimate). Only major releases have a figure.
 const salesOf = (row) => { const e = ENRICH[row._k]; return e && e.units != null ? e.units : null; };
 const fmtUnits = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "m"
@@ -1311,13 +1338,14 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-const SPECIAL_TABS = ["home", "stats", "pick", "challenges"];
+const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
   $("#picker").hidden = mode !== "pick";
   $("#challenges").hidden = mode !== "challenges";
   $("#home").hidden = mode !== "home";
+  $("#reviews").hidden = mode !== "reviews";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1329,6 +1357,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
 
 function renderAll() {
   if (activeTab === "home") { setSpecialMode("home"); renderHome(); return; }
+  if (activeTab === "reviews") { setSpecialMode("reviews"); renderReviews(); return; }
   if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
@@ -1371,7 +1400,7 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["home", "games", "completed", "onOrder", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "home";
+  const tab = ["home", "games", "completed", "onOrder", "reviews", "stats", "pick", "challenges"].includes(p.get("tab")) ? p.get("tab") : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
@@ -1849,6 +1878,7 @@ function cmdkCandidates(q) {
       { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
       { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
       { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
+      { kind: "Tab", label: "📝 Reviews", run: () => switchTab("reviews") },
       { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
       { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
       { kind: "Tab", label: "🎯 Challenges", run: () => switchTab("challenges") },
@@ -1856,8 +1886,8 @@ function cmdkCandidates(q) {
   }
   // Tabs
   const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
-                ["onOrder", "📦 On Order"], ["stats", "📊 Stats"], ["pick", "🎲 Pick"],
-                ["challenges", "🎯 Challenges"]];
+                ["onOrder", "📦 On Order"], ["reviews", "📝 Reviews"], ["stats", "📊 Stats"],
+                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"]];
   for (const [id, label] of tabs) {
     if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
   }

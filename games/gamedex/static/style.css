@@ -1024,6 +1024,106 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   .h-arrow { display: none; }
 }
 
+/* ---- Reviews ------------------------------------------------------------ */
+.reviews { flex: 1; overflow-y: auto; padding: 26px 20px 40px; }
+.rev-head { max-width: 860px; margin: 0 auto 22px; }
+.rev-head h1 { font-family: var(--display); font-size: 30px; letter-spacing: -.02em; margin-bottom: 8px; }
+.rev-head p { color: var(--muted); font-size: 14px; }
+.rev-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+#revQ {
+  flex: 1; min-width: 200px; max-width: 380px; padding: 9px 14px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 13.5px;
+}
+#revQ:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 4px var(--accent-soft); }
+
+.rev-list { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.rev {
+  display: flex; gap: 18px; padding: 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  transition: border-color .16s;
+}
+.rev:hover { border-color: var(--surface-3); }
+.rev-art { background: none; border: none; padding: 0; cursor: pointer; flex: none; }
+.rev-cover {
+  width: 88px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--surface-2); display: block;
+  transition: transform .18s var(--ease);
+}
+.rev-art:hover .rev-cover { transform: translateY(-3px); }
+.rev-cover.ph { display: flex; align-items: center; justify-content: center; font-size: 24px; opacity: .35; }
+.rev-body { flex: 1; min-width: 0; }
+.rev-body header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rev-title {
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  font: 600 17px/1.3 var(--display); color: var(--text); letter-spacing: -.01em;
+}
+.rev-title:hover { color: var(--accent); }
+.rev-score { font: 700 17px/1 var(--display); flex: none; font-variant-numeric: tabular-nums; }
+.rev-meta { color: var(--dim); font-size: 11.5px; margin: 5px 0 12px; }
+.rev-critic, .rev-time { white-space: nowrap; }
+/* Collapsed to ~6 lines with a fade; "Read more" opens it. */
+.rev-text {
+  font-size: 14px; line-height: 1.72; color: var(--muted); white-space: pre-wrap;
+  position: relative; max-height: 168px; overflow: hidden;
+}
+.rev-text::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+.rev.open .rev-text { max-height: none; }
+.rev.open .rev-text::after { display: none; }
+.rev-text mark { background: var(--accent-soft); color: var(--text); border-radius: 3px; padding: 0 2px; }
+.rev-more {
+  margin-top: 10px; background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font: 600 12.5px var(--display);
+}
+.rev-more:hover { text-decoration: underline; }
+
+@media (max-width: 760px) {
+  .reviews { overflow: visible; flex: none; padding: 18px 12px 32px; }
+  .rev { flex-direction: column; gap: 14px; padding: 16px; }
+  .rev-cover { width: 74px; }
+  .rev-head h1 { font-size: 24px; }
+}
+
+/* ---- Launch / store buttons --------------------------------------------- */
+.hero-actions, .h-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.hero-actions { margin-top: 4px; padding-bottom: 4px; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+.btn.launch {
+  background: linear-gradient(92deg, var(--accent), var(--accent-2));
+  color: #fff; border: none; font-weight: 600;
+  box-shadow: 0 6px 18px rgba(124, 92, 255, .28);
+}
+.btn.launch:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn.ghost { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+.btn.ghost:hover { border-color: var(--accent-line); color: var(--accent); }
+
+/* Hero pager arrows (home) */
+.h-page {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 38px; height: 60px; border-radius: var(--r-sm); cursor: pointer;
+  background: var(--glass-btn); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); color: var(--on-glass); font-size: 20px; line-height: 1;
+  opacity: 0; transition: opacity .18s;
+}
+.h-hero:hover .h-page { opacity: 1; }
+.h-page.prev { left: 10px; }
+.h-page.next { right: 10px; }
+.h-page:hover { border-color: var(--accent-line); }
+
+@media (max-width: 760px) {
+  /* Touch: swipe pages the hero (see wireHeroSwipe). Keep the arrows visible as
+     an affordance, and make the dots an actual tap target. */
+  .h-page { opacity: 1; width: 30px; height: 46px; font-size: 17px; }
+  .h-page.prev { left: 2px; }
+  .h-page.next { right: 2px; }
+  .h-dot { width: 9px; height: 9px; padding: 8px; background-clip: content-box; box-sizing: content-box; }
+  .h-dot.on { width: 22px; }
+}
+
 /* ---- Challenges --------------------------------------------------------- */
 .challenges { flex: 1; overflow-y: auto; padding: 26px 20px; }
 .ch-hero { max-width: 1180px; margin: 0 auto 24px; }

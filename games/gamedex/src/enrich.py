@@ -10,6 +10,7 @@ as `_k`; sources resolve independently and are merged at read time.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import sqlite3
 import threading
@@ -21,11 +22,12 @@ from match_validator import MatchValidator
 
 log = logging.getLogger("gamedex.enrich")
 
-_IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes", "name")
+_IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes",
+               "name", "stores")
 # igdbId/source let the UI tell IGDB matches from fallback (IGN/GameSpot/Steam)
 # ones, and spot games with no metadata at all.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
-                "igdbId", "source")
+                "igdbId", "source", "stores")
 # Light fields each secondary source contributes to the cover/facet map.
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
@@ -375,11 +377,70 @@ class Enricher:
                 with self._lock:
                     self._queued[src].discard(key)
 
+    def backfill_stores(self):
+        """One-off: add `stores` to records matched before we asked IGDB for them.
+
+        Cheap — fetch-by-id batches 500 games per call, so the whole library is
+        ~30 requests rather than 14.5k searches. Steam-sourced fallback records
+        get theirs parsed straight out of the stored URL, no network at all.
+        """
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key, igdb_id, data FROM enrichment WHERE status='matched' AND data IS NOT NULL"
+            ).fetchall()
+
+        need, steam_fixed = {}, 0
+        for key, igdb_id, raw in rows:
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            if rec.get("stores"):
+                continue
+            m = re.search(r"/app/(\d+)", rec.get("url") or "")
+            if (rec.get("source") == "Steam") and m:
+                rec["stores"] = {"steam": m.group(1)}
+                with self._db_lock:
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?",
+                                     (json.dumps(rec), key))
+                steam_fixed += 1
+            elif igdb_id:
+                need[int(igdb_id)] = key
+        if steam_fixed:
+            with self._db_lock:
+                self._db.commit()
+
+        if not need or not self._igdb.configured:
+            log.info("stores backfill: %d from Steam URLs, nothing to fetch", steam_fixed)
+            return
+        log.info("stores backfill: fetching storefront ids for %d games", len(need))
+        found = 0
+        try:
+            stores = self._igdb.stores_for(list(need))
+        except Exception as exc:
+            log.warning("stores backfill failed: %s", exc)
+            return
+        with self._db_lock:
+            for gid, st in stores.items():
+                key = need.get(gid)
+                if not key:
+                    continue
+                row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                if not row or not row[0]:
+                    continue
+                rec = json.loads(row[0])
+                rec["stores"] = st
+                self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+                found += 1
+            self._db.commit()
+        log.info("stores backfill: %d games got storefront ids (+%d from Steam URLs)", found, steam_fixed)
+
     def start(self):
         for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
             self._workers[src] = t
             t.start()
+        threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
 
     def stop(self):
         self._stop.set()

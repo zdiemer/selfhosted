@@ -185,8 +185,12 @@ function heroSection(playing) {
     ? `<div class="h-dots">${playing.map((_, i) =>
         `<button class="h-dot${i === homeState.heroIdx % playing.length ? " on" : ""}" data-hero="${i}" aria-label="Game ${i + 1}"></button>`).join("")}</div>`
     : "";
+  const pager = playing.length > 1
+    ? `<button class="h-page prev" data-page="-1" aria-label="Previous game">‹</button>
+       <button class="h-page next" data-page="1" aria-label="Next game">›</button>` : "";
   return `<section class="h-hero" style="${bg ? `--shot:url('${bg}')` : ""}">
     <div class="h-hero-bg${bg ? " on" : ""}"></div>
+    ${pager}
     <div class="h-hero-inner">
       ${cs ? `<img class="h-hero-cover" src="${escapeHtml(cs)}" alt="">` : `<div class="h-hero-cover ph">🎮</div>`}
       <div class="h-hero-txt">
@@ -195,7 +199,10 @@ function heroSection(playing) {
         <div class="h-hero-meta">${bits}${row.dateStarted ? ` · started ${escapeHtml(fmtDate(row.dateStarted))}` : ""}</div>
         ${prog != null ? `<div class="h-prog"><span style="width:${prog}%"></span></div>
           <div class="h-prog-txt">${prog}% through${left != null ? ` · about ${fmtHours(left)} left` : ""}</div>` : ""}
-        <button class="btn h-open" data-hk="${escapeHtml(String(row._k || ""))}" data-hs="games">▶ Open game</button>
+        <span class="h-actions">
+          ${launchHtml(row)}
+          <button class="btn ghost h-open" data-hk="${escapeHtml(String(row._k || ""))}" data-hs="games">Details</button>
+        </span>
       </div>
       ${dots}
     </div>
@@ -249,6 +256,36 @@ function challengeSpotlight() {
 
 // ---- render --------------------------------------------------------------
 
+// Swap just the hero, leaving every other <img> on the page untouched.
+function renderHero(playing) {
+  const cur = document.querySelector(".h-hero");
+  if (!cur) return;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = heroSection(playing);
+  const next = tmp.firstElementChild;
+  if (!next) return;
+  cur.replaceWith(next);
+  wireHeroBits(next, playing);
+}
+
+// Enrichment arrived: fill in the covers that were placeholders, in place.
+// A full renderHome() here would recreate every <img> and flash the whole page.
+function patchHomeCovers() {
+  const host = $("#home");
+  if (!host) return;
+  host.querySelectorAll("[data-hk]").forEach((el) => {
+    const ph = el.querySelector(".card-cover.ph");
+    if (!ph) return;
+    const e = ENRICH[el.dataset.hk];
+    const cs = coverSrc(e, "cover_big");
+    if (!cs) return;
+    const img = document.createElement("img");
+    img.className = "card-cover" + (coverIsPixelArt(e, cs) ? " pixel" : "");
+    img.loading = "lazy"; img.alt = ""; img.src = cs;
+    ph.replaceWith(img);
+  });
+}
+
 function renderHome() {
   const host = $("#home");
   if (!DATA) return;
@@ -290,6 +327,72 @@ function renderHome() {
   wireHome(host, playing);
 }
 
+// Click handlers for the hero's own buttons (cover/open/dots).
+// Swipe the hero on touch devices. A 7px dot is not a tap target, and paging a
+// carousel by poking dots is the wrong gesture on a phone anyway.
+function wireHeroSwipe(scope, playing) {
+  if (playing.length < 2) return;
+  let x0 = null, y0 = null;
+  scope.addEventListener("touchstart", (e) => {
+    x0 = e.changedTouches[0].clientX; y0 = e.changedTouches[0].clientY;
+  }, { passive: true });
+  scope.addEventListener("touchend", (e) => {
+    if (x0 == null) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    const dy = e.changedTouches[0].clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy)) return;   // a scroll, not a swipe
+    const n = playing.length;
+    homeState.heroIdx = (homeState.heroIdx + (dx < 0 ? 1 : -1) + n) % n;
+    renderHero(playing);
+    loadHeroShot(playing);
+  }, { passive: true });
+}
+
+function wireHeroBits(scope, playing) {
+  wireHeroSwipe(scope, playing);
+  scope.querySelectorAll(".h-page").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const n = playing.length;
+      homeState.heroIdx = (homeState.heroIdx + (+el.dataset.page) + n) % n;
+      renderHero(playing);
+      loadHeroShot(playing);
+    };
+  });
+  scope.querySelectorAll("[data-hk]").forEach((el) => {
+    el.onclick = () => {
+      const row = hRows().find((r) => String(r._k || "") === el.dataset.hk);
+      if (row) openDrawer(row, "games");
+    };
+  });
+  scope.querySelectorAll(".h-dot").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      homeState.heroIdx = +el.dataset.hero;
+      renderHero(playing);
+      loadHeroShot(playing);
+    };
+  });
+}
+
+// The hero wants a screenshot backdrop; fetch the detail for the shown game
+// once, then redraw only the hero with it.
+function loadHeroShot(playing) {
+  if (!playing.length || !ENRICH_ENABLED) return;
+  const row = playing[homeState.heroIdx % playing.length];
+  if (!row._k || DETAIL[row._k]) return;
+  fetch("api/enrichment/detail?key=" + encodeURIComponent(row._k))
+    .then((r) => r.json())
+    .then((j) => {
+      if (j.status === "matched" && j.detail && (j.detail.screenshots || []).length) {
+        DETAIL[row._k] = j.detail;
+        if (activeTab === "home") renderHero(playing);
+      }
+    })
+    .catch(() => {});
+}
+
 function wireHome(host, playing) {
   // Any card / hero button opens the game.
   host.querySelectorAll("[data-hk]").forEach((el) => {
@@ -306,39 +409,23 @@ function wireHome(host, playing) {
       if (shelfEl) shelfEl.scrollBy({ left: +el.dataset.dir * shelfEl.clientWidth * 0.8, behavior: "smooth" });
     };
   });
-  host.querySelectorAll(".h-dot").forEach((el) => {
-    el.onclick = (e) => { e.stopPropagation(); homeState.heroIdx = +el.dataset.hero; renderHome(); };
-  });
   const more = $("#hPickMore");
   if (more) more.onclick = () => { switchTab("pick"); nav(); };
   const chal = $("#hChal"), chalAll = $("#hChalAll");
   if (chal) chal.onclick = () => { chState.open = null; switchTab("challenges"); nav(); };
   if (chalAll) chalAll.onclick = (e) => { e.stopPropagation(); chState.open = null; switchTab("challenges"); nav(); };
 
-  // The hero wants a screenshot backdrop; fetch the detail for the shown game
-  // once, then re-render so it can use it.
-  if (playing.length) {
-    const row = playing[homeState.heroIdx % playing.length];
-    if (row._k && !DETAIL[row._k] && ENRICH_ENABLED) {
-      fetch("api/enrichment/detail?key=" + encodeURIComponent(row._k))
-        .then((r) => r.json())
-        .then((j) => {
-          if (j.status === "matched" && j.detail && (j.detail.screenshots || []).length) {
-            DETAIL[row._k] = j.detail;
-            if (activeTab === "home") renderHome();
-          }
-        })
-        .catch(() => {});
-    }
-  }
+  loadHeroShot(playing);
 
   // Rotate the hero every 9s, but never while the user is reading a drawer.
+  // renderHero, NOT renderHome — the latter rebuilds every <img> on the page.
   clearInterval(_homeTimer);
   if (playing.length > 1 && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     _homeTimer = setInterval(() => {
       if (activeTab !== "home" || !$("#overlay").hidden) return;
       homeState.heroIdx = (homeState.heroIdx + 1) % playing.length;
-      renderHome();
+      renderHero(playing);
+      loadHeroShot(playing);
     }, 9000);
   }
 }

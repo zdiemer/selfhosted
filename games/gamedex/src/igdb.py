@@ -41,8 +41,14 @@ _FIELDS = (
     "involved_companies.publisher,"
     "franchises.name,franchise.name,"
     "similar_games.name,similar_games.slug,similar_games.url,"
-    "similar_games.cover.image_id;"
+    "similar_games.cover.image_id,"
+    # Storefront ids — this is what lets the UI hand off to `steam://`.
+    "external_games.external_game_source,external_games.uid,external_games.url;"
 )
+
+# IGDB's external_game_source enum. (It used to be `category`; the field was
+# renamed, and querying the old name silently returns nothing.)
+_STORE_SOURCE = {1: "steam", 5: "gog", 26: "epic", 15: "itch", 36: "epic"}
 
 
 def platform_from_str(value):
@@ -194,6 +200,24 @@ class IgdbClient:
             return None, 0
         return self._to_enrichment(best, best_info), best_info.match_score
 
+    def stores_for(self, igdb_ids):
+        """{igdb_id: {'steam': '620', …}} for a batch of ids.
+
+        Used to backfill storefront ids onto records matched before we started
+        asking for them. Fetching by id lets us do 500 games per request instead
+        of one search each — the whole 14.5k library is ~30 calls.
+        """
+        out = {}
+        for i in range(0, len(igdb_ids), 500):
+            chunk = [int(x) for x in igdb_ids[i:i + 500]]
+            body = ("fields id,external_games.external_game_source,external_games.uid; "
+                    f"where id = ({','.join(str(c) for c in chunk)}); limit 500;")
+            for g in self._post("games", body) or []:
+                st = self._stores(g.get("external_games") or [])
+                if st:
+                    out[g["id"]] = st
+        return out
+
     def fetch_by_slug(self, slug: str):
         """Fetch a single game by its IGDB URL slug (for manual overrides)."""
         safe = slug.replace('"', "")
@@ -254,5 +278,17 @@ class IgdbClient:
                  "cover": (s.get("cover") or {}).get("image_id")}
                 for s in c.get("similar_games", []) if s.get("name")
             ][:12],
+            "stores": self._stores(c.get("external_games") or []),
             "confidence": None,
         }
+
+    @staticmethod
+    def _stores(external):
+        """{'steam': '620', 'gog': '...'} — storefront ids we can deep-link to."""
+        out = {}
+        for e in external:
+            name = _STORE_SOURCE.get(e.get("external_game_source"))
+            uid = e.get("uid")
+            if name and uid and name not in out:
+                out[name] = str(uid)
+        return out
