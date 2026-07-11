@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.53.0"
+  tag: "0.55.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -62,6 +62,14 @@ igdb:
   # VGChartz (1 req/s) — unit sales, scraped from the sales table. Estimates,
   # and coverage skews hard to major retail releases; most games have no entry.
   vgchartz: true
+  # Steam-appid extras (1 req/s, 4 calls per game): Valve's Deck compatibility,
+  # ProtonDB's community tier, SteamSpy owners/reviews, and global achievement
+  # rates. Keyed on the appid IGDB gives us, so it cannot mismatch.
+  steamx: true
+  # speedrun.com world records (1 req/s) — the counterweight to HowLongToBeat.
+  speedrun: true
+  # StrategyWiki walkthrough links (2 req/s). GameFAQs is Cloudflare-blocked.
+  guides: true
 
 # GameSpot for the fallback chain (apiKey goes in values.local.yaml).
 # DISABLED: the API now 301s to a Cloudflare-protected page (403 "Just a

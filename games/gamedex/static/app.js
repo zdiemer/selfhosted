@@ -88,6 +88,9 @@ const ADBC = {};                   // matchKey -> Arcade Database record
 const VNC = {};                    // matchKey -> VNDB record
 const VGC = {};                    // matchKey -> VGChartz record
 const THC = {};                    // matchKey -> Thumby record
+const SXC = {};                    // matchKey -> Steam extras (Deck/Proton/SteamSpy)
+const SRC = {};                    // matchKey -> speedrun record
+const GDC = {};                    // matchKey -> StrategyWiki guide
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
@@ -167,6 +170,18 @@ const chips = (arr, fk) => (arr && arr.length
       ? `<span class="chip facet-link" data-fk="${fk}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`
       : `<span class="chip">${escapeHtml(String(x))}</span>`).join("")}</div>` : "");
 
+function videoHtml(d) {
+  const vids = (d.videos || []).slice(0, 6);
+  if (!vids.length) return "";
+  return `<div class="detail-row notes"><div class="k">Trailers</div>
+    <div class="trailers">${vids.map((v) => `
+      <button class="trailer" data-yt="${escapeHtml(v.id)}" title="${escapeHtml(v.name || "Trailer")}">
+        <img loading="lazy" src="https://i.ytimg.com/vi/${escapeHtml(v.id)}/mqdefault.jpg" alt="">
+        <span class="trailer-play">▶</span>
+        <span class="trailer-cap">${escapeHtml(v.name || "Trailer")}</span>
+      </button>`).join("")}</div></div>`;
+}
+
 function detailHtml(d) {
   if (!d) return "";
   const cs = coverSrc(d, "cover_big");
@@ -179,7 +194,8 @@ function detailHtml(d) {
   const meta = [];
   if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(d.developers, "developer")}</div></div>`);
   if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(d.publishers, "publisher")}</div></div>`);
-  const nShots = (d.screenshots || []).length;
+  const gallery = [...(d.screenshots || []), ...(d.artworks || [])];
+  const nShots = gallery.length;
   const shots = nShots
     ? `<div class="shots"><div class="shot-view"><img class="shot-img" alt="" loading="lazy"></div>` +
       (nShots > 1 ? `<button class="shot-nav prev" aria-label="Previous">‹</button><button class="shot-nav next" aria-label="Next">›</button>` : "") +
@@ -192,7 +208,7 @@ function detailHtml(d) {
   // The cover, score and chips live in the hero now — this is just the prose.
   return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
-    meta.join("") + shots + simHtml +
+    meta.join("") + videoHtml(d) + shots + simHtml +
     igdbAttr(d);
 }
 
@@ -272,6 +288,9 @@ function mapControlHtml(key) {
     arcadedb: (ADBC[key] || {}).url || "",
     vndb: (VNC[key] || {}).url || "",
     vgchartz: (VGC[key] || {}).url || "",
+    steamx: (SXC[key] || {}).url || "",
+    speedrun: (SRC[key] || {}).url || "",
+    guides: (GDC[key] || {}).url || "",
   };
   // IGDB / Steam / IGN all fill the same "primary metadata" slot.
   const rows = [
@@ -288,6 +307,10 @@ function mapControlHtml(key) {
   if (ENRICH_SOURCES.includes("arcadedb") && (drawerRow || {}).mameRomset) rows.push({ id: "arcadedb", label: "Arcade Database", ph: "adb.arcadeitalia.net/?mame=<romset>" });
   if (ENRICH_SOURCES.includes("vndb") && ["Visual Novel", "Adventure"].includes((drawerRow || {}).genre)) rows.push({ id: "vndb", label: "VNDB", ph: "vndb.org/v<id>" });
   if (ENRICH_SOURCES.includes("vgchartz")) rows.push({ id: "vgchartz", label: "VGChartz sales", ph: "vgchartz.com/games/game.php?id=<id>" });
+  // Steam extras are keyed on the appid, so mapping means pointing at the store page.
+  if (ENRICH_SOURCES.includes("steamx")) rows.push({ id: "steamx", label: "Steam Deck / ProtonDB", ph: "store.steampowered.com/app/<appid>/" });
+  if (ENRICH_SOURCES.includes("speedrun")) rows.push({ id: "speedrun", label: "speedrun.com", ph: "speedrun.com/<game>" });
+  if (ENRICH_SOURCES.includes("guides")) rows.push({ id: "guides", label: "StrategyWiki guide", ph: "strategywiki.org/wiki/<Page>" });
   return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
       <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
@@ -445,15 +468,62 @@ function thumbyHtml(key) {
     `</div>`;
 }
 
+// Steam extras — all keyed on the appid, so if they're here they're right.
+function steamxHtml(key) {
+  const x = SXC[key];
+  if (!x) return "";
+  const deck = x.deck
+    ? `<div class="hltb-row"><span>Steam Deck</span><b class="deck deck-${escapeHtml(String(x.deck).toLowerCase())}">${escapeHtml(x.deck)}</b></div>` : "";
+  const proton = x.protonTier
+    ? `<div class="hltb-row"><span>ProtonDB</span><b class="proton proton-${escapeHtml(String(x.protonTier))}">${escapeHtml(x.protonTier)}${x.protonReports ? ` <span class="muted">(${x.protonReports} reports)</span>` : ""}</b></div>` : "";
+  const rev = x.reviewScore != null
+    ? `<div class="hltb-row"><span>Steam reviews</span><b class="${ratingClass(x.reviewScore)}">${Math.round(x.reviewScore * 100)}% positive <span class="muted">of ${(x.positive + x.negative).toLocaleString()}</span></b></div>` : "";
+  const own = x.owners
+    ? `<div class="hltb-row"><span>Owners (est.)</span><b>${escapeHtml(x.owners)}</b></div>` : "";
+  const ccu = x.concurrent
+    ? `<div class="hltb-row"><span>Playing now</span><b>${x.concurrent.toLocaleString()}</b></div>` : "";
+  const a = x.achievements;
+  const ach = a
+    ? `<div class="hltb-row"><span>Achievements</span><b>${a.count} <span class="muted">· median ${a.medianPercent}% · rarest ${a.rarestPercent}%</span></b></div>` : "";
+  if (!(deck || proton || rev || own || ccu || ach)) return "";
+  return `<div class="hltb"><div class="hltb-head">🐧 Steam</div>${deck}${proton}${rev}${own}${ccu}${ach}` +
+    (x.protonUrl ? `<a class="hltb-link" href="${escapeHtml(x.protonUrl)}" target="_blank" rel="noopener">View on ProtonDB ↗</a>` : "") +
+    `</div>`;
+}
+
+// The world record, next to HowLongToBeat: a nice sense of scale.
+function speedrunHtml(key) {
+  const r = SRC[key];
+  if (!r || !r.wrTime) return "";
+  const rows = (r.categories || []).slice(0, 3).map((c) =>
+    `<div class="hltb-row"><span>${escapeHtml(c.category)}</span><b>${escapeHtml(c.time)}</b></div>`).join("");
+  return `<div class="hltb"><div class="hltb-head">🏁 World records</div>${rows}` +
+    (r.url ? `<a class="hltb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Leaderboards on speedrun.com ↗</a>` : "") +
+    `</div>`;
+}
+
+function guidesHtml(key) {
+  const g = GDC[key];
+  if (!g) return "";
+  const secs = (g.sections || []).slice(0, 6)
+    .map((x) => `<span class="chip">${escapeHtml(x)}</span>`).join("");
+  return `<div class="hltb"><div class="hltb-head">📖 Guide (StrategyWiki)</div>` +
+    (secs ? `<div class="chips">${secs}</div>` : "") +
+    `<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">${g.hasWalkthrough ? "Read the walkthrough" : "Open the guide"} ↗</a></div>`;
+}
+
 // Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
 // Push the full detail up into the hero: a screenshot becomes the backdrop, the
 // cover sharpens, the IGDB score and chips appear.
 function fillHero(detail) {
   const bg = $("#heroBg"), coverEl = $("#heroCover"), chipsEl = $("#heroChips");
   if (!detail) return;
-  const shot = (detail.screenshots || [])[0];
-  if (bg && shot) {
-    bg.style.backgroundImage = `url("${IMG(shot, "screenshot_med")}")`;
+  // Artwork first: it's cinematic key art, made to be looked at. A screenshot is
+  // a fallback — it's a picture of a HUD.
+  const art = (detail.artworks || [])[0] || (detail.screenshots || [])[0];
+  const size = (detail.artworks || []).length ? "1080p" : "screenshot_med";
+  if (bg && art) {
+    bg.style.backgroundImage = `url("${IMG(art, size)}")`;
     bg.classList.add("on");
   }
   const cs = coverSrc(detail, "cover_big");
@@ -486,8 +556,9 @@ function renderIgdbSection(key, el, status, detail) {
          <div class="skel skel-line"></div><div class="skel skel-line"></div>
          <div class="skel skel-line short"></div>`;
   }
-  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + arcadeHtml(key) + vndbHtml(key)
-    + thumbyHtml(key) + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + speedrunHtml(key) + metacriticHtml(key)
+    + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
+    + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
 
   el.querySelectorAll(".map-src").forEach((rowEl) => {
     const src = rowEl.dataset.src;
@@ -513,7 +584,20 @@ function renderIgdbSection(key, el, status, detail) {
     };
   });
 
-  wireCarousel(el, (detail && detail.screenshots) || []);
+  wireCarousel(el, detail ? [...(detail.screenshots || []), ...(detail.artworks || [])] : []);
+  // Trailers: swap the thumbnail for the player only when it's actually clicked.
+  el.querySelectorAll("[data-yt]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.yt;
+      const frame = document.createElement("iframe");
+      frame.className = "trailer-frame";
+      frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
+      frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+      frame.allowFullscreen = true;
+      frame.title = "Trailer";
+      btn.replaceWith(frame);
+    };
+  });
 }
 
 async function submitOverride(key, url, source = "igdb", remove = false) {
@@ -553,6 +637,9 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     if ("vndb" in j) VNC[key] = j.vndb;
     if ("vgchartz" in j) VGC[key] = j.vgchartz;
     if ("thumby" in j) THC[key] = j.thumby;
+    if ("steamx" in j) SXC[key] = j.steamx;
+    if ("speedrun" in j) SRC[key] = j.speedrun;
+    if ("guides" in j) GDC[key] = j.guides;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -788,6 +875,9 @@ function extraSourcesOf(row) {
   if (e.vnUrl) out.push("VNDB");
   if (e.units != null) out.push("VGChartz sales");
   if (e.thumbyUrl) out.push("Thumby");
+  if (e.deck || e.protonTier) out.push("Steam extras");
+  if (e.wrTime) out.push("speedrun.com");
+  if (e.guideUrl) out.push("StrategyWiki");
   if (e.hltbUrl) out.push("HowLongToBeat");
   if (e.metaUrl) out.push("Metacritic");
   if (e.geUrl) out.push("GameEye");
@@ -833,6 +923,14 @@ function extraFacetCols() {
       getVals: (r) => { const e = ENRICH[r._k]; return e && e.adbPlayers ? [e.adbPlayers] : []; } },
     { key: "__adborient", label: "Arcade screen", type: "text", facet: true, virtual: true, kind: "fn",
       getVals: (r) => { const e = ENRICH[r._k]; return e && e.adbOrientation ? [e.adbOrientation] : []; } },
+    // You track Steam Deck completions in the sheet — now you can filter the
+    // backlog down to what Valve says actually runs on it.
+    { key: "__deck", label: "Steam Deck", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.deck ? [e.deck] : []; } },
+    { key: "__proton", label: "ProtonDB", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.protonTier ? [e.protonTier] : []; } },
+    { key: "__steamrev", label: "Steam reviews", type: "text", facet: true, virtual: true, kind: "bucket",
+      buckets: METACRITIC_BUCKETS, getVal: (r) => { const e = ENRICH[r._k]; return e && e.steamReview; } },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];

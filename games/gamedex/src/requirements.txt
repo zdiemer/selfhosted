@@ -9,3 +9,7 @@ edit-distance==1.0.6
 roman==4.2
 # HowLongToBeat scraping (repurposed HltbClient).
 beautifulsoup4==4.12.3
+# StrategyWiki sits behind a TLS-fingerprint (JA3) block: plain `requests` gets a
+# 403 no matter the headers, while curl gets a 200. curl_cffi impersonates a real
+# browser's TLS handshake, which is the only thing that gets through.
+curl_cffi==0.7.4

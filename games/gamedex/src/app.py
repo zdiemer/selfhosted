@@ -34,6 +34,9 @@ from hltb import HltbClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
 from poller import DataStore
+from guides import GuideClient
+from speedrun import SpeedrunClient
+from steamx import SteamExtraClient
 from thumby import ThumbyClient
 from vgchartz import VgChartzClient
 from vndb import VndbClient
@@ -73,6 +76,13 @@ if _on("THUMBY_ENABLED"):
     _secondary["thumby"] = ThumbyClient()          # Thumby / Thumby Color
 if _on("VGCHARTZ_ENABLED"):
     _secondary["vgchartz"] = VgChartzClient()      # sales figures
+if _on("STEAMX_ENABLED"):
+    # Keyed on the Steam appid IGDB gives us — an exact lookup, no fuzzy match.
+    _secondary["steamx"] = SteamExtraClient()      # Deck + ProtonDB + SteamSpy + achievements
+if _on("SPEEDRUN_ENABLED"):
+    _secondary["speedrun"] = SpeedrunClient()      # world-record times
+if _on("GUIDES_ENABLED"):
+    _secondary["guides"] = GuideClient()           # StrategyWiki walkthroughs
 # Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
 # off by default — its API is Cloudflare-blocked (see fallback.py).
 _fallback = (
@@ -162,7 +172,10 @@ def enrichment_detail(key: str):
             "arcadedb": enricher.get_secondary("arcadedb", key),
             "vndb": enricher.get_secondary("vndb", key),
             "vgchartz": enricher.get_secondary("vgchartz", key),
-            "thumby": enricher.get_secondary("thumby", key)}
+            "thumby": enricher.get_secondary("thumby", key),
+            "steamx": enricher.get_secondary("steamx", key),
+            "speedrun": enricher.get_secondary("speedrun", key),
+            "guides": enricher.get_secondary("guides", key)}
 
 
 @app.get("/api/enrichment/stats")

@@ -463,6 +463,47 @@ td.cover { width: 46px; padding: 5px 8px; }
 tr.row-col-complete td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
+/* ---- Trailers ------------------------------------------------------------ */
+.trailers { display: flex; gap: 10px; overflow-x: auto; padding: 2px 0 8px; }
+.trailer {
+  position: relative; flex: 0 0 200px; cursor: pointer; padding: 0; border: none;
+  background: none; font-family: inherit; color: var(--text); text-align: left;
+}
+.trailer img {
+  width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--matte); display: block;
+  transition: transform .18s var(--ease), border-color .18s;
+}
+.trailer:hover img { transform: translateY(-3px); border-color: var(--accent-line); }
+.trailer-play {
+  position: absolute; top: 32%; left: 50%; transform: translate(-50%, -50%);
+  width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 15px; color: #fff;
+  background: rgba(8, 10, 14, .72); backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, .3); transition: background .16s, transform .16s;
+}
+.trailer:hover .trailer-play { background: var(--accent); transform: translate(-50%, -50%) scale(1.08); }
+.trailer-cap {
+  display: block; margin-top: 6px; font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trailer-frame {
+  width: 100%; max-width: 560px; aspect-ratio: 16 / 9; border: 1px solid var(--border);
+  border-radius: var(--r-sm); background: #000;
+}
+
+/* ---- Steam Deck / ProtonDB badges --------------------------------------- */
+.deck, .proton { font-weight: 700; }
+.deck-verified { color: var(--good); }
+.deck-playable { color: var(--warn); }
+.deck-unsupported { color: var(--bad); }
+.deck-unknown { color: var(--muted); }
+.proton-platinum { color: #d8c8f0; }
+.proton-gold { color: #fbbf24; }
+.proton-silver { color: #c6cbd6; }
+.proton-bronze { color: #d08c60; }
+.proton-borked { color: var(--bad); }
+
 /* ---- Cinematic hero (drawer header) ------------------------------------- */
 .hero {
   position: relative; margin: -28px -28px 20px; padding: 26px 28px 0;

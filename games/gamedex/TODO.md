@@ -31,6 +31,14 @@ Working list. Checked = shipped and deployed.
       (Steam 3,880 · GOG 121) plus store/app links for Epic, itch, PlayStation,
       Xbox, Google Play and the App Store (iOS works: apps.apple.com/id<appid>).
 
+- [x] **Trailers + artwork** — IGDB's videos and artworks were fetched and never
+      shown. Click-to-play trailers, artworks folded into the gallery, and the
+      hero backdrop now prefers key art over a screenshot.
+- [x] **Steam extras** — Deck compatibility (Valve), ProtonDB tier, SteamSpy
+      owners/reviews, achievement rates. Keyed on the appid: cannot mismatch.
+      New facets: Steam Deck, ProtonDB, Steam reviews.
+- [x] **speedrun.com + StrategyWiki** — world records and walkthrough links.
+
 ## Next
 
 - [ ] **Launch: RomM** — deep-link emulated titles into the RomM instance we

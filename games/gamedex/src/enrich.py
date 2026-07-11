@@ -30,6 +30,10 @@ _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genre
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
                 "igdbId", "source", "stores")
 # Light fields each secondary source contributes to the cover/facet map.
+# Sources keyed on the Steam appid, which lives in the IGDB *enrichment* record
+# rather than the sheet — so their worker has to wait for IGDB to resolve first.
+_NEEDS_APPID = {"steamx"}
+
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
     "metacritic": lambda d: {"metascore": d.get("metascore"), "metaUrl": d.get("url")},
@@ -43,6 +47,10 @@ _SECONDARY_LIGHT = {
                        "vnCover": d.get("cover"), "vnUrl": d.get("url")},
     "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url")},
     "thumby": lambda d: {"thumbyUrl": d.get("url"), "thumbyCover": d.get("cover")},
+    "steamx": lambda d: {"deck": d.get("deck"), "protonTier": d.get("protonTier"),
+                         "steamReview": d.get("reviewScore"), "owners": d.get("owners")},
+    "speedrun": lambda d: {"wrTime": d.get("wrTime"), "wrSeconds": d.get("wrSeconds")},
+    "guides": lambda d: {"guideUrl": d.get("url")},
 }
 
 # Not every source applies to every game. These gates keep the queues honest:
@@ -53,6 +61,10 @@ _SOURCE_GATE = {
     "arcadedb": lambda m: bool(m.get("mameRomset")),
     "thumby": lambda m: m.get("platform") in ("Thumby", "Thumby Color"),
     "vndb": lambda m: m.get("genre") in ("Visual Novel", "Adventure"),
+    # Gated on platform, not on the appid: the appid isn't known until IGDB has
+    # resolved, and gates run at queue time. The worker drops the ones that turn
+    # out to have no appid.
+    "steamx": lambda m: m.get("platform") in ("PC", "Mac", "Linux"),
 }
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -249,6 +261,16 @@ class Enricher:
 
     def _table(self, src):
         return "enrichment" if src == "igdb" else src
+
+    def appid_for(self, key):
+        """The Steam appid from a key's primary metadata record, if it has one."""
+        row = self._get("enrichment", [key]).get(key)
+        if not row or row[0] != "matched" or not row[1]:
+            return None
+        st = (row[1].get("stores") or {}).get("steam")
+        if not st:
+            return None
+        return st.get("id") if isinstance(st, dict) else str(st)
 
     # -- keys / index -------------------------------------------------------
     def key_for(self, title, platform, year) -> str:
@@ -511,6 +533,7 @@ class Enricher:
                 with self._lock:
                     self._queued[src].discard(key)
                 continue
+            requeued = False
             try:
                 if src == "igdb":
                     enrichment, score = self._igdb.match(
@@ -521,6 +544,23 @@ class Enricher:
                         if fb:
                             enrichment, score = fb, fb.get("confidence") or 0
                     self._save_igdb(key, enrichment, score)
+                elif src in _NEEDS_APPID:
+                    appid = self.appid_for(key)
+                    if appid is None:
+                        if self._status("enrichment", key) is None:
+                            # IGDB hasn't got to this game yet. Put it back and
+                            # come round again rather than recording a no_match
+                            # we'd never revisit.
+                            with self._lock:
+                                self._q[src].append(key)
+                            requeued = True
+                            time.sleep(0.05)
+                            continue
+                        # IGDB resolved and there's no Steam id — nothing to ask.
+                        self._save_secondary(src, key, None)
+                        continue
+                    client = self._secondary[src]
+                    self._save_secondary(src, key, client.match_meta({**meta, "steamAppId": appid}))
                 else:
                     client = self._secondary[src]
                     # ArcadeDB keys on the MAME romset and Thumby/VNDB on
@@ -532,8 +572,9 @@ class Enricher:
                 log.warning("%s enrich failed for %r: %s", src, meta["title"], exc)
                 time.sleep(1.0)
             finally:
-                with self._lock:
-                    self._queued[src].discard(key)
+                if not requeued:
+                    with self._lock:
+                        self._queued[src].discard(key)
 
     def backfill_stores(self):
         """One-off: add `stores` to records matched before we asked IGDB for them.
