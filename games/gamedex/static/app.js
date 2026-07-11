@@ -69,6 +69,7 @@ const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${s
 // Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
 const coverSrc = (e, size) => (e && e.coverUrl ? e.coverUrl : (e && e.cover ? IMG(e.cover, size) : ""));
 let ENRICH_ENABLED = false;
+let ENRICH_COMPLETE = false;       // all sources backfilled → stop shimmering covers
 let ENRICH_SOURCES = [];           // enabled secondary sources (hltb, metacritic, gameye)
 const ENRICH = {};                 // matchKey -> light enrichment
 const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
@@ -79,9 +80,12 @@ const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
+// A cover is "pending" while enrichment is still resolving and we've not seen it.
+const coverPending = (row) => ENRICH_ENABLED && !ENRICH_COMPLETE && !(row._k in ENRICH);
 function coverCell(row) {
   const src = coverSrc(ENRICH[row._k], "cover_small");
-  return src ? `<img class="cover-thumb" loading="lazy" src="${src}" alt="">` : `<span class="cover-ph">🎮</span>`;
+  if (src) return `<img class="cover-thumb" loading="lazy" src="${src}" alt="">`;
+  return `<span class="cover-ph${coverPending(row) ? " skel" : ""}"></span>`;
 }
 
 // Queue enrichment for any on-screen rows we haven't asked about yet.
@@ -106,7 +110,7 @@ async function postEnrich(keys) {
     let changed = false;
     for (const [k, v] of Object.entries(j.items || {})) { ENRICH[k] = v; changed = true; }
     updateEnrichStatus(j.stats);
-    if (changed) renderTable(currentFiltered);              // fill covers in place
+    if (changed) patchEnrichedCells();                      // in-place: no flicker
     if (j.pending && j.pending.length) {                    // still resolving — poll
       clearTimeout(enrichTimer);
       enrichTimer = setTimeout(() => postEnrich(j.pending), 2500);
@@ -125,6 +129,25 @@ function updateEnrichStatus(stats) {
   for (const s of Object.values(src)) queued += s.queued || 0;
   el.textContent = parts.join(" · ") + (queued ? ` · ${queued.toLocaleString()} queued` : "");
   el.hidden = false;
+
+  // Enrichment progress bar (all sources combined).
+  ENRICH_COMPLETE = !!stats.complete;
+  const wrap = $("#progress"), bar = $("#progressBar");
+  if (wrap && bar && stats.total) {
+    const srcs = Object.values(src);
+    const done = (stats.resolved || 0) + srcs.reduce((a, s) => a + (s.resolved || 0), 0);
+    const total = stats.total * (1 + srcs.length);
+    bar.style.width = Math.min(100, Math.round((100 * done) / total)) + "%";
+    wrap.hidden = ENRICH_COMPLETE;
+  }
+}
+
+// Shimmering placeholder cards while the spreadsheet loads.
+function showSkeletons(n = 30) {
+  $("#gridwrap").hidden = false;
+  $("#grid").innerHTML = Array.from({ length: n }, () =>
+    `<div class="card"><div class="card-cover ph skel"></div><div class="card-body">
+      <div class="skel skel-line"></div><div class="skel skel-line short"></div></div></div>`).join("");
 }
 
 const chips = (arr, fk) => (arr && arr.length
@@ -271,14 +294,19 @@ function renderIgdbSection(key, el, status, detail) {
   if (status === "matched" && detail) content = detailHtml(detail);
   else if (status === "no_match") content = `<div class="igdb-loading muted">No IGDB match for this title.</div>`;
   else {
-    // loading / pending / error — show the cover from the light data immediately
-    // so we never display a bare "Loading" when we already have metadata.
+    // Loading / pending / error — show the real cover if the light data already
+    // has one, otherwise shimmer. Never a bare "Loading" line.
     const cs = coverSrc(ENRICH[key], "cover_big");
     const msg = status === "pending-final" ? "Metadata still resolving — reopen shortly."
-      : status === "error" ? "Couldn’t load extra details."
-      : "Loading details…";
-    content = (cs ? `<div class="igdb-head"><img class="cover-big" src="${cs}" alt=""></div>` : "") +
-      `<div class="igdb-loading muted">${msg}</div>`;
+      : status === "error" ? "Couldn’t load extra details." : "";
+    content = `<div class="igdb-head">` +
+      (cs ? `<img class="cover-big" src="${cs}" alt="">` : `<div class="cover-big skel"></div>`) +
+      `<div class="igdb-side">` +
+      (msg ? `<div class="igdb-loading muted">${msg}</div>`
+           : `<div class="skel skel-line" style="height:24px;width:65%"></div>
+              <div class="skel skel-line"></div><div class="skel skel-line"></div>
+              <div class="skel skel-line short"></div>`) +
+      `</div></div>`;
   }
   el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + gameyeHtml(key) + mapControlHtml(key);
 
@@ -360,8 +388,12 @@ async function loadAllEnrichment() {
       changed = true;
     }
     if (j.stats) updateEnrichStatus(j.stats);
-    if (changed) renderAll();                       // covers + facets fill in
-    if (j.stats && !j.stats.complete) {             // IGDB or HLTB backfill still running
+    if (changed) {
+      // Patch in place rather than re-rendering (which would flicker every image).
+      if (activeTab === "stats") renderStats();
+      else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
+    }
+    if (j.stats && !j.stats.complete) {             // a backfill is still running
       clearTimeout(allTimer);
       allTimer = setTimeout(loadAllEnrichment, 45000);
     }
@@ -753,6 +785,7 @@ function renderTableView(pageRows) {
   tbody.innerHTML = "";
   for (const row of pageRows) {
     const tr = document.createElement("tr");
+    if (row._k) tr.dataset.k = row._k;
     const cover = ENRICH_ENABLED ? `<td class="cover">${coverCell(row)}</td>` : "";
     tr.innerHTML = cover + cols.map((c) => `<td>${fmtCell(row[c.key], c.type)}</td>`).join("");
     tr.onclick = () => openDrawer(row);
@@ -768,36 +801,72 @@ function rowCompleted(row) {
   return false;
 }
 
+const CARD_ROW = new WeakMap();   // card element -> row (for in-place patching)
+
+// Text-only card body (no <img>), so it can be re-rendered without flicker.
+function cardBodyHtml(row) {
+  const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
+  const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
+  const rel = row.releaseDate || row.release;                 // full date, else year
+  const relDisp = rel ? fmtDate(rel) : row.releaseYear;
+  const pt = playtimeOf(row);
+  const parts = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
+  if (pt != null) parts.push("⏱ " + fmtHours(pt));
+  const cv = collectionValueOf(row);
+  if (cv != null) parts.push("💵 $" + cv.toFixed(2));
+  const rating = row.rating != null
+    ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";
+  const mc = metacriticOf(row);
+  const meta = mc != null
+    ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
+  return `${meta}${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${parts.join(" · ")}</div>`;
+}
+
 function renderGrid(pageRows) {
   const grid = $("#grid");
-  const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
   grid.innerHTML = "";
   for (const row of pageRows) {
-    const e = ENRICH[row._k];
-    const cs = coverSrc(e, "cover_big");
+    const cs = coverSrc(ENRICH[row._k], "cover_big");
+    const pend = coverPending(row);
     const cover = cs
       ? `<img class="card-cover" loading="lazy" src="${cs}" alt="">`
-      : `<div class="card-cover ph">🎮</div>`;
-    const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
-    const rel = row.releaseDate || row.release;                 // full date, else year
-    const relDisp = rel ? fmtDate(rel) : row.releaseYear;
-    const pt = playtimeOf(row);
-    const parts = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
-    if (pt != null) parts.push("⏱ " + fmtHours(pt));
-    const cv = collectionValueOf(row);
-    if (cv != null) parts.push("💵 $" + cv.toFixed(2));
-    const sub = parts.join(" · ");
-    const rating = row.rating != null
-      ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";
-    const mc = metacriticOf(row);
-    const meta = mc != null
-      ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
+      : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : "🎮"}</div>`;
     const card = document.createElement("div");
     card.className = "card" + (rowCompleted(row) ? " done" : "");
-    card.innerHTML = `${cover}<div class="card-body">${meta}${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${sub}</div></div>`;
+    if (row._k) card.dataset.k = row._k;
+    CARD_ROW.set(card, row);
+    card.innerHTML = `${cover}<div class="card-body">${cardBodyHtml(row)}</div>`;
     card.onclick = () => openDrawer(row);
     grid.appendChild(card);
   }
+}
+
+// Enrichment arrived: update covers/badges IN PLACE. A full re-render would
+// recreate every <img> and make the whole grid flicker on each poll.
+function patchEnrichedCells() {
+  document.querySelectorAll("#grid .card[data-k]").forEach((card) => {
+    const row = CARD_ROW.get(card);
+    if (!row) return;
+    const cur = card.querySelector(".card-cover");
+    const cs = coverSrc(ENRICH[card.dataset.k], "cover_big");
+    if (cs && cur && cur.tagName !== "IMG") {          // placeholder → real cover
+      const img = document.createElement("img");
+      img.className = "card-cover"; img.loading = "lazy"; img.alt = ""; img.src = cs;
+      cur.replaceWith(img);
+    } else if (!cs && cur && ENRICH_COMPLETE && cur.classList.contains("skel")) {
+      cur.classList.remove("skel");                    // resolved with no cover
+      cur.textContent = "🎮";
+    }
+    const body = card.querySelector(".card-body");
+    if (body) body.innerHTML = cardBodyHtml(row);      // text only — safe to redraw
+  });
+  document.querySelectorAll("#tbody tr[data-k]").forEach((tr) => {
+    const cs = coverSrc(ENRICH[tr.dataset.k], "cover_small");
+    const cell = tr.querySelector("td.cover");
+    if (cs && cell && !cell.querySelector("img")) {
+      cell.innerHTML = `<img class="cover-thumb" loading="lazy" src="${cs}" alt="">`;
+    }
+  });
 }
 
 // Grid has no clickable headers — a Sort dropdown + direction toggle stand in.
@@ -980,6 +1049,7 @@ function setFreshness() {
 
 // ---- boot ---------------------------------------------------------------
 async function load() {
+  showSkeletons();
   let payload = null;
   for (let attempt = 0; attempt < 40; attempt++) {
     const res = await fetch("api/data", { cache: "no-store" });
@@ -1001,7 +1071,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // events
 // ---- Stats dashboard (hand-rolled SVG, no deps) -------------------------
-const PALETTE = ["#6ea8fe", "#4ade80", "#fbbf24", "#f87171", "#a78bfa", "#22d3ee", "#fb923c", "#f472b6", "#94a3b8", "#34d399", "#e879f9", "#facc15"];
+const PALETTE = ["#7c5cff", "#22d3ee", "#34d399", "#fbbf24", "#f472b6", "#60a5fa", "#fb923c", "#a78bfa", "#2dd4bf", "#f87171", "#e879f9", "#facc15"];
 function countBy(arr) {
   const m = new Map();
   for (const v of arr) { if (v == null || v === "") continue; m.set(v, (m.get(v) || 0) + 1); }

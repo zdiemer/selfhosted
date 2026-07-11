@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gamedex</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎮</text></svg>" />
 </head>
@@ -14,6 +17,7 @@
     <div class="freshness" id="freshness"></div>
     <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data">⟳</button>
   </header>
+  <div class="progress" id="progress" hidden><div class="progress-bar" id="progressBar"></div></div>
   <div id="toast" class="toast" hidden></div>
 
   <nav class="tabs" id="tabs">
