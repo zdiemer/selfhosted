@@ -73,7 +73,9 @@ const coverSrc = (e, size) => (
   !e ? "" :
   e.coverUrl ? e.coverUrl :
   e.cover ? IMG(e.cover, size) :
-  e.vnCover || e.adbCover || "");
+  e.vnCover || e.adbCover || e.thumbyCover || "");
+// Thumby art is a 64x64 icon — scale it up with hard edges, not a blur.
+const coverIsPixelArt = (e, src) => !!(e && e.thumbyCover && src === e.thumbyCover);
 let ENRICH_ENABLED = false;
 let ENRICH_COMPLETE = false;       // all sources backfilled → stop shimmering covers
 let ENRICH_SOURCES = [];           // enabled secondary sources (hltb, metacritic, gameye)
@@ -379,7 +381,15 @@ function salesHtml(key) {
 function thumbyHtml(key) {
   const t = THC[key];
   if (!t) return "";
+  const art = [["Title", t.titleImage], ["Icon", t.icon]].filter(([, u]) => u)
+    .map(([l, u]) => `<figure class="adb-art"><img class="pixel" loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .join("");
+  // Tinymine and Thoom ship no still image at all — only an animated title
+  // card. Show it, so they aren't blank.
+  const vid = t.video
+    ? `<video class="thumby-vid" src="${escapeHtml(t.video)}" autoplay muted loop playsinline></video>` : "";
   return `<div class="hltb"><div class="hltb-head">🔬 ${escapeHtml(t.platform || "Thumby")}</div>` +
+    (art ? `<div class="adb-arts">${art}</div>` : "") + vid +
     (t.description ? `<p class="thumby-desc">${escapeHtml(t.description)}</p>` : "") +
     (t.url ? `<a class="hltb-link" href="${escapeHtml(t.url)}" target="_blank" rel="noopener">View on GitHub ↗</a>` : "") +
     `</div>`;
@@ -1042,8 +1052,9 @@ function renderGrid(pageRows) {
   for (const row of pageRows) {
     const cs = coverSrc(ENRICH[row._k], "cover_big");
     const pend = coverPending(row);
+    const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
     const cover = cs
-      ? `<img class="card-cover" loading="lazy" src="${cs}" alt="">`
+      ? `<img class="card-cover${pixel}" loading="lazy" src="${cs}" alt="">`
       : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : "🎮"}</div>`;
     const card = document.createElement("div");
     // A part-finished collection is yellow, and that beats the green "done"
@@ -1069,7 +1080,10 @@ function patchEnrichedCells() {
     const cs = coverSrc(ENRICH[card.dataset.k], "cover_big");
     if (cs && cur && cur.tagName !== "IMG") {          // placeholder → real cover
       const img = document.createElement("img");
-      img.className = "card-cover"; img.loading = "lazy"; img.alt = ""; img.src = cs;
+      // Must re-apply .pixel here too: on first paint the enrichment hasn't
+      // arrived, so every cover starts as a placeholder and is swapped in HERE.
+      img.className = "card-cover" + (coverIsPixelArt(ENRICH[card.dataset.k], cs) ? " pixel" : "");
+      img.loading = "lazy"; img.alt = ""; img.src = cs;
       cur.replaceWith(img);
     } else if (!cs && cur && ENRICH_COMPLETE && cur.classList.contains("skel")) {
       cur.classList.remove("skel");                    // resolved with no cover

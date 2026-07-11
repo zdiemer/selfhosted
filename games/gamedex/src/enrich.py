@@ -39,7 +39,7 @@ _SECONDARY_LIGHT = {
     "vndb": lambda d: {"vnRating": d.get("rating"), "vnHours": d.get("hours"),
                        "vnCover": d.get("cover"), "vnUrl": d.get("url")},
     "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url")},
-    "thumby": lambda d: {"thumbyUrl": d.get("url")},
+    "thumby": lambda d: {"thumbyUrl": d.get("url"), "thumbyCover": d.get("cover")},
 }
 
 # Not every source applies to every game. These gates keep the queues honest:

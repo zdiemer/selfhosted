@@ -98,6 +98,24 @@ class ThumbyClient:
                 return self._to_record(plat, name, urls)
         return None
 
+    def _art(self, urls):
+        """The two assets that are actually artwork.
+
+        Everything else with an image extension is a sprite sheet — Monstra
+        ships 43 .bmp files of frogmen and boulders — so match by name, never by
+        extension. `icon.bmp` is the launcher icon (64x64, 1-bit on Thumby and
+        16-bit on Thumby Color); `arcade_title_image.png` is the title card
+        (Tiny Rogue misnames its `arcade_title_video.png`, hence the prefix).
+        """
+        icon = title = None
+        for u in urls:
+            base = u.rsplit("/", 1)[-1].lower()
+            if base == "icon.bmp" and icon is None:
+                icon = u
+            elif base.startswith("arcade_title") and base.endswith((".png", ".bmp")) and title is None:
+                title = u
+        return icon, title
+
     def _to_record(self, platform, name, urls):
         desc_url = next((u for u in urls if "_description" in u), None)
         description = None
@@ -109,11 +127,15 @@ class ThumbyClient:
                     description = r.text.strip() or None
             except Exception as exc:
                 log.debug("thumby: description fetch failed for %s: %s", name, exc)
+        icon, title = self._art(urls)
         return {
             "name": name,
             "platform": platform,
             "url": _repo_url(urls),
             "description": description,
+            "icon": icon,
+            "titleImage": title,
+            "cover": title or icon,          # title card if there is one, else the icon
             "video": next((u for u in urls if u.endswith(".webm")), None),
             "source": next((u for u in urls if u.endswith(".py")), None),
         }
