@@ -10,6 +10,7 @@ as `_k`; sources resolve independently and are merged at read time.
 from __future__ import annotations
 
 import json
+import os
 import re
 import logging
 import sqlite3
@@ -55,6 +56,7 @@ _SOURCE_GATE = {
 }
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
+VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
 
 
 class Enricher:
@@ -90,7 +92,157 @@ class Enricher:
                 self._db.execute(f"ALTER TABLE {src} ADD COLUMN manual INTEGER DEFAULT 0")
         if "manual" not in {r[1] for r in self._db.execute("PRAGMA table_info(enrichment)")}:
             self._db.execute("ALTER TABLE enrichment ADD COLUMN manual INTEGER DEFAULT 0")
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS value_history("
+            " day TEXT PRIMARY KEY, total REAL, games INTEGER, priced INTEGER)"
+        )
+        self._db.execute("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)")
         self._db.commit()
+
+    # -- collection value over time -----------------------------------------
+    # Re-scrape prices every N days (the snapshot itself is daily and free).
+    # GameEye only ever tells us today's price, so a trend has to be recorded as
+    # it happens. One row per day; the first won't be interesting, the hundredth
+    # will be.
+    _COND_KEY = {"complete": "priceCib", "cib": "priceCib", "loose": "priceLoose", "new": "priceNew"}
+
+    @staticmethod
+    def _copies(notes):
+        """"Two copies owned" -> 2. Mirrors quantityFromNotes() in the UI."""
+        if not notes:
+            return 1
+        m = re.search(r"(\d+)\s+cop(?:y|ies)", str(notes), re.I)
+        if m:
+            return int(m.group(1))
+        words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                 "six": 6, "seven": 7, "eight": 8}
+        m = re.search(r"\b(one|two|three|four|five|six|seven|eight)\s+cop(?:y|ies)", str(notes), re.I)
+        return words.get(m.group(1).lower(), 1) if m else 1
+
+    def snapshot_value(self):
+        """Record today's total collection value (owned physical games)."""
+        gate = _SOURCE_GATE["gameye"]
+        with self._lock:
+            owned = {k: m for k, m in self._key_meta.items() if gate(m)}
+        if not owned:
+            return
+        prices = self._get("gameye", list(owned))
+        total, priced = 0.0, 0
+        for key, meta in owned.items():
+            entry = prices.get(key)
+            if not entry or entry[0] != "matched" or not entry[1]:
+                continue
+            field = self._COND_KEY.get(str(meta.get("condition") or "").lower(), "priceLoose")
+            price = entry[1].get(field) or entry[1].get("priceLoose")
+            if price is None:
+                continue
+            total += price * self._copies(meta.get("notes"))
+            priced += 1
+        day = datetime.now(timezone.utc).date().isoformat()
+        with self._db_lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO value_history(day,total,games,priced) VALUES(?,?,?,?)",
+                (day, round(total, 2), len(owned), priced),
+            )
+            self._db.commit()
+        log.info("value snapshot %s: $%s across %d priced games", day, f"{total:,.2f}", priced)
+
+    def value_history(self):
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT day,total,games,priced FROM value_history ORDER BY day"
+            ).fetchall()
+        return [{"day": d, "total": t, "games": g, "priced": p} for d, t, g, p in rows]
+
+    def _kv_get(self, k):
+        with self._db_lock:
+            row = self._db.execute("SELECT v FROM kv WHERE k=?", (k,)).fetchone()
+        return row[0] if row else None
+
+    def _kv_set(self, k, v):
+        with self._db_lock:
+            self._db.execute("INSERT OR REPLACE INTO kv(k,v) VALUES(?,?)", (k, v))
+            self._db.commit()
+
+    def _days_since_scrape(self):
+        last = self._kv_get("gameye_scraped")
+        if not last:
+            return 10 ** 6                      # never scraped: do it now
+        try:
+            then = datetime.fromisoformat(last).date()
+        except ValueError:
+            return 10 ** 6
+        return (datetime.now(timezone.utc).date() - then).days
+
+    def refresh_source(self, src):
+        """Re-scrape every game a source applies to, ignoring cached results.
+
+        request() deliberately skips keys that already resolved — that's what
+        stops the backfill re-doing work. For prices we want the opposite: a
+        cached price is a stale price. Manual overrides are still protected, by
+        the manual=1 guard in _save_secondary.
+        """
+        if src not in self._secondary:
+            return 0
+        gate = _SOURCE_GATE.get(src)
+        with self._cv:
+            n = 0
+            for key, meta in self._key_meta.items():
+                if gate and not gate(meta):
+                    continue
+                if key in self._queued[src]:
+                    continue
+                self._q[src].append(key)
+                self._queued[src].add(key)
+                n += 1
+            self._cv.notify_all()
+        log.info("%s: re-queued %d games for a fresh scrape", src, n)
+        return n
+
+    def _drain(self, src, timeout):
+        """Block until a source's queue empties (or we run out of patience)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                if not self._queued[src]:
+                    return True
+            if self._stop.wait(30):
+                return False
+        return False
+
+    def _value_loop(self):
+        """Snapshot once a day.
+
+        Waits for the first reindex: start() runs before the poller has fetched
+        the spreadsheet, so at boot there are no keys to price and an eager
+        snapshot would record nothing and then sleep for 24 hours.
+        """
+        while not self._stop.is_set():
+            with self._lock:
+                ready = bool(self._key_meta)
+            if not ready:
+                if self._stop.wait(20):
+                    return
+                continue
+            try:
+                # Prices are re-scraped weekly: GameEye allows 500/hr and there
+                # are ~2k owned physical games, so a full pass is ~4h — fine
+                # weekly, wasteful daily, and market values don't move that fast.
+                # The snapshot itself runs daily regardless, so buying or selling
+                # something shows up the next day even between scrapes.
+                #
+                # The "last scraped" date lives in the DB, not in memory: this
+                # process restarts on every deploy, and an in-memory counter
+                # would kick off a 4-hour scrape each time.
+                if self._days_since_scrape() >= VALUE_RESCRAPE_DAYS:
+                    if self.refresh_source("gameye"):
+                        self._drain("gameye", timeout=8 * 3600)
+                    self._kv_set("gameye_scraped", datetime.now(timezone.utc).date().isoformat())
+                self.snapshot_value()
+            except Exception as exc:
+                log.warning("value snapshot failed: %s", exc)
+            if self._stop.wait(24 * 3600):
+                return
 
     def _table(self, src):
         return "enrichment" if src == "igdb" else src
@@ -117,6 +269,9 @@ class Enricher:
                         # ArcadeDB, which looks up by romset rather than title.
                         "owned": bool(r.get("owned")), "format": r.get("format"),
                         "mameRomset": r.get("mameRomset"), "genre": r.get("genre"),
+                        # For the daily value snapshot: price depends on the
+                        # copy's condition, and the notes say how many you own.
+                        "condition": r.get("condition"), "notes": r.get("notes"),
                     }
         with self._lock:
             self._key_meta = key_meta
@@ -441,6 +596,8 @@ class Enricher:
             self._workers[src] = t
             t.start()
         threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
+        if "gameye" in self._secondary:
+            threading.Thread(target=self._value_loop, name="value-history", daemon=True).start()
 
     def stop(self):
         self._stop.set()

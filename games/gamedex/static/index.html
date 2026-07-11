@@ -8,6 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0a0c11" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Gamedex" />
+  <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎮</text></svg>" />
 </head>
 <body>
@@ -124,6 +130,13 @@
   <script src="home.js"></script>
   <script src="reviews.js"></script>
   <script src="health.js"></script>
+  <script>
+    // Installable + offline. The SW is opt-out-safe: if registration fails the
+    // app just behaves as it always did.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
   <script src="collections.js"></script>
   <script src="challenges.js"></script>
 </body>

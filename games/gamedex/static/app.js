@@ -1466,6 +1466,7 @@ async function load() {
   setFreshness();
   applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
+  loadValueHistory();           // daily collection-value snapshots (for the trend chart)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1539,6 +1540,18 @@ const bucketize = (data, buckets, val) => buckets.map(([label, lo, hi]) => ({ la
 
 // ---- Year in review + backlog burn-down ---------------------------------
 const statsState = { year: null };
+let VALUE_HISTORY = null;          // [{day,total,games,priced}] — daily snapshots
+
+// GameEye only knows today's price, so the trend has to be recorded as it
+// happens (see enrich.snapshot_value). One point per day; useless on day one.
+async function loadValueHistory() {
+  try {
+    const res = await fetch("api/value-history");
+    const j = await res.json();
+    VALUE_HISTORY = j.history || [];
+    if (activeTab === "stats" && VALUE_HISTORY.length > 1) renderStats();
+  } catch (_) { VALUE_HISTORY = []; }
+}
 
 function yearInReview(rows, games) {
   const years = [...new Set(rows.map((r) => yearOf(r.date)).filter(Boolean))].sort((a, b) => b - a);
@@ -1778,6 +1791,13 @@ function renderStats() {
       statPanel("Spending per year", barsV(spendData, { color: 3, fmt: usd }), "wide"),
       statPanel("Games bought per year", barsV(boughtData, { color: 5 })),
       statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, label: usd(totalSpent) + " all in" }), "wide"),
+      ...(VALUE_HISTORY && VALUE_HISTORY.length > 1
+        ? [statPanel("Collection value over time",
+            areaLine(VALUE_HISTORY.map((h) => ({ label: fmtDate(h.day).replace(/,.*/, ""), value: Math.round(h.total) })),
+              { color: 2, fmt: usd, label: usd(VALUE_HISTORY[VALUE_HISTORY.length - 1].total) + " today" }), "wide")]
+        : [statPanel("Collection value over time",
+            `<div class="s-empty">Recording daily from today — a trend needs at least two points.
+             ${VALUE_HISTORY && VALUE_HISTORY.length ? `First snapshot: ${escapeHtml(fmtDate(VALUE_HISTORY[0].day))} at ${usd(VALUE_HISTORY[0].total)}.` : ""}</div>`, "wide")]),
       statPanel("The crown jewels", posterRow(topValueRows, { note: (r) => usd(collectionValueOf(r)) }), "wide"),
       statPanel("Most valuable owned", barsH(topValue, { fmt: usd })),
       statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),

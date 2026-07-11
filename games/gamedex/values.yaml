@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.48.0"
+  tag: "0.51.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -43,6 +43,12 @@ igdb:
   fallback: true
   # GameEye market values (Loose/CIB/New) for owned physical games only, 500/hr.
   gameye: true
+  # How often to RE-scrape those prices. A cached price is a stale price, so the
+  # collection-value trend needs fresh ones — but at 500/hr a full pass over the
+  # ~2k owned physical games takes ~4h, which is fine weekly and wasteful daily.
+  # (The value snapshot itself runs daily regardless, so buying or selling a game
+  # shows up the next day even between scrapes.)
+  valueRescrapeDays: 7
   # Arcade Database (4 req/s) — an EXACT lookup by MAME romset, so it cannot
   # mismatch. Cabinet/marquee/flyer art, player count, controls, orientation.
   # Gated to the games that carry a romset.

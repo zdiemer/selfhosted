@@ -70,6 +70,8 @@ spec:
               value: {{ .Values.igdb.fallback | quote }}
             - name: GAMEEYE_ENABLED
               value: {{ .Values.igdb.gameye | quote }}
+            - name: VALUE_RESCRAPE_DAYS
+              value: {{ .Values.igdb.valueRescrapeDays | default 7 | quote }}
             - name: ARCADEDB_ENABLED
               value: {{ .Values.igdb.arcadedb | quote }}
             - name: VNDB_ENABLED

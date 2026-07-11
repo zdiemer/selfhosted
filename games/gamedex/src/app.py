@@ -216,6 +216,14 @@ def enrichment_override(body: Override):
     return {"status": "matched", "source": src, "record": record}
 
 
+@app.get("/api/value-history")
+def value_history():
+    """Daily snapshots of the collection's total value (see enrich.snapshot_value)."""
+    if not enricher:
+        return {"enabled": False, "history": []}
+    return {"enabled": True, "history": enricher.value_history()}
+
+
 @app.post("/api/refresh")
 def refresh():
     """Eagerly re-check Dropbox now (instead of waiting for the poll interval)."""
