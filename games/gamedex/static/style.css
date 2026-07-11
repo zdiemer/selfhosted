@@ -297,6 +297,16 @@ td.cover { width: 46px; padding: 5px 8px; }
 .card-body { padding: 9px 10px 11px; position: relative; }
 .card-title { font: 600 13px/1.3 var(--display); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-sub { color: var(--dim); font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The value you're currently sorting by, surfaced on the card. */
+.card-sortval {
+  display: flex; justify-content: space-between; gap: 6px; align-items: baseline;
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums;
+  overflow: hidden; white-space: nowrap;
+}
+.card-sortval + .card-sortval { margin-top: 3px; padding-top: 3px; border-top: none; }
+.card-sortval > span { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.card-sortval i { font-style: normal; }
 .card-rating, .card-meta {
   position: absolute; top: -24px; backdrop-filter: blur(6px);
   background: rgba(8, 10, 14, .72); border: 1px solid rgba(255, 255, 255, .08);

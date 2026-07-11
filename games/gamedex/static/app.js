@@ -813,10 +813,15 @@ function renderTable(rows) {
 
 function renderTableView(pageRows) {
   const cols = columns().filter((c) => c.primary);
+  const spec = effectiveSort();
+  // Surface sorted-by columns that aren't shown (e.g. Date Added) as extra columns.
+  for (const s of spec) {
+    const c = colByKey(s.key);
+    if (c && !cols.includes(c)) cols.push(c);
+  }
   const thead = $("#thead");
   thead.innerHTML = "";
   if (ENRICH_ENABLED) thead.appendChild(document.createElement("th")).className = "cover-h";
-  const spec = effectiveSort();
   const specByKey = new Map(spec.map((s, i) => [s.key, { dir: s.dir, ord: i }]));
   const multi = spec.length > 1;
   for (const c of cols) {
@@ -854,6 +859,21 @@ function rowCompleted(row) {
 
 const CARD_ROW = new WeakMap();   // card element -> row (for in-place patching)
 
+// When an explicit sort is active, surface the sorted field's value on the card
+// so you can see what you're sorting by without opening the game.
+function sortValueHtml(row) {
+  const st = tabState[activeTab];
+  if (!st || !st.sort || !st.sort.length) return "";     // default sort → nothing extra
+  return st.sort.slice(0, 2).map((s) => {
+    const c = colByKey(s.key);
+    if (!c) return "";
+    const v = row[s.key];
+    const val = (v === undefined || v === null || v === "")
+      ? `<i class="muted">—</i>` : fmtCell(v, c.type);
+    return `<div class="card-sortval"><span>${escapeHtml(c.label)}</span>${val}</div>`;
+  }).join("");
+}
+
 // Text-only card body (no <img>), so it can be re-rendered without flicker.
 function cardBodyHtml(row) {
   const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
@@ -870,7 +890,8 @@ function cardBodyHtml(row) {
   const mc = metacriticOf(row);
   const meta = mc != null
     ? `<span class="card-meta ${ratingClass(mc)}" title="Metacritic">${Math.round(mc * 100)}</span>` : "";
-  return `${meta}${rating}<div class="card-title" title="${title}">${title}</div><div class="card-sub">${parts.join(" · ")}</div>`;
+  return `${meta}${rating}<div class="card-title" title="${title}">${title}</div>` +
+    `<div class="card-sub">${parts.join(" · ")}</div>${sortValueHtml(row)}`;
 }
 
 function renderGrid(pageRows) {
