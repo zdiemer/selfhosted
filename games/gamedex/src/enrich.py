@@ -24,11 +24,11 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes",
-               "name", "stores")
+               "name", "stores", "url")
 # igdbId/source let the UI tell IGDB matches from fallback (IGN/GameSpot/Steam)
 # ones, and spot games with no metadata at all.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
-                "igdbId", "source", "stores")
+                "igdbId", "source", "stores", "url")
 
 
 def _light_relations(rec):

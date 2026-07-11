@@ -21,7 +21,7 @@
 // ---- who owns what -------------------------------------------------------
 // igdbId -> the rows in your collection that matched it.
 let _byIgdb = null;
-const resetRelations = () => { _byIgdb = null; _relById = null; _byName = null; };
+const resetRelations = () => { _byIgdb = null; _relById = null; _bySlug = null; _byName = null; };
 
 function rowsByIgdbId() {
   if (_byIgdb) return _byIgdb;
@@ -35,36 +35,53 @@ function rowsByIgdbId() {
   return (_byIgdb = m);
 }
 
-// The collection indexed by IGDB name. IGDB's similar_games entries carry a
-// name and a cover but no id, so name is the only key we can join on — and both
-// sides are IGDB names, which makes it a clean join rather than a fuzzy one.
+// The collection, indexed by IGDB SLUG. IGDB's similar_games entries carry a url
+// (igdb.com/games/<slug>) and the slug is that game's unique key — so this is an
+// exact join on an identifier, not a match on a name. Names are ambiguous
+// (there are three different games called "Doom"); slugs are not.
+const igdbSlug = (url) => {
+  const m = /igdb\.com\/games\/([^/?#]+)/i.exec(String(url || ""));
+  return m ? m[1].toLowerCase() : null;
+};
+
+// Name is still the fallback, for the handful of records that predate the url
+// being stored, or that matched via IGN/Steam/LaunchBox and have no IGDB url.
 const relNorm = (s) => String(s || "").toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   .replace(/[^a-z0-9]/g, "");
 
-let _byName = null;
-function rowsByGameName() {
-  if (_byName) return _byName;
-  const m = new Map();
+let _bySlug = null, _byName = null;
+function buildGameIndexes() {
+  if (_bySlug) return;
+  _bySlug = new Map();
+  _byName = new Map();
   for (const r of ((DATA.sheets.games || {}).rows || [])) {
     const e = ENRICH[r._k] || {};
-    const key = relNorm(e.name || r.title);
-    if (!key) continue;
-    if (!m.has(key)) m.set(key, []);
-    m.get(key).push(r);
+    const slug = e.igdbId ? igdbSlug(e.url) : null;   // only an IGDB match has an IGDB slug
+    if (slug) {
+      if (!_bySlug.has(slug)) _bySlug.set(slug, []);
+      _bySlug.get(slug).push(r);
+    }
+    const name = relNorm(e.name || r.title);
+    if (name) {
+      if (!_byName.has(name)) _byName.set(name, []);
+      _byName.get(name).push(r);
+    }
   }
-  return (_byName = m);
 }
 
 // IGDB's "similar games", narrowed to the ones you actually have. The rest are
 // shopping suggestions, and this is a collection browser, not a store.
 function similarInCollection(detail) {
+  buildGameIndexes();
   const out = [];
   const seen = new Set();
   for (const s of (detail.similar || [])) {
-    const key = relNorm(s.name);
-    const rows = rowsByGameName().get(key);
-    if (!rows || !rows.length || seen.has(key)) continue;
+    const slug = igdbSlug(s.url);
+    const rows = (slug && _bySlug.get(slug)) || _byName.get(relNorm(s.name));
+    if (!rows || !rows.length) continue;
+    const key = slug || relNorm(s.name);
+    if (seen.has(key)) continue;
     seen.add(key);
     const row = rows.find((r) => r.completed) || rows.find((r) => r.owned) || rows[0];
     out.push({ ...s, row });
