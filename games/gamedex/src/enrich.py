@@ -31,6 +31,14 @@ _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRatin
                 "igdbId", "source", "stores")
 
 
+def _light_relations(rec):
+    """Just enough of the graph for the grid: what KIND of entry this is."""
+    rel = (rec or {}).get("relations") or {}
+    if not rel:
+        return None
+    return {"type": rel.get("gameTypeLabel"), "parent": (rel.get("parent") or {}).get("name")}
+
+
 def _light_video(rec):
     """The first trailer id, for the hover-to-play preview on the grid.
 
@@ -82,7 +90,8 @@ _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
 # Bump when the shape or the source map of `stores` changes — the backfill
 # rebuilds every record instead of skipping the ones that already have a value.
-STORES_VERSION = "3"
+STORES_VERSION = "4"
+RELATIONS_VERSION = "2"
 
 
 class Enricher:
@@ -464,6 +473,7 @@ class Enricher:
             base = {f: e[1].get(f) for f in _IGDB_LIGHT} if e and e[0] == "matched" else {}
             if e and e[0] == "matched":
                 base["video"] = _light_video(e[1])
+                base["rel"] = _light_relations(e[1])
             for src, extract in _SECONDARY_LIGHT.items():
                 entry = sec.get(src, {}).get(k)
                 if entry and entry[0] == "matched":
@@ -499,6 +509,7 @@ class Enricher:
                     d = json.loads(data)
                     out[mk] = {f: d.get(f) for f in _FACET_LIGHT}
                     out[mk]["video"] = _light_video(d)
+                    out[mk]["rel"] = _light_relations(d)
             for src, extract in _SECONDARY_LIGHT.items():
                 if src not in self._secondary:
                     continue
@@ -637,7 +648,7 @@ class Enricher:
                                      (json.dumps(rec), key))
                 steam_fixed += 1
             elif igdb_id:
-                need[int(igdb_id)] = key
+                need.setdefault(int(igdb_id), []).append(key)
         if steam_fixed:
             with self._db_lock:
                 self._db.commit()
@@ -654,19 +665,62 @@ class Enricher:
             return
         with self._db_lock:
             for gid, st in stores.items():
-                key = need.get(gid)
-                if not key:
-                    continue
-                row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
-                if not row or not row[0]:
-                    continue
-                rec = json.loads(row[0])
-                rec["stores"] = st
-                self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
-                found += 1
+                # Every row sharing this IGDB id — the same game on PS5 and PC is
+                # two rows and both want the appid.
+                for key in need.get(gid, []):
+                    row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                    if not row or not row[0]:
+                        continue
+                    rec = json.loads(row[0])
+                    rec["stores"] = st
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+                    found += 1
             self._db.commit()
         self._kv_set("stores_version", STORES_VERSION)
         log.info("stores backfill: %d games got storefront ids (+%d from Steam URLs)", found, steam_fixed)
+
+    def backfill_relations(self):
+        """Add IGDB's relationship graph (parent/dlcs/remakes/ports/…) to matched
+        records. Fetch-by-id, 500 per request — the whole library in ~30 calls."""
+        if not self._igdb.configured:
+            return
+        stale = self._kv_get("relations_version") != RELATIONS_VERSION
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key, igdb_id, data FROM enrichment"
+                " WHERE status='matched' AND igdb_id IS NOT NULL AND data IS NOT NULL"
+            ).fetchall()
+        need = {}
+        for key, igdb_id, raw in rows:
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            if rec.get("relations") and not stale:
+                continue
+            need.setdefault(int(igdb_id), []).append(key)
+        if not need:
+            return
+        log.info("relations backfill: fetching the graph for %d games", len(need))
+        found = 0
+        try:
+            rels = self._igdb.relations_for(list(need))
+        except Exception as exc:
+            log.warning("relations backfill failed: %s", exc)
+            return
+        with self._db_lock:
+            for gid, rel in rels.items():
+                for key in need.get(gid, []):
+                    row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                    if not row or not row[0]:
+                        continue
+                    rec = json.loads(row[0])
+                    rec["relations"] = rel
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+                    found += 1
+            self._db.commit()
+        self._kv_set("relations_version", RELATIONS_VERSION)
+        log.info("relations backfill: %d games linked", found)
 
     def start(self):
         for src in self._sources:
@@ -674,6 +728,7 @@ class Enricher:
             self._workers[src] = t
             t.start()
         threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
+        threading.Thread(target=self.backfill_relations, name="relations-backfill", daemon=True).start()
         if "gameye" in self._secondary:
             threading.Thread(target=self._value_loop, name="value-history", daemon=True).start()
 

@@ -2,7 +2,7 @@
 
 // ---- config -------------------------------------------------------------
 let PAGE_SIZE = 50;
-let viewMode = "grid";             // "table" | "grid" | "timeline" (completed only)
+let viewMode = "grid";             // "table" | "grid" | "grouped" | "timeline" (completed only)
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -612,6 +612,13 @@ function fillHero(detail) {
 }
 
 function renderIgdbSection(key, el, status, detail) {
+  // The relationship map is about YOUR collection, not IGDB's copy of the game,
+  // so it's painted into its own host rather than the enrichment block.
+  const relHost = $("#relations");
+  if (relHost && status === "matched" && detail) {
+    relHost.innerHTML = relationsHtml(detail);
+    wireRelations(relHost);
+  }
   let content;
   if (status === "matched" && detail) { content = detailHtml(detail); fillHero(detail); }
   else if (status === "no_match") content = `<div class="igdb-loading muted">No IGDB match for this title.</div>`;
@@ -737,6 +744,15 @@ async function loadAllEnrichment() {
         patchEnrichedCells();
         patchTimelineCovers();          // the Completed tab's third view
         renderFacets();
+        // Grouping keys off the IGDB id, which lives in the enrichment map — and
+        // the grid paints before that map arrives, so the first render has
+        // nothing to group by. Re-render, but only when the grouping actually
+        // changes, or we'd flash the grid on every poll.
+        if (viewMode === "grouped") {
+          resetRelations();
+          const n = groupByGame(currentFiltered).length;
+          if (n !== lastGroupedCount) { lastGroupedCount = n; renderTable(currentFiltered); }
+        }
       }
     }
     if (j.stats && !j.stats.complete) {             // a backfill is still running
@@ -1317,7 +1333,10 @@ function onHeaderClick(col, shift) {
 // Dispatcher: sort → paginate → render as table or grid.
 function renderTable(rows) {
   const st = tabState[activeTab];
-  const sorted = sortRows(rows);
+  // Grouped: rows sharing an IGDB id ARE the same game, so collapse them before
+  // sorting and paging — otherwise the counts and page numbers would lie.
+  const base = viewMode === "grouped" ? groupByGame(rows) : rows;
+  const sorted = sortRows(base);
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   if (st.page > pages) st.page = pages;
   const start = (st.page - 1) * PAGE_SIZE;
@@ -1328,10 +1347,11 @@ function renderTable(rows) {
   $("#viewTimeline").hidden = !canTimeline;
   if (viewMode === "timeline" && !canTimeline) viewMode = "grid";
   $("#tablewrap").hidden = viewMode !== "table";
-  $("#gridwrap").hidden = viewMode !== "grid";
+  $("#gridwrap").hidden = !(viewMode === "grid" || viewMode === "grouped");
   $("#timeline").hidden = viewMode !== "timeline";
   $("#pager").style.display = viewMode === "timeline" ? "none" : "";
-  for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"], ["viewTimeline", "timeline"]]) {
+  for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"],
+                         ["viewGrouped", "grouped"], ["viewTimeline", "timeline"]]) {
     $("#" + id).classList.toggle("active", viewMode === m);
   }
   if (viewMode === "timeline") {
@@ -1351,7 +1371,7 @@ function renderTable(rows) {
     if (viewMode === "grid") $("#thead").innerHTML = "";
     const act = $("#emptyAction");
     if (act) act.onclick = () => { st.search = ""; st.facets = {}; st.page = 1; $("#search").value = ""; renderAll(); nav(); };
-  } else if (viewMode === "grid") renderGrid(pageRows);
+  } else if (viewMode === "grid" || viewMode === "grouped") renderGrid(pageRows);
   else renderTableView(pageRows);
 
   maybeEnrich(pageRows);
@@ -1439,6 +1459,7 @@ function cardBodyHtml(row) {
   if (pt != null) parts.push("⏱ " + fmtHours(pt));
   const cv = collectionValueOf(row);
   if (cv != null) parts.push("💵 $" + cv.toFixed(2));
+  if (row._members && row._members.length > 1) parts.push(`⧉ ${row._members.length} copies`);
   const units = salesOf(row);
   if (units != null) parts.push("📈 " + fmtUnits(units));
   const rating = row.rating != null
@@ -1672,6 +1693,8 @@ function openDrawer(row, sheetKey) {
       raw += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
     }
   }
+  html += (typeof editionsHtml === "function" ? editionsHtml(row) : "");
+  html += `<div id="relations"></div>`;
   html += collectionSectionHtml(row);
   // Sheet fields collapse behind a "Raw data" disclosure — the enriched view
   // leads. A grouped collection card has no sheet row of its own; its values are
@@ -1679,6 +1702,13 @@ function openDrawer(row, sheetKey) {
   if (raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
   wireCollections(body);
+  // A grouped card's members open individually.
+  body.querySelectorAll("[data-rlc]").forEach((el) => {
+    el.onclick = () => {
+      const m = (row._members || [])[+el.dataset.rlc];
+      if (m) openDrawer(m, "games");
+    };
+  });
   $("#overlay").hidden = false;
   drawerRow = row;
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
@@ -1698,6 +1728,7 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
+let lastGroupedCount = -1;      // so the grouped view repaints once enrichment lands
 const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "series"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
@@ -1774,7 +1805,7 @@ function applyStateFromURL() {
     if (tab === "series") { seriesState.open = p.get("fr") || null; }
     applyingState = false; switchTab(tab); return;
   }
-  viewMode = ["table", "timeline"].includes(p.get("view")) ? p.get("view") : "grid";
+  viewMode = ["table", "timeline", "grouped"].includes(p.get("view")) ? p.get("view") : "grid";
   PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   const st = tabState[tab];
   st.search = p.get("q") || "";
@@ -1822,6 +1853,7 @@ async function load() {
   resetSearchCache();
   resetSeries();
   resetTaste();
+  resetRelations();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
@@ -2410,6 +2442,7 @@ function setView(mode) {
 }
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
+$("#viewGrouped").addEventListener("click", () => { setView("grouped"); nav(); });
 $("#viewTimeline").addEventListener("click", () => { setView("timeline"); nav(); });
 // ---- Mobile floating controls ------------------------------------------
 // On mobile the page is one scroller, so the result bar scrolls away. Move the

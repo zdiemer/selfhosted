@@ -213,6 +213,77 @@ class IgdbClient:
             return None, 0
         return self._to_enrichment(best, best_info), best_info.match_score
 
+    # IGDB's game_type enum — what KIND of thing this entry is.
+    GAME_TYPES = {
+        0: "Main game", 1: "DLC", 2: "Expansion", 3: "Bundle",
+        4: "Standalone expansion", 5: "Mod", 6: "Episode", 7: "Season",
+        8: "Remake", 9: "Remaster", 10: "Expanded edition", 11: "Port",
+        12: "Fork", 13: "Pack", 14: "Update",
+    }
+
+    _REL_FIELDS = (
+        "fields id,game_type,version_title,"
+        "parent_game.id,parent_game.name,parent_game.cover.image_id,"
+        "version_parent.id,version_parent.name,version_parent.cover.image_id,"
+        "dlcs.id,dlcs.name,dlcs.cover.image_id,"
+        "expansions.id,expansions.name,expansions.cover.image_id,"
+        "standalone_expansions.id,standalone_expansions.name,standalone_expansions.cover.image_id,"
+        "expanded_games.id,expanded_games.name,expanded_games.cover.image_id,"
+        "remakes.id,remakes.name,remakes.cover.image_id,"
+        "remasters.id,remasters.name,remasters.cover.image_id,"
+        "ports.id,ports.name,ports.cover.image_id,"
+        "bundles.id,bundles.name,bundles.cover.image_id,"
+        "collections.id,collections.name;"
+    )
+
+    def relations_for(self, igdb_ids):
+        """{igdb_id: relations} — the graph IGDB keeps and a spreadsheet can't.
+
+        Fetched by id in batches of 500, like stores_for: asking for all of this
+        on every *search* would bloat 25 results per query, and we only need it
+        once per game.
+        """
+        out = {}
+        for i in range(0, len(igdb_ids), 500):
+            chunk = [int(x) for x in igdb_ids[i:i + 500]]
+            body = f"{self._REL_FIELDS} where id = ({','.join(str(c) for c in chunk)}); limit 500;"
+            for g in self._post("games", body) or []:
+                rel = self._relations(g)
+                if rel:
+                    out[g["id"]] = rel
+        return out
+
+    @classmethod
+    def _relations(cls, g):
+        def one(x):
+            if not x:
+                return None
+            return {"id": x.get("id"), "name": x.get("name"),
+                    "cover": (x.get("cover") or {}).get("image_id")}
+
+        def many(key):
+            return [one(x) for x in (g.get(key) or []) if x.get("name")]
+
+        rel = {
+            "gameType": g.get("game_type"),
+            "gameTypeLabel": cls.GAME_TYPES.get(g.get("game_type")),
+            "versionTitle": g.get("version_title"),
+            "parent": one(g.get("parent_game")),
+            "versionParent": one(g.get("version_parent")),
+            "dlcs": many("dlcs"),
+            "expansions": many("expansions"),
+            "standaloneExpansions": many("standalone_expansions"),
+            "expandedGames": many("expanded_games"),
+            "remakes": many("remakes"),
+            "remasters": many("remasters"),
+            "ports": many("ports"),
+            "bundles": many("bundles"),
+            "collections": [c.get("name") for c in (g.get("collections") or []) if c.get("name")],
+        }
+        # Nothing but a game_type isn't a relationship worth storing.
+        has_any = any(rel[k] for k in rel if k not in ("gameType", "gameTypeLabel"))
+        return rel if has_any or rel["gameType"] else None
+
     def stores_for(self, igdb_ids):
         """{igdb_id: {'steam': '620', …}} for a batch of ids.
 

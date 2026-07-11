@@ -1154,6 +1154,61 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 .poster-note { font-size: 10.5px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 
+/* ---- Related games (IGDB graph) ------------------------------------------ */
+.rl { margin: 20px 0 4px; }
+.rl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.rl-head h3 { font-size: 15px; }
+.rl-head h3 .muted { font-size: 12.5px; font-weight: 400; }
+.rl-kind {
+  flex: none; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); text-transform: uppercase; letter-spacing: .04em;
+}
+.rl-sect { margin-bottom: 12px; }
+.rl-sect h4 {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+  margin-bottom: 6px; font-weight: 600;
+}
+.rl-sect h4 .muted { text-transform: none; letter-spacing: 0; }
+.rl-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.rl-card {
+  display: flex; align-items: center; gap: 9px; flex: 0 0 auto; max-width: 260px;
+  padding: 6px 11px 6px 6px; border-radius: var(--r-sm); cursor: default;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: inherit; color: var(--text); text-align: left;
+  transition: border-color .14s, transform .14s var(--ease);
+}
+/* Something you own is a link; something you don't is just information. */
+.rl-card[data-rlk] { cursor: pointer; }
+.rl-card[data-rlk]:hover { border-color: var(--accent-line); transform: translateY(-2px); }
+.rl-card.rl-none { opacity: .62; border-style: dashed; }
+.rl-card img, .rl-ph {
+  width: 30px; height: 40px; flex: none; object-fit: cover; border-radius: 3px;
+  background: var(--surface-3); display: flex; align-items: center; justify-content: center; font-size: 13px;
+}
+.rl-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rl-txt b {
+  font-size: 12.5px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rl-badge { font-size: 10px; font-weight: 600; }
+.rl-b-done { color: var(--good); }
+.rl-b-owned { color: var(--accent-2); }
+.rl-b-listed { color: var(--muted); }
+.rl-b-none { color: var(--dim); font-weight: 500; }
+
+/* "Your copies" — the members of a grouped card */
+.rl-copies { display: flex; flex-direction: column; gap: 4px; }
+.rl-copy {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 8px 12px; border-radius: var(--r-sm); cursor: pointer; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: inherit; color: var(--text); font-size: 12.5px;
+  transition: border-color .14s;
+}
+.rl-copy:hover { border-color: var(--accent-line); }
+.rl-copy-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-copy span[class^="rl-b-"] { flex: none; font-size: 11px; font-weight: 600; }
+
 /* ---- Predicted rating ---------------------------------------------------- */
 .pw {
   /* Needs air on BOTH sides: it sat right on top of the launch button. */
