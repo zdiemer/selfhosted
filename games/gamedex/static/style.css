@@ -286,6 +286,8 @@ tbody tr:hover { background: var(--panel-2); }
 .hltb-row:last-of-type { border-bottom: none; }
 .hltb-row span { color: var(--muted); }
 .hltb-link { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 12px; }
+.hltb-row.mine { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 6px; }
+.hltb-row.mine b { color: var(--good); }
 
 /* Manual IGDB mapping control */
 .igdb-map { margin: 12px 0 4px; padding-top: 10px; border-top: 1px dashed var(--border); }

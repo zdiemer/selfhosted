@@ -73,6 +73,7 @@ const ENRICH = {};                 // matchKey -> light enrichment
 const DETAIL = {};                 // matchKey -> full IGDB detail (drawer cache)
 const HLTBC = {};                  // matchKey -> HLTB playtimes (drawer cache)
 const MCC = {};                    // matchKey -> Metacritic score (drawer cache)
+const GEC = {};                    // matchKey -> GameEye prices (drawer cache)
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
@@ -202,14 +203,33 @@ function metacriticHtml(key) {
     `<b class="${ratingClass(score / 100)}">${score} <small class="muted">· ${src}</small></b></div></div>`;
 }
 
-// Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + manual-map.
+function gameyeHtml(key) {
+  const ge = GEC[key];
+  if (!ge) return "";
+  const rows = [["Loose", ge.priceLoose], ["CIB", ge.priceCib], ["New", ge.priceNew]].filter(([, v]) => v != null);
+  if (!rows.length) return "";
+  const cond = (drawerRow && drawerRow.condition) || "";
+  const key2 = { complete: "priceCib", cib: "priceCib", loose: "priceLoose", new: "priceNew" }[cond.toLowerCase()] || "priceLoose";
+  const qty = quantityFromNotes(drawerRow && drawerRow.notes);
+  let mine = "";
+  if (ge[key2] != null) {
+    const total = ge[key2] * qty;
+    mine = `<div class="hltb-row mine"><span>Your copy${qty > 1 ? ` ×${qty}` : ""}${cond ? ` (${escapeHtml(cond)})` : ""}</span><b>$${total.toFixed(2)}</b></div>`;
+  }
+  return `<div class="hltb"><div class="hltb-head">💵 Value (GameEye)</div>` +
+    rows.map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>$${v.toFixed(2)}</b></div>`).join("") + mine +
+    (ge.url ? `<a class="hltb-link" href="${escapeHtml(ge.url)}" target="_blank" rel="noopener">View on GameEye ↗</a>` : "") +
+    `</div>`;
+}
+
+// Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
 function renderIgdbSection(key, el, status, detail) {
   const content =
     status === "matched" && detail ? detailHtml(detail)
     : status === "no_match" ? `<div class="igdb-loading muted">No IGDB match for this title.</div>`
     : status === "pending-final" ? `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`
     : `<div class="igdb-loading">Loading IGDB metadata…</div>`;
-  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + mapControlHtml(key, !!(detail && detail.manual));
+  el.innerHTML = content + hltbHtml(HLTBC[key]) + metacriticHtml(key) + gameyeHtml(key) + mapControlHtml(key, !!(detail && detail.manual));
   const go = el.querySelector("[data-map-go]");
   const input = el.querySelector("[data-map-input]");
   const reset = el.querySelector("[data-map-reset]");
@@ -259,6 +279,7 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     const j = await res.json();
     if ("hltb" in j) HLTBC[key] = j.hltb;
     if ("metacritic" in j) MCC[key] = j.metacritic;
+    if ("gameye" in j) GEC[key] = j.gameye;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -325,6 +346,26 @@ const playtimeOf = (row) => { const e = ENRICH[row._k]; const h = e && e.hltbBes
 const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
 // User rating (0–1): IGDB community rating where enriched, else sheet GameFAQs.
 const userRatingOf = (row) => { const e = ENRICH[row._k]; return e && e.userRating != null ? e.userRating : row.gamefaqsUserRating; };
+
+// Quantity of copies owned, parsed from the notes ("Two copies owned" → 2).
+const _NUMWORD = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+function quantityFromNotes(notes) {
+  if (!notes) return 1;
+  const s = String(notes);
+  let m = s.match(/(\d+)\s+cop(?:y|ies)/i);
+  if (m) return parseInt(m[1], 10);
+  m = s.match(/\b(one|two|three|four|five|six|seven|eight)\s+cop(?:y|ies)/i);
+  return m ? _NUMWORD[m[1].toLowerCase()] || 1 : 1;
+}
+// Map the sheet's Condition to a GameEye price key.
+const _COND_KEY = { complete: "geCib", cib: "geCib", loose: "geLoose", new: "geNew" };
+// Collection value for an owned row: GameEye price for its condition × quantity.
+function collectionValueOf(row) {
+  const e = ENRICH[row._k];
+  if (!e) return null;
+  const price = e[_COND_KEY[(row.condition || "").toLowerCase()] || "geLoose"];
+  return price != null ? price * quantityFromNotes(row.notes) : null;
+}
 function bucketLabel(v, buckets) { for (const b of buckets) if (b.test(v)) return b.label; return null; }
 
 const igdbFacetCols = () =>
@@ -687,6 +728,8 @@ function renderGrid(pageRows) {
     const pt = playtimeOf(row);
     const parts = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
     if (pt != null) parts.push("⏱ " + fmtHours(pt));
+    const cv = collectionValueOf(row);
+    if (cv != null) parts.push("💵 $" + cv.toFixed(2));
     const sub = parts.join(" · ");
     const rating = row.rating != null
       ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";

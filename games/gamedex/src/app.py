@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from enrich import Enricher
 from fallback import FallbackClient
+from gameye import GameEyeClient
 from hltb import HltbClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
@@ -56,6 +57,8 @@ if _on("HLTB_ENABLED"):
     _secondary["hltb"] = HltbClient()
 if _on("METACRITIC_ENABLED"):
     _secondary["metacritic"] = MetacriticClient()
+if _on("GAMEEYE_ENABLED"):
+    _secondary["gameye"] = GameEyeClient()
 # Fallback metadata (IGN/GameSpot/Steam) for games IGDB doesn't match.
 _fallback = FallbackClient(os.environ.get("GAMESPOT_API_KEY", "")) if _on("FALLBACK_ENABLED") else None
 enricher = (
@@ -136,7 +139,8 @@ def enrichment_detail(key: str):
     status, detail = enricher.get_detail(key)
     return {"enabled": True, "status": status, "detail": detail,
             "hltb": enricher.get_secondary("hltb", key),
-            "metacritic": enricher.get_secondary("metacritic", key)}
+            "metacritic": enricher.get_secondary("metacritic", key),
+            "gameye": enricher.get_secondary("gameye", key)}
 
 
 @app.get("/api/enrichment/stats")

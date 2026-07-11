@@ -68,6 +68,8 @@ spec:
               value: {{ .Values.igdb.metacritic | quote }}
             - name: FALLBACK_ENABLED
               value: {{ .Values.igdb.fallback | quote }}
+            - name: GAMEEYE_ENABLED
+              value: {{ .Values.igdb.gameye | quote }}
             - name: GAMESPOT_API_KEY
               valueFrom:
                 secretKeyRef:

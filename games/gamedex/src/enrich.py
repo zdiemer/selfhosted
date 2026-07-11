@@ -27,7 +27,11 @@ _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRatin
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
     "metacritic": lambda d: {"metascore": d.get("metascore"), "metaUrl": d.get("url")},
+    "gameye": lambda d: {"geLoose": d.get("priceLoose"), "geCib": d.get("priceCib"),
+                         "geNew": d.get("priceNew"), "geUrl": d.get("url")},
 }
+# Sources that only apply to owned physical games (gated in request()).
+_OWNED_PHYSICAL_ONLY = {"gameye"}
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -87,6 +91,8 @@ class Enricher:
                         "title": title, "platform": r.get("platform"), "year": r.get("releaseYear"),
                         "developer": r.get("developer"), "publisher": r.get("publisher"),
                         "franchise": r.get("franchise"),
+                        # For the owned-physical gate (GameEye).
+                        "owned": bool(r.get("owned")), "format": r.get("format"),
                     }
         with self._lock:
             self._key_meta = key_meta
@@ -162,7 +168,11 @@ class Enricher:
             for k in keys:
                 if k not in self._key_meta:
                     continue
+                meta = self._key_meta[k]
+                owned_phys = meta.get("owned") and (meta.get("format") or "").lower() == "physical"
                 for src in self._sources:
+                    if src in _OWNED_PHYSICAL_ONLY and not owned_phys:
+                        continue
                     if self._status(self._table(src), k):
                         continue
                     q = self._q[src]
