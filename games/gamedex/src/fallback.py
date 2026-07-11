@@ -43,6 +43,35 @@ class _Ign:
         r.raise_for_status()
         return (r.json().get("data") or {}).get("searchObjectsByName", {}).get("objects", [])
 
+    def override_from_url(self, title, url):
+        """Manual mapping: pick the IGN result whose slug matches the pasted URL."""
+        m = re.search(r"ign\.com/games/([^/?#]+)", url)
+        if not m:
+            return None
+        slug = m.group(1)
+        for o in self._search(title):
+            if o.get("slug") == slug or (o.get("url") or "").rstrip("/").endswith("/" + slug):
+                return self._to_record(o)
+        return None
+
+    def _to_record(self, o):
+        nm = (o.get("metadata") or {}).get("names") or {}
+        years = []
+        for reg in o.get("objectRegions", []):
+            for rel in reg.get("releases", []):
+                if rel.get("date"):
+                    try:
+                        years.append(int(rel["date"][:4]))
+                    except ValueError:
+                        pass
+        return {
+            "source": "IGN", "name": nm.get("name") or o.get("slug"),
+            "url": ("https://www.ign.com" + o["url"]) if o.get("url") else None,
+            "coverUrl": (o.get("primaryImage") or {}).get("url"), "summary": None,
+            "genres": [g.get("name") for g in (o.get("genres") or []) if g.get("name")],
+            "year": years[0] if years else None, "confidence": 0,
+        }
+
     def match(self, game):
         for o in self._search(game.title):
             names = [o.get("slug")]
@@ -114,6 +143,30 @@ class _Steam:
         self._v = validator
         self._lim = RateLimiter(2)
 
+    def _appdetails(self, appid):
+        self._lim.wait()
+        det = requests.get("https://store.steampowered.com/api/appdetails",
+                           params={"appids": appid}, headers={"User-Agent": _UA}, timeout=30).json()
+        return ((det or {}).get(str(appid)) or {}).get("data") or {}
+
+    def _to_record(self, appid, data):
+        m = re.search(r"(\d{4})", (data.get("release_date") or {}).get("date") or "")
+        return {
+            "source": "Steam", "name": data.get("name"),
+            "url": f"https://store.steampowered.com/app/{appid}/",
+            "coverUrl": data.get("header_image"), "summary": data.get("short_description"),
+            "genres": [g.get("description") for g in (data.get("genres") or []) if g.get("description")],
+            "year": int(m.group(1)) if m else None, "confidence": 0,
+        }
+
+    def override_from_url(self, title, url):
+        """Manual mapping: fetch the Steam app directly by its appid."""
+        m = re.search(r"/app/(\d+)", url)
+        if not m:
+            return None
+        data = self._appdetails(m.group(1))
+        return self._to_record(m.group(1), data) if data else None
+
     def match(self, game):
         if not game.platform or game.platform.value != "PC":   # Steam = PC only
             return None
@@ -148,22 +201,28 @@ class _Steam:
 
 
 class FallbackClient:
-    def __init__(self, gamespot_key: str = None):
+    def __init__(self, gamespot_key: str = None, gamespot_enabled: bool = False):
         v = MatchValidator()
-        self._sources = [("IGN", _Ign(v))]
-        if gamespot_key:
-            self._sources.append(("GameSpot", _GameSpot(v, gamespot_key)))
-        self._sources.append(("Steam", _Steam(v)))
+        self._clients = {"ign": _Ign(v), "steam": _Steam(v)}
+        # GameSpot is OFF by default: its API now 301s to a Cloudflare-protected
+        # page (403 "Just a moment…"), so it matches nothing — and at 200 req/hr
+        # it stalled the chain ~18s per IGDB miss. Kept for if it ever returns.
+        if gamespot_key and gamespot_enabled:
+            self._clients["gamespot"] = _GameSpot(v, gamespot_key)
+        self._chain = [n for n in ("ign", "gamespot", "steam") if n in self._clients]
 
     @property
     def configured(self):
         return True
 
+    def client_for(self, name):
+        return self._clients.get((name or "").lower())
+
     def match(self, title, platform=None, year=None):
         game = ExcelGame(title=title, platform=platform_from_str(platform), release_year=year)
-        for name, client in self._sources:
+        for name in self._chain:
             try:
-                res = client.match(game)
+                res = self._clients[name].match(game)
                 if res:
                     return res
             except Exception as exc:

@@ -75,6 +75,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "gamedex.fullname" . }}
                   key: gamespot-api-key
+            - name: GAMESPOT_ENABLED
+              value: {{ (.Values.gamespot | default dict).enabled | default false | quote }}
           # Ready only once the first Dropbox load succeeds (health returns 503
           # until then), so traffic never hits an empty dataset.
           readinessProbe:

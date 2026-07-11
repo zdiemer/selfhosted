@@ -22,7 +22,10 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes", "name")
-_FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating")
+# igdbId/source let the UI tell IGDB matches from fallback (IGN/GameSpot/Steam)
+# ones, and spot games with no metadata at all.
+_FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
+                "igdbId", "source")
 # Light fields each secondary source contributes to the cover/facet map.
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},

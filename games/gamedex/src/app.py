@@ -59,8 +59,12 @@ if _on("METACRITIC_ENABLED"):
     _secondary["metacritic"] = MetacriticClient()
 if _on("GAMEEYE_ENABLED"):
     _secondary["gameye"] = GameEyeClient()
-# Fallback metadata (IGN/GameSpot/Steam) for games IGDB doesn't match.
-_fallback = FallbackClient(os.environ.get("GAMESPOT_API_KEY", "")) if _on("FALLBACK_ENABLED") else None
+# Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
+# off by default — its API is Cloudflare-blocked (see fallback.py).
+_fallback = (
+    FallbackClient(os.environ.get("GAMESPOT_API_KEY", ""), _on("GAMESPOT_ENABLED", "false"))
+    if _on("FALLBACK_ENABLED") else None
+)
 enricher = (
     Enricher(_igdb, ENRICH_DB, backfill=ENRICH_BACKFILL, secondary=_secondary, fallback=_fallback)
     if _igdb.configured else None
@@ -156,22 +160,35 @@ class Override(BaseModel):
     source: str = "igdb"
 
 
+# IGN/GameSpot/Steam supply the *primary* metadata record, so mapping them
+# writes to the same slot as IGDB.
+_PRIMARY_FALLBACKS = ("ign", "steam", "gamespot")
+
+
 @app.post("/api/enrichment/override")
 def enrichment_override(body: Override):
     if not enricher:
         return JSONResponse(status_code=400, content={"error": "enrichment disabled"})
     src = body.source or "igdb"
-    client = _igdb if src == "igdb" else _secondary.get(src)
+    if src == "igdb":
+        client = _igdb
+    elif src in _PRIMARY_FALLBACKS:
+        client = _fallback.client_for(src) if _fallback else None
+    else:
+        client = _secondary.get(src)
     if client is None or not hasattr(client, "override_from_url"):
         return JSONResponse(status_code=400, content={"error": f"source '{src}' can't be mapped"})
+
+    # A primary-metadata source (igdb or a fallback) occupies the igdb slot.
+    slot = "igdb" if (src == "igdb" or src in _PRIMARY_FALLBACKS) else src
     if not body.url or not body.url.strip():          # clear → back to auto
-        enricher.clear_source_override(src, body.key)
+        enricher.clear_source_override(slot, body.key)
         return {"status": "cleared", "source": src}
     meta = enricher.meta_for(body.key) or {}
     record = client.override_from_url(meta.get("title", ""), body.url)
     if not record:
         return JSONResponse(status_code=404, content={"error": "no match found for that URL"})
-    enricher.set_source_override(src, body.key, record)
+    enricher.set_source_override(slot, body.key, record)
     return {"status": "matched", "source": src, "record": record}
 
 

@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.16.4"
+  tag: "0.17.1"
   pullPolicy: IfNotPresent
 
 service:
@@ -42,10 +42,13 @@ igdb:
   # GameEye market values (Loose/CIB/New) for owned physical games only, 500/hr.
   gameye: true
 
-# GameSpot API key for the fallback chain (set apiKey in values.local.yaml).
-# Without it, only IGN + Steam fallbacks run.
+# GameSpot for the fallback chain (apiKey goes in values.local.yaml).
+# DISABLED: the API now 301s to a Cloudflare-protected page (403 "Just a
+# moment…"), so it matched 0 games — and at 200 req/hr it stalled the chain
+# ~18s per IGDB miss. The chain is IGN → Steam. Flip enabled if it ever returns.
 gamespot:
   apiKey: ""
+  enabled: false
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:

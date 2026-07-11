@@ -72,7 +72,8 @@ _GAMES = [
     ("Owned",                "bool",   True,  False, True),
     ("Completed",            "bool",   True,  False, True),
     ("Wishlisted",           "bool",   True,  False, False),
-    ("Playable",             "bool",   True,  False, False),
+    # Tri-state, not a bool (see _VALUE_LABELS): 1 playable, 0 unknown, -1 not.
+    ("Playable",             "text",   True,  False, False),
     ("VR",                   "bool",   True,  False, False),
     ("DLC",                  "bool",   True,  False, False),
     ("English",              "bool",   True,  False, False),
@@ -129,6 +130,10 @@ _EXCLUDE = {"Order #", "Address on Order", "Tracking #"}
 # Keyed by the slugged column key.
 _VALUE_LABELS = {
     "playingStatus": {"1": "Playing", "0": "On Hold", "-1": "Up Next"},
+    # Playability is tri-state (matches zdiemer/GamesMaster's Playability enum:
+    # UNKNOWN=0, PLAYABLE=1, UNPLAYABLE=-1). Coercing it to bool made bool(-1)
+    # True, so unplayable games read as "Yes" and unknown ones as "No".
+    "playable": {"1": "Yes", "0": "Unknown", "-1": "No"},
 }
 
 

@@ -196,14 +196,30 @@ function igdbAttr(d) {
 }
 
 function mapControlHtml(key) {
-  const rows = [{ id: "igdb", label: "Metadata (IGDB)", ph: "IGDB game URL" }];
+  // Current mapping per source, so the boxes show what a game is already matched to.
+  const d = DETAIL[key] || {};
+  const primary = d.source ? String(d.source).toLowerCase() : (d.igdbId ? "igdb" : null);
+  const cur = {
+    igdb: primary === "igdb" ? d.url || "" : "",
+    steam: primary === "steam" ? d.url || "" : "",
+    ign: primary === "ign" ? d.url || "" : "",
+    hltb: (HLTBC[key] || {}).url || "",
+    metacritic: (MCC[key] || {}).url || "",
+    gameye: (GEC[key] || {}).url || "",
+  };
+  // IGDB / Steam / IGN all fill the same "primary metadata" slot.
+  const rows = [
+    { id: "igdb", label: "Metadata — IGDB", ph: "IGDB game URL" },
+    { id: "steam", label: "Metadata — Steam", ph: "Steam store URL (…/app/<id>/)" },
+    { id: "ign", label: "Metadata — IGN", ph: "IGN game URL" },
+  ];
   if (ENRICH_SOURCES.includes("hltb")) rows.push({ id: "hltb", label: "HowLongToBeat", ph: "HLTB game URL" });
   if (ENRICH_SOURCES.includes("metacritic")) rows.push({ id: "metacritic", label: "Metacritic", ph: "Metacritic game URL" });
   const ownedPhys = drawerRow && drawerRow.owned && (drawerRow.format || "").toLowerCase() === "physical";
   if (ENRICH_SOURCES.includes("gameye") && ownedPhys) rows.push({ id: "gameye", label: "GameEye value", ph: "GameEye encyclopedia URL" });
   return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
-      <div class="map-row"><input type="url" placeholder="${s.ph}" data-map-input>
+      <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
       <button class="btn" data-map-go>Map</button><button class="linkbtn" data-map-reset title="Reset to auto">Auto</button></div></div>`).join("") +
     `</details>`;
 }
@@ -341,11 +357,11 @@ async function submitOverride(key, url, source = "igdb") {
     const j = await res.json();
     // Clear caches so the refetch shows the new mapping.
     delete DETAIL[key]; delete HLTBC[key]; delete MCC[key]; delete GEC[key];
-    if (source === "igdb") {
+    if (["igdb", "steam", "ign", "gamespot"].includes(source)) {   // primary slot
       const r = j.record;
       if (r) ENRICH[key] = Object.assign(ENRICH[key] || {}, {
-        cover: r.cover, coverUrl: r.coverUrl, source: r.source, genres: r.genres,
-        themes: r.themes, gameModes: r.gameModes, userRating: r.userRating,
+        cover: r.cover, coverUrl: r.coverUrl, source: r.source, igdbId: r.igdbId,
+        genres: r.genres, themes: r.themes, gameModes: r.gameModes, userRating: r.userRating,
       });
       else delete ENRICH[key];
     }
@@ -456,9 +472,40 @@ function collectionValueOf(row) {
 }
 function bucketLabel(v, buckets) { for (const b of buckets) if (b.test(v)) return b.label; return null; }
 
+// What each source found for a row (used by the metadata facets).
+const metaOf = (row) => {
+  const e = ENRICH[row._k] || null;
+  return {
+    igdb: !!(e && e.igdbId),                        // IGDB proper
+    fallback: e && e.source ? e.source : null,      // IGN / Steam / GameSpot
+    hltb: !!(e && e.hltbBest != null),
+    mc: !!(e && e.metascore != null),
+  };
+};
+// Which source supplied the game's primary metadata.
+function metaSourceOf(row) {
+  const m = metaOf(row);
+  return m.igdb ? "IGDB" : m.fallback || "None";
+}
+// Tags for what a row is MISSING — multi-valued, so one game can carry several.
+function missingOf(row) {
+  const m = metaOf(row);
+  const out = [];
+  if (!m.igdb) out.push("No IGDB");
+  if (!m.igdb && !m.fallback) out.push("No cover / art");
+  if (!m.hltb) out.push("No HLTB");
+  if (!m.mc) out.push("No Metacritic");
+  if (!m.igdb && !m.fallback && !m.hltb && !m.mc) out.push("Nothing at all");
+  return out;
+}
+
 const igdbFacetCols = () =>
   ENRICH_ENABLED
-    ? IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true }))
+    ? [
+        ...IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true })),
+        { key: "__meta_src", label: "Metadata source", type: "text", facet: true, virtual: true, kind: "fn", getVals: (r) => [metaSourceOf(r)] },
+        { key: "__missing", label: "Missing data", type: "text", facet: true, virtual: true, kind: "fn", getVals: missingOf },
+      ]
     : [];
 // Bucketed facets available on the Games tab (playtime + Metacritic).
 function extraFacetCols() {
@@ -474,6 +521,9 @@ const facetColByKey = (key) => facetCols().find((c) => c.key === key);
 
 // A row's facet values as [{key, raw}] — scalar → one, arrays → many, bucket → one label.
 function rowFacetItems(row, col) {
+  if (col.kind === "fn") {                    // computed, possibly multi-valued
+    return (col.getVals(row) || []).map((x) => ({ key: String(x), raw: x }));
+  }
   if (col.kind === "bucket") {
     const v = col.getVal(row);
     if (v === undefined || v === null || v === "") return [];
@@ -749,8 +799,9 @@ function renderTable(rows) {
 
   $("#tablewrap").hidden = viewMode !== "table";
   $("#gridwrap").hidden = viewMode !== "grid";
-  $("#gridsortwrap").hidden = viewMode !== "grid";
-  if (viewMode === "grid") { populateGridSort(); renderGrid(pageRows); }
+  $("#gridsortwrap").hidden = false;    // sort control in both views (reaches
+  populateGridSort();                   // non-primary columns like Date Added)
+  if (viewMode === "grid") renderGrid(pageRows);
   else renderTableView(pageRows);
 
   maybeEnrich(pageRows);
@@ -872,7 +923,7 @@ function patchEnrichedCells() {
 // Grid has no clickable headers — a Sort dropdown + direction toggle stand in.
 function populateGridSort() {
   const sel = $("#gridsort");
-  const cols = columns().filter((c) => c.primary && c.sort);
+  const cols = columns().filter((c) => c.sort);   // all sortable, not just shown
   const eff = effectiveSort();
   const usingDefault = !(tabState[activeTab].sort && tabState[activeTab].sort.length);
   const cur = usingDefault ? "__default" : eff[0].key;
