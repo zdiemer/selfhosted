@@ -588,6 +588,7 @@ td.cover { width: 46px; padding: 5px 8px; }
   max-width: 1180px; margin: 0 auto;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 16px;
 }
+.ch-card { min-width: 0; }
 .ch-card {
   position: relative; text-align: left; cursor: pointer; font-family: inherit; color: var(--text);
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
@@ -655,7 +656,11 @@ td.cover { width: 46px; padding: 5px 8px; }
 .ch-sec { font-family: var(--display); font-size: 17px; margin-bottom: 4px; }
 .ch-sec .muted { font-size: 13px; font-weight: 400; }
 .ch-hint { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
-.ch-buckets { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-bottom: 30px; }
+/* minmax(0, …), never a bare 1fr: an fr track's automatic minimum is the item's
+   min-content, and the chip titles are nowrap — so the track inflates to the
+   widest title and the card spills off the side of the page. */
+.ch-buckets { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 30px; }
+.ch-bucket, .ch-chips, .ch-chip { min-width: 0; }
 .ch-bucket {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 13px 14px;
 }
@@ -781,7 +786,7 @@ td.cover { width: 46px; padding: 5px 8px; }
 
   .challenges { padding: 18px 12px; }
   .ch-grid { grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; }
-  .ch-buckets { grid-template-columns: 1fr; }
+  .ch-buckets { grid-template-columns: minmax(0, 1fr); }
   .ch-detail-head { flex-wrap: wrap; gap: 12px; }
   .ch-detail-head h1 { font-size: 21px; }
   .ch-foot { flex-wrap: wrap; gap: 2px 8px; }   /* narrow cards: let the two labels stack */
