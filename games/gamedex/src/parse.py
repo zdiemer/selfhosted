@@ -327,4 +327,13 @@ def parse_workbook(data: bytes) -> dict:
 
     # Completed sheet only carries a full release date — derive a year facet.
     _inject_release_year(result["completed"], "release")
+
+    # Early Access / TBD games have no numeric year; surface the release-date
+    # label (e.g. "Early Access") as the Release Year facet value so they're
+    # filterable and sortable rather than dropping out of the year facet.
+    for r in result["games"]["rows"]:
+        if not r.get("releaseYear"):
+            rd = r.get("releaseDate")
+            if isinstance(rd, str) and not re.match(r"^\d{4}-", rd):
+                r["releaseYear"] = rd
     return result

@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "0.2.0"
+  tag: "0.2.1"
   pullPolicy: IfNotPresent
 
 service:
@@ -27,9 +27,10 @@ refreshIntervalSeconds: 600
 igdb:
   clientId: ""            # Twitch app Client ID   (values.local.yaml)
   clientSecret: ""        # Twitch app Client Secret (values.local.yaml)
-  # Slowly enrich every game in the background (off by default). Leave false to
-  # only enrich on demand; flip on to eventually build a complete IGDB dataset.
-  backfill: false
+  # Slowly enrich every game in the background so the IGDB facets + cover map
+  # eventually cover the whole library. Runs at 4 req/s behind on-demand
+  # requests, cached on the PVC.
+  backfill: true
 
 # PVC holding the SQLite IGDB cache — the only persistent state. Small.
 persistence:

@@ -29,6 +29,8 @@ log = logging.getLogger("gamedex.enrich")
 
 # Light projection shipped for a whole page (covers + facets-worthy bits).
 _LIGHT = ("igdbId", "cover", "rating", "year", "genres", "themes", "gameModes", "name")
+# Even leaner projection for the bulk facet/cover map (all matched games).
+_FACET_LIGHT = ("cover", "genres", "themes", "gameModes")
 
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 
@@ -157,13 +159,29 @@ class Enricher:
         return items, pending
 
     def get_detail(self, key):
+        """Return (status, detail): status is 'matched' | 'no_match' | 'pending'.
+        A pending key is (re)queued at the front so the drawer resolves quickly;
+        a no_match key is terminal so the UI stops polling."""
         rows = self._get_rows([key])
         entry = rows.get(key)
-        if entry and entry[0] == "matched":
-            return entry[1]
-        # Not resolved yet — enqueue at the front and report pending.
+        if entry:
+            return entry[0], (entry[1] if entry[0] == "matched" else None)
         self.request([key])
-        return None
+        return "pending", None
+
+    def get_all_light(self):
+        """{matchKey: {cover, genres, themes, gameModes}} for every matched game.
+        Powers the global cover map + IGDB facets once the cache is populated."""
+        out = {}
+        with self._db_lock:
+            for mk, data in self._db.execute(
+                "SELECT match_key,data FROM enrichment WHERE status='matched'"
+            ):
+                if not data:
+                    continue
+                d = json.loads(data)
+                out[mk] = {f: d.get(f) for f in _FACET_LIGHT}
+        return out
 
     def stats(self):
         with self._db_lock:

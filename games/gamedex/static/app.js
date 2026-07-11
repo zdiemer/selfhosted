@@ -139,26 +139,73 @@ function renderDetail(d, el) {
     `<div class="igdb-attr">${d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">View on IGDB ↗</a> · ` : ""}Metadata by <a href="https://www.igdb.com" target="_blank" rel="noopener">IGDB</a></div>`;
 }
 
-async function loadDetail(key, el) {
+async function loadDetail(key, el, attempt = 0) {
   if (DETAIL[key]) { renderDetail(DETAIL[key], el); return; }
-  el.innerHTML = `<div class="igdb-loading">Loading IGDB metadata…</div>`;
+  if (attempt === 0) el.innerHTML = `<div class="igdb-loading">Loading IGDB metadata…</div>`;
   try {
     const res = await fetch("api/enrichment/detail?key=" + encodeURIComponent(key));
     const j = await res.json();
-    if (j.detail) { DETAIL[key] = j.detail; renderDetail(j.detail, el); }
-    else if (j.pending) { setTimeout(() => loadDetail(key, el), 2500); }
-    else el.innerHTML = `<div class="igdb-loading muted">No IGDB match.</div>`;
+    if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderDetail(j.detail, el); }
+    else if (j.status === "no_match") { el.innerHTML = `<div class="igdb-loading muted">No IGDB match for this title.</div>`; }
+    else if (j.status === "pending") {
+      if (attempt >= 15) { el.innerHTML = `<div class="igdb-loading muted">Metadata still resolving — reopen shortly.</div>`; return; }
+      setTimeout(() => loadDetail(key, el, attempt + 1), 2500);
+    } else el.innerHTML = "";
   } catch (_) { el.innerHTML = ""; }
+}
+
+// Bulk-load the light cover/facet map for every already-matched game (powers
+// covers + IGDB facets across the whole list). Re-polls while backfill runs.
+let allTimer = null;
+async function loadAllEnrichment() {
+  if (!ENRICH_ENABLED) return;
+  try {
+    const res = await fetch("api/enrichment/all");
+    const j = await res.json();
+    if (j.enabled === false) { ENRICH_ENABLED = false; return; }
+    let changed = false;
+    for (const [k, v] of Object.entries(j.items || {})) {
+      ENRICH[k] = Object.assign(ENRICH[k] || {}, v);
+      changed = true;
+    }
+    if (j.stats) updateEnrichStatus(j.stats);
+    if (changed) renderAll();                       // covers + facets fill in
+    if (j.stats && j.stats.resolved < j.stats.total) {  // backfill still running
+      clearTimeout(allTimer);
+      allTimer = setTimeout(loadAllEnrichment, 45000);
+    }
+  } catch (_) { /* transient */ }
 }
 
 // ---- data access --------------------------------------------------------
 const sheet = () => DATA.sheets[activeTab];
 const columns = () => sheet().columns;
 const searchCols = () => columns().filter((c) => c.search).map((c) => c.key);
-const facetCols = () => columns().filter((c) => c.facet);
 const colByKey = (key) => columns().find((c) => c.key === key);
 
-// Facet value display label + sortable key for a raw value.
+// Virtual facets sourced from IGDB enrichment (array-valued, joined via row._k).
+const IGDB_FACET_DEFS = [
+  { key: "__igdb_genre", label: "IGDB Genre", source: "genres" },
+  { key: "__igdb_theme", label: "Theme", source: "themes" },
+  { key: "__igdb_mode", label: "Game Mode", source: "gameModes" },
+];
+const igdbFacetCols = () =>
+  ENRICH_ENABLED
+    ? IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true }))
+    : [];
+const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols()];
+const facetColByKey = (key) => facetCols().find((c) => c.key === key);
+
+// A row's facet values as [{key, raw}] — scalar → one, IGDB arrays → many.
+function rowFacetItems(row, col) {
+  let v;
+  if (col.virtual) { const e = ENRICH[row._k]; v = e ? e[col.source] : undefined; }
+  else v = row[col.key];
+  if (v === undefined || v === null || v === "") return [];
+  const arr = Array.isArray(v) ? v : [v];
+  return arr.filter((x) => x !== undefined && x !== null && x !== "").map((x) => ({ key: String(x), raw: x }));
+}
+
 function facetLabel(col, value) {
   if (col.type === "bool") return value ? "Yes" : "No";
   return String(value);
@@ -171,12 +218,11 @@ function matchesSearch(row, terms, cols) {
   const hay = cols.map((k) => row[k]).filter((v) => v != null).join(" ").toLowerCase();
   return terms.every((t) => hay.includes(t));
 }
-// Row matches a facet selection (Set of String(value)). OR within a facet.
-function matchesFacet(row, key, selected) {
+// Row matches a facet selection (Set of value keys). OR within a facet; for
+// IGDB array facets a row matches if ANY of its values is selected.
+function matchesFacet(row, col, selected) {
   if (!selected || selected.size === 0) return true;
-  const v = row[key];
-  if (v === undefined || v === null) return false;
-  return selected.has(String(v));
+  return rowFacetItems(row, col).some((it) => selected.has(it.key));
 }
 
 // Rows matching search + every facet EXCEPT `skipKey` (for facet counts) or all.
@@ -184,12 +230,14 @@ function filterRows(skipKey) {
   const st = tabState[activeTab];
   const terms = st.search.toLowerCase().split(/\s+/).filter(Boolean);
   const sCols = searchCols();
-  const facetKeys = Object.keys(st.facets);
+  const active = Object.keys(st.facets)
+    .map((k) => [facetColByKey(k), st.facets[k]])
+    .filter(([c]) => c);
   return sheet().rows.filter((row) => {
     if (!matchesSearch(row, terms, sCols)) return false;
-    for (const key of facetKeys) {
-      if (key === skipKey) continue;
-      if (!matchesFacet(row, key, st.facets[key])) return false;
+    for (const [col, sel] of active) {
+      if (col.key === skipKey) continue;
+      if (!matchesFacet(row, col, sel)) return false;
     }
     return true;
   });
@@ -206,10 +254,9 @@ function renderFacets() {
     const base = filterRows(col.key);
     const counts = new Map();
     for (const row of base) {
-      const v = row[col.key];
-      if (v === undefined || v === null || v === "") continue;
-      const k = String(v);
-      counts.set(k, (counts.get(k) || 0) + 1);
+      for (const it of rowFacetItems(row, col)) {
+        counts.set(it.key, (counts.get(it.key) || 0) + 1);
+      }
     }
     const selected = st.facets[col.key] || new Set();
     // Always include selected values even if their current count is 0.
@@ -222,8 +269,10 @@ function renderFacets() {
       count: n,
     }));
     const numeric = col.type === "year" || col.type === "int" || col.type === "number";
+    // For year facets, non-numeric labels (e.g. "Early Access") sort as newest.
+    const nkey = (k) => { const n = Number(k); return isNaN(n) ? Infinity : n; };
     values.sort((a, b) =>
-      numeric ? Number(b.key) - Number(a.key) : b.count - a.count || a.label.localeCompare(b.label)
+      numeric ? nkey(b.key) - nkey(a.key) : b.count - a.count || a.label.localeCompare(b.label)
     );
 
     const group = document.createElement("div");
@@ -352,7 +401,10 @@ function cmpBy(a, b, spec) {
   if (ym) return -1;
   const dir = spec.dir === "desc" ? -1 : 1;
   const type = spec.type || (colByKey(spec.key) || {}).type;
-  if (NUMERIC_TYPES.includes(type)) return (Number(x) - Number(y)) * dir;
+  if (NUMERIC_TYPES.includes(type)) {
+    const nx = Number(x), ny = Number(y);          // "Early Access" (NaN) = newest
+    return ((isNaN(nx) ? Infinity : nx) - (isNaN(ny) ? Infinity : ny)) * dir;
+  }
   if (type === "bool") return ((x ? 1 : 0) - (y ? 1 : 0)) * dir;
   return String(x).localeCompare(String(y), undefined, { sensitivity: "base" }) * dir;
 }
@@ -531,6 +583,7 @@ async function load() {
   if (ENRICH_ENABLED) updateEnrichStatus(en);
   setFreshness();
   switchTab("games");
+  loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

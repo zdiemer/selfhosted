@@ -106,12 +106,19 @@ def enrichment_batch(batch: KeyBatch):
     return {"enabled": True, "items": items, "pending": pending, "stats": enricher.stats()}
 
 
+@app.get("/api/enrichment/all")
+def enrichment_all():
+    if not enricher:
+        return {"enabled": False, "items": {}}
+    return {"enabled": True, "items": enricher.get_all_light(), "stats": enricher.stats()}
+
+
 @app.get("/api/enrichment/detail")
 def enrichment_detail(key: str):
     if not enricher:
-        return {"enabled": False, "detail": None}
-    detail = enricher.get_detail(key)
-    return {"enabled": True, "detail": detail, "pending": detail is None}
+        return {"enabled": False, "status": "disabled", "detail": None}
+    status, detail = enricher.get_detail(key)
+    return {"enabled": True, "status": status, "detail": detail}
 
 
 @app.get("/api/enrichment/stats")
