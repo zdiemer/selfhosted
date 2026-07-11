@@ -2,7 +2,7 @@
 
 // ---- config -------------------------------------------------------------
 let PAGE_SIZE = 50;
-let viewMode = "grid";             // "table" | "grid"
+let viewMode = "grid";             // "table" | "grid" | "timeline" (completed only)
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -685,7 +685,12 @@ async function loadAllEnrichment() {
       else if (activeTab === "reviews") patchReviewCovers();
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab === "health") renderHealth();
-      else if (activeTab !== "pick") { patchEnrichedCells(); renderFacets(); }
+      else if (activeTab === "series") patchSeriesCovers();
+      else if (activeTab !== "pick") {
+        patchEnrichedCells();
+        patchTimelineCovers();          // the Completed tab's third view
+        renderFacets();
+      }
     }
     if (j.stats && !j.stats.complete) {             // a backfill is still running
       clearTimeout(allTimer);
@@ -1268,8 +1273,23 @@ function renderTable(rows) {
   const start = (st.page - 1) * PAGE_SIZE;
   const pageRows = sorted.slice(start, start + PAGE_SIZE);
 
+  // The timeline is a view of the Completed rows — same filters, same search.
+  const canTimeline = activeTab === "completed";
+  $("#viewTimeline").hidden = !canTimeline;
+  if (viewMode === "timeline" && !canTimeline) viewMode = "grid";
   $("#tablewrap").hidden = viewMode !== "table";
   $("#gridwrap").hidden = viewMode !== "grid";
+  $("#timeline").hidden = viewMode !== "timeline";
+  $("#pager").style.display = viewMode === "timeline" ? "none" : "";
+  for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"], ["viewTimeline", "timeline"]]) {
+    $("#" + id).classList.toggle("active", viewMode === m);
+  }
+  if (viewMode === "timeline") {
+    renderTimeline(rows);
+    $("#count").textContent = `${rows.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
+    renderViews();
+    return;
+  }
   $("#gridsortwrap").hidden = false;    // sort control in both views (reaches
   populateGridSort();                   // non-primary columns like Date Added)
   if (!sorted.length) {
@@ -1285,6 +1305,8 @@ function renderTable(rows) {
   else renderTableView(pageRows);
 
   maybeEnrich(pageRows);
+  kbReset();
+  renderViews();
   $("#count").textContent = `${sorted.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
   $("#clear").hidden = !(st.search || Object.keys(st.facets).length);
   $("#resetsort").hidden = !(st.sort && st.sort.length);
@@ -1579,6 +1601,7 @@ function detailValue(c, v) {
 
 function openDrawer(row, sheetKey) {
   stopPreview();
+  applyCoverAccent(row);
   drawerSheet = sheetKey || (SPECIAL_TABS.includes(activeTab) ? "games" : activeTab);
   const cols = (DATA.sheets[drawerSheet] || DATA.sheets.games).columns;
   const titleCol = cols[0];
@@ -1625,7 +1648,7 @@ function applyDrawerFacet(key, val) {
 
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
-const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health"];
+const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "series"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
@@ -1634,6 +1657,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   $("#home").hidden = mode !== "home";
   $("#reviews").hidden = mode !== "reviews";
   $("#health").hidden = mode !== "health";
+  $("#series").hidden = mode !== "series";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1650,6 +1674,7 @@ function renderAll() {
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
   if (activeTab === "health") { setSpecialMode("health"); renderHealth(); return; }
+  if (activeTab === "series") { setSpecialMode("series"); renderSeries(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = groupCollections(filterRows(null));
@@ -1672,6 +1697,9 @@ function syncURL(push) {
   if (activeTab === "pick") {
     if (pickState.selector) p.set("sel", pickState.selector);
     if (pickState.param) p.set("pp", pickState.param);
+    if (pickState.minutes) p.set("mins", String(pickState.minutes));
+  } else if (activeTab === "series") {
+    if (seriesState.open) p.set("fr", seriesState.open);
   } else if (activeTab === "challenges") {
     if (chState.open) p.set("ch", chState.open);
   } else if (activeTab !== "stats") {
@@ -1689,13 +1717,14 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["home", "games", "completed", "onOrder", "reviews", "stats", "pick", "challenges", "health"].includes(p.get("tab")) ? p.get("tab") : "home";
+  const tab = ["home", "games", "completed", "onOrder", "series", "reviews", "stats", "pick", "challenges", "health"].includes(p.get("tab")) ? p.get("tab") : "home";
   if (SPECIAL_TABS.includes(tab)) {
-    if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; }
+    if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
+    if (tab === "series") { seriesState.open = p.get("fr") || null; }
     applyingState = false; switchTab(tab); return;
   }
-  viewMode = p.get("view") === "table" ? "table" : "grid";
+  viewMode = ["table", "timeline"].includes(p.get("view")) ? p.get("view") : "grid";
   PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   const st = tabState[tab];
   st.search = p.get("q") || "";
@@ -1741,6 +1770,7 @@ async function load() {
   resetCollections();
   resetHealth();
   resetSearchCache();
+  resetSeries();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
@@ -2098,7 +2128,7 @@ function renderStats() {
 }
 
 // ---- "Pick my next game" ------------------------------------------------
-const pickState = { selector: "backlog", param: "", picked: null };
+const pickState = { selector: "backlog", param: "", picked: null, minutes: 0 };
 let _completedFranchises = null;
 const completedFranchises = () => (_completedFranchises ||=
   new Set(((DATA.sheets.completed || {}).rows || []).map((r) => r.franchise).filter(Boolean)));
@@ -2165,9 +2195,19 @@ const SELECTORS = [
 ];
 
 const pickEligible = () => ((DATA.sheets.games || {}).rows || []).filter((r) => !r.completed && r.title);
+
+// "I have 45 minutes." A game qualifies if you could plausibly FINISH it in the
+// time you've got — HLTB's main-story number where we have it, the sheet's
+// estimate otherwise. 0 means "don't care".
+function withinTimeBudget(rows) {
+  if (!pickState.minutes) return rows;
+  const hours = pickState.minutes / 60;
+  return rows.filter((r) => { const t = playtimeOf(r); return t != null && t <= hours; });
+}
 function pickPool() {
   const sel = SELECTORS.find((s) => s.id === pickState.selector) || SELECTORS[0];
-  let pool = pickEligible().filter((r) => (sel.param ? pickState.param && sel.filter(r, pickState.param) : sel.filter(r)));
+  let pool = withinTimeBudget(
+    pickEligible().filter((r) => (sel.param ? pickState.param && sel.filter(r, pickState.param) : sel.filter(r))));
   if (sel.topBy && pool.length) {   // narrow to extremes (recent/oldest) before rolling
     pool = [...pool].sort((a, b) => { const x = sel.topBy.by(a) || "", y = sel.topBy.by(b) || ""; return x < y ? -1 : x > y ? 1 : 0; });
     if (sel.topBy.desc) pool.reverse();
@@ -2210,9 +2250,15 @@ function renderPicker() {
     paramHtml = `<select id="pickParam">${vals.map((v) => `<option ${v === pickState.param ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}</select>`;
   }
   const { pool } = pickPool();
+  const TIMES = [[0, "Any length"], [30, "30 minutes"], [45, "45 minutes"], [60, "1 hour"],
+                 [120, "2 hours"], [300, "5 hours"], [600, "10 hours"]];
   host.innerHTML = `
     <div class="pick-controls">
       <label>Pick <select id="pickSel">${opts}</select></label>${paramHtml}
+      <label class="pick-time">I have
+        <select id="pickTime">${TIMES.map(([m, l]) =>
+          `<option value="${m}" ${m === pickState.minutes ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select>
+      </label>
       <button id="pickBtn" class="pick-btn">🎲 Pick for me</button>
       <span class="pick-count">${pool.length.toLocaleString()} game${pool.length === 1 ? "" : "s"} in pool</span>
     </div>
@@ -2222,6 +2268,7 @@ function renderPicker() {
   $("#pickSel").onchange = (e) => { pickState.selector = e.target.value; pickState.param = ""; pickState.picked = null; renderPicker(); nav(); };
   const pp = $("#pickParam");
   if (pp) pp.onchange = (e) => { pickState.param = e.target.value; pickState.picked = null; renderPicker(); nav(); };
+  $("#pickTime").onchange = (e) => { pickState.minutes = +e.target.value; pickState.picked = null; renderPicker(); nav(); };
   $("#pickBtn").onclick = () => { pickGame(); nav(); };
   const card = host.querySelector(".pick-card");
   if (card) {
@@ -2264,13 +2311,12 @@ $("#pagesize").addEventListener("change", (e) => {
   nav();
 });
 function setView(mode) {
-  viewMode = mode;
-  $("#viewTable").classList.toggle("active", mode === "table");
-  $("#viewGrid").classList.toggle("active", mode === "grid");
+  viewMode = mode;                      // renderTable paints the active state
   renderTable(currentFiltered);
 }
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
+$("#viewTimeline").addEventListener("click", () => { setView("timeline"); nav(); });
 // ---- Mobile floating controls ------------------------------------------
 // On mobile the page is one scroller, so the result bar scrolls away. Move the
 // sort/per-page/view cluster into a bottom sheet and reach it from a FAB.
@@ -2336,6 +2382,7 @@ function cmdkCandidates(q) {
       { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
       { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
       { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
+      { kind: "Tab", label: "🎬 Series", run: () => switchTab("series") },
       { kind: "Tab", label: "📝 Reviews", run: () => switchTab("reviews") },
       { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
       { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
@@ -2346,7 +2393,8 @@ function cmdkCandidates(q) {
   // Tabs
   const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
                 ["onOrder", "📦 On Order"], ["reviews", "📝 Reviews"], ["stats", "📊 Stats"],
-                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"], ["health", "🩺 Health"]];
+                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"], ["health", "🩺 Health"],
+                ["series", "🎬 Series"]];
   for (const [id, label] of tabs) {
     if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
   }

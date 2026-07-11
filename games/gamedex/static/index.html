@@ -35,6 +35,7 @@
     <button data-tab="games">🎮 All Games</button>
     <button data-tab="completed">🏆 Completed</button>
     <button data-tab="onOrder">📦 On Order</button>
+    <button data-tab="series">🎬 Series</button>
     <button data-tab="reviews">📝 Reviews</button>
     <button data-tab="stats">📊 Stats</button>
     <button data-tab="pick">🎲 Pick</button>
@@ -66,9 +67,11 @@
           <span class="viewtoggle">
             <button id="viewTable" title="Table view" aria-label="Table view">☰</button>
             <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view">▦</button>
+            <button id="viewTimeline" title="Timeline (completed games)" aria-label="Timeline view" hidden>⏳</button>
           </span>
         </div>
       </div>
+      <div class="views" id="views" hidden></div>
       <div class="tablewrap" id="tablewrap">
         <table id="table">
           <thead><tr id="thead"></tr></thead>
@@ -84,6 +87,8 @@
       <div class="home" id="home" hidden></div>
       <div class="reviews" id="reviews" hidden></div>
       <div class="health" id="health" hidden></div>
+      <div class="series" id="series" hidden></div>
+      <div class="timeline" id="timeline" hidden></div>
       <div class="pager" id="pager"></div>
     </section>
   </main>
@@ -130,6 +135,9 @@
   <script src="home.js"></script>
   <script src="reviews.js"></script>
   <script src="health.js"></script>
+  <script src="franchise.js"></script>
+  <script src="timeline.js"></script>
+  <script src="extras.js"></script>
   <script>
     // Installable + offline. The SW is opt-out-safe: if registration fails the
     // app just behaves as it always did.
