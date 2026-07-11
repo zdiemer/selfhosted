@@ -1468,6 +1468,15 @@ function setView(mode) {
 }
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
+// Wordmark = home: back to all games with nothing filtered/sorted.
+$("#brand").addEventListener("click", () => {
+  for (const t of TABS) tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
+  pickState.selector = "backlog"; pickState.param = ""; pickState.picked = null;
+  $("#search").value = "";
+  setFacets(false);
+  switchTab("games");
+  nav();
+});
 $("#facetToggle").addEventListener("click", () => setFacets(!$("#facets").classList.contains("open")));
 $("#facetBackdrop").addEventListener("click", () => setFacets(false));
 $("#gridsort").addEventListener("change", (e) => {
