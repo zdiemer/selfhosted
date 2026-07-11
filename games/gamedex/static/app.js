@@ -972,9 +972,20 @@ function facetLabel(col, value) {
 
 // ---- filtering ----------------------------------------------------------
 // Row matches free-text search.
+// The searchable text of a row, built once and kept. A WeakMap keyed on the row
+// object means a fresh spreadsheet invalidates it for free.
+const HAYSTACK = new WeakMap();
+function rowHaystack(row, cols) {
+  let hay = HAYSTACK.get(row);
+  if (hay === undefined) {
+    hay = cols.map((k) => row[k]).filter((v) => v != null).join(" ").toLowerCase();
+    HAYSTACK.set(row, hay);
+  }
+  return hay;
+}
 function matchesSearch(row, terms, cols) {
   if (!terms.length) return true;
-  const hay = cols.map((k) => row[k]).filter((v) => v != null).join(" ").toLowerCase();
+  const hay = rowHaystack(row, cols);
   return terms.every((t) => hay.includes(t));
 }
 // Row matches a facet selection (Set of value keys). OR within a facet; for
@@ -984,18 +995,35 @@ function matchesFacet(row, col, selected) {
   return rowFacetItems(row, col).some((it) => selected.has(it.key));
 }
 
-// Rows matching search + every facet EXCEPT `skipKey` (for facet counts) or all.
-function filterRows(skipKey) {
+// The search half of the filter, memoised. renderFacets() calls filterRows once
+// per facet column (20+ times) and the search term is the same for every one of
+// them, so scanning the sheet each time was pure waste.
+let _searchBase = { tab: null, q: null, rows: null };
+function searchedRows() {
   const st = tabState[activeTab];
+  if (_searchBase.tab === activeTab && _searchBase.q === st.search) return _searchBase.rows;
   const terms = st.search.toLowerCase().split(/\s+/).filter(Boolean);
   const sCols = searchCols();
+  const rows = terms.length
+    ? sheet().rows.filter((row) => matchesSearch(row, terms, sCols))
+    : sheet().rows;
+  _searchBase = { tab: activeTab, q: st.search, rows };
+  return rows;
+}
+const resetSearchCache = () => { _searchBase = { tab: null, q: null, rows: null }; };
+
+// Rows matching search + every facet EXCEPT `skipKey` (for facet counts) or all.
+// Callers never mutate the result (sortRows copies), so the no-facet case can
+// hand back the memoised array as-is.
+function filterRows(skipKey) {
+  const st = tabState[activeTab];
   const active = Object.keys(st.facets)
     .map((k) => [facetColByKey(k), st.facets[k]])
-    .filter(([c]) => c);
-  return sheet().rows.filter((row) => {
-    if (!matchesSearch(row, terms, sCols)) return false;
+    .filter(([c]) => c && c.key !== skipKey && st.facets[c.key] && st.facets[c.key].size);
+  const base = searchedRows();
+  if (!active.length) return base;
+  return base.filter((row) => {
     for (const [col, sel] of active) {
-      if (col.key === skipKey) continue;
       if (!matchesFacet(row, col, sel)) return false;
     }
     return true;
@@ -1069,6 +1097,65 @@ function renderFacets() {
     const filterKey = "__f_" + col.key;
     const showAll = st.expanded[filterKey + "_all"];
     let filterText = st.expanded[filterKey] || "";
+    // The options list is rebuilt on its own when you type in the filter box —
+    // never via renderFacets(). Re-rendering the whole sidebar recomputed the
+    // counts for every column (the expensive part), and worse, it destroyed the
+    // input you were typing into: the old code then "restored focus" by querying
+    // the DETACHED group element, which finds the old input and focuses nothing.
+    // Keeping the input alive means focus and caret survive for free.
+    const optionsBox = document.createElement("div");
+    optionsBox.className = "facet-options";
+
+    const paintOptions = () => {
+      optionsBox.innerHTML = "";
+      const q = (st.expanded[filterKey] || "").toLowerCase();
+      const shown = q ? values.filter((v) => v.label.toLowerCase().includes(q)) : values;
+      const seeAll = st.expanded[filterKey + "_all"];
+      const capped = !seeAll && !q && shown.length > FACET_CAP;
+      const visible = capped ? shown.slice(0, FACET_CAP) : shown;
+
+      for (const v of visible) {
+        const opt = document.createElement("label");
+        const isChecked = selected.has(v.key);
+        opt.className = "facet-opt" + (isChecked ? " checked" : "");
+        opt.innerHTML =
+          `<input type="checkbox" ${isChecked ? "checked" : ""}/>` +
+          `<span class="lbl" title="${escapeHtml(v.label)}">${escapeHtml(v.label)}</span>` +
+          `<span class="cnt">${v.count.toLocaleString()}</span>`;
+        opt.querySelector("input").onchange = () => {
+          const set = st.facets[col.key] || new Set();
+          if (set.has(v.key)) set.delete(v.key);
+          else set.add(v.key);
+          if (set.size) st.facets[col.key] = set;
+          else delete st.facets[col.key];
+          st.page = 1;
+          renderAll();
+          nav();
+        };
+        optionsBox.appendChild(opt);
+      }
+
+      if (!visible.length) {
+        const none = document.createElement("div");
+        none.className = "facet-none";
+        none.textContent = "No matches";
+        optionsBox.appendChild(none);
+      }
+      if (capped) {
+        const more = document.createElement("button");
+        more.className = "facet-more";
+        more.textContent = `Show ${shown.length - FACET_CAP} more…`;
+        more.onclick = () => { st.expanded[filterKey + "_all"] = true; paintOptions(); };
+        optionsBox.appendChild(more);
+      } else if (seeAll && shown.length > FACET_CAP && !q) {
+        const less = document.createElement("button");
+        less.className = "facet-more";
+        less.textContent = "Show less";
+        less.onclick = () => { st.expanded[filterKey + "_all"] = false; paintOptions(); };
+        optionsBox.appendChild(less);
+      }
+    };
+
     if (values.length > FACET_FILTER_THRESHOLD) {
       const fi = document.createElement("input");
       fi.className = "facet-filter";
@@ -1077,56 +1164,13 @@ function renderFacets() {
       fi.value = filterText;
       fi.oninput = () => {
         st.expanded[filterKey] = fi.value;
-        renderFacets();
-        // keep focus after re-render
-        const again = group.querySelector(".facet-filter");
-        if (again) { again.focus(); again.setSelectionRange(fi.value.length, fi.value.length); }
+        paintOptions();          // this group only; the input is never replaced
       };
       body.appendChild(fi);
     }
 
-    let shown = values;
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      shown = shown.filter((v) => v.label.toLowerCase().includes(q));
-    }
-    const capped = !showAll && !filterText && shown.length > FACET_CAP;
-    const visible = capped ? shown.slice(0, FACET_CAP) : shown;
-
-    for (const v of visible) {
-      const opt = document.createElement("label");
-      const isChecked = selected.has(v.key);
-      opt.className = "facet-opt" + (isChecked ? " checked" : "");
-      opt.innerHTML =
-        `<input type="checkbox" ${isChecked ? "checked" : ""}/>` +
-        `<span class="lbl" title="${escapeHtml(v.label)}">${escapeHtml(v.label)}</span>` +
-        `<span class="cnt">${v.count.toLocaleString()}</span>`;
-      opt.querySelector("input").onchange = () => {
-        const set = st.facets[col.key] || new Set();
-        if (set.has(v.key)) set.delete(v.key);
-        else set.add(v.key);
-        if (set.size) st.facets[col.key] = set;
-        else delete st.facets[col.key];
-        st.page = 1;
-        renderAll();
-        nav();
-      };
-      body.appendChild(opt);
-    }
-
-    if (capped) {
-      const more = document.createElement("button");
-      more.className = "facet-more";
-      more.textContent = `Show ${shown.length - FACET_CAP} more…`;
-      more.onclick = () => { st.expanded[filterKey + "_all"] = true; renderFacets(); };
-      body.appendChild(more);
-    } else if (showAll && shown.length > FACET_CAP && !filterText) {
-      const less = document.createElement("button");
-      less.className = "facet-more";
-      less.textContent = "Show less";
-      less.onclick = () => { st.expanded[filterKey + "_all"] = false; renderFacets(); };
-      body.appendChild(less);
-    }
+    paintOptions();
+    body.appendChild(optionsBox);
 
     group.appendChild(body);
     host.appendChild(group);
@@ -1696,6 +1740,7 @@ async function load() {
   DATA = payload;
   resetCollections();
   resetHealth();
+  resetSearchCache();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
   const en = DATA.meta && DATA.meta.enrichment;
   ENRICH_ENABLED = !!(en && en.enabled !== false);
@@ -2185,12 +2230,18 @@ function renderPicker() {
   }
 }
 
+let searchTimer = null;
 $("#search").addEventListener("input", (e) => {
   const st = tabState[activeTab];
   st.search = e.target.value;
   st.page = 1;
-  renderAll();
-  syncURL(false);          // replace so typing doesn't flood history
+  // Coalesce keystrokes. Filtering 14.7k rows and rebuilding every facet is
+  // fast now, but not fast enough to do it between two quick keypresses.
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    renderAll();
+    syncURL(false);        // replace so typing doesn't flood history
+  }, 140);
 });
 $("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { switchTab(e.target.dataset.tab); nav(); } });
 $("#clear").addEventListener("click", () => {
@@ -2481,6 +2532,7 @@ $("#refresh").addEventListener("click", async () => {
       if (dres.ok) {
         DATA = await dres.json();
         resetCollections();
+        resetSearchCache();
         const en = DATA.meta && DATA.meta.enrichment;
         ENRICH_ENABLED = !!(en && en.enabled !== false);
         setFreshness(); renderAll(); loadAllEnrichment();

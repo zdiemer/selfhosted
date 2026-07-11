@@ -285,6 +285,7 @@ a { color: var(--accent-2); }
 .facet-opt .cnt { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 .facet-opt.checked { background: var(--accent-soft); }
 .facet-opt.checked .lbl { color: var(--text); font-weight: 500; }
+.facet-none { color: var(--dim); font-size: 12px; padding: 6px 2px; }
 .facet-more { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 12px; padding: 5px 4px; }
 .facet-more:hover { text-decoration: underline; }
 
