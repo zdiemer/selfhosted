@@ -18,6 +18,31 @@ const hOrders = () => ((DATA.sheets.onOrder || {}).rows || []);
 
 const byStatus = (s) => hRows().filter((r) => r.playingStatus === s);
 const hToday = () => new Date();
+
+/* Rotate the recommendation shelves daily: the same picks all day, a fresh set
+   tomorrow. A date-seeded shuffle, not a random one — random would reshuffle on
+   every refresh, and a static top-N never changes at all. The salt lets each shelf
+   rotate independently so they don't all move in lockstep. */
+const _dayNum = () => { const d = hToday(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
+function _daySeed(salt) {
+  let h = 2166136261 ^ _dayNum();
+  for (let i = 0; i < salt.length; i++) h = Math.imul(h ^ salt.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+function _rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function dailyShuffle(arr, salt) {
+  const rnd = _rng(_daySeed(salt)), a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+const dailyPick = (arr, n, salt) => dailyShuffle(arr, salt).slice(0, n);
 const hMD = (d) => `-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const yearsAgo = (iso) => hToday().getFullYear() - +String(iso).slice(0, 4);
 const agoText = (n) => (n <= 0 ? "today" : n === 1 ? "1 year ago" : `${n} years ago`);
@@ -113,12 +138,16 @@ function suggestions(n = 6) {
     if (r.completed || r.playingStatus) return false;
     return typeof isCandidate === "function" ? isCandidate(r) : !!r.owned;
   });
-  // Best-rated first, then take at most two per rule so the reasons stay varied.
+  // Keep the quality — take the best-rated candidates — then rotate WITHIN that pool
+  // daily, so it's a fresh eight each day but never a dud. Two per rule keeps the
+  // reasons varied.
   const scored = pool
     .map((r) => ({ r, s: combinedRating(r) ?? 0 }))
-    .sort((a, b) => b.s - a.s);
+    .sort((a, b) => b.s - a.s)
+    .slice(0, Math.max(n * 6, 48));
+  const rotated = dailyShuffle(scored.map((x) => x.r), "picks");
   const used = new Map(), out = [];
-  for (const { r } of scored) {
+  for (const r of rotated) {
     if (out.length >= n) break;
     for (const rule of SUGGESTION_RULES) {
       const why = rule.test(r);
@@ -318,18 +347,19 @@ function renderHome() {
   const picks = suggestions(8);
 
   // Recommendations come from the server (IGDB's similar-games, crossed with
-  // your backlog); predictions are computed here from your own ratings.
-  const recRows = (RECS || []).map((rec) => {
+  // your backlog); predictions are computed here from your own ratings. Both
+  // rotate daily from their full pool rather than always showing the same top 18.
+  const recRows = dailyPick((RECS || []).map((rec) => {
     const row = hRows().find((r) => String(r._k || "") === rec.key);
     return row ? { row, rec } : null;
-  }).filter(Boolean).slice(0, 18);
+  }).filter(Boolean), 18, "recs");
 
-  const loved = hRows()
+  const loved = dailyPick(hRows()
     .filter((r) => !r.completed && !r.playingStatus && (typeof isCandidate !== "function" || isCandidate(r)))
     .map((r) => ({ r, p: typeof predictedCached === "function" ? predictedCached(r) : null }))
     .filter((x) => x.p && x.p.confidence >= 0.75)
     .sort((a, b) => b.p.score - a.p.score)
-    .slice(0, 18);
+    .slice(0, 60), 18, "loved");   // rotate 18 out of the top ~60 predicted
 
   host.innerHTML =
     heroSection(playing) +
