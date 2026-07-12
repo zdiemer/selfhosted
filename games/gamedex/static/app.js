@@ -112,6 +112,7 @@ const THC = {};                    // matchKey -> Thumby record
 const SXC = {};                    // matchKey -> Steam extras (Deck/Proton/SteamSpy)
 const SRC = {};                    // matchKey -> speedrun record
 const GDC = {};                    // matchKey -> StrategyWiki guide
+const COOPC = {};                  // matchKey -> Co-Optimus co-op details
 const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
@@ -445,6 +446,8 @@ function mapControlHtml(key) {
   // Steam extras are keyed on the appid, so mapping means pointing at the store page.
   if (ENRICH_SOURCES.includes("steamx")) rows.push({ id: "steamx", label: "Steam Deck / ProtonDB", ph: "store.steampowered.com/app/<appid>/" });
   if (ENRICH_SOURCES.includes("speedrun")) rows.push({ id: "speedrun", label: "speedrun.com", ph: "speedrun.com/<game>" });
+  if (ENRICH_SOURCES.includes("cooptimus") && COOP_PLATFORMS.has((drawerRow || {}).platform))
+    rows.push({ id: "cooptimus", label: "Co-Optimus", ph: "co-optimus.com/game/<id>/..." });
   if (ENRICH_SOURCES.includes("guides")) rows.push({ id: "guides", label: "StrategyWiki guide", ph: "strategywiki.org/wiki/<Page>" });
   return `<details class="map-menu"><summary>${icon("i-edit", 13)} Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
@@ -653,6 +656,26 @@ function thumbyHtml(key) {
 }
 
 // Steam extras — all keyed on the appid, so if they're here they're right.
+/* Co-op. IGDB says "co-operative" and stops; this says whether that's two people
+   on one sofa or eight strangers online — the only part that decides what you
+   actually play tonight. */
+function coopHtml(key) {
+  const c = COOPC[key];
+  if (!c) return "";
+  const rows = [];
+  if (c.localPlayers > 1) {
+    rows.push(`<div class="hltb-row"><span>On one screen</span><b class="good">${c.localPlayers} players${c.splitscreen ? " · splitscreen" : ""}</b></div>`);
+  }
+  if (c.onlinePlayers > 1) rows.push(`<div class="hltb-row"><span>Online</span><b>${c.onlinePlayers} players</b></div>`);
+  if (c.lanPlayers > 1) rows.push(`<div class="hltb-row"><span>LAN</span><b>${c.lanPlayers} players</b></div>`);
+  if (c.campaignCoop) rows.push(`<div class="hltb-row"><span>Campaign</span><b class="good">Playable co-op</b></div>`);
+  if (c.dropIn) rows.push(`<div class="hltb-row"><span>Drop-in</span><b>Join mid-game</b></div>`);
+  if (!rows.length) return "";
+  const link = c.url
+    ? `<a class="hltb-link" href="${escapeHtml(c.url)}" target="_blank" rel="noopener">View on Co-Optimus ↗</a>` : "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-star", 15)} Co-op (Co-Optimus)</div>${rows.join("")}${link}</div>`;
+}
+
 function steamxHtml(key) {
   const x = SXC[key];
   if (!x) return "";
@@ -749,7 +772,7 @@ function renderIgdbSection(key, el, status, detail) {
          <div class="skel skel-line short"></div>`;
   }
   el.innerHTML = content + hltbHtml(HLTBC[key]) + speedrunHtml(key) + metacriticHtml(key)
-    + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
+    + coopHtml(key) + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
     + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
 
   el.querySelectorAll(".map-src").forEach((rowEl) => {
@@ -825,6 +848,7 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     if ("steamx" in j) SXC[key] = j.steamx;
     if ("speedrun" in j) SRC[key] = j.speedrun;
     if ("guides" in j) GDC[key] = j.guides;
+    if ("cooptimus" in j) COOPC[key] = j.cooptimus;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -895,6 +919,11 @@ const sheet = () => DATA.sheets[activeTab];
 const columns = () => sheet().columns;
 const searchCols = () => columns().filter((c) => c.search).map((c) => c.key);
 const colByKey = (key) => columns().find((c) => c.key === key);
+
+// The 13 platforms Co-Optimus covers (see src/cooptimus.py).
+const COOP_PLATFORMS = new Set(["Nintendo Switch", "Nintendo Wii U", "PC", "PlayStation 2",
+  "PlayStation 3", "PlayStation 4", "PlayStation 5", "Nintendo Wii", "WiiWare", "Xbox",
+  "Xbox 360", "Xbox One", "Xbox Series X|S"]);
 
 const titleCase = (s) => String(s).replace(/\b[a-z]/g, (c) => c.toUpperCase());
 

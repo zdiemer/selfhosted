@@ -102,6 +102,8 @@ spec:
               value: {{ .Values.igdb.speedrun | quote }}
             - name: GUIDES_ENABLED
               value: {{ .Values.igdb.guides | quote }}
+            - name: COOPTIMUS_ENABLED
+              value: {{ .Values.igdb.cooptimus | quote }}
             - name: GAMESPOT_API_KEY
               valueFrom:
                 secretKeyRef:

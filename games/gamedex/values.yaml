@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "1.7.3"
+  tag: "1.8.3"
   pullPolicy: IfNotPresent
 
 service:
@@ -70,6 +70,8 @@ igdb:
   speedrun: true
   # StrategyWiki walkthrough links (2 req/s). GameFAQs is Cloudflare-blocked.
   guides: true
+  # Co-Optimus: local/online player counts, splitscreen, campaign co-op.
+  cooptimus: true
 
 # GameSpot for the fallback chain (apiKey goes in values.local.yaml).
 # DISABLED: the API now 301s to a Cloudflare-protected page (403 "Just a

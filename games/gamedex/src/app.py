@@ -38,6 +38,7 @@ from igdb import IgdbClient
 from metacritic import MetacriticClient
 from poller import DataStore
 import recommend
+from cooptimus import CooptimusClient
 from guides import GuideClient
 from speedrun import SpeedrunClient
 from steamx import SteamExtraClient
@@ -87,6 +88,9 @@ if _on("SPEEDRUN_ENABLED"):
     _secondary["speedrun"] = SpeedrunClient()      # world-record times
 if _on("GUIDES_ENABLED"):
     _secondary["guides"] = GuideClient()           # StrategyWiki walkthroughs
+if _on("COOPTIMUS_ENABLED"):
+    # IGDB says "co-operative"; Co-Optimus says how many, on one sofa or online.
+    _secondary["cooptimus"] = CooptimusClient()
 # Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
 # off by default — its API is Cloudflare-blocked (see fallback.py).
 _fallback = (
@@ -230,7 +234,8 @@ def enrichment_detail(key: str):
             "thumby": enricher.get_secondary("thumby", key),
             "steamx": enricher.get_secondary("steamx", key),
             "speedrun": enricher.get_secondary("speedrun", key),
-            "guides": enricher.get_secondary("guides", key)}
+            "guides": enricher.get_secondary("guides", key),
+            "cooptimus": enricher.get_secondary("cooptimus", key)}
 
 
 @app.get("/api/enrichment/stats")

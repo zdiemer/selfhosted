@@ -78,6 +78,13 @@ _SECONDARY_LIGHT = {
     "vndb": lambda d: {"vnRating": d.get("rating"), "vnHours": d.get("hours"),
                        "vnCover": d.get("cover"), "vnUrl": d.get("url")},
     "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url")},
+    # Enough to filter and sort on. "Can we play this together, and how" is a
+    # question about numbers, not prose.
+    "cooptimus": lambda d: {
+        "coopLocal": d.get("localPlayers"), "coopOnline": d.get("onlinePlayers"),
+        "coopSplit": d.get("splitscreen"), "coopCampaign": d.get("campaignCoop"),
+        "coopDropIn": d.get("dropIn"), "coopUrl": d.get("url"),
+    },
     "thumby": lambda d: {"thumbyUrl": d.get("url"), "thumbyCover": d.get("cover")},
     "steamx": lambda d: {"deck": d.get("deck"), "protonTier": d.get("protonTier"),
                          "steamReview": d.get("reviewScore"), "owners": d.get("owners")},
@@ -88,6 +95,13 @@ _SECONDARY_LIGHT = {
 # Not every source applies to every game. These gates keep the queues honest:
 # an arcade scraper has nothing to say about a Switch game, and asking anyway
 # would just burn rate limit and write thousands of no_match rows.
+# The 13 platforms Co-Optimus knows about (see cooptimus.PLATFORMS).
+_COOP_PLATFORMS = {
+    "Nintendo Switch", "Nintendo Wii U", "PC", "PlayStation 2", "PlayStation 3",
+    "PlayStation 4", "PlayStation 5", "Nintendo Wii", "WiiWare", "Xbox",
+    "Xbox 360", "Xbox One", "Xbox Series X|S",
+}
+
 _SOURCE_GATE = {
     "gameye": lambda m: m.get("owned") and (m.get("format") or "").lower() == "physical",
     "arcadedb": lambda m: bool(m.get("mameRomset")),
@@ -97,6 +111,9 @@ _SOURCE_GATE = {
     # resolved, and gates run at queue time. The worker drops the ones that turn
     # out to have no appid.
     "steamx": lambda m: m.get("platform") in ("PC", "Mac", "Linux"),
+    # Co-Optimus only covers modern consoles and PC — searching an SNES game there
+    # is a request that can only ever come back empty.
+    "cooptimus": lambda m: m.get("platform") in _COOP_PLATFORMS,
 }
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
