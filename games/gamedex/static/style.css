@@ -2477,21 +2477,36 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    pinned under them. The segment is absolute so a run is exactly as wide as its
    spines — narrow runs clip the label (tooltip has the full name) instead of bulging. */
 .sh-run { position:relative; display:flex; flex-direction:column; justify-content:flex-end;
-  padding-bottom:26px; min-width:0; }
+  padding-bottom:26px; flex:0 0 auto; }   /* never shrink — spines are fixed width */
 .sh-run + .sh-run { margin-left:7px; }
-.sh-spines { display:flex; align-items:flex-end; gap:2px; }
-.sh-seg { position:absolute; left:0; right:0; bottom:0; height:22px; overflow:hidden;
+.sh-spines { display:flex; align-items:flex-end; gap:2px; flex:0 0 auto; }
+.sh-seg { position:absolute; left:0; right:0; bottom:0; height:22px; cursor:default;
   display:flex; align-items:center; justify-content:center; gap:6px; padding:0 7px;
   border-radius:3px; border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, transparent),
-    color-mix(in srgb, var(--accent) 9%, transparent)); }
+    color-mix(in srgb, var(--accent) 9%, transparent)); transition:border-color .15s ease; }
 .sh-seg.head { border-color:color-mix(in srgb, var(--accent) 50%, transparent);
   background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 30%, transparent),
     color-mix(in srgb, var(--accent) 12%, transparent)); }
-.sh-seg span { font:700 9.5px/1 var(--font); letter-spacing:.1em; text-transform:uppercase;
+.sh-seg span { min-width:0; font:700 9.5px/1 var(--font); letter-spacing:.1em; text-transform:uppercase;
   color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sh-seg em { flex:0 0 auto; font:700 9px/1 var(--font); font-style:normal; color:var(--accent);
   font-variant-numeric:tabular-nums; }
+/* The full platform name on hover — the segment clips its label, this doesn't. */
+.sh-seg:hover { border-color:var(--accent); z-index:6; }
+.sh-seg::after { content:attr(data-full); position:absolute; bottom:calc(100% + 8px); left:50%;
+  transform:translateX(-50%) translateY(3px); white-space:nowrap; pointer-events:none;
+  padding:5px 9px; border-radius:7px; background:var(--tooltip-bg, #14141a);
+  color:#f4f4f7; font:700 10px/1 var(--font); letter-spacing:.06em; text-transform:uppercase;
+  border:1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow:0 10px 26px -10px rgba(0,0,0,.7); opacity:0; transition:opacity .14s ease, transform .14s ease; }
+.sh-seg::before { content:""; position:absolute; bottom:calc(100% + 3px); left:50%;
+  transform:translateX(-50%); border:5px solid transparent; border-top-color:#14141a;
+  pointer-events:none; opacity:0; transition:opacity .14s ease; z-index:1; }
+.sh-seg:hover::after { opacity:1; transform:translateX(-50%) translateY(0); }
+.sh-seg:hover::before { opacity:1; }
+.sp-stripe { position:absolute; left:0; top:0; bottom:0; width:4px; z-index:1;
+  box-shadow:inset -1px 0 2px rgba(0,0,0,.28); }
 
 .sh-stage { position:relative; border:1px solid var(--border); border-radius:16px;
   background:radial-gradient(120% 30% at 50% 2%, rgba(124,92,255,.09), transparent 60%), var(--surface);
@@ -2501,7 +2516,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-board { position:relative; }
 .sh-board + .sh-board { margin-top:18px; }
 
-.sh-row { display:flex; align-items:flex-end; justify-content:center; gap:0;
+.sh-row { display:flex; align-items:flex-end; justify-content:flex-start; gap:0;
   padding:0 10px; position:relative; }
 .sh-plank { height:14px; margin:0 4px; border-radius:2px;
   background:linear-gradient(180deg, #54402E, #2E2118);
@@ -2603,8 +2618,6 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-case .f-left.wrapped { padding:0; }
 .sh-case .f-left.std { flex-direction:column; align-items:stretch; justify-content:flex-start;
   padding:0; box-shadow:inset -2px 0 7px rgba(0,0,0,.32), inset 1px 0 0 rgba(255,255,255,.14); }
-.sh-case .f-left.std .sp-band { font-size:9px; }
-.sh-case .f-left.std .sp-name { font-size:11px; }
 
 /* no art anywhere: a plain case with the title on it, and nothing pretending otherwise */
 .sh-blank { display:flex; flex-direction:column; align-items:center; justify-content:center;

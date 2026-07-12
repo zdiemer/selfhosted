@@ -34,34 +34,41 @@ const faceUrl = (k, f, v) =>
  * automatically below. Brand colours are facts; the short label stands in for the
  * logo we can't reproduce. Anything not in the table falls back to a neutral spine
  * carrying the platform name, so every game reads as a real object on the shelf. */
+// Each entry paints that console's real retail spine as closely as styled text can:
+// accurate brand colour, the band where the system puts it, an edge stripe where the
+// case has one (the PS2's blue spine, the Xbox green rail), and the wordmark set in
+// that family's style. `mark` is extra CSS for the wordmark; `stripe` an outer-edge bar.
+const PS_MARK   = "text-transform:none;font-weight:600;letter-spacing:.01em;";
+const XBOX_MARK = "font-weight:800;letter-spacing:.18em;";
+const WII_MARK  = "text-transform:none;font-weight:800;letter-spacing:.02em;";
 const SPINE_LOGOS = {
-  gameboy:  { base:"#9a93b4", band:"#2c2a45", bandInk:"#e8e6f2", ink:"#1b1a2a", label:"GAME BOY" },
-  gbc:      { base:"#5b4fa6", band:"#2a2170", bandInk:"#ffd23f", ink:"#ffffff", label:"GBC" },
-  gba:      { base:"#3a2e86", band:"#1c1550", bandInk:"#8b7bf0", ink:"#ffffff", label:"GBA" },
-  ds:       { base:"#eef0f4", band:"#0a6bd6", bandInk:"#ffffff", ink:"#16181d", label:"DS" },
-  n3ds:     { base:"#eef0f4", band:"#c8102e", bandInk:"#ffffff", ink:"#16181d", label:"3DS" },
-  nes:      { base:"#c3c3cb", band:"#242427", bandInk:"#e6352b", ink:"#16181d", label:"NES" },
-  snes:     { base:"#c9cad4", band:"#4f3f9a", bandInk:"#ffffff", ink:"#16181d", label:"SNES" },
-  n64:      { base:"#1b1b21", band:"#c8102e", bandInk:"#ffffff", ink:"#f2f2f5", label:"N64" },
-  gamecube: { base:"#463c85", band:"#221b4e", bandInk:"#b9b0e8", ink:"#ffffff", label:"GAMECUBE" },
-  wii:      { base:"#eef1f5", band:"#0a9bd6", bandInk:"#ffffff", ink:"#16181d", label:"Wii" },
-  wiiu:     { base:"#eef1f5", band:"#0a86c4", bandInk:"#ffffff", ink:"#16181d", label:"Wii U" },
-  switch:   { base:"#f3f4f6", band:"#e60012", bandInk:"#ffffff", ink:"#16181d", label:"SWITCH" },
-  switch2:  { base:"#f3f4f6", band:"#d1001c", bandInk:"#ffffff", ink:"#16181d", label:"SWITCH 2" },
-  ps1:      { base:"#1b1b20", band:"#3a3a44", bandInk:"#e9e9ef", ink:"#e9e9ef", label:"PS one" },
-  ps2:      { base:"#121219", band:"#1a3fd4", bandInk:"#ffffff", ink:"#eef0f6", label:"PS2" },
-  ps3:      { base:"#0e0e13", band:"#2a2a33", bandInk:"#e9e9ef", ink:"#eef0f6", label:"PS3" },
-  ps4:      { base:"#eef1f6", band:"#003791", bandInk:"#ffffff", ink:"#16181d", label:"PS4" },
-  ps5:      { base:"#f5f6f9", band:"#1a1a1f", bandInk:"#ffffff", ink:"#16181d", label:"PS5" },
-  psp:      { base:"#141418", band:"#2a2a33", bandInk:"#e9e9ef", ink:"#eef0f6", label:"PSP" },
-  vita:     { base:"#141418", band:"#0a6bd6", bandInk:"#ffffff", ink:"#eef0f6", label:"PS VITA" },
-  xbox:     { base:"#0f7d0f", band:"#0a5a0a", bandInk:"#eafff0", ink:"#ffffff", label:"XBOX" },
-  xbox360:  { base:"#eef2ee", band:"#0f7d0f", bandInk:"#ffffff", ink:"#16181d", label:"XBOX 360" },
-  xboxone:  { base:"#17191d", band:"#0f7d0f", bandInk:"#ffffff", ink:"#eef0f6", label:"XBOX ONE" },
-  xboxsx:   { base:"#0e0f12", band:"#0f7d0f", bandInk:"#ffffff", ink:"#eef0f6", label:"SERIES X|S" },
-  genesis:  { base:"#1a1a1e", band:"#c81d25", bandInk:"#ffffff", ink:"#f2f2f5", label:"GENESIS" },
-  dreamcast:{ base:"#eef1f5", band:"#e35205", bandInk:"#ffffff", ink:"#16181d", label:"DREAMCAST" },
-  saturn:   { base:"#141418", band:"#8a9099", bandInk:"#16181d", ink:"#eef0f6", label:"SATURN" },
+  gameboy:  { base:"linear-gradient(90deg,#8f88ab,#a49dbf)", band:"#211d38", bandInk:"#e7e3f4", ink:"#1a182a", label:"GAME BOY", mark:"font-size:7.5px;" },
+  gbc:      { base:"linear-gradient(90deg,#574fa4,#6a61b6)", band:"#241a66", bandInk:"#ffd23f", ink:"#ffffff", label:"GAME BOY COLOR", mark:"font-size:7px;letter-spacing:.04em;" },
+  gba:      { base:"linear-gradient(90deg,#33287a,#40338c)", band:"#160f4a", bandInk:"#9c8ef6", ink:"#ffffff", label:"GAME BOY ADVANCE", mark:"font-size:7px;letter-spacing:.04em;" },
+  ds:       { base:"linear-gradient(90deg,#eceef2,#f6f7fa)", band:"#c6c9d1", bandInk:"#16181d", ink:"#16181d", label:"NINTENDO DS", mark:"font-size:7.5px;" },
+  n3ds:     { base:"linear-gradient(90deg,#eceef2,#f6f7fa)", band:"#d21a24", bandInk:"#ffffff", ink:"#16181d", label:"NINTENDO 3DS", mark:"font-size:7.5px;" },
+  nes:      { base:"linear-gradient(90deg,#bfbfc8,#cdcdd5)", band:"#1c1c1f", bandInk:"#e6352b", ink:"#16181d", label:"NES", mark:"letter-spacing:.12em;" },
+  snes:     { base:"linear-gradient(90deg,#c5c6d0,#d2d3db)", band:"#4b3f8f", bandInk:"#ffffff", ink:"#1b1c22", label:"SUPER NINTENDO", mark:"font-size:7px;" },
+  n64:      { base:"linear-gradient(90deg,#141416,#202024)", band:"#141416", bandInk:"#f2f2f5", ink:"#f2f2f5", label:"NINTENDO 64", mark:"font-size:7.5px;" },
+  gamecube: { base:"linear-gradient(90deg,#352a72,#463a8c)", band:"#1e1650", bandInk:"#c9c2f0", ink:"#ffffff", label:"GAMECUBE" },
+  wii:      { base:"linear-gradient(90deg,#eef1f5,#f7f9fb)", band:"#12a5db", bandInk:"#ffffff", ink:"#16181d", label:"Wii", mark:WII_MARK },
+  wiiu:     { base:"linear-gradient(90deg,#eef1f5,#f7f9fb)", band:"#0e93cc", bandInk:"#ffffff", ink:"#16181d", label:"Wii U", mark:WII_MARK },
+  switch:   { base:"linear-gradient(90deg,#dd0018,#f01b2c)", band:"#c00010", bandInk:"#ffffff", ink:"#ffffff", label:"SWITCH", mark:"letter-spacing:.14em;" },
+  switch2:  { base:"linear-gradient(90deg,#d1001a,#e6142c)", band:"#b3000f", bandInk:"#ffffff", ink:"#ffffff", label:"SWITCH 2", mark:"letter-spacing:.1em;" },
+  ps1:      { base:"linear-gradient(90deg,#121318,#1c1d24)", band:"#121318", bandInk:"#f2f2f5", ink:"#e9e9ef", label:"PlayStation", mark:PS_MARK },
+  ps2:      { base:"linear-gradient(90deg,#0b0b12,#15161e)", band:"#0b0b12", bandInk:"#dfe4ff", ink:"#eef0f6", label:"PlayStation 2", mark:PS_MARK+"font-size:7.5px;", stripe:"#0e39c4" },
+  ps3:      { base:"linear-gradient(90deg,#0d0d12,#17171e)", band:"#0d0d12", bandInk:"#e8e8ee", ink:"#eef0f6", label:"PS3", mark:"font-weight:800;" },
+  ps4:      { base:"linear-gradient(90deg,#0e1116,#181c24)", band:"#0064d2", bandInk:"#ffffff", ink:"#eef0f6", label:"PS4", mark:"font-weight:800;" },
+  ps5:      { base:"linear-gradient(90deg,#f4f6f9,#ffffff)", band:"#101014", bandInk:"#ffffff", ink:"#16181d", label:"PS5", mark:"font-weight:800;" },
+  psp:      { base:"linear-gradient(90deg,#101015,#1a1a20)", band:"#101015", bandInk:"#e8e8ee", ink:"#eef0f6", label:"PSP", mark:"font-weight:800;letter-spacing:.1em;" },
+  vita:     { base:"linear-gradient(90deg,#101015,#1a1a20)", band:"#101015", bandInk:"#e8e8ee", ink:"#eef0f6", label:"PS VITA", mark:"font-weight:700;letter-spacing:.06em;" },
+  xbox:     { base:"linear-gradient(90deg,#107c10,#149314)", band:"#0a5c0a", bandInk:"#eafff0", ink:"#ffffff", label:"XBOX", mark:XBOX_MARK },
+  xbox360:  { base:"linear-gradient(90deg,#eef2ee,#f8faf8)", band:"#107c10", bandInk:"#ffffff", ink:"#16181d", label:"XBOX 360", mark:XBOX_MARK },
+  xboxone:  { base:"linear-gradient(90deg,#15171b,#1f2228)", band:"#107c10", bandInk:"#ffffff", ink:"#eef0f6", label:"XBOX ONE", mark:XBOX_MARK },
+  xboxsx:   { base:"linear-gradient(90deg,#0c0d10,#16181d)", band:"#107c10", bandInk:"#ffffff", ink:"#eef0f6", label:"XBOX SERIES", mark:XBOX_MARK },
+  genesis:  { base:"linear-gradient(90deg,#141416,#202024)", band:"#c1121f", bandInk:"#ffffff", ink:"#f2f2f5", label:"GENESIS", mark:"letter-spacing:.1em;" },
+  dreamcast:{ base:"linear-gradient(90deg,#eef1f5,#f7f9fb)", band:"#e35205", bandInk:"#ffffff", ink:"#16181d", label:"DREAMCAST", mark:"font-size:7.5px;" },
+  saturn:   { base:"linear-gradient(90deg,#101014,#1a1a20)", band:"#101014", bandInk:"#e8e8ee", ink:"#eef0f6", label:"SEGA SATURN", mark:"font-size:7.5px;letter-spacing:.06em;" },
 };
 const PLAT_KEY = {
   "nintendo switch":"switch", "switch":"switch",
@@ -97,12 +104,45 @@ const spineStyle = (p) =>
   { base:"#26262d", band:"#3a3a45", bandInk:"rgba(255,255,255,.82)", ink:"#f2f2f5",
     label:(p || "Unknown").toUpperCase() };
 
+// A starting title size that lands close, so nothing paints hugely-clipped: the title
+// runs down the spine, so it's the case HEIGHT the text has to fit in. shFitName then
+// trims the last pixel of overflow once the element is measured for real.
+function shTitlePx(t, hmm) {
+  const avail = shPx(hmm) * 0.6;                 // the track left for the title after the band
+  const px = avail / (Math.max((t || "").length, 1) * 0.52);  // ~0.52em per rotated latin glyph
+  return Math.max(6, Math.min(10.5, Math.round(px * 2) / 2));
+}
+
 // The inner markup for a standard spine — shared by the flat shelf spine and the 3D
 // case's left wall, so a pulled game's spine matches the one it came from.
 function stdSpineHtml(g) {
   const s = spineStyle(g.p);
-  return `<span class="sp-band" style="background:${s.band};color:${s.bandInk}">${escapeHtml(s.label)}</span>` +
-         `<span class="sp-name" style="color:${s.ink}">${escapeHtml(g.t)}</span>`;
+  const stripe = s.stripe ? `<i class="sp-stripe" style="background:${s.stripe}"></i>` : "";
+  return stripe +
+    `<span class="sp-band" style="background:${s.band};color:${s.bandInk};${s.mark || ""}">${escapeHtml(s.label)}</span>` +
+    `<span class="sp-name" style="color:${s.ink};font-size:${shTitlePx(g.t, g.case.h)}px">${escapeHtml(g.t)}</span>`;
+}
+
+// Shrink a rendered title until it no longer overflows its spine. Titles run vertically,
+// so overflow is along the block (scroll) axis. Cheap, and only ever run on spines the
+// viewer is about to see (see shFitObs), so 1,800 spines cost nothing up front.
+function shFitName(spine) {
+  const nm = spine.querySelector(".sp-name");
+  if (!nm) return;
+  let fs = parseFloat(nm.style.fontSize) || parseFloat(getComputedStyle(nm).fontSize) || 9;
+  let guard = 0;
+  while (nm.scrollHeight > nm.clientHeight + 1 && fs > 5.5 && guard++ < 16) {
+    fs -= 0.5;
+    nm.style.fontSize = fs.toFixed(1) + "px";
+  }
+}
+let shFitObs = null;
+function shObserveFit(root) {
+  if (shFitObs) shFitObs.disconnect();
+  shFitObs = new IntersectionObserver((ents) => {
+    for (const e of ents) if (e.isIntersecting) { shFitName(e.target); shFitObs.unobserve(e.target); }
+  }, { rootMargin: "300px" });
+  root.querySelectorAll(".sh-spine.std").forEach((el) => shFitObs.observe(el));
 }
 
 async function loadShelf() {
@@ -154,7 +194,16 @@ async function renderShelf() {
   q.oninput = () => { SHELF.filter = q.value; paintShelfRows(); };
   document.getElementById("shelfplat").onchange = (e) => { SHELF.plat = e.target.value; paintShelfRows(); };
   document.getElementById("shVeil").onclick = shelfClose;
+  window.addEventListener("resize", shOnResize);   // dedup'd — re-pack boards to new width
   paintShelfRows();
+}
+
+// The board width depends on the viewport, so re-pack when it changes. Debounced, and a
+// no-op once the shelf is gone from the DOM.
+let shResizeT = 0;
+function shOnResize() {
+  clearTimeout(shResizeT);
+  shResizeT = setTimeout(() => { if (document.getElementById("shRows")) paintShelfRows(); }, 160);
 }
 
 /* ---------- the rows of spines ---------- */
@@ -194,14 +243,26 @@ function paintShelfRows() {
   // One CONTINUOUS shelf. Games flow across boards regardless of platform, and each
   // board highlights the platform SEGMENTS running through it — so a platform that
   // spans three boards is labelled on all three, and the shelf reads as one run.
-  const PER_BOARD = 40;
   const idxOf = new Map(SHELF.games.map((g, i) => [g, i]));
   const total = {};
   for (const g of games) total[g.p] = (total[g.p] || 0) + 1;
   const started = new Set();
 
+  // Pack each board to the shelf's real WIDTH rather than a fixed count. Fixed counts
+  // let a wide board out-measure the viewport; flexbox then shrinks the runs while the
+  // fixed-width spines inside can't shrink, so they spill over and platforms overlap.
+  // Widths here mirror the CSS: 2px between spines, 7px between platform runs, 20px pad.
+  const avail = Math.max((rows.clientWidth || 1100) - 20, 320);
   const boards = [];
-  for (let i = 0; i < games.length; i += PER_BOARD) boards.push(games.slice(i, i + PER_BOARD));
+  let cur = [], curW = 0, curPlat = null;
+  for (const g of games) {
+    const w = shPx(g.case.d) + 2;
+    const gap = curPlat !== null && curPlat !== g.p ? 7 : 0;
+    if (cur.length && curW + gap + w > avail) { boards.push(cur); cur = []; curW = 0; curPlat = null; }
+    const gap2 = curPlat !== null && curPlat !== g.p ? 7 : 0;
+    cur.push(g); curW += gap2 + w; curPlat = g.p;
+  }
+  if (cur.length) boards.push(cur);
 
   rows.innerHTML = boards.map((board, bi) => {
     // Consecutive same-platform spines form a labelled run within this board.
@@ -219,7 +280,7 @@ function paintShelfRows() {
           const name = escapeHtml(run.p || "Unknown");
           return `<div class="sh-run">
             <div class="sh-spines">${run.games.map((g) => shSpineHtml(g, idxOf.get(g))).join("")}</div>
-            <div class="sh-seg${first ? " head" : ""}" title="${name}${first ? "" : " (continued)"}">
+            <div class="sh-seg${first ? " head" : ""}" data-full="${name} · ${total[run.p]}${first ? "" : " · continued"}">
               <span>${name}</span>${first ? `<em>${total[run.p]}</em>` : ""}
             </div>
           </div>`;
@@ -233,6 +294,7 @@ function paintShelfRows() {
     const b = e.target.closest(".sh-spine");
     if (b) shelfOpen(+b.dataset.i);
   };
+  shObserveFit(rows);
 }
 
 /* ---------- the one case ---------- */
