@@ -27,7 +27,7 @@ import threading
 import time
 
 import requests
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 
 log = logging.getLogger("gamedex.shelf")
 
@@ -96,6 +96,10 @@ FACES = ("front", "spine", "back")
 # box that was cut wrong the first time. (v3: on rotated templates the back turns the
 # opposite way from the front, to cancel the 3D mirror on the back face.)
 CUT_VERSION = "3"
+
+# Bump when the UPLOAD slicing changes, to re-cut stored uploads from originals.
+# (v2: honour EXIF orientation.)
+UPLOAD_CUT_VERSION = "2"
 
 # Cover Project's print templates, in millimetres: back | spine | front | height.
 # Kept in step with tools/cp_wrap.py, which is what chose the template offline.
@@ -193,6 +197,30 @@ class Shelf:
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
         self._invalidate_stale_cache()
+        self._recut_uploads_if_stale()
+
+    def _recut_uploads_if_stale(self) -> None:
+        """When the upload SLICING changes, re-cut every upload from its stored original
+        so already-broken art fixes itself on deploy. (v2: honour EXIF orientation — a
+        3DS wrap uploaded from a phone was sliced sideways into thin strips.)"""
+        stamp = self._udir / ".upload-cut-version"
+        if stamp.exists() and stamp.read_text().strip() == UPLOAD_CUT_VERSION:
+            return
+        n = 0
+        for key, meta in list(self._uploads.items()):
+            orig = self._udir / f"{key.replace('/', '_')}.orig"
+            if not orig.exists():
+                continue
+            try:
+                self.set_cover(key, orig.read_bytes(), kind=meta.get("kind", "wrap"),
+                               platform="", rotate=meta.get("rotate", 0),
+                               x1=meta.get("x1"), x2=meta.get("x2"), case=meta.get("case"))
+                n += 1
+            except Exception as e:
+                log.warning("re-cut upload %s: %s", key, e)
+        stamp.write_text(UPLOAD_CUT_VERSION)
+        if n:
+            log.info("shelf: re-cut %d uploads (v%s)", n, UPLOAD_CUT_VERSION)
 
     def _load_uploads(self) -> dict:
         try:
@@ -362,7 +390,14 @@ class Shelf:
         rotation the Cover Project scans do."""
         if kind not in ("wrap", "front"):
             raise ValueError("kind must be 'wrap' or 'front'")
-        im = Image.open(io.BytesIO(data)).convert("RGB")
+        im = Image.open(io.BytesIO(data))
+        # Honour EXIF orientation. A phone photo (or a re-saved scan) can carry an
+        # orientation flag that the browser applies automatically — so the editor showed
+        # it upright and the guides were placed on that — but PIL does NOT apply it by
+        # default, so the server was slicing the raw sideways pixels into thin strips
+        # (the "3DS box wrapped vertically" bug). Bake the orientation in, then the
+        # server and the editor agree.
+        im = ImageOps.exif_transpose(im).convert("RGB")
         if max(im.size) > 2400:                            # sanity cap before any work
             s = 2400 / max(im.size)
             im = im.resize((round(im.width * s), round(im.height * s)), Image.LANCZOS)

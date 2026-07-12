@@ -206,43 +206,44 @@ function heroSection(playing) {
       </div>
       ${dots}
     </div>
+    ${playing.length > 1 ? `<div class="h-countdown"><span></span></div>` : ""}
   </section>`;
 }
 
-// Releases and completions that share today's calendar date.
+// Releases, completions, purchases and additions that share today's calendar date.
 function onThisDay() {
   const md = hMD(hToday());
-  const rel = hRows()
-    .filter((r) => typeof r.releaseDate === "string" && r.releaseDate.slice(4) === md)
-    .sort((a, b) => (combinedRating(b) ?? 0) - (combinedRating(a) ?? 0));
-  const done = hCompleted()
-    .filter((r) => typeof r.date === "string" && r.date.slice(4) === md)
-    .sort(byDateDesc("date"));
-  if (!rel.length && !done.length) return "";
+  const onMd = (v) => typeof v === "string" && v.slice(4) === md;
 
-  const relCards = rel.slice(0, 12).map((r) =>
-    homeCard(r, "games", `Released ${agoText(yearsAgo(r.releaseDate))}`));
-  const doneCards = done.slice(0, 12).map((r) =>
-    homeCard(r, "completed", `You finished it ${agoText(yearsAgo(r.date))}`));
+  const rel = hRows().filter((r) => onMd(r.releaseDate))
+    .sort((a, b) => (combinedRating(b) ?? 0) - (combinedRating(a) ?? 0));
+  const done = hCompleted().filter((r) => onMd(r.date)).sort(byDateDesc("date"));
+  const bought = hRows().filter((r) => onMd(r.datePurchased)).sort(byDateDesc("datePurchased"));
+  const added = hRows().filter((r) => onMd(r.dateAdded)).sort(byDateDesc("dateAdded"));
+  if (!rel.length && !done.length && !bought.length && !added.length) return "";
+
+  const cards = (rows, sheet, dateKey, verb) => rows.slice(0, 12).map((r) =>
+    homeCard(r, sheet, `${verb} ${agoText(yearsAgo(r[dateKey]))}`));
 
   const today = hToday().toLocaleDateString(undefined, { month: "long", day: "numeric" });
+  const sect = (rows, id, label, sheet, dateKey, verb) =>
+    rows.length ? shelf(id, `<span class="h-sub">${label}</span>`, cards(rows, sheet, dateKey, verb)) : "";
   return `<div class="h-otd-head"><h2>${icon("i-calendar", 17)} On this day <span class="muted">${escapeHtml(today)}</span></h2></div>` +
-    shelf("otdDone", `<span class="h-sub">You finished these</span>`, doneCards) +
-    shelf("otdRel", `<span class="h-sub">Released on this date</span>`, relCards);
+    sect(done, "otdDone", "You finished these", "completed", "date", "Finished") +
+    sect(bought, "otdBought", "You bought these", "games", "datePurchased", "Bought") +
+    sect(added, "otdAdded", "You added these", "games", "dateAdded", "Added") +
+    sect(rel, "otdRel", "Released on this date", "games", "releaseDate", "Released");
 }
 
-// The challenge you're closest to finishing.
+// The three challenges you're closest to finishing.
 function challengeSpotlight() {
   if (typeof CHALLENGES === "undefined") return "";
   const live = CHALLENGES.map(computeChallenge).filter((r) => r.total && r.remaining.size);
   if (!live.length) return "";
   live.sort((a, b) => a.remaining.size - b.remaining.size);
-  const r = live[0];
-  const buckets = chSortBuckets(r, r.remaining).slice(0, 4);
-  return `<section class="h-sect">
-    <div class="h-sect-head"><h2>${icon("i-target", 17)} Closest challenge</h2>
-      <div class="h-sect-act"><button class="linkbtn" id="hChalAll">See all →</button></div></div>
-    <button class="h-chal" id="hChal">
+  const cards = live.slice(0, 3).map((r) => {
+    const buckets = chSortBuckets(r, r.remaining).slice(0, 4);
+    return `<button class="h-chal" data-chal="${escapeHtml(r.c.id || r.c.name)}">
       <span class="ch-icon big">${glyph(r.c.icon, 26)}</span>
       <span class="h-chal-txt">
         <b>${escapeHtml(r.c.name)}</b>
@@ -250,7 +251,12 @@ function challengeSpotlight() {
         <span class="ch-bar"><span style="width:${(r.pct * 100).toFixed(1)}%"></span></span>
         <span class="h-chal-left">Left: ${buckets.map(([k]) => escapeHtml(String(k))).join(" · ")}${r.remaining.size > 4 ? " …" : ""}</span>
       </span>
-    </button>
+    </button>`;
+  }).join("");
+  return `<section class="h-sect">
+    <div class="h-sect-head"><h2>${icon("i-target", 17)} Closest challenges</h2>
+      <div class="h-sect-act"><button class="linkbtn" id="hChalAll">See all →</button></div></div>
+    <div class="h-chals">${cards}</div>
   </section>`;
 }
 
@@ -318,7 +324,7 @@ function renderHome() {
   host.innerHTML =
     heroSection(playing) +
     (picks.length ? `<section class="h-sect">
-      <div class="h-sect-head"><h2>✨ Picked for you</h2>
+      <div class="h-sect-head"><h2>${icon("i-sparkle", 17)} Picked for you</h2>
         <div class="h-sect-act"><button class="linkbtn" id="hPickMore">Roll one instead →</button></div></div>
       <div class="h-picks">${picks.map((p) =>
         homeCard(p.row, "games", `<span class="h-why">${escapeHtml(p.why)}</span>`)).join("")}</div>
@@ -392,6 +398,7 @@ function wireHeroBits(scope, playing) {
       loadHeroShot(playing);
     };
   });
+  scheduleHero(playing);   // (re-)arm the auto-rotate; resets it after any manual paging
 }
 
 // The hero wants a screenshot backdrop; fetch the detail for the shown game
@@ -430,21 +437,35 @@ function wireHome(host, playing) {
   });
   const more = $("#hPickMore");
   if (more) more.onclick = () => { switchTab("pick"); nav(); };
-  const chal = $("#hChal"), chalAll = $("#hChalAll");
-  if (chal) chal.onclick = () => { chState.open = null; switchTab("challenges"); nav(); };
+  const chalAll = $("#hChalAll");
   if (chalAll) chalAll.onclick = (e) => { e.stopPropagation(); chState.open = null; switchTab("challenges"); nav(); };
+  host.querySelectorAll(".h-chal[data-chal]").forEach((el) => {
+    el.onclick = () => { chState.open = el.dataset.chal; switchTab("challenges"); nav(); };
+  });
 
   loadHeroShot(playing);
+  // The initial hero (built inline by renderHome) needs its pager/dots/swipe wired too
+  // — only renderHero did it before, so a fresh Home landed with a dead pager.
+  const hero = host.querySelector(".h-hero");
+  if (hero) wireHeroBits(hero, playing);
+}
 
-  // Rotate the hero every 9s, but never while the user is reading a drawer.
-  // renderHero, NOT renderHome — the latter rebuilds every <img> on the page.
-  clearInterval(_homeTimer);
-  if (playing.length > 1 && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    _homeTimer = setInterval(() => {
-      if (activeTab !== "home" || !$("#overlay").hidden) return;
+// Rotate the hero on a 9s timer that RESTARTS on any manual paging — otherwise a
+// swipe right before the timer fired flicked past two games in a blink. setTimeout
+// that reschedules itself, rather than a fixed interval, so resetting is just a
+// clearTimeout. renderHero (not renderHome) — the latter rebuilds every <img>.
+const HERO_MS = 9000;
+function scheduleHero(playing) {
+  clearTimeout(_homeTimer);
+  if (!playing || playing.length <= 1 ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  _homeTimer = setTimeout(() => {
+    if (activeTab === "home" && $("#overlay").hidden) {
       homeState.heroIdx = (homeState.heroIdx + 1) % playing.length;
       renderHero(playing);
-      loadHeroShot(playing);
-    }, 9000);
-  }
+      loadHeroShot(playing);       // renderHero re-wires and re-arms the timer + countdown
+    } else {
+      scheduleHero(playing);       // paused (drawer/other tab): just try again later
+    }
+  }, HERO_MS);
 }

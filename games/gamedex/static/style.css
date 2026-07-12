@@ -2697,3 +2697,16 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .ce-rm:hover { background:color-mix(in srgb, var(--bad) 12%, transparent); }
 
 .drawer-art { display:block; width:100%; margin:14px 0 4px; text-align:center; padding:11px; }
+
+/* ---- home: hero auto-rotate countdown ---- */
+.h-countdown { position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: rgba(255,255,255,.08); z-index: 3; overflow: hidden; }
+.h-countdown span { display: block; height: 100%; transform-origin: left; transform: scaleX(0);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  animation: heroCountdown 9s linear forwards; }
+@keyframes heroCountdown { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .h-countdown { display: none; } }
+
+/* ---- home: closest challenges (three across) ---- */
+.h-chals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 900px) { .h-chals { grid-template-columns: 1fr; } }

@@ -521,7 +521,12 @@ function wireCarousel(el, items) {
       view.appendChild(img);
     }
     count.textContent = `${shotIdx + 1} / ${media.length}`;
-    cap.textContent = m.kind === "video" ? m.name : (m.art ? "Artwork" : "");
+    // A video always carries a link out to YouTube — the embed can be walled by
+    // YouTube's per-device bot check (not something we can talk our way past), and a
+    // walled iframe with no way to click through is worse than no video.
+    if (m.kind === "video")
+      cap.innerHTML = `${escapeHtml(m.name)} · <a href="https://www.youtube.com/watch?v=${escapeHtml(m.id)}" target="_blank" rel="noopener">Watch on YouTube ↗</a>`;
+    else cap.textContent = m.art ? "Artwork" : "";
   };
 
   const prev = wrap.querySelector(".prev"), next = wrap.querySelector(".next");
@@ -1611,9 +1616,30 @@ function effectiveSort() {
   return DEFAULT_SORT[activeTab] ||
     [{ key: (columns().find((c) => c.primary) || columns()[0]).key, dir: "asc" }];
 }
+// Naive search relevance: a query that hits the TITLE outranks one that only hit
+// another field (genre, publisher…). So searching "Adventure" surfaces the game
+// *named* Adventure above everything merely tagged with the Adventure genre.
+function searchRank(row, terms) {
+  const title = String(row.title ?? row.game ?? "").toLowerCase();
+  let score = 0;
+  for (const t of terms) {
+    if (title === t) score += 100;
+    else if (title.startsWith(t)) score += 40;
+    else if (title.includes(t)) score += 20;
+    // matched only via another field (it passed the filter) — no title bonus
+  }
+  return score;
+}
+
 function sortRows(rows) {
   const spec = effectiveSort();
+  const q = (tabState[activeTab].search || "").toLowerCase().trim();
+  const terms = q ? q.split(/\s+/).filter(Boolean) : [];
   return [...rows].sort((a, b) => {
+    if (terms.length) {
+      const r = searchRank(b, terms) - searchRank(a, terms);
+      if (r) return r;                    // title relevance first when searching
+    }
     for (const s of spec) { const c = cmpBy(a, b, s); if (c) return c; }
     return 0;
   });
@@ -3168,6 +3194,7 @@ function renderPicker() {
 let searchTimer = null;
 $("#search").addEventListener("input", (e) => {
   const st = tabState[activeTab];
+  if (!st) return;             // a special tab (Home, Stats…) has no results list to filter
   st.search = e.target.value;
   st.page = 1;
   // Coalesce keystrokes. Filtering 14.7k rows and rebuilding every facet is
@@ -3177,6 +3204,18 @@ $("#search").addEventListener("input", (e) => {
     renderAll();
     syncURL(false);        // replace so typing doesn't flood history
   }, 140);
+});
+// Enter from a tab with no results list of its own (Home, Stats, Shelf, …) takes the
+// query to All Games and shows it there, which is what a search box implies.
+$("#search").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  if (["games", "completed", "onOrder"].includes(activeTab)) { e.target.blur(); return; }
+  const q = e.target.value;
+  tabState.games.search = q;
+  tabState.games.page = 1;
+  switchTab("games");      // no reset — keep the query we just set
+  nav();
 });
 // closest(), not e.target: a tab now contains an <svg> and a <span>, so the click
 // lands on the icon and e.target.dataset.tab is undefined. This is exactly what
@@ -3280,30 +3319,26 @@ $("#theme").addEventListener("click", () => {
 // 14.7k games is too many to browse to. Type a few letters, hit enter.
 const cmdk = { open: false, sel: 0, results: [] };
 
+// Read the tab list from the live header, so the palette can never go stale — adding
+// or removing a tab (Shelf in, Reviews out) updates it for free.
+function cmdkTabs() {
+  return [...document.querySelectorAll("#tabs button[data-tab]")].map((b) => ({
+    id: b.dataset.tab,
+    label: (b.querySelector("span") || {}).textContent || b.dataset.tab,
+    icon: ((b.querySelector("use") || {}).getAttribute?.("href") || "#i-home").slice(1),
+  }));
+}
+
 function cmdkCandidates(q) {
   const out = [];
   const needle = q.toLowerCase().trim();
   if (!needle) {
-    return [
-      { kind: "Tab", label: "Home", icon: "i-home", run: () => switchTab("home") },
-      { kind: "Tab", label: "All Games", icon: "i-library", run: () => switchTab("games") },
-      { kind: "Tab", label: "Completed", icon: "i-trophy", run: () => switchTab("completed") },
-      { kind: "Tab", label: "On Order", icon: "i-package", run: () => switchTab("onOrder") },
-      { kind: "Tab", label: "Groupings", icon: "i-layers", run: () => switchTab("groups") },
-      { kind: "Tab", label: "Stats", icon: "i-stats", run: () => switchTab("stats") },
-      { kind: "Tab", label: "Pick", icon: "i-dice", run: () => switchTab("pick") },
-      { kind: "Tab", label: "Challenges", icon: "i-target", run: () => switchTab("challenges") },
-      { kind: "Tab", label: "Health", icon: "i-health", run: () => switchTab("health") },
-    ];
+    return cmdkTabs().map((t) => ({ kind: "Tab", label: t.label, icon: t.icon, run: () => switchTab(t.id) }));
   }
   // Tabs
-  const tabs = [["home", "Home", "i-home"], ["games", "All Games", "i-library"],
-                ["completed", "Completed", "i-trophy"], ["onOrder", "On Order", "i-package"],
-                ["stats", "Stats", "i-stats"],
-                ["pick", "Pick", "i-dice"], ["challenges", "Challenges", "i-target"],
-                ["health", "Health", "i-health"], ["groups", "Groupings", "i-layers"]];
-  for (const [id, label, ico] of tabs) {
-    if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, icon: ico, run: () => switchTab(id) });
+  for (const t of cmdkTabs()) {
+    if (t.label.toLowerCase().includes(needle))
+      out.push({ kind: "Tab", label: t.label, icon: t.icon, run: () => switchTab(t.id) });
   }
   // Games — prefix matches first, then substring. Capped, so typing stays fast.
   const rows = (DATA.sheets.games || {}).rows || [];
