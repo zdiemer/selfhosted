@@ -3379,6 +3379,10 @@ function cmdkCandidates(q) {
 const _cmdkFacets = {};
 function cmdkFacetIndex() {
   if (_cmdkFacets[activeTab]) return _cmdkFacets[activeTab];
+  // Special tabs (Home, Stats, Shelf…) have no sheet, so columns()/facetCols() throw —
+  // which is exactly why the palette worked on All Games and Completed but broke the
+  // moment you typed anywhere else. No sheet, no facet values.
+  if (!DATA.sheets[activeTab]) return (_cmdkFacets[activeTab] = []);
   const out = [];
   const rows = (sheet() || { rows: [] }).rows || [];
   for (const col of facetCols()) {

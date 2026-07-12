@@ -1407,19 +1407,26 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 
 /* Challenge spotlight */
+/* Vertical card — the old horizontal (big icon | text) layout crammed into a
+   third-of-the-row column and clipped the longest one. Stacked, each fills its
+   equal column cleanly. */
 .h-chal {
-  display: flex; align-items: center; gap: 18px; width: 100%; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0;
+  text-align: left; cursor: pointer;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 18px 20px; font-family: inherit; color: var(--text);
+  padding: 16px 18px; font-family: inherit; color: var(--text);
   transition: border-color .16s, transform .16s var(--ease);
 }
 .h-chal:hover { border-color: var(--accent-line); transform: translateY(-2px); }
-.h-chal-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.h-chal-txt b { font-family: var(--display); font-size: 15.5px; }
-.h-chal-txt .muted { font-size: 12.5px; }
-.h-chal .ch-bar { margin: 3px 0; }
+.h-chal-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.h-chal-top .ch-icon { flex: none; }
+.h-chal-top b { font-family: var(--display); font-size: 15px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-chal .muted { font-size: 12.5px; }
+.h-chal .ch-bar { margin: 1px 0; }
 .h-chal-left {
-  font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: var(--dim); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
 @media (max-width: 760px) {

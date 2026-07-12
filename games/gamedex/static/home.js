@@ -219,7 +219,13 @@ function onThisDay() {
     .sort((a, b) => (combinedRating(b) ?? 0) - (combinedRating(a) ?? 0));
   const done = hCompleted().filter((r) => onMd(r.date)).sort(byDateDesc("date"));
   const bought = hRows().filter((r) => onMd(r.datePurchased)).sort(byDateDesc("datePurchased"));
-  const added = hRows().filter((r) => onMd(r.dateAdded)).sort(byDateDesc("dateAdded"));
+  // "Added" only shows games NOT already in "Bought" today — a game bought and logged
+  // the same day would otherwise appear twice. What's left is the interesting case: a
+  // preorder added before it shipped, or an emulated game with no purchase at all.
+  const boughtKeys = new Set(bought.map((r) => r._k || r.title));
+  const added = hRows()
+    .filter((r) => onMd(r.dateAdded) && !boughtKeys.has(r._k || r.title))
+    .sort(byDateDesc("dateAdded"));
   if (!rel.length && !done.length && !bought.length && !added.length) return "";
 
   const cards = (rows, sheet, dateKey, verb) => rows.slice(0, 12).map((r) =>
@@ -242,15 +248,19 @@ function challengeSpotlight() {
   if (!live.length) return "";
   live.sort((a, b) => a.remaining.size - b.remaining.size);
   const cards = live.slice(0, 3).map((r) => {
-    const buckets = chSortBuckets(r, r.remaining).slice(0, 4);
+    // "Skyrim, Mario, and 6 others" beats a runaway dot-separated list that overflows.
+    const names = chSortBuckets(r, r.remaining).map(([k]) => String(k));
+    const shown = names.slice(0, 2).map(escapeHtml);
+    const more = names.length - shown.length;
+    const left = shown.length
+      ? shown.join(", ") + (more > 0 ? `, and ${more} other${more > 1 ? "s" : ""}` : "")
+      : "";
     return `<button class="h-chal" data-chal="${escapeHtml(r.c.id || r.c.name)}">
-      <span class="ch-icon big">${glyph(r.c.icon, 26)}</span>
-      <span class="h-chal-txt">
-        <b>${escapeHtml(r.c.name)}</b>
-        <span class="muted">${r.cleared.size} of ${r.total} cleared — ${r.remaining.size} to go</span>
-        <span class="ch-bar"><span style="width:${(r.pct * 100).toFixed(1)}%"></span></span>
-        <span class="h-chal-left">Left: ${buckets.map(([k]) => escapeHtml(String(k))).join(" · ")}${r.remaining.size > 4 ? " …" : ""}</span>
-      </span>
+      <span class="h-chal-top"><span class="ch-icon">${glyph(r.c.icon, 20)}</span>
+        <b>${escapeHtml(r.c.name)}</b></span>
+      <span class="muted">${r.cleared.size} of ${r.total} · ${r.remaining.size} to go</span>
+      <span class="ch-bar"><span style="width:${(r.pct * 100).toFixed(1)}%"></span></span>
+      ${left ? `<span class="h-chal-left">Left: ${left}</span>` : ""}
     </button>`;
   }).join("");
   return `<section class="h-sect">
