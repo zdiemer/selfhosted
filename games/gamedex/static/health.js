@@ -48,6 +48,38 @@ function hzTitleKey(t) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+/* Collapse the ways the SAME Japanese title gets romanised, so a spelling difference
+   that's really just Hepburn drift isn't mistaken for a typo. Long vowels are the big
+   one — "Toukiden" vs "Tokiden", "Yuusha" vs "Yusha" — plus sokuon doubles and を.
+   Applied to both sides before the edit-distance check; if the two collapse to the
+   same string, it was never a misspelling. */
+const hzRomaji = (s) => String(s || "")
+  .replace(/ou/g, "o").replace(/wo/g, "o")
+  .replace(/(.)\1+/g, "$1");            // oo/uu/aa/ii long vowels + kk/tt/pp/ss sokuon
+
+/* Split a title into its series base and trailing sequel number, on the same
+   normalised key the other checks use: "The Amazing Spider-Man 2" -> {base:
+   "amazingspiderman", num: "2"}, "The Amazing Spider-Man" -> {base: "amazingspiderman",
+   num: ""}. Roman numerals are already digits by the time hzTitleKey is done. */
+function hzSequel(t) {
+  const s = hzTitleKey(t);
+  const m = s.match(/^(.+?)(\d+)$/);
+  return m ? { base: m[1], num: m[2] } : { base: s, num: "" };
+}
+// Two titles that are the same series but a different number in it — a sequel mismatch.
+function hzSequelMismatch(a, b) {
+  // Fractions, superscripts and slashes turn a title's number into garbage once the
+  // punctuation is stripped ("Zeit²" → zeit vs "Zeit 2" → zeit2; "ClayFighter 63⅓";
+  // "Police 24/7") — those aren't sequel differences, they're notation. And a trailing
+  // four-digit YEAR ("Surgeon Simulator 2013") is an edition, not a sequel.
+  const notation = /[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³¹¼-¾\/]/;
+  if (notation.test(a) || notation.test(b)) return false;
+  const x = hzSequel(a), y = hzSequel(b);
+  if (x.base.length < 4 || x.base !== y.base || x.num === y.num) return false;
+  const isYear = (n) => /^(19|20)\d\d$/.test(n);
+  return !isYear(x.num) && !isYear(y.num);
+}
+
 // Levenshtein, bounded. We only care whether it's 1-2 edits, so bail out early
 // rather than filling a 60x60 matrix for every one of 14,752 titles.
 function hzEditDistance(a, b, max = 3) {
@@ -96,11 +128,15 @@ const HEALTH_CHECKS = [
   {
     id: "dupes", severity: "warn", sheet: "games",
     title: "Possible duplicate rows",
-    why: "Same normalised title on the same platform. Sometimes legitimate (two editions), often a double-entry.",
+    why: "The same game logged twice — same title, platform, region AND release year. "
+       + "A US and a JP copy, or two platforms, or two years, are genuinely different "
+       + "things you own, so they're not flagged.",
     find: () => {
       const seen = new Map();
       for (const r of hzGames()) {
-        const k = `${hzNorm(r.title)}|${r.platform || ""}`;
+        // Region and year are part of what makes a row distinct: a NTSC and a PAL
+        // Ocarina, or the SNES and the GBA Chrono Trigger, are not duplicates.
+        const k = [hzNorm(r.title), r.platform || "", r.releaseRegion || "", r.releaseYear || ""].join("|");
         if (!seen.has(k)) seen.set(k, []);
         seen.get(k).push(r);
       }
@@ -246,8 +282,26 @@ const HEALTH_CHECKS = [
          Normalise them away and what's left is a genuine letter-level typo. */
       const a = hzTitleKey(r.title), b = hzTitleKey(e.name);
       if (!a || !b || a === b) return false;
+      // Romanisation drift ("Toukiden" vs "Tokiden") isn't a misspelling.
+      if (hzRomaji(a) === hzRomaji(b)) return false;
+      // A sequel-number difference is a WRONG MATCH, not a typo — its own check.
+      if (hzSequelMismatch(r.title, e.name)) return false;
       const d = hzEditDistance(a, b);
       return d > 0 && d <= 2 && Math.min(a.length, b.length) >= 10;
+    }),
+    detail: (r) => `sheet: "${r.title}" · IGDB: "${(ENRICH[r._k] || {}).name}"`,
+  },
+  {
+    id: "sequel", severity: "warn", sheet: "games",
+    title: "Matched the wrong game in a series",
+    why: "The IGDB match is the same series but a different number — “The Amazing "
+       + "Spider-Man” matched “The Amazing Spider-Man 2”, “Sonic the "
+       + "Hedgehog” matched “Sonic the Hedgehog 2”. The metadata, cover and "
+       + "playtime are all for the wrong game.",
+    find: () => hzGames().filter((r) => {
+      const e = ENRICH[r._k];
+      if (!e || !e.name || e.manualMatch) return false;
+      return hzSequelMismatch(r.title, e.name);
     }),
     detail: (r) => `sheet: "${r.title}" · IGDB: "${(ENRICH[r._k] || {}).name}"`,
   },
