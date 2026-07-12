@@ -735,6 +735,12 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   border-radius: var(--r); flex-shrink: 0; background: var(--surface-2);
   box-shadow: var(--sh-2);
 }
+/* No box art: centre the placeholder in the frame, the way the grid card does.
+   Without this the emoji is just text and sits in the top-left corner. */
+.cover-big.ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 40px; opacity: .35;
+}
 .igdb-side { flex: 1; min-width: 0; }
 .igdb-rating { font-family: var(--display); font-size: 30px; font-weight: 800; margin-bottom: 10px; line-height: 1; }
 .igdb-rating small { font-size: 11.5px; font-weight: 500; color: var(--dim); font-family: "Inter"; }
