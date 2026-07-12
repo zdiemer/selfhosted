@@ -526,6 +526,23 @@ class Enricher:
     def normalize(self):
         return self._validator.normalize
 
+    def resolved_no_match(self):
+        """Keys we looked up and found nothing for — in NO source.
+
+        The light map only carries MATCHED games, so the frontend cannot tell
+        "still looking" from "looked, found nothing": both are simply absent. That
+        is why an unmatchable game shimmered forever. Say so explicitly.
+
+        A game counts as resolved only when the PRIMARY lookup has finished; the
+        secondary sources can still be catching up without holding a cover hostage,
+        since none of them provide one except as a fallback we would have stored.
+        """
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key FROM enrichment WHERE status='no_match'"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def get_all_light(self):
         out = {}
         with self._db_lock:

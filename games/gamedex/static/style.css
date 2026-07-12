@@ -770,7 +770,11 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
    feature strip. 94px -> 62px. */
 .similar { display: flex; gap: 10px; margin-top: 10px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
 .sim {
-  position: relative; flex: 0 0 62px; scroll-snap-align: start; cursor: pointer;
+  /* min-width:0 is load-bearing. A flex item's min-width defaults to AUTO, which
+     is min-content — and min-content for a nowrap title is the whole title. So
+     `flex: 0 0 62px` was being overruled and each entry grew to the width of its
+     name, spacing the covers by title length instead of by the art. */
+  position: relative; flex: 0 0 62px; min-width: 0; scroll-snap-align: start; cursor: pointer;
   background: none; border: none; padding: 0; font-family: inherit;
   color: var(--muted); font-size: 10px; text-align: center;
 }
@@ -782,7 +786,10 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 .sim:hover img, .sim:hover .sim-ph { transform: translateY(-3px); box-shadow: var(--glow); }
 .sim:hover { color: var(--text); }
-.sim span { display: block; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.35; }
+.sim span {
+  display: block; width: 62px; margin-top: 5px; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sim i {
   position: absolute; top: 3px; right: 3px; width: 15px; height: 15px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;

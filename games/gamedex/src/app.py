@@ -181,7 +181,15 @@ def enrichment_batch(batch: KeyBatch):
 def enrichment_all():
     if not enricher:
         return {"enabled": False, "items": {}}
-    return {"enabled": True, "items": enricher.get_all_light(), "stats": enricher.stats()}
+    return {
+        "enabled": True,
+        "items": enricher.get_all_light(),
+        # Games we looked up and found nothing for. Without this the UI cannot
+        # distinguish "still resolving" from "resolved, no metadata", and shows a
+        # loading skeleton forever on anything unmatchable.
+        "noMatch": enricher.resolved_no_match(),
+        "stats": enricher.stats(),
+    }
 
 
 @app.get("/api/enrichment/detail")

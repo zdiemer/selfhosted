@@ -106,8 +106,15 @@ const ENRICH_REQUESTED = new Set();
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
-// A cover is "pending" while enrichment is still resolving and we've not seen it.
-const coverPending = (row) => ENRICH_ENABLED && !ENRICH_COMPLETE && !(row._k in ENRICH);
+// Games we looked up and found NOTHING for. They are absent from ENRICH exactly
+// like a game we haven't got to yet, which is why they used to shimmer forever:
+// "still looking" and "looked, found nothing" were indistinguishable.
+let NO_MATCH = new Set();
+
+// A cover is "pending" only while enrichment is still LOOKING for this row. Once
+// it has resolved — with a cover or without one — it is not pending any more.
+const coverPending = (row) =>
+  ENRICH_ENABLED && !ENRICH_COMPLETE && !(row._k in ENRICH) && !NO_MATCH.has(row._k);
 function coverCell(row) {
   const src = coverSrc(ENRICH[row._k], "cover_small");
   if (src) return `<img class="cover-thumb" loading="lazy" src="${src}" alt="">`;
@@ -308,7 +315,9 @@ function heroHtml(row, titleText) {
   const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
   const cover = cs
     ? `<img class="cover-big${pixel}" id="heroCover" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="cover-big skel" id="heroCover"></div>`;
+    : coverPending(row)
+      ? `<div class="cover-big skel" id="heroCover"></div>`
+      : `<div class="cover-big ph" id="heroCover">🎮</div>`;
   const bits = [row.platform, row.releaseYear || row.releaseDate || row.release, row.genre]
     .filter((x) => x != null && x !== "")
     .map((x) => `<span class="pill facet-link" data-fk="${x === row.platform ? "platform" : x === row.genre ? "genre" : "releaseYear"}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`);
@@ -782,6 +791,13 @@ async function loadAllEnrichment() {
     for (const [k, v] of Object.entries(j.items || {})) {
       ENRICH[k] = Object.assign(ENRICH[k] || {}, v);
       changed = true;
+    }
+    // The rows we looked up and found nothing for. They will never get a cover, so
+    // they must stop pretending one is on the way.
+    if (j.noMatch) {
+      const before = NO_MATCH.size;
+      NO_MATCH = new Set(j.noMatch);
+      if (NO_MATCH.size !== before) changed = true;
     }
     if (j.stats) updateEnrichStatus(j.stats);
     if (changed) {
@@ -1819,8 +1835,9 @@ function patchEnrichedCells() {
       img.className = "card-cover" + (coverIsPixelArt(ENRICH[card.dataset.k], cs) ? " pixel" : "");
       img.loading = "lazy"; img.alt = ""; img.src = cs;
       cur.replaceWith(img);
-    } else if (!cs && cur && ENRICH_COMPLETE && cur.classList.contains("skel")) {
-      cur.classList.remove("skel");                    // resolved with no cover
+    } else if (!cs && cur && cur.classList.contains("skel") &&
+               (ENRICH_COMPLETE || NO_MATCH.has(card.dataset.k) || (card.dataset.k in ENRICH))) {
+      cur.classList.remove("skel");                    // resolved, just no cover
       cur.textContent = "🎮";
     }
     const body = card.querySelector(".card-body");
