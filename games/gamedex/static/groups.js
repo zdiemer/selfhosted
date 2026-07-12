@@ -162,7 +162,7 @@ function renderGroups() {
   host.innerHTML =
     `<div class="fr-index-head">
       <button class="ch-back" id="grHome">← All groupings</button>
-      <h1>${g.icon} ${escapeHtml(g.label)}</h1>
+      <h1>${glyph(g.icon, 24)} ${escapeHtml(g.label)}</h1>
       <p>${all.length.toLocaleString()} ${escapeHtml(g.units)} with ${MIN_GROUP}+ games · ${finished.toLocaleString()} finished end to end.</p>
       <div class="rev-controls">
         ${searchField("grQ", `Find a ${g.units.replace(/e?s$/, "")}…`, groupState.q)}

@@ -2267,12 +2267,25 @@ function svgDonut(segments, size = 150) {
   return `<div class="s-donut-wrap"><svg viewBox="0 0 ${size} ${size}" class="s-donut">${paths}</svg><div class="s-legend">${legend}</div></div>`;
 }
 // A numeric value counts up on scroll-in (data-n); anything else renders as-is.
-const statCard = (v, l, pre = "", post = "") => {
+/* A stat card. Eleven of these used to be identical — same size, same accent
+   gradient on every number — so nothing led and nothing receded, and the accent
+   was doing the job state colour should do.
+
+   opts.tone   "lead" | "good" | "warn" | "" — colour carries MEANING now.
+   opts.icon   an icon id, set back in the corner.
+   opts.sub    the line under the number that says what it's of. */
+const statCard = (v, l, pre = "", post = "", opts = {}) => {
+  const { tone = "", icon: ic = "", sub = "" } = opts;
   const num = typeof v === "number" && isFinite(v);
   const body = num
     ? `<div class="s-num" data-n="${v}" data-pre="${escapeHtml(pre)}" data-post="${escapeHtml(post)}">${escapeHtml(pre)}0${escapeHtml(post)}</div>`
     : `<div class="s-num">${v == null ? "—" : escapeHtml(String(v))}</div>`;
-  return `<div class="stat-card">${body}<div class="s-cap">${escapeHtml(l)}</div></div>`;
+  return `<div class="stat-card${tone ? " t-" + tone : ""}">
+    ${ic ? `<span class="s-ico">${icon(ic, 15)}</span>` : ""}
+    ${body}
+    <div class="s-cap">${escapeHtml(l)}</div>
+    ${sub ? `<div class="s-sub">${escapeHtml(sub)}</div>` : ""}
+  </div>`;
 };
 const last = (pts) => (pts && pts.length ? pts[pts.length - 1].value.toLocaleString() : "0");
 
@@ -2580,23 +2593,28 @@ function renderStats() {
     .sort((a, b) => b.v - a.v).slice(0, 10)
     .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
 
-  const sect = (title, panels) => `<h2 class="stat-sec">${title}</h2><div class="stat-grid">${panels.join("")}</div>`;
+  const sect = (title, panels) =>
+    `<h2 class="stat-sec"><span>${escapeHtml(title)}</span><i>${panels.length}</i></h2>` +
+    `<div class="stat-grid">${panels.join("")}</div>`;
   host.innerHTML =
     yearInReview(rows, games) +
     burnDown(rows, games) +
     `<h2 class="stat-sec">All time</h2>` +
-    `<div class="stat-cards">
-      ${statCard(rows.length, "Completed")}
-      ${statCard(Math.round(hours), "Hours played", "", "h")}
-      ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%")}
-      ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics")}
-      ${statCard(thisYear, "Done in " + (curYear || "—"))}
-      ${statCard(backlog.length, "In backlog")}
-      ${statCard(Math.round(backlogHours), "Backlog hours", "", "h")}
-      ${statCard(complPct, "Library done", "", "%")}
-      ${statCard(Math.round(totalSpent), "Total spent", "$")}
-      ${statCard(Math.round(collectionVal), "Collection value", "$")}
-      ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo")}
+    // Two ranks. Beaten / backlog / library-done are the three numbers the page is
+    // actually about; the rest are supporting. Green means beaten and amber means
+    // outstanding — the accent stays out of it.
+    `<div class="stat-cards lead">
+      ${statCard(rows.length, "Beaten", "", "", { tone: "good", icon: "i-trophy", sub: `of ${games.length.toLocaleString()} catalogued` })}
+      ${statCard(backlog.length, "In backlog", "", "", { tone: "warn", icon: "i-clock", sub: `${Math.round(backlogHours).toLocaleString()} hours of it` })}
+      ${statCard(complPct, "Library done", "", "%", { tone: "lead", icon: "i-target", sub: `${thisYear} beaten in ${curYear || "—"}` })}
+    </div>
+    <div class="stat-cards">
+      ${statCard(Math.round(hours), "Hours played", "", "h", { icon: "i-clock" })}
+      ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%", { icon: "i-star" })}
+      ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics", "", "", { icon: "i-trend" })}
+      ${statCard(Math.round(totalSpent), "Total spent", "$", "", { icon: "i-package" })}
+      ${statCard(Math.round(collectionVal), "Collection value", "$", "", { icon: "i-trend" })}
+      ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo", { icon: "i-calendar" })}
     </div>` +
     sect("Completed games", [
       statPanel("Finished vs added, cumulatively", multiLine([
