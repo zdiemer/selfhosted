@@ -46,6 +46,14 @@ Working list. Checked = shipped and deployed.
 
 ## Next
 
+- [ ] **Match confidence for SECONDARY sources** — HLTB, Metacritic, GameEye, VNDB,
+      VGChartz, speedrun and guides all compute MatchValidator.match_score and then
+      drop it on the floor; only the primary IGDB match persists a score (now shown
+      in Health). Recording theirs means a `score` column per source table and a
+      re-match of everything already cached — ~14k games x 7 sources of rate-limited
+      scraping — so it can't be backfilled cheaply. Cheap half-step: store it for
+      new/refreshed matches, and show "not recorded" for the rest.
+
 - [ ] **Launch: RomM** — BLOCKED. We do not actually run RomM: `games/romm/` is a
       chart with no Helm release and no pod, and its README lists manual NAS/SMB
       prerequisites that were never done. Deep-linking emulated titles needs the
