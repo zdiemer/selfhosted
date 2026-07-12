@@ -66,7 +66,18 @@ config:
   skipHashCalculation: true
   # Folders that aren't game platforms, or that we don't want RomM walking.
   excludePlatforms:
+    # Not a platform, a stray folder on the share.
     - _romnas
+    # 172,809 entries across these six — more than every other platform on the
+    # share combined, and they're archived WEB games: IGDB has nothing to say
+    # about them, and RomM can't launch them. Scanning them would be hours of
+    # SMB traffic to produce a wall of unidentified files.
+    - Flashpoint
+    - Flashpoint-Flash
+    - Flashpoint-HTML5
+    - Flashpoint-Java
+    - Flashpoint-Shockwave
+    - Flashpoint-Unity
   # your-folder-name: romm-platform-name, for folders RomM can't identify.
   platformMap:
     "3DO": 3do
@@ -109,12 +120,6 @@ config:
     "FM77AV": fm-7
     "Famicom Disk System": fds
     "Fire TV": amazon-fire-tv
-    "Flashpoint": browser
-    "Flashpoint-Flash": browser
-    "Flashpoint-HTML5": browser
-    "Flashpoint-Java": browser
-    "Flashpoint-Shockwave": browser
-    "Flashpoint-Unity": browser
     "Game Boy": gb
     "Game Boy Advance": gba
     "Game Boy Color": gbc
