@@ -248,7 +248,7 @@ function shBuild(i) {
   };
   document.getElementById("shArt").onclick = () =>
     openCoverEditor({ key: g.k, platform: g.p, title: g.t, hasUpload: g.src === "upload",
-      onDone: () => reloadShelfBox(g.k) });
+      caseDefault: g.case, onDone: () => reloadShelfBox(g.k) });
 }
 
 // After an upload changes, refresh just this game's data + the pulled case, without a
@@ -405,12 +405,16 @@ addEventListener("keydown", (e) => {
 
 /* ============ the cover editor (shared: shelf card + main drawer) ============
  * Two explicit choices, no auto-detect, because the user asked for it that way:
- *   "Full box art"  — a back|spine|front wrap; we slice it into the three faces.
- *   "Front only"    — just the front; the server builds a spine and a stand-in back.
- * Plus a rotate control (some downloads come sideways) and, whatever it's for, this is
- * the manual override — an upload beats whatever we auto-resolved.                    */
-function openCoverEditor({ key, platform, title, hasUpload, onDone }) {
-  let kind = "wrap", rotate = 0, file = null, objurl = null;
+ *   "Full box art"  — a back|spine|front wrap; you drag the two guides to the spine and
+ *                     we slice there. The front face takes the FRONT panel's aspect.
+ *   "Front only"    — just the front; the case takes the IMAGE's aspect, so a tall Game
+ *                     Boy cover isn't forced into a wide Blu-ray shape.
+ * The box's proportions come from the image and from you — not a per-platform table.  */
+function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone }) {
+  const NOMINAL_H = (caseDefault && caseDefault.h) || 175;   // case height in mm, for size
+  let kind = "wrap", rotate = 0, file = null, img = null;
+  let x1 = 130 / 273, x2 = 144 / 273;                        // spine guides (fractions of width)
+  let depth = (caseDefault && caseDefault.d) || 14;          // front-mode spine thickness, mm
 
   const host = document.createElement("div");
   host.className = "ce-scrim";
@@ -429,19 +433,30 @@ function openCoverEditor({ key, platform, title, hasUpload, onDone }) {
       <label class="ce-drop" id="ceDrop">
         <input type="file" accept="image/*" hidden>
         <div class="ce-empty"><b>Choose an image</b><span>or drop it here</span></div>
-        <div class="ce-prev" hidden><img alt=""><span class="ce-guides"></span></div>
+        <div class="ce-stage" hidden>
+          <div class="ce-imgwrap">
+            <img alt="" draggable="false">
+            <div class="ce-region back"><span>back</span></div>
+            <div class="ce-region front"><span>front</span></div>
+            <div class="ce-guide" data-g="1"></div>
+            <div class="ce-guide" data-g="2"></div>
+          </div>
+        </div>
       </label>
 
       <div class="ce-tools" hidden id="ceTools">
-        <button class="sh-btn" id="ceRot">↻ Rotate</button>
+        <button class="sh-btn" id="ceRot" type="button">↻ Rotate</button>
+        <label class="ce-depth" id="ceDepthWrap">Spine
+          <input type="range" id="ceDepth" min="4" max="40" step="1">
+          <span id="ceDepthVal"></span></label>
         <span class="ce-dim" id="ceDim"></span>
       </div>
 
       <div class="ce-acts">
-        ${hasUpload ? `<button class="sh-btn ce-rm" id="ceRemove">Remove my art</button>` : `<span></span>`}
+        ${hasUpload ? `<button class="sh-btn ce-rm" id="ceRemove" type="button">Remove my art</button>` : `<span></span>`}
         <div class="ce-right">
-          <button class="sh-btn" id="ceCancel">Cancel</button>
-          <button class="sh-btn primary" id="ceSave" disabled>Save</button>
+          <button class="sh-btn" id="ceCancel" type="button">Cancel</button>
+          <button class="sh-btn primary" id="ceSave" type="button" disabled>Save</button>
         </div>
       </div>
     </div>`;
@@ -449,71 +464,134 @@ function openCoverEditor({ key, platform, title, hasUpload, onDone }) {
 
   const $ = (s) => host.querySelector(s);
   const hint = $("#ceHint"), drop = $("#ceDrop"), input = drop.querySelector("input");
-  const prev = $(".ce-prev"), prevImg = prev.querySelector("img");
+  const stage = $(".ce-stage"), imgwrap = $(".ce-imgwrap"), imgEl = imgwrap.querySelector("img");
   const empty = $(".ce-empty"), tools = $("#ceTools"), save = $("#ceSave"), dim = $("#ceDim");
+  const gEls = [...host.querySelectorAll(".ce-guide")];
+  const regBack = $(".ce-region.back"), regFront = $(".ce-region.front");
+  const depthWrap = $("#ceDepthWrap"), depthEl = $("#ceDepth"), depthVal = $("#ceDepthVal");
+  depthEl.value = depth;
 
   const HINTS = {
-    wrap: "A full wrap — back, spine and front in one image (e.g. a Cover Project scan). We'll slice it into the case's three faces.",
-    front: "Just the front cover. We'll colour a spine from it and make a stand-in back.",
+    wrap: "A full wrap — back, spine, front in one image. Drag the two lines onto the spine; we slice there and the front takes its own shape.",
+    front: "Just the front cover. The case takes your image's exact shape, and we colour a spine and make a stand-in back.",
   };
-  const setKind = (k) => {
+
+  // The rotated image's on-screen dimensions (what the guides and slicing act on).
+  const rotDims = () => rotate % 180
+    ? { w: img.naturalHeight, h: img.naturalWidth }
+    : { w: img.naturalWidth, h: img.naturalHeight };
+
+  // Draw the file into a canvas at the chosen rotation, so the preview and the server
+  // agree on orientation and the guides land on the real pixels.
+  function paintImage() {
+    if (!img) return;
+    const { w, h } = rotDims();
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(rotate * Math.PI / 180);                       // clockwise, matches the server
+    ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+    imgEl.src = c.toDataURL("image/jpeg", 0.92);
+    dim.textContent = `${w}×${h}`;
+    layout();
+  }
+
+  function layout() {
+    const wrap = kind === "wrap";
+    gEls.forEach((g, k) => { g.hidden = !wrap; g.style.left = (k ? x2 : x1) * 100 + "%"; });
+    regBack.hidden = regFront.hidden = !wrap;
+    if (wrap) {
+      regBack.style.width = x1 * 100 + "%";
+      regFront.style.left = x2 * 100 + "%";
+      regFront.style.width = (1 - x2) * 100 + "%";
+    }
+    depthWrap.style.display = wrap ? "none" : "";             // wrap depth comes from the guides
+    depthVal.textContent = depth + " mm";
+  }
+
+  function setKind(k) {
     kind = k;
     host.querySelectorAll(".ce-opt").forEach((b) => b.classList.toggle("on", b.dataset.kind === k));
-    hint.textContent = HINTS[k];
-    prev.classList.toggle("wrap", k === "wrap");   // show slice guides for wraps
-  };
-  setKind("wrap");
+    hint.textContent = HINTS[k]; hint.classList.remove("ce-err");
+    imgwrap.classList.toggle("is-wrap", k === "wrap");
+    layout();
+  }
 
-  const applyPreview = () => {
-    prevImg.style.transform = `rotate(${rotate}deg)`;
-    // when rotated 90/270 the image box swaps aspect; let CSS object-fit handle it
-    prevImg.classList.toggle("turned", rotate % 180 !== 0);
-  };
-  const loadFile = (f) => {
+  function loadFile(f) {
     if (!f || !f.type.startsWith("image/")) return;
     file = f; rotate = 0;
-    if (objurl) URL.revokeObjectURL(objurl);
-    objurl = URL.createObjectURL(f);
-    prevImg.onload = () => { dim.textContent = `${prevImg.naturalWidth}×${prevImg.naturalHeight}`; };
-    prevImg.src = objurl;
-    empty.hidden = true; prev.hidden = false; tools.hidden = false; save.disabled = false;
-    applyPreview();
-  };
+    const url = URL.createObjectURL(f);
+    img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      empty.hidden = true; stage.hidden = false; tools.hidden = false; save.disabled = false;
+      paintImage();
+    };
+    img.src = url;
+  }
+
+  // Drag a spine guide. Positions are fractions of the displayed image width.
+  function dragGuide(which, clientX) {
+    const r = imgwrap.getBoundingClientRect();
+    let f = (clientX - r.left) / r.width;
+    f = Math.max(0, Math.min(1, f));
+    if (which === 0) x1 = Math.min(f, x2 - 0.01);
+    else x2 = Math.max(f, x1 + 0.01);
+    layout();
+  }
+  gEls.forEach((g, k) => {
+    g.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation(); g.setPointerCapture(e.pointerId);
+      const move = (ev) => dragGuide(k, ev.clientX);
+      const up = (ev) => { g.releasePointerCapture(e.pointerId);
+        g.removeEventListener("pointermove", move); g.removeEventListener("pointerup", up); };
+      g.addEventListener("pointermove", move); g.addEventListener("pointerup", up);
+    });
+  });
 
   host.querySelectorAll(".ce-opt").forEach((b) => b.onclick = () => setKind(b.dataset.kind));
   input.onchange = () => loadFile(input.files[0]);
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-  drop.addEventListener("drop", (e) => {
-    e.preventDefault(); drop.classList.remove("over");
-    loadFile(e.dataTransfer.files[0]);
-  });
-  $("#ceRot").onclick = (e) => { e.preventDefault(); rotate = (rotate + 90) % 360; applyPreview(); };
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); loadFile(e.dataTransfer.files[0]); });
+  $("#ceRot").onclick = () => { rotate = (rotate + 90) % 360; paintImage(); };
+  depthEl.oninput = () => { depth = +depthEl.value; depthVal.textContent = depth + " mm"; };
+  setKind("wrap");
 
-  const close = () => { if (objurl) URL.revokeObjectURL(objurl); host.remove(); };
+  const close = () => host.remove();
   $("#ceCancel").onclick = close;
   $(".ce-x").onclick = close;
   host.addEventListener("click", (e) => { if (e.target === host) close(); });
-
   if (hasUpload) $("#ceRemove").onclick = async () => {
     $("#ceRemove").disabled = true;
     await fetch(`/api/shelf/${encodeURIComponent(key)}/cover`, { method: "DELETE" });
     close(); onDone && onDone();
   };
 
+  // Compute the case dims from the image + guides, so nothing is squashed to a template.
+  function caseDims() {
+    const { w, h } = rotDims();
+    const H = NOMINAL_H;
+    if (kind === "front") return { w: Math.round(H * (w / h)), h: H, d: depth };
+    const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // in image pixels
+    return { w: Math.round(H * (frontW / h)), h: H, d: Math.max(3, Math.round(H * (spineW / h))) };
+  }
+
   save.onclick = async () => {
     if (!file) return;
     save.disabled = true; save.textContent = "Saving…";
+    const c = caseDims();
+    const q = new URLSearchParams({ kind, rotate, w: c.w, h: c.h, d: c.d });
+    if (kind === "wrap") { q.set("x1", x1.toFixed(4)); q.set("x2", x2.toFixed(4)); }
     try {
-      const r = await fetch(
-        `/api/shelf/${encodeURIComponent(key)}/cover?kind=${kind}&rotate=${rotate}`,
+      const r = await fetch(`/api/shelf/${encodeURIComponent(key)}/cover?${q}`,
         { method: "POST", body: file });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
       close(); onDone && onDone();
     } catch (err) {
       save.disabled = false; save.textContent = "Save";
-      hint.textContent = "Upload failed: " + err.message;
-      hint.classList.add("ce-err");
+      hint.textContent = "Upload failed: " + err.message; hint.classList.add("ce-err");
     }
   };
 }

@@ -340,12 +340,18 @@ class Shelf:
         return key in self._uploads
 
     def set_cover(self, key: str, data: bytes, kind: str, platform: str,
-                  rotate: int = 0) -> dict:
+                  rotate: int = 0, x1: float | None = None, x2: float | None = None,
+                  case: dict | None = None) -> dict:
         """Store a user-supplied cover for one game, as three cached faces.
 
-        kind='wrap' — a full back|spine|front box art, sliced by the platform's template.
-        kind='front' — just the front; we build the spine from its dominant colour and a
-        blurred stand-in back, exactly like the IGDB-front fallback but with real art.
+        The shape of the box comes from the IMAGE and the user, not a per-platform table
+        (which got a Game Boy box a Blu-ray shape). The editor derives everything and
+        passes it in:
+          case   — the box's real proportions {w,h,d} in mm; the FRONT face aspect is the
+                   uploaded image's own aspect, so nothing is squashed to a template.
+          x1,x2  — for a wrap, the spine boundaries as FRACTIONS of width (0..1), which
+                   the user drags to line up with their scan. Back is [0,x1], spine
+                   [x1,x2], front [x2,1].
 
         `rotate` (0/90/180/270) is applied to the WHOLE image first, so the user can
         straighten a sideways scan — which is why uploads never need the per-face
@@ -359,21 +365,28 @@ class Shelf:
         if rotate % 360:
             im = im.rotate(-(rotate % 360), expand=True)   # clockwise, to match the UI
 
-        tpl_name = UPLOAD_TEMPLATE.get(platform, DEFAULT_UPLOAD_TEMPLATE)
-        back_mm, spine_mm, front_mm, h_mm = TEMPLATES[tpl_name]
+        # The case dims: the editor's numbers if given, else a platform fallback so the
+        # older callers and the API without a case still work.
+        if case and all(k in case for k in ("w", "h", "d")):
+            cw, ch, cd = float(case["w"]), float(case["h"]), float(case["d"])
+        else:
+            mm = FALLBACK_CASE.get(platform, DEFAULT_CASE)
+            cw, ch, cd = float(mm[0]), float(mm[1]), float(mm[2])
 
         if kind == "wrap":
-            total = back_mm + spine_mm + front_mm
-            x1 = round(im.width * back_mm / total)
-            x2 = round(im.width * (back_mm + spine_mm) / total)
+            if x1 is None or x2 is None:              # fall back to a DVD-ish split
+                x1, x2 = 130 / 273, 144 / 273
+            px1 = round(im.width * max(0.0, min(1.0, x1)))
+            px2 = round(im.width * max(0.0, min(1.0, x2)))
+            px1, px2 = sorted((px1, px2))
             faces = {
-                "back": im.crop((0, 0, x1, im.height)),
-                "spine": im.crop((x1, 0, x2, im.height)),
-                "front": im.crop((x2, 0, im.width, im.height)),
+                "back": im.crop((0, 0, px1, im.height)),
+                "spine": im.crop((px1, 0, px2, im.height)),
+                "front": im.crop((px2, 0, im.width, im.height)),
             }
         else:
             hue = dominant_hue(im)
-            spine = Image.new("RGB", (max(8, round(im.height * spine_mm / h_mm)), im.height),
+            spine = Image.new("RGB", (max(8, round(im.height * cd / ch)), im.height),
                               _hex(hue))
             back = im.filter(_BLUR).point(lambda p: int(p * 0.42))
             faces = {"front": im, "spine": spine, "back": back}
@@ -393,9 +406,9 @@ class Shelf:
         # gets ?v=<n>, which changes even though the path is the same (faces are cached
         # immutably otherwise).
         prev = self._uploads.get(key, {}).get("v", 0)
-        entry = {"kind": kind, "template": tpl_name, "region": "user",
+        entry = {"kind": kind, "region": "user",
                  "back_is_real": kind == "wrap", "v": prev + 1,
-                 "case": {"w": front_mm, "h": h_mm, "d": spine_mm}}
+                 "case": {"w": round(cw, 1), "h": round(ch, 1), "d": round(cd, 1)}}
         with self._guard:
             self._uploads[key] = entry
             self._save_uploads()

@@ -219,11 +219,15 @@ MAX_UPLOAD = 12 * 1024 * 1024
 
 
 @app.post("/api/shelf/{key}/cover")
-async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotate: int = 0):
+async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotate: int = 0,
+                          x1: float | None = None, x2: float | None = None,
+                          w: float | None = None, h: float | None = None, d: float | None = None):
     """Store a hand-supplied cover for one game — the image bytes are the raw POST body.
 
-    This is the manual override: whatever you upload beats what we auto-resolved, which
-    is how you fix a wrong match or add art for a game no source covered."""
+    The editor derives the box's proportions from the image (front aspect) and the user's
+    dragged spine guides, and passes them here — w/h/d are the case dims in mm, x1/x2 the
+    spine boundaries as fractions. This is the manual override: whatever you upload beats
+    what we auto-resolved, which is how you fix a wrong match or a wrong box shape."""
     plat = _platform_for(key)
     if plat is None:
         return JSONResponse({"error": "unknown game"}, status_code=404)
@@ -232,8 +236,10 @@ async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotat
         return JSONResponse({"error": "empty body"}, status_code=400)
     if len(body) > MAX_UPLOAD:
         return JSONResponse({"error": "image too large (max 12 MB)"}, status_code=413)
+    case = {"w": w, "h": h, "d": d} if None not in (w, h, d) else None
     try:
-        entry = SHELF.set_cover(key, body, kind=kind, platform=plat, rotate=int(rotate))
+        entry = SHELF.set_cover(key, body, kind=kind, platform=plat, rotate=int(rotate),
+                                x1=x1, x2=x2, case=case)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "src": "upload", "case": entry["case"], "v": entry["v"]}

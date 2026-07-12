@@ -2634,24 +2634,40 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .ce-hint { font-size:12.5px; color:var(--dim); margin:0 0 14px; line-height:1.45; min-height:34px; }
 .ce-hint.ce-err { color:var(--bad); }
 .ce-drop { display:block; border:1.5px dashed var(--border); border-radius:12px;
-  min-height:210px; cursor:pointer; overflow:hidden; position:relative;
+  min-height:220px; cursor:pointer; overflow:hidden; position:relative;
   background:var(--surface-2); transition:border-color .15s; }
 .ce-drop.over { border-color:var(--accent); }
 .ce-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:4px; color:var(--dim); }
 .ce-empty b { color:var(--text); font:600 14px var(--font); }
 .ce-empty span { font-size:12px; }
-.ce-prev { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-  padding:14px; background:repeating-conic-gradient(#0000 0% 25%, rgba(255,255,255,.03) 0% 50%) 0 0/20px 20px; }
-.ce-prev img { max-width:100%; max-height:182px; object-fit:contain; border-radius:3px;
-  box-shadow:0 6px 20px rgba(0,0,0,.5); transition:transform .2s var(--ease); }
-.ce-prev img.turned { max-width:182px; max-height:100%; }
-/* slice guides: show where a wrap gets cut into back | spine | front */
-.ce-prev.wrap .ce-guides { position:absolute; inset:14px; pointer-events:none; }
-.ce-prev.wrap .ce-guides::before, .ce-prev.wrap .ce-guides::after {
-  content:""; position:absolute; top:14px; bottom:14px; width:1px;
-  background:repeating-linear-gradient(var(--accent) 0 5px, transparent 5px 10px); opacity:.6; }
-.ce-tools { display:flex; align-items:center; gap:12px; margin-top:12px; }
+.ce-stage { min-height:220px; display:flex; align-items:center; justify-content:center;
+  padding:16px; cursor:default;
+  background:repeating-conic-gradient(#0000 0 25%, rgba(255,255,255,.03) 0 50%) 0 0/20px 20px; }
+/* shrink-wraps the image, so guide positions in % map exactly to image pixels */
+.ce-imgwrap { position:relative; display:inline-block; line-height:0; max-width:100%;
+  box-shadow:0 6px 22px rgba(0,0,0,.5); }
+.ce-imgwrap img { max-width:100%; max-height:200px; width:auto; height:auto; border-radius:2px; }
+.ce-region { position:absolute; top:0; bottom:0; pointer-events:none;
+  display:flex; align-items:flex-start; justify-content:center; }
+.ce-region.back { left:0; background:rgba(0,0,0,.42); }
+.ce-region.front { background:rgba(124,92,255,.10); box-shadow:inset 0 0 0 2px var(--accent-line); }
+.ce-region span { font:700 8px/1 var(--font); letter-spacing:.14em; text-transform:uppercase;
+  color:#fff; background:rgba(0,0,0,.55); padding:3px 5px; border-radius:0 0 4px 0;
+  margin-top:0; }
+.ce-region.front span { background:var(--accent); }
+.ce-guide { position:absolute; top:-6px; bottom:-6px; width:14px; margin-left:-7px;
+  cursor:ew-resize; touch-action:none; z-index:3; display:flex; justify-content:center; }
+.ce-guide::before { content:""; width:2px; background:var(--accent);
+  box-shadow:0 0 0 1px rgba(0,0,0,.4); }
+.ce-guide::after { content:""; position:absolute; top:50%; width:12px; height:22px;
+  margin-top:-11px; background:var(--accent); border-radius:3px;
+  box-shadow:0 2px 6px rgba(0,0,0,.5); }
+.ce-tools { display:flex; align-items:center; gap:14px; margin-top:12px; flex-wrap:wrap; }
+.ce-depth { display:flex; align-items:center; gap:8px; font:600 11px var(--font);
+  color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
+.ce-depth input { width:88px; accent-color:var(--accent); }
+.ce-depth span { color:var(--muted); font-variant-numeric:tabular-nums; }
 .ce-dim { font:500 11px var(--font); color:var(--dim); font-variant-numeric:tabular-nums; }
 .ce-acts { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:18px; }
 .ce-right { display:flex; gap:8px; }
