@@ -243,7 +243,7 @@ function challengeSpotlight() {
     <div class="h-sect-head"><h2>${icon("i-target", 17)} Closest challenge</h2>
       <div class="h-sect-act"><button class="linkbtn" id="hChalAll">See all →</button></div></div>
     <button class="h-chal" id="hChal">
-      <span class="ch-icon big">${r.c.icon}</span>
+      <span class="ch-icon big">${glyph(r.c.icon, 26)}</span>
       <span class="h-chal-txt">
         <b>${escapeHtml(r.c.name)}</b>
         <span class="muted">${r.cleared.size} of ${r.total} cleared — ${r.remaining.size} to go</span>

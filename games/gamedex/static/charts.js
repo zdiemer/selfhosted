@@ -415,7 +415,9 @@ function scatter(points, opts = {}) {
     `<line class="sc-grid" x1="${PAD.l}" y1="${py(v).toFixed(1)}" x2="${W - PAD.r}" y2="${py(v).toFixed(1)}"/>
      <text x="${PAD.l - 6}" y="${(py(v) + 3).toFixed(1)}" text-anchor="end" class="s-axis">${Math.round(v * 100)}</text>`).join("");
   const dots = points.map((p, i) => {
-    const [c1] = chartColor(p.y >= p.x ? 2 : 9);      // above the line = you liked it more
+    // Above the diagonal you liked it more than the critics; below, less. That IS
+    // state, so it takes the state colours — not two arbitrary hues from a rotation.
+    const c1 = p.y >= p.x ? STATE.good : STATE.bad;
     const gap = Math.round((p.y - p.x) * 100);
     const tip = p.tip || [
       p.label,
@@ -439,7 +441,14 @@ function scatter(points, opts = {}) {
 function radar(axes, opts = {}) {
   const { size = 260, color = 0 } = opts;
   if (axes.length < 3) return `<div class="s-empty">Not enough data</div>`;
-  const R = size / 2 - 34, cx = size / 2, cy = size / 2;
+  /* The labels sit OUTSIDE the web and they are text, so the box has to be wider
+     than it is tall — no amount of shrinking the web fixes it. "Real-Time
+     Strategy" is ~95px at 10px, anchored 105px from the centre: in a square
+     300-box it ran clean off the right edge. Give it horizontal gutters. */
+  const GUTTER_X = 96;      // "Real-Time Strategy" is ~95px of text
+  const GUTTER_Y = 24;      // the top and bottom labels need their line-height
+  const W = size + GUTTER_X * 2, H = size + GUTTER_Y * 2;
+  const R = size / 2 - 18, cx = W / 2, cy = H / 2;
   const [c1, c2] = chartColor(color);
   const max = Math.max(...axes.map((a) => a.value)) || 1;
   const pt = (i, frac) => {
@@ -454,12 +463,12 @@ function radar(axes, opts = {}) {
   }).join("");
   const poly = axes.map((a, i) => pt(i, a.value / max).map((n) => n.toFixed(1)).join(",")).join(" ");
   const labels = axes.map((a, i) => {
-    const [x, y] = pt(i, 1.19);
+    const [x, y] = pt(i, 1.14);
     const anchor = x < cx - 4 ? "end" : x > cx + 4 ? "start" : "middle";
     return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}" class="rd-lbl"
       ${tipAttr(a.tip || `${a.label} — ${a.hint || a.value}`)}>${escapeHtml(String(a.label))}</text>`;
   }).join("");
-  return `<svg viewBox="0 0 ${size} ${size}" class="s-svg radar">
+  return `<svg viewBox="0 0 ${W} ${H}" class="s-svg radar">
     ${rings}${spokes}
     <polygon class="rd-poly" points="${poly}" fill="${c1}" fill-opacity=".28" stroke="${c2}" stroke-width="2"/>
     ${axes.map((a, i) => { const [x, y] = pt(i, a.value / max);
