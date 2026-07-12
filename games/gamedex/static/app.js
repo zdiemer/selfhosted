@@ -2465,9 +2465,9 @@ function renderStats() {
     </div>` +
     sect("Completed games", [
       statPanel("Finished vs added, cumulatively", multiLine([
-        { points: cumAcquired, color: 3, label: `Acquired · ${last(cumAcquired)}` },
-        { points: cumAdded, color: 1, label: `Added to the sheet · ${last(cumAdded)}` },
-        { points: cumulative, color: 0, label: `Finished · ${rows.length.toLocaleString()}` },
+        { points: cumAcquired, color: 3, name: "Acquired", label: `Acquired · ${last(cumAcquired)}` },
+        { points: cumAdded, color: 1, name: "Added to the sheet", label: `Added to the sheet · ${last(cumAdded)}` },
+        { points: cumulative, color: 0, name: "Finished", label: `Finished · ${rows.length.toLocaleString()}` },
       ]), "wide",
       "The gap between the lines is your backlog. Acquired uses Date Purchased; Added uses Date Added, which only starts in 2024 — that is when you began recording it, not a gap in the chart."),
       statPanel("Your hall of fame", posterRow(bestRows, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide"),

@@ -1178,6 +1178,19 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .hm-cell[data-tip], .rd-dot[data-tip] { cursor: default; }
 
 .ln-dot { cursor: default; }
+
+/* The crosshair: one hover band per x, reporting every line at that point. */
+.ln-band { cursor: default; }
+/* A dot you can hover is worth enlarging, and it should say it's clickable. */
+.sc-dot[data-tip]:hover { r: 7; }
+.sc-dot.linked { cursor: pointer; }
+.ln-guide {
+  stroke: var(--text-2); stroke-width: 1; stroke-dasharray: 3 3;
+  opacity: 0; transition: opacity .12s var(--ease);
+}
+.ln-mark { opacity: 0; transition: opacity .12s var(--ease); }
+.ln-band:hover .ln-guide { opacity: .55; }
+.ln-band:hover .ln-mark { opacity: 1; }
 .ln-dot:hover { fill: var(--accent); fill-opacity: .35; }
 
 /* Calendar heatmap */

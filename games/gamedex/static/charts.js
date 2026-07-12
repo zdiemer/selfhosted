@@ -267,11 +267,13 @@ function multiLine(series, opts = {}) {
   const x = (i) => PAD.l + (n > 1 ? (i / (n - 1)) : 0) * (W - PAD.l - PAD.r);
   const y = (v) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b);
 
-  let defs = "", paths = "", dots = "";
+  let defs = "", paths = "";
+  const at = [];      // per-series: label -> point, for the shared crosshair
   live.forEach((s, si) => {
     const [c1, c2] = chartColor(s.color ?? si);
-    const at = new Map(s.points.map((p) => [p.label, p]));
-    const seq = labels.map((l, i) => ({ i, p: at.get(l) })).filter((o) => o.p);
+    const at_ = new Map(s.points.map((p) => [p.label, p]));
+    at.push(at_);
+    const seq = labels.map((l, i) => ({ i, p: at_.get(l) })).filter((o) => o.p);
     const line = seq.map((o, k) => `${k ? "L" : "M"}${x(o.i).toFixed(1)},${y(o.p.value).toFixed(1)}`).join(" ");
     const first = seq[0], last = seq[seq.length - 1];
     const area = `${line} L${x(last.i).toFixed(1)},${(H - PAD.b).toFixed(1)} L${x(first.i).toFixed(1)},${(H - PAD.b).toFixed(1)} Z`;
@@ -282,11 +284,31 @@ function multiLine(series, opts = {}) {
     paths += `<path class="ln-area" d="${area}" fill="url(#${uid})"/>
       <path class="ln-line" d="${line}" fill="none" stroke="${c2}" stroke-width="2.5"
         stroke-linecap="round" stroke-linejoin="round"/>`;
-    // The hover target: fat, invisible, and it says what the value is.
-    dots += seq.map((o) =>
-      `<circle class="ln-dot" cx="${x(o.i).toFixed(1)}" cy="${y(o.p.value).toFixed(1)}" r="9" fill="transparent"
-        ${tipAttr(o.p.tip || `${s.label ? s.label + " · " : ""}${o.p.label} — ${fmt(o.p.value)}`)}/>`).join("");
   });
+
+  /* One hover target per x, spanning the full height, rather than a target per
+     dot. With three lines you want to compare them AT A YEAR — hovering each
+     line separately makes you hold two numbers in your head and guess at the
+     third. So a band reports every series at once, and draws a guide line with a
+     dot on each line it crosses. */
+  const bandW = (W - PAD.l - PAD.r) / Math.max(1, n - 1);
+  const bands = labels.map((l, i) => {
+    const hits = live.map((s, si) => ({ s, si, p: at[si].get(l) })).filter((h) => h.p);
+    if (!hits.length) return "";
+    // `name` is the short series name for the tooltip. The legend `label` carries
+    // a running total ("Acquired · 6,183"), which would read as nonsense here.
+    const tip = [l, ...hits.map((h) => `${h.s.name ? h.s.name + ": " : ""}${fmt(h.p.value)}`)].join("\n");
+    const marks = hits.map((h) => {
+      const [, c2] = chartColor(h.s.color ?? h.si);
+      return `<circle class="ln-mark" cx="${x(i).toFixed(1)}" cy="${y(h.p.value).toFixed(1)}" r="4" fill="${c2}"/>`;
+    }).join("");
+    return `<g class="ln-band"${tipAttr(tip)}>
+      <rect x="${(x(i) - bandW / 2).toFixed(1)}" y="${PAD.t}" width="${bandW.toFixed(1)}"
+        height="${(H - PAD.t - PAD.b).toFixed(1)}" fill="transparent"/>
+      <line class="ln-guide" x1="${x(i).toFixed(1)}" y1="${PAD.t}" x2="${x(i).toFixed(1)}" y2="${(H - PAD.b).toFixed(1)}"/>
+      ${marks}
+    </g>`;
+  }).join("");
 
   // Label every nth point so the axis never collides with itself.
   const step = Math.ceil(n / 10);
@@ -299,7 +321,7 @@ function multiLine(series, opts = {}) {
 
   return `<div class="ln-wrap">
     <svg viewBox="0 0 ${W} ${H}" class="s-svg lnchart" preserveAspectRatio="xMidYMid meet">
-      <defs>${defs}</defs>${paths}${dots}${ticks}
+      <defs>${defs}</defs>${paths}${bands}${ticks}
     </svg>
     ${legend ? `<div class="ln-legend">${legend}</div>` : ""}
   </div>`;
@@ -358,9 +380,15 @@ function scatter(points, opts = {}) {
      <text x="${PAD.l - 6}" y="${(py(v) + 3).toFixed(1)}" text-anchor="end" class="s-axis">${Math.round(v * 100)}</text>`).join("");
   const dots = points.map((p, i) => {
     const [c1] = chartColor(p.y >= p.x ? 2 : 9);      // above the line = you liked it more
+    const gap = Math.round((p.y - p.x) * 100);
+    const tip = p.tip || [
+      p.label,
+      `You: ${Math.round(p.y * 100)}%`,
+      `Critics: ${Math.round(p.x * 100)}%`,
+      gap === 0 ? "You agreed" : `You rated it ${Math.abs(gap)} ${gap > 0 ? "higher" : "lower"}`,
+    ].join("\n");
     return `<circle class="sc-dot${p.link ? " linked" : ""}" cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}"
-      r="4.5" fill="${c1}" style="--d:${Math.min(i * 6, 700)}ms"${chartLink(p.link)}>
-      <title>${escapeHtml(p.label)} — you ${Math.round(p.y * 100)}, critics ${Math.round(p.x * 100)}</title></circle>`;
+      r="4.5" fill="${c1}" style="--d:${Math.min(i * 6, 700)}ms"${chartLink(p.link)}${tipAttr(tip)}/>`;
   }).join("");
   return `<svg viewBox="0 0 ${W} ${H}" class="s-svg scatter">
     ${grid}
