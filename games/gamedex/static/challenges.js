@@ -25,7 +25,7 @@ const chMean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 // priority/5) and the mean of the external scores.
 function combinedRating(r) {
   const others = [r.metacriticRating, r.gamefaqsUserRating].filter((v) => v != null);
-  const mine = r.rating != null ? r.rating : (r.priority != null ? Number(r.priority) / 5 : null);
+  const mine = r.rating != null ? r.rating : (r.priority != null ? priorityRank(r.priority) / 5 : null);
   const parts = [];
   if (mine != null && !isNaN(mine)) parts.push(mine);
   if (others.length) parts.push(chMean(others));
@@ -47,7 +47,9 @@ const chToday = () => new Date().toISOString().slice(0, 10);
 // in a language I read, unplayed, and actually out.
 function isCandidate(r) {
   if (r.completed) return false;
-  if (!((Number(r.priority) || 0) > 1)) return false;
+  // Priority is a label now ("Might Play"), so Number() would be NaN and this
+  // would reject every game in the library.
+  if (!(priorityRank(r.priority) > 1)) return false;
   if (r.playable !== "Yes") return false;
   if (r.english === "None" && CH_TEXT_GENRES.has(r.genre)) return false;
   return !!r.releaseDate && r.releaseDate <= chToday();

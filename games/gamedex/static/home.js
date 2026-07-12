@@ -93,7 +93,7 @@ const SUGGESTION_RULES = [
   },
   {
     id: "priority",
-    test: (r) => (Number(r.priority) >= 4 ? `Flagged high priority` : null),
+    test: (r) => (priorityRank(r.priority) >= 4 ? `Flagged high priority` : null),
   },
   {
     id: "wishlist",

@@ -96,11 +96,11 @@ _GAMES = [
     ("Digital Platform",     "text",   True,  False, False),
     ("Subscription",         "text",   True,  False, False),
     ("Limited Print",        "text",   True,  False, False),
-    ("Edition",              "text",   True,  False, False),
-    ("Required Accessory",   "text",   True,  False, False),
-    ("Physical Media",       "text",   True,  False, False),
-    ("Delisted",             "bool",   True,  False, False),
-    ("Damaged",              "bool",   True,  False, False),
+    ("Edition",              "text",   False,  False, False),
+    ("Required Accessory",   "text",   False,  False, False),
+    ("Physical Media",       "text",   False,  False, False),
+    ("Delisted",             "bool",   False,  False, False),
+    ("Damaged",              "bool",   False,  False, False),
 ]
 
 _COMPLETED = [
@@ -152,6 +152,10 @@ _REGIONS = {
 # several were previously coerced to bool, which silently collapsed states.
 _VALUE_LABELS = {
     "playingStatus": {"1": "Playing", "0": "On Hold", "-1": "Up Next"},
+    # Priority is 1-5 in the sheet. "3" is not a filter anyone can reason about;
+    # "Want to Play" is.
+    "priority": {"1": "Will Not Play", "2": "Might Play", "3": "Want to Play",
+                 "4": "Will Play", "5": "Must Play"},
     # Playability: UNKNOWN=0, PLAYABLE=1, UNPLAYABLE=-1. As a bool, bool(-1) was
     # True → unplayable games read "Yes" and unknown ones "No".
     "playable": {"1": "Yes", "0": "Unknown", "-1": "No"},

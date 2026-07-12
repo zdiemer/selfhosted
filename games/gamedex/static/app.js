@@ -850,6 +850,16 @@ const columns = () => sheet().columns;
 const searchCols = () => columns().filter((c) => c.search).map((c) => c.key);
 const colByKey = (key) => columns().find((c) => c.key === key);
 
+const titleCase = (s) => String(s).replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+/* Priority is a LABEL now, not a number — so sorting or listing it alphabetically
+   would put "Might Play" above "Must Play" above "Want to Play", which is
+   meaningless. Rank it by intent, which is what the number meant. */
+const PRIORITY_RANK = {
+  "Must Play": 5, "Will Play": 4, "Want to Play": 3, "Might Play": 2, "Will Not Play": 1,
+};
+const priorityRank = (v) => PRIORITY_RANK[v] ?? 0;
+
 /* One search field. There were three — the top bar, Groupings and Reviews — each
    styled separately and drifting apart. Same markup everywhere now, so the icon,
    the height, the radius and the focus ring can't disagree. */
@@ -1220,7 +1230,8 @@ function extraFacetCols(tab = activeTab) {
     { key: "__deck", label: "Steam Deck", type: "text", facet: true, virtual: true, kind: "fn",
       getVals: (r) => { const e = ENRICH[r._k]; return e && e.deck ? [e.deck] : []; } },
     { key: "__proton", label: "ProtonDB", type: "text", facet: true, virtual: true, kind: "fn",
-      getVals: (r) => { const e = ENRICH[r._k]; return e && e.protonTier ? [e.protonTier] : []; } },
+      // The API returns "platinum"; it's a tier, not a word in a sentence.
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.protonTier ? [titleCase(e.protonTier)] : []; } },
     { key: "__steamrev", label: "Steam reviews", type: "text", facet: true, virtual: true, kind: "bucket",
       buckets: METACRITIC_BUCKETS, getVal: (r) => { const e = ENRICH[r._k]; return e && e.steamReview; } },
     // What we think you'd score it — a filter for "things I'd probably love".
@@ -1501,6 +1512,11 @@ function cmpBy(a, b, spec) {
   const x = v ? v.get(a) : a[spec.key];
   const y = v ? v.get(b) : b[spec.key];
   if (spec.kind === "playingRank") return playingRank(x) - playingRank(y);
+  if (spec.key === "priority") {
+    // Alphabetically, "Might Play" beats "Must Play" beats "Want to Play". Rank it.
+    const d = priorityRank(x) - priorityRank(y);
+    return spec.dir === "desc" ? -d : d;
+  }
   if (spec.kind === "releaseDateDesc") return releaseDateScore(y) - releaseDateScore(x);
   const xm = isBlank(x), ym = isBlank(y);
   if (xm && ym) return 0;
@@ -2738,7 +2754,7 @@ const SELECTORS = [
   { id: "playing", label: "Currently playing", group: "Status", filter: (r) => r.playingStatus === "Playing" },
   { id: "upnext", label: "Up next", group: "Status", filter: (r) => r.playingStatus === "Up Next" },
   { id: "onhold", label: "On hold", group: "Status", filter: (r) => r.playingStatus === "On Hold" },
-  { id: "priority", label: "High priority", group: "Status", filter: (r) => Number(r.priority) >= 4 },
+  { id: "priority", label: "High priority", group: "Status", filter: (r) => priorityRank(r.priority) >= 4 },
   { id: "maxpriority", label: "Top priority", group: "Status", filter: (r) => Number(r.priority) >= 5 },
 
   { id: "onesit", label: "One sitting (under 2h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 2; } },
