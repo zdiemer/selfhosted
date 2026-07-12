@@ -66,182 +66,183 @@ config:
   skipHashCalculation: true
   # Folders that aren't game platforms, or that we don't want RomM walking.
   excludePlatforms:
-    # Not a platform, a stray folder on the share.
-    - _romnas
-    # 172,809 entries across these six — archived WEB games. IGDB has no metadata
-    # for them and RomM cannot launch them.
-    - Flashpoint
-    - Flashpoint-Flash
-    - Flashpoint-HTML5
-    - Flashpoint-Java
-    - Flashpoint-Shockwave
-    - Flashpoint-Unity
-    # RomM has no platform for any of these — they aren't in its 220-slug table and
-    # IGDB has no equivalent — so it cannot identify a single file in them. Scanning
-    # would be 243,974 entries of SMB traffic to produce a wall of unknown files.
-    # J2ME alone is 223,430: the biggest folder on the share, and the most useless.
+    # Everything RomM cannot PLAY IN THE BROWSER. RomM's EmulatorJS build ships a
+    # fixed table of 78 platform slugs (frontend bundle, object `mO`); anything
+    # outside it has no core, so it is a catalogue entry with no Play button.
+    # That rules out Dreamcast, MSX, Vectrex and Atari ST (no flycast/bluemsx/
+    # vecx/hatari in the build), every modern console (PS2 up, Xbox, Wii, Switch),
+    # the home micros (ZX Spectrum, BBC, Apple II), and the arcade BOARDS whose
+    # games MAME 2003 / FBNeo can't run (Naomi, Chihiro, Triforce, Atomiswave,
+    # TeknoParrot, Daphne laserdisc). The MAME folder itself stays.
     - J2ME
+    - Flashpoint-Flash
+    - ZX Spectrum
+    - Flashpoint-HTML5
     - Symbian
+    - iOS
+    - Atari ST
+    - Flashpoint-Shockwave
+    - PS2
+    - MSX
+    - BBC Micro
+    - Apple II
+    - e-Reader
+    - Flashpoint-Unity
+    - MSX2
+    - Wii
+    - Xbox
+    - Playdate
+    - Xbox 360
+    - Ouya
+    - PS3
+    - WiiWare
+    - Flashpoint-Java
+    - PC-88
+    - Sharp X68000
+    - Nintendo 3DS
     - Visual Pinball
+    - ZX81
+    - Windows 3.x
+    - ScummVM
+    - FM Towns
+    - Dreamcast
+    - Mac OS
     - GP2X
+    - GameCube
+    - TI-99-4A
     - Oric
+    - TeknoParrot
+    - PC-98
+    - Arduboy
+    - Satellaview
+    - CoCo
+    - Palm OS
+    - Apple IIGS
+    - Acorn Archimedes
+    - Sega Pico
+    - Windows Phone
+    - Amstrad PCW
+    - FM-7
     - GP2X Caanoo
+    - Dragon 32-64
     - Mophun
     - Sam Coupe
     - GP2X Wiz
+    - Android
+    - Naomi
+    - Intellivision
+    - N-Gage 2.0
+    - Dreamcast VMU
+    - SG-1000
+    - N-Gage
+    - Windows Mobile
+    - Odyssey 2
+    - PC-6001
+    - Zodiac
     - BREW
+    - Neo Geo CD
+    - Namco System 2x6
     - MSX Turbo R
+    - SuperVision
+    - Singe Arcade
+    - CDTV
+    - Zeebo
     - DREAMM
+    - Arcadia 2001
     - ExEn
+    - Vectrex
+    - Triforce
+    - Playdia
+    - Atari 8-bit
+    - FM77AV
     - Didj
+    - Channel F
+    - Nintendo 64DD
+    - Pippin
+    - LaserActive
+    - Jaguar CD
+    - Atomiswave
+    - Pokemon Mini
+    - Naomi 2
     - GP32
+    - Laserdisc Arcade
+    - Switch
+    - American Laser Games
+    - Chihiro
     - Apple Lisa
     - Sufami Turbo
+    - Loopy
     - Risc PC
+    - PS4
+    - Nuon
     - TI Calculators
+    - New Nintendo 3DS
     - Keitai
-    - IBM OS2
     - VideoNow XP
+    - IBM OS2
     - DVD Games
     - Action Max
-    - PlayStation Mobile
+    - BlackBerry
+    - PS Vita
+    - Windows 9x
     - iPod
+    - _romnas
+    - PlayStation Mobile
+    - Gizmondo
+    - Wii U
+    - Sharp X1
+    - Flashpoint
     - SNK
+    - Odyssey
+    - Astrocade
+    - Fire TV
   # your-folder-name: romm-platform-name, for folders RomM can't identify.
   platformMap:
     "3DO": 3do
-    "Acorn Archimedes": acorn-archimedes
-    "American Laser Games": arcade
     "Amiga": amiga
     "Amiga CD32": amiga-cd32
     "Amstrad CPC": acpc
-    "Amstrad PCW": amstrad-pcw
-    "Android": android
-    "Apple II": appleii
-    "Apple IIGS": apple-iigs
-    "Arcadia 2001": arcadia-2001
-    "Arduboy": arduboy
-    "Astrocade": astrocade
     "Atari 2600": atari2600
     "Atari 5200": atari5200
     "Atari 7800": atari7800
-    "Atari 8-bit": atari8bit
-    "Atari ST": atari-st
-    "Atomiswave": arcade
-    "BBC Micro": bbcmicro
-    "BlackBerry": blackberry
     "CD-i": philips-cd-i
-    "CDTV": commodore-cdtv
-    "Channel F": fairchild-channel-f
-    "Chihiro": arcade
-    "CoCo": trs-80-color-computer
     "ColecoVision": colecovision
     "Commodore 128": c64
     "Commodore 64": c64
     "Commodore PET": cpet
     "Commodore Plus-4": c-plus-4
     "DSiWare": nintendo-dsi
-    "Dragon 32-64": dragon-32-slash-64
-    "Dreamcast": dc
-    "Dreamcast VMU": visual-memory-unit-slash-visual-memory-system
-    "FM Towns": fm-towns
-    "FM-7": fm-7
-    "FM77AV": fm-7
     "Famicom Disk System": fds
-    "Fire TV": amazon-fire-tv
     "Game Boy": gb
     "Game Boy Advance": gba
     "Game Boy Color": gbc
     "Game Gear": gamegear
-    "GameCube": ngc
     "Genesis": genesis
-    "Gizmondo": gizmondo
-    "Intellivision": intellivision
     "Jaguar": jaguar
-    "Jaguar CD": atari-jaguar-cd
-    "LaserActive": laseractive
-    "Laserdisc Arcade": arcade
-    "Loopy": casio-loopy
     "Lynx": lynx
     "MAME": arcade
     "MS-DOS": dos
-    "MSX": msx
-    "MSX2": msx2
-    "Mac OS": mac
     "Master System": sms
-    "N-Gage": ngage
-    "N-Gage 2.0": ngage
     "NES": nes
-    "Namco System 2x6": arcade
-    "Naomi": arcade
-    "Naomi 2": arcade
-    "Neo Geo CD": neo-geo-cd
     "Neo Geo Pocket": neo-geo-pocket
     "Neo Geo Pocket Color": neo-geo-pocket-color
-    "New Nintendo 3DS": new-nintendo-3ds
-    "Nintendo 3DS": 3ds
     "Nintendo 64": n64
-    "Nintendo 64DD": 64dd
     "Nintendo DS": nds
     "Nintendo DSi": nintendo-dsi
-    "Nuon": nuon
-    "Odyssey": odyssey
-    "Odyssey 2": odyssey-2
-    "Ouya": ouya
-    "PC-6001": nec-pc-6000-series
-    "PC-88": pc-8800-series
-    "PC-98": pc-9800-series
     "PC-FX": pc-fx
-    "PS Vita": psvita
-    "PS2": ps2
-    "PS3": ps3
-    "PS4": ps4
     "PSP": psp
     "PSX": psx
-    "Palm OS": palm-os
-    "Pippin": apple-pippin
-    "Playdate": playdate
-    "Playdia": playdia
-    "Pokemon Mini": pokemon-mini
-    "SG-1000": sg1000
     "SNES": snes
-    "Satellaview": satellaview
     "Saturn": saturn
-    "ScummVM": scummvm
     "Sega 32X": sega32
     "Sega CD": segacd
-    "Sega Pico": sega-pico
-    "Sharp X1": x1
-    "Sharp X68000": sharp-x68000
-    "Singe Arcade": arcade
     "SuperGrafx": supergrafx
-    "SuperVision": supervision
-    "Switch": switch
-    "TI-99-4A": ti-99
-    "TeknoParrot": arcade
-    "Triforce": arcade
     "TurboGrafx-16": tg16
     "TurboGrafx-CD": turbografx-cd
     "VIC-20": vic-20
-    "Vectrex": vectrex
     "Virtual Boy": virtualboy
-    "Wii": wii
-    "Wii U": wiiu
-    "WiiWare": wii
-    "Windows 3.x": win
-    "Windows 9x": win
-    "Windows Mobile": windows-mobile
-    "Windows Phone": winphone
     "WonderSwan": wonderswan
     "WonderSwan Color": wonderswan-color
-    "Xbox": xbox
-    "Xbox 360": xbox360
-    "ZX Spectrum": zxs
-    "ZX81": zx81
-    "Zeebo": zeebo
-    "Zodiac": zod
-    "e-Reader": e-reader-slash-card-e-reader
-    "iOS": ios
 
 romm:
   # REQUIRED — set in values.local.yaml. Generate with:
