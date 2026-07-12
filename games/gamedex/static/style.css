@@ -984,6 +984,49 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
 /* ---- Stats -------------------------------------------------------------- */
 .stats { flex: 1; overflow-y: auto; padding: 20px; }
+/* ---- chart language ----------------------------------------------------
+   Every SVG text class needs an explicit fill. .s-axis had NO RULE, so it fell
+   back to black — every axis label, month name and weekday in every chart was
+   black on a near-black page. (Same bug as .s-val a week ago. SVG text does not
+   inherit `color`.) */
+.s-axis {
+  fill: var(--dim); font: 600 10px var(--font);
+  font-variant-numeric: tabular-nums; letter-spacing: .04em;
+}
+.donut-total, .s-val { fill: var(--text); }
+
+/* Charts were scaling to whatever width they were given: the scatter rendered at
+   1318x1163 from a 340x300 viewBox — a 4x blow-up. Cap them, and centre. */
+.s-svg { max-width: 100%; height: auto; display: block; }
+.lnchart { width: 100%; max-width: 640px; }
+.scatter { width: 100%; max-width: 380px; margin: 0 auto; }
+.radar   { width: 100%; max-width: 300px; margin: 0 auto; }
+.s-donut { width: 156px; height: 156px; flex-shrink: 0; }
+.heatmap { width: 100%; max-width: 780px; min-width: 560px; height: auto; }
+
+/* The days either side of the year: same footprint, no ink — so the grid is a
+   rectangle instead of ragged at both corners. */
+.hm-blank { fill: var(--surface-2); opacity: .35 !important; pointer-events: none; }
+
+/* The endpoint is where you ARE. */
+.ln-end { opacity: 0; transition: opacity .4s var(--ease) .5s; }
+.s-svg.drawn .ln-end, .drawn .ln-end { opacity: 1; }
+
+/* One hue per bar now, so the fill is a colour, not a gradient. */
+.bar-fill { background: var(--c1) !important; }
+.col-fill { background: var(--c1) !important; }
+.bar-val, .col-val {
+  font-variant-numeric: tabular-nums; font-weight: 600; font-family: var(--font);
+}
+/* Diverging: a real centre line, so length means the same on both sides. */
+.bars.diverging .bar-track { position: relative; }
+.bars.diverging .bar-track::before {
+  content: ""; position: absolute; left: 0; top: -2px; bottom: -2px;
+  width: 1px; background: var(--border);
+}
+.bars.diverging .bar.neg .bar-val { color: var(--bad); }
+.bars.diverging .bar:not(.neg) .bar-val { color: var(--good); }
+
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 12px; }
 
 /* The three numbers the page is actually about get their own rank. Everything

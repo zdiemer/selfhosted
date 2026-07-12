@@ -2390,7 +2390,7 @@ function yearInReview(rows, games) {
     </div>
     ${statPanel(`Every day of ${y}`, heatmap(byDay, y, { onDay: showDay, tipFor: dayTip }), "wide")}
     ${statPanel(`The best of ${y}`, posterRow(top, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide")}
-    ${statPanel(`What you played in ${y}`, donut(topCounts(mine.map((r) => r.genre), 7)))}
+    ${statPanel(`What you played in ${y}`, barsH(topCounts(mine.map((r) => r.genre), 7)))}
     ${statPanel(`Where you played in ${y}`, barsH(topCounts(mine.map((r) => r.platform), 8)))}
   </section>`;
 }
@@ -2627,29 +2627,30 @@ function renderStats() {
       statPanel("You vs the critics", scatter(scatterPts, { xLabel: "Critics", yLabel: "You" })),
       statPanel("Your taste, by genre", radar(genreRadar, { color: 4 }), "",
         "Your average rating per genre (0-100%), for genres you've finished 15+ games in. A long spoke means you rate that genre highly — not that you play it a lot."),
-      statPanel("Completions per year", barsV(yearData), "wide"),
-      statPanel("Completions by month", barsV(monthData, { color: 1 })),
-      statPanel("By release decade", barsV(decadeData, { color: 4 })),
+      statPanel("Completions per year", barsV(yearData, { tone: "good" }), "wide"),
+      statPanel("Completions by month", barsV(monthData, { tone: "good" })),
+      statPanel("By release decade", barsV(decadeData)),
       statPanel("Top platforms", barsH(countBars(rows, "platform", 10, "completed"))),
       statPanel("Top genres", barsH(countBars(rows, "genre", 12, "completed"))),
       statPanel("Top franchises", barsH(countBars(rows, "franchise", 10, "completed"))),
       statPanel("Top developers", barsH(countBars(rows, "developer", 10, "completed"))),
       statPanel("Top publishers", barsH(countBars(rows, "publisher", 10, "completed"))),
       statPanel("Rating distribution", barsH(ratingData)),
-      statPanel("By region", donut(countBars(rows, "region", 8, "completed"))),
+      statPanel("By region", barsH(countBars(rows, "region", 8, "completed"))),
       statPanel("How I played", barsH(flags)),
       statPanel("Longest playthroughs", barsH(longest, { fmt: (v) => v + "h" })),
-      statPanel("Biggest me-vs-critic gaps", barsH(gaps, { fmt: (v) => (v > 0 ? "+" : "") + v })),
+      statPanel("Biggest me-vs-critic gaps", barsH(gaps, { fmt: (v) => (v > 0 ? "+" : "") + v, diverging: true }), "",
+        "Green: you rated it higher than the critics did. Red: lower."),
     ]) +
     sect("Backlog", [
       statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),
       statPanel("Backlog by genre", barsH(countBars(backlog, "genre", 12, "games"))),
       statPanel("Backlog by length", barsH(backlogTime)),
-      statPanel("Backlog by status", donut(countBars(backlog, "playingStatus", 6, "games"))),
+      statPanel("Backlog by status", barsH(countBars(backlog, "playingStatus", 6, "games"))),
     ]) +
     sect("Purchases & collection", [
-      statPanel("Spending per year", barsV(spendData, { color: 3, fmt: usd }), "wide"),
-      statPanel("Games bought per year", barsV(boughtData, { color: 5 })),
+      statPanel("Spending per year", barsV(spendData, { fmt: usd, tone: "warn" }), "wide"),
+      statPanel("Games bought per year", barsV(boughtData)),
       statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, fmt: usd, label: usd(totalSpent) + " all in" }), "wide"),
       ...(VALUE_HISTORY && VALUE_HISTORY.length > 1
         ? [statPanel("Collection value over time",

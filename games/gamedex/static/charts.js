@@ -12,14 +12,26 @@
 
    Loaded after app.js; shares its globals (openDrawer, tabState, …). */
 
-// Gradient pairs, one per series slot.
-const CHART_COLORS = [
-  ["#8b6cff", "#6d3bff"], ["#22d3ee", "#0ea5b7"], ["#34d399", "#10b981"],
-  ["#fbbf24", "#f59e0b"], ["#f472b6", "#ec4899"], ["#60a5fa", "#3b82f6"],
-  ["#fb923c", "#f97316"], ["#a78bfa", "#8b5cf6"], ["#2dd4bf", "#14b8a6"],
-  ["#f87171", "#ef4444"], ["#e879f9", "#d946ef"], ["#facc15", "#eab308"],
-];
-const chartColor = (i) => CHART_COLORS[i % CHART_COLORS.length];
+/* Colour has exactly three jobs. Anything else is decoration, and decoration is
+   what makes a chart hard to read.
+
+   1 MAGNITUDE — one ramp, from the accent. Ordered data: a ranking, a density, a
+     count. The eye reads dark-to-bright as less-to-more without being told.
+   2 STATE — green/amber/red, fixed meanings, used NOWHERE else. The moment green
+     means "beaten" AND "the third bar", it means nothing.
+   3 CATEGORY — a few harmonised hues, only where the categories differ in KIND.
+
+   What this replaces: twelve rotating hues handed out in render order, so a bar
+   was teal because it was third. Nothing was encoded. */
+const RAMP = ["#7C5CFF", "#6B4FE0", "#5B44C2", "#4C3AA3", "#3D3085", "#332A70", "#2A2360", "#241E52"];
+const STATE = { good: "#35D07F", warn: "#F5A524", bad: "#F2555A" };
+// Only for genuinely different KINDS of thing (platform families), never for a ranking.
+const FAMILY = ["#7C5CFF", "#3DBFD9", "#4FC08D", "#E8894A", "#9AA4B8", "#C77DD6"];
+
+// A ranked bar already encodes its value in LENGTH. The ramp reinforces that
+// order instead of arguing with it.
+const rampAt = (i, n) => RAMP[Math.min(RAMP.length - 1, Math.round((i / Math.max(1, n - 1)) * (RAMP.length - 1)))];
+const chartColor = (i) => [FAMILY[i % FAMILY.length], FAMILY[i % FAMILY.length]];
 
 // Click targets are registered per render and referenced by index, so a bar can
 // carry a closure (open this game / filter by this platform) without any global
@@ -73,20 +85,26 @@ function tipList(title, names, total) {
 
 /* Horizontal bars — the workhorse. data: [{label, value, link?, hint?}] */
 function barsH(data, opts = {}) {
-  const { fmt = chartFmt, colorBy = "index", max: maxOpt } = opts;
+  const { fmt = chartFmt, max: maxOpt, diverging = false, family = false } = opts;
   if (!data.length) return `<div class="s-empty">No data</div>`;
-  // Diverging data (the me-vs-critic gaps go negative) scales on magnitude.
   const max = maxOpt || Math.max(1, ...data.map((d) => Math.abs(d.value)));
-  return `<div class="bars">` + data.map((d, i) => {
-    const [c1, c2] = chartColor(colorBy === "index" ? i : 0);
+  const n = data.length;
+  return `<div class="bars${diverging ? " diverging" : ""}">` + data.map((d, i) => {
+    // Diverging is the ONE place two hues are earned: there's a real zero, and
+    // which side of it you're on is the point. Everything else is a ranking.
+    const c = diverging ? (d.value < 0 ? STATE.bad : STATE.good)
+      : family ? FAMILY[i % FAMILY.length]
+      : rampAt(i, n);
     const pct = Math.max(1.5, (Math.abs(d.value) / max) * 100);
     const neg = d.value < 0;
     const tag = d.link ? "button" : "div";
+    // A tooltip that repeats the label and the value already printed beside it is
+    // noise. Only tip when there's something MORE to say (the games behind a bar).
     return `<${tag} class="bar${d.link ? " linked" : ""}${neg ? " neg" : ""}"${chartLink(d.link)}
-      ${tipAttr(d.tip || `${d.label} — ${fmt(d.value)}`)}>
+      ${tipAttr(d.tip)}>
       <span class="bar-lbl">${escapeHtml(String(d.label))}</span>
       <span class="bar-track">
-        <span class="bar-fill" style="--w:${pct.toFixed(1)}%;--c1:${c1};--c2:${c2};--d:${i * 28}ms"></span>
+        <span class="bar-fill" style="--w:${pct.toFixed(1)}%;--c1:${c};--d:${i * 26}ms"></span>
       </span>
       <span class="bar-val">${escapeHtml(fmt(d.value))}</span>
     </${tag}>`;
@@ -95,21 +113,23 @@ function barsH(data, opts = {}) {
 
 /* Vertical bars — for time series (per year, per month). */
 function barsV(data, opts = {}) {
-  const { fmt = chartFmt, color = 0 } = opts;
+  const { fmt = chartFmt, tone = "" } = opts;
   if (!data.length) return `<div class="s-empty">No data</div>`;
   const max = Math.max(1, ...data.map((d) => d.value));
-  const [c1, c2] = chartColor(color);
+  const c1 = STATE[tone] || RAMP[0];
   // Past ~13 columns the value captions are wider than the bars they sit on and
   // start colliding. Drop them; the hover title still gives the exact figure.
   const showVals = data.length <= 13;
   return `<div class="colsw"><div class="cols${showVals ? "" : " novals"}">` + data.map((d, i) => {
     const pct = d.value ? Math.max(2, (d.value / max) * 100) : 0;
     const tag = d.link ? "button" : "div";
+    // Value printed above the bar? Then the tooltip has nothing to add.
+    const tip = d.tip || (showVals ? "" : `${d.label} — ${fmt(d.value)}`);
     return `<${tag} class="col${d.link ? " linked" : ""}"${chartLink(d.link)}
-      ${tipAttr(d.tip || `${d.label} — ${fmt(d.value)}`)}>
+      ${tipAttr(tip)}>
       ${showVals ? `<span class="col-val">${d.value ? escapeHtml(fmt(d.value)) : ""}</span>` : ""}
       <span class="col-track">
-        <span class="col-fill" style="--h:${pct.toFixed(1)}%;--c1:${c1};--c2:${c2};--d:${i * 22}ms"></span>
+        <span class="col-fill" style="--h:${pct.toFixed(1)}%;--c1:${c1};--d:${i * 22}ms"></span>
       </span>
       <span class="col-lbl">${escapeHtml(String(d.label))}</span>
     </${tag}>`;
@@ -134,7 +154,7 @@ function donut(segments, opts = {}) {
       <stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient>`;
     paths += `<path class="donut-seg" style="--d:${i * 60}ms"
       d="M${x0},${y0} A${r},${r} 0 ${large} 1 ${x1},${y1} L${xi0},${yi0} A${rin},${rin} 0 ${large} 0 ${xi1},${yi1} Z"
-      fill="url(#dg${i})"><title>${escapeHtml(String(s.label))} — ${s.value.toLocaleString()} (${Math.round(100 * s.value / total)}%)</title></path>`;
+      fill="url(#dg${i})"/>`;
     a0 = a1;
   });
   const legend = segs.map((s, i) => {
@@ -281,9 +301,11 @@ function multiLine(series, opts = {}) {
     defs += `<linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="${c1}" stop-opacity="${live.length > 1 ? ".22" : ".42"}"/>
       <stop offset="1" stop-color="${c1}" stop-opacity="0"/></linearGradient>`;
+    const end = seq[seq.length - 1];
     paths += `<path class="ln-area" d="${area}" fill="url(#${uid})"/>
       <path class="ln-line" d="${line}" fill="none" stroke="${c2}" stroke-width="2.5"
-        stroke-linecap="round" stroke-linejoin="round"/>`;
+        stroke-linecap="round" stroke-linejoin="round"/>
+      <circle class="ln-end" cx="${x(end.i).toFixed(1)}" cy="${y(end.p.value).toFixed(1)}" r="3.6" fill="${c2}"/>`;
   });
 
   /* One hover target per x, spanning the full height, rather than a target per
@@ -341,6 +363,20 @@ function heatmap(counts, year, opts = {}) {
   const W = weeks * (CELL + GAP) + 24, H = 7 * (CELL + GAP) + TOP + 4;
   let cells = "", months = "";
   let lastMonth = -1;
+
+  /* Pad to a full rectangle FIRST. 2026 begins on a Thursday, so Sun-Wed have no
+     cell in week 0 and Fri/Sat none in the last week. The maths is right, but the
+     grid reads as broken — three rows visibly short at one end, four at the other.
+     These blanks are the days either side of the year: same footprint, no ink. */
+  for (let wk = 0; wk < weeks; wk++) {
+    for (let dow = 0; dow < 7; dow++) {
+      const dayIdx = wk * 7 + dow - firstDow;
+      if (dayIdx >= 0 && dayIdx < days) continue;      // a real day; drawn below
+      cells += `<rect class="hm-cell hm-blank" x="${24 + wk * (CELL + GAP)}" y="${TOP + dow * (CELL + GAP)}"
+        width="${CELL}" height="${CELL}" rx="2.5"/>`;
+    }
+  }
+
   for (let d = 0; d < days; d++) {
     const date = new Date(Date.UTC(year, 0, 1 + d));
     const iso = date.toISOString().slice(0, 10);
