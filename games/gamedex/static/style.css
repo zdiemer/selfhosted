@@ -2638,7 +2638,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background:var(--surface-2); transition:border-color .15s; }
 .ce-drop.over { border-color:var(--accent); }
 .ce-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
-  justify-content:center; gap:4px; color:var(--dim); }
+  justify-content:center; gap:4px; color:var(--dim);
+  border:0; background:transparent; cursor:pointer; width:100%; font:inherit; }
+.ce-empty:hover b { color:var(--accent); }
 .ce-empty b { color:var(--text); font:600 14px var(--font); }
 .ce-empty span { font-size:12px; }
 .ce-stage { min-height:220px; display:flex; align-items:center; justify-content:center;

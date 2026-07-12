@@ -2184,6 +2184,7 @@ function openDrawer(row, sheetKey, keepStack) {
     openCoverEditor({
       key, platform: row.platform, title: row[titleCol.key],
       hasUpload: g ? g.src === "upload" : false,
+      caseDefault: g ? g.case : null, existing: g ? g.upload : null,
       onDone: () => { if (typeof SHELF !== "undefined") SHELF.loaded = false; },
     });
   };

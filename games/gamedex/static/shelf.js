@@ -248,7 +248,7 @@ function shBuild(i) {
   };
   document.getElementById("shArt").onclick = () =>
     openCoverEditor({ key: g.k, platform: g.p, title: g.t, hasUpload: g.src === "upload",
-      caseDefault: g.case, onDone: () => reloadShelfBox(g.k) });
+      caseDefault: g.case, existing: g.upload, onDone: () => reloadShelfBox(g.k) });
 }
 
 // After an upload changes, refresh just this game's data + the pulled case, without a
@@ -410,11 +410,12 @@ addEventListener("keydown", (e) => {
  *   "Front only"    — just the front; the case takes the IMAGE's aspect, so a tall Game
  *                     Boy cover isn't forced into a wide Blu-ray shape.
  * The box's proportions come from the image and from you — not a per-platform table.  */
-function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone }) {
+function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existing, onDone }) {
   const NOMINAL_H = (caseDefault && caseDefault.h) || 175;   // case height in mm, for size
-  let kind = "wrap", rotate = 0, file = null, img = null;
-  let x1 = 130 / 273, x2 = 144 / 273;                        // spine guides (fractions of width)
-  let depth = (caseDefault && caseDefault.d) || 14;          // front-mode spine thickness, mm
+  let kind = (existing && existing.kind) || "wrap", rotate = 0, file = null, img = null;
+  let x1 = (existing && existing.x1) ?? 130 / 273;           // spine guides (fractions of width)
+  let x2 = (existing && existing.x2) ?? 144 / 273;
+  let depth = (existing && existing.d) || (caseDefault && caseDefault.d) || 14;
 
   const host = document.createElement("div");
   host.className = "ce-scrim";
@@ -430,9 +431,9 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone 
       </div>
       <p class="ce-hint" id="ceHint"></p>
 
-      <label class="ce-drop" id="ceDrop">
+      <div class="ce-drop" id="ceDrop">
         <input type="file" accept="image/*" hidden>
-        <div class="ce-empty"><b>Choose an image</b><span>or drop it here</span></div>
+        <button type="button" class="ce-empty" id="ceOpen"><b>Choose an image</b><span>or drop it here</span></button>
         <div class="ce-stage" hidden>
           <div class="ce-imgwrap">
             <img alt="" draggable="false">
@@ -442,10 +443,11 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone 
             <div class="ce-guide" data-g="2"></div>
           </div>
         </div>
-      </label>
+      </div>
 
       <div class="ce-tools" hidden id="ceTools">
         <button class="sh-btn" id="ceRot" type="button">↻ Rotate</button>
+        <button class="sh-btn" id="ceChange" type="button">Change image</button>
         <label class="ce-depth" id="ceDepthWrap">Spine
           <input type="range" id="ceDepth" min="4" max="40" step="1">
           <span id="ceDepthVal"></span></label>
@@ -518,10 +520,12 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone 
     layout();
   }
 
-  function loadFile(f) {
-    if (!f || !f.type.startsWith("image/")) return;
-    file = f; rotate = 0;
-    const url = URL.createObjectURL(f);
+  // Load any image blob — a freshly-chosen file, or the ORIGINAL of an existing upload
+  // when reopening to adjust it. A fresh file resets rotation; a reopened one keeps it.
+  function loadBlob(blob, opts = {}) {
+    if (!blob || !(blob.type || "").startsWith("image/")) return;
+    file = blob; rotate = opts.rotate || 0;
+    const url = URL.createObjectURL(blob);
     img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
@@ -530,6 +534,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone 
     };
     img.src = url;
   }
+  const loadFile = (f) => loadBlob(f, { rotate: 0 });
 
   // Drag a spine guide. Positions are fractions of the displayed image width.
   function dragGuide(which, clientX) {
@@ -552,12 +557,25 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, onDone 
 
   host.querySelectorAll(".ce-opt").forEach((b) => b.onclick = () => setKind(b.dataset.kind));
   input.onchange = () => loadFile(input.files[0]);
+  // Opening the file dialog is now an explicit button — the preview is no longer a
+  // <label>, so dragging a guide can't accidentally re-trigger the picker.
+  $("#ceOpen").onclick = () => input.click();
+  $("#ceChange").onclick = () => input.click();
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); loadFile(e.dataTransfer.files[0]); });
   $("#ceRot").onclick = () => { rotate = (rotate + 90) % 360; paintImage(); };
   depthEl.oninput = () => { depth = +depthEl.value; depthVal.textContent = depth + " mm"; };
-  setKind("wrap");
+  setKind(kind);
+
+  // Reopening a game that already has art: pull its original image back in, at the
+  // rotation and guides it was saved with, so you adjust rather than start over.
+  if (existing) {
+    fetch(`/api/shelf/${encodeURIComponent(key)}/original`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b) loadBlob(b, { rotate: existing.rotate || 0 }); })
+      .catch(() => {});
+  }
 
   const close = () => host.remove();
   $("#ceCancel").onclick = close;

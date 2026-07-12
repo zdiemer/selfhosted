@@ -263,6 +263,10 @@ class Shelf:
                 "hue": self._hues.get(key, "#6E6E78"),   # the spine when we have no scan
                 "uv": (up or {}).get("v"),    # upload version, for cache-busting the faces
                 "backReal": (up or w or {}).get("back_is_real", bool(w)),
+                # the upload's own settings, so "Change art" can reopen and re-adjust it
+                "upload": up and {"kind": up.get("kind"), "rotate": up.get("rotate", 0),
+                                  "x1": up.get("x1"), "x2": up.get("x2"),
+                                  "d": up.get("case", {}).get("d")},
             })
         # Sort titles the way a person alphabetises a shelf: ignore a leading article.
         def alpha(t):
@@ -402,12 +406,19 @@ class Shelf:
             piece.save(tmp, "JPEG", quality=84, optimize=True)
             tmp.replace(self._udir / f"{safe}.{name}.jpg")
 
+        # Keep the ORIGINAL upload so "Change art" can reopen it and re-adjust — otherwise
+        # we'd only have the sliced faces and couldn't re-drag the spine.
+        (self._udir / f"{safe}.orig").write_bytes(data)
+
         # A monotonic version so the browser refetches after a re-upload — the face URL
         # gets ?v=<n>, which changes even though the path is the same (faces are cached
         # immutably otherwise).
         prev = self._uploads.get(key, {}).get("v", 0)
         entry = {"kind": kind, "region": "user",
                  "back_is_real": kind == "wrap", "v": prev + 1,
+                 "rotate": rotate % 360,
+                 "x1": round(float(x1), 4) if x1 is not None else None,
+                 "x2": round(float(x2), 4) if x2 is not None else None,
                  "case": {"w": round(cw, 1), "h": round(ch, 1), "d": round(cd, 1)}}
         with self._guard:
             self._uploads[key] = entry
@@ -424,7 +435,20 @@ class Shelf:
         safe = key.replace("/", "_")
         for name in FACES:
             (self._udir / f"{safe}.{name}.jpg").unlink(missing_ok=True)
+        (self._udir / f"{safe}.orig").unlink(missing_ok=True)
         return True
+
+    def original(self, key: str) -> tuple[bytes, str] | None:
+        """The raw image the user uploaded, so the editor can reopen and re-adjust it."""
+        if key not in self._uploads:
+            return None
+        p = self._udir / f"{key.replace('/', '_')}.orig"
+        if not p.exists():
+            return None
+        data = p.read_bytes()
+        ct = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else \
+             "image/webp" if data[8:12] == b"WEBP" else "image/jpeg"
+        return data, ct
 
     def _cut(self, key: str, safe: str) -> None:
         w = self._wraps[key]

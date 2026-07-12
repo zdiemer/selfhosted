@@ -251,6 +251,17 @@ def api_shelf_upload_delete(key: str):
     return {"ok": SHELF.remove_cover(key)}
 
 
+@app.get("/api/shelf/{key}/original")
+def api_shelf_original(key: str):
+    """The raw image the user uploaded — so the editor can reopen and re-adjust it."""
+    got = SHELF.original(key)
+    if got is None:
+        return JSONResponse({"error": "no upload"}, status_code=404)
+    data, ct = got
+    return Response(content=data, media_type=ct,
+                    headers={"Cache-Control": "no-store"})
+
+
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
