@@ -22,12 +22,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import prefs as prefs_mod
 import romm
+import shelf as shelf_mod
 
 from arcadedb import ArcadeDbClient
 from enrich import Enricher
@@ -163,6 +164,45 @@ def api_romm():
     if not ROMM.enabled:
         return {"enabled": False, "roms": {}}
     return ROMM.snapshot()
+
+
+# ---------- the shelf ----------
+
+_resolved = {}
+_rp = Path(os.environ.get("COVERS_RESOLVED", "/app/data/covers-resolved.json"))
+if _rp.exists():
+    import json as _json
+    _resolved = _json.loads(_rp.read_text())
+    logging.getLogger("gamedex").info(
+        "shelf: %d real box wraps, %d spine colours",
+        len(_resolved.get("wraps", {})), len(_resolved.get("hues", {})))
+SHELF = shelf_mod.Shelf(_resolved, Path(os.environ.get("COVERS_CACHE", "/data/covers")))
+
+
+@app.get("/api/shelf")
+def api_shelf():
+    """The games you can physically pick up. Digital games are not objects and do not
+    go on a shelf."""
+    if not store.ready:
+        return JSONResponse(status_code=503, content={"status": "loading", "games": []})
+    snap = store.snapshot()
+    enr = enricher.get_all_light() if enricher else {}
+    rows = SHELF.rows(snap["data"]["games"]["rows"], enr)
+    return {"games": rows, "wraps": sum(1 for r in rows if r["src"] == "wrap")}
+
+
+@app.get("/api/shelf/{key}/{face}.jpg")
+def api_shelf_face(key: str, face: str):
+    """One face of one box, cut out of the real scan.
+
+    Cut on first request and cached on disk from then on — we never hotlink their CDN,
+    and a 6 MB scan is fetched exactly once in the lifetime of the volume."""
+    img = SHELF.face(key, face)
+    if img is None:
+        return JSONResponse({"error": "no wrap"}, status_code=404)
+    return Response(content=img, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 

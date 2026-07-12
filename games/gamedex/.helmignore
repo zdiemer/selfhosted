@@ -1,0 +1,15 @@
+# Helm packs the whole chart directory into the release secret, which is capped at
+# 1 MB. Nothing below is used to RENDER the chart — src, static and data are baked
+# into the container image at build time, and tools only ever runs on a laptop.
+# Leave them in and `helm upgrade` fails with "Secret ... is invalid: data: Too long".
+.git/
+src/
+static/
+tools/
+data/
+Dockerfile
+build.sh
+upgrade.sh
+README.md
+TODO.md
+*.tar

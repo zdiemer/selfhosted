@@ -119,6 +119,7 @@
     <button data-tab="games"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-library"/></svg><span>All Games</span></button>
     <button data-tab="completed"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-trophy"/></svg><span>Completed</span></button>
     <button data-tab="onOrder"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-package"/></svg><span>On Order</span></button>
+    <button data-tab="shelf"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-layers"/></svg><span>Shelf</span></button>
     <button data-tab="groups"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-layers"/></svg><span>Groupings</span></button>
     <button data-tab="reviews"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-review"/></svg><span>Reviews</span></button>
     <button data-tab="stats"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-stats"/></svg><span>Stats</span></button>
@@ -173,6 +174,7 @@
       <div class="home" id="home" hidden></div>
       <div class="reviews" id="reviews" hidden></div>
       <div class="health" id="health" hidden></div>
+      <div class="shelfview" id="shelfview" hidden></div>
       <div class="groups" id="groups" hidden></div>
       <div class="timeline" id="timeline" hidden></div>
       <div class="pager" id="pager"></div>
@@ -234,6 +236,7 @@
       window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
     }
   </script>
+  <script src="shelf.js"></script>
   <script src="collections.js"></script>
   <script src="challenges.js"></script>
 </body>

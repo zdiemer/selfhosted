@@ -2415,3 +2415,139 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .pick-card { flex-direction: column; align-items: center; text-align: center; }
   .stats, .picker { padding: 16px 12px; }
 }
+
+/* ================= the shelf ================= */
+.shelfview { padding: 4px 0 40px; }
+.sh-head { display:flex; align-items:flex-end; justify-content:space-between; gap:20px;
+  flex-wrap:wrap; margin-bottom:18px; }
+.sh-head h2 { font:800 26px/1.15 var(--display); letter-spacing:-.02em; margin:0 0 6px; }
+.sh-sub { color:var(--dim); margin:0; font-size:14px; max-width:60ch; }
+.sh-sub b { color:var(--text); font-weight:600; }
+.sh-tools { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.sh-empty { color:var(--dim); padding:40px 0; text-align:center; }
+
+.sh-stage { position:relative; border:1px solid var(--border); border-radius:16px;
+  background:radial-gradient(120% 30% at 50% 2%, rgba(124,92,255,.09), transparent 60%), var(--surface);
+  padding:20px 20px 22px; overflow:hidden; }
+
+/* Each board carries its OWN camera. Put the perspective on the stage instead and the
+   vanishing point sits at 44% of a stage that grows with every board — a thousand px
+   below the case, which then shears into a parallelogram. The origin is a fixed pixel
+   offset from the board top, and SHELF_PERSP_Y in shelf.js must match it. */
+.sh-board { position:relative; padding-top:330px;
+  perspective:1600px; perspective-origin:50% 190px; }
+.sh-board + .sh-board { margin-top:14px; }
+.sh-headroom { position:absolute; left:0; right:0; top:0; height:330px; }
+.sh-prompt { position:absolute; left:0; right:0; top:44%; text-align:center;
+  font:600 11px/1 var(--font); letter-spacing:.16em; text-transform:uppercase;
+  color:var(--dim); opacity:0; transition:opacity .3s ease; pointer-events:none; }
+.sh-board:first-child .sh-prompt { opacity:.5; }
+.sh-stage.pulled .sh-prompt { opacity:0; }
+.sh-row { display:flex; align-items:flex-end; justify-content:center; gap:2px;
+  padding:0 10px; min-height:120px; position:relative; }
+.sh-plank { height:14px; margin:0 4px; border-radius:2px;
+  background:linear-gradient(180deg, #54402E, #2E2118);
+  box-shadow:0 12px 26px -10px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12); }
+
+/* A spine is a div. Two thousand games is two thousand divs — no 3D, no layers. */
+.sh-spine { position:relative; flex:0 0 auto; border:0; padding:0;
+  border-radius:2px 2px 0 0; display:flex; align-items:center; justify-content:center;
+  cursor:pointer; color:#fff; transform-origin:bottom center;
+  transition:transform .35s cubic-bezier(.2,.7,.25,1), filter .35s ease, opacity .2s linear;
+  box-shadow:inset -3px 0 9px rgba(0,0,0,.5), inset 1px 0 0 rgba(255,255,255,.16),
+             0 -2px 10px rgba(0,0,0,.3); }
+.sh-spine span { writing-mode:vertical-rl; font:700 9px/1 var(--font); letter-spacing:.02em;
+  color:rgba(255,255,255,.95); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  max-height:calc(100% - 20px); text-shadow:0 1px 2px rgba(0,0,0,.6); pointer-events:none; }
+.sh-spine:hover, .sh-spine:focus-visible { transform:translateY(-10px); filter:brightness(1.18); outline:none; }
+.sh-spine:focus-visible { box-shadow:0 0 0 2px var(--accent), inset -3px 0 9px rgba(0,0,0,.5); }
+.sh-spine.out { opacity:0; pointer-events:none; }          /* it's in your hand now */
+.sh-spine.lean { transform:rotate(-4deg) translateY(-1px); }  /* neighbour tips into the gap */
+.sh-stage.pulled .sh-spine:not(.out) { filter:brightness(.5) saturate(.65); }
+
+.sh-veil { position:absolute; inset:0; background:rgba(0,0,0,.35); opacity:0;
+  pointer-events:none; transition:opacity .4s ease; z-index:1; }
+.sh-stage.pulled .sh-veil { opacity:1; pointer-events:auto; }
+
+/* ---- the ONE case ---- */
+.sh-case { position:absolute; left:0; top:0; z-index:2; display:none;
+  transform-style:preserve-3d; cursor:grab; touch-action:none; user-select:none;
+  will-change:transform; }
+.sh-case.live { display:block; }
+.sh-case:active { cursor:grabbing; }
+.sh-case:focus-visible { outline:2px solid var(--accent); outline-offset:18px; border-radius:4px; }
+
+/* Every face is CENTRED on the box origin, then rotated to its own wall and pushed
+   HALF the relevant dimension along its own local Z. Six faces, no magic numbers,
+   and every face meets its neighbours exactly. Hang a face off its own edge instead
+   and it lands OUTSIDE the box, slicing through the cover — that's what flickers. */
+.sh-face { position:absolute; left:50%; top:50%; overflow:hidden;
+  backface-visibility:hidden; background:#111; }
+.sh-face img { width:100%; height:100%; object-fit:cover; display:block;
+  pointer-events:none; -webkit-user-drag:none; user-select:none; }
+.sh-case .f-front, .sh-case .f-back { width:var(--w); height:var(--h);
+  margin:calc(var(--h) / -2) 0 0 calc(var(--w) / -2); border-radius:2px; }
+.sh-case .f-left, .sh-case .f-right { width:var(--d); height:var(--h);
+  margin:calc(var(--h) / -2) 0 0 calc(var(--d) / -2); }
+.sh-case .f-top, .sh-case .f-bottom { width:var(--w); height:var(--d);
+  margin:calc(var(--d) / -2) 0 0 calc(var(--w) / -2); }
+.sh-case .f-front  { transform:translateZ(calc(var(--d) / 2)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.10); }
+.sh-case .f-back   { transform:rotateY(180deg) translateZ(calc(var(--d) / 2)); background:#0c0c0f; }
+.sh-case .f-left   { transform:rotateY(-90deg) translateZ(calc(var(--w) / 2));
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:inset -3px 0 9px rgba(0,0,0,.45), inset 1px 0 0 rgba(255,255,255,.18); }
+.sh-case .f-right  { transform:rotateY(90deg) translateZ(calc(var(--w) / 2));
+  background:linear-gradient(90deg, rgba(255,255,255,.09), rgba(0,0,0,.55)); }
+.sh-case .f-top    { transform:rotateX(90deg) translateZ(calc(var(--h) / 2));
+  background:linear-gradient(180deg, rgba(255,255,255,.15), rgba(0,0,0,.45)); }
+.sh-case .f-bottom { transform:rotateX(-90deg) translateZ(calc(var(--h) / 2));
+  background:linear-gradient(180deg, rgba(0,0,0,.6), rgba(255,255,255,.05)); }
+
+.sh-case .f-front::after { content:""; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(105deg, rgba(255,255,255,.30) 0%, rgba(255,255,255,.05) 26%,
+    transparent 46%, transparent 62%, rgba(255,255,255,.10) 92%);
+  opacity:var(--sheen, .3); }
+/* the blur belongs to the FAKE back, not to backs — never blur a real scan */
+.sh-case .f-back:not(.wrapped) img { filter:blur(9px) saturate(.5) brightness(.4); transform:scale(1.15); }
+.sh-blurb { position:absolute; inset:0; padding:14px 12px; display:flex; flex-direction:column;
+  gap:6px; background:linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.72)); }
+.sh-blurb i { display:block; height:5px; border-radius:99px; background:rgba(255,255,255,.16); }
+.sh-blurb i:nth-child(3) { width:78%; } .sh-blurb i:nth-child(5) { width:60%; }
+.sh-blurb span { margin-top:auto; font:700 9px/1 var(--font); letter-spacing:.1em;
+  text-transform:uppercase; color:rgba(255,255,255,.55);
+  border:1px solid rgba(255,255,255,.25); padding:5px 6px; border-radius:3px; align-self:flex-start; }
+.sh-case .f-left span { writing-mode:vertical-rl; font:700 9px/1 var(--font);
+  color:rgba(255,255,255,.95); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  max-height:calc(var(--h) - 24px); text-shadow:0 1px 2px rgba(0,0,0,.55); }
+.sh-case .f-left.wrapped { padding:0; }
+
+/* no art anywhere: a plain case with the title on it, and nothing pretending otherwise */
+.sh-blank { display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; padding:18px; text-align:center;
+  background:linear-gradient(160deg, color-mix(in srgb, var(--tint) 30%, #17171c), #101014); }
+.sh-blank b { font:700 15px/1.25 var(--display); color:#fff; }
+.sh-blank small { font:600 9px/1 var(--font); letter-spacing:.12em; text-transform:uppercase;
+  color:rgba(255,255,255,.5); }
+
+/* ---- the card that comes up with it ---- */
+.sh-info { position:absolute; z-index:3; left:50%; top:26px; transform:translateX(150px);
+  width:min(300px, 32%); opacity:0; pointer-events:none;
+  transition:opacity .35s ease .12s, transform .45s cubic-bezier(.2,.7,.25,1) .12s; }
+.sh-board.open .sh-info { opacity:1; pointer-events:auto; transform:translateX(180px); }
+.sh-info h3 { font:800 21px/1.2 var(--display); letter-spacing:-.02em; margin:0 0 5px; }
+.sh-plat { font:600 11px/1 var(--font); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--dim); margin-bottom:12px; }
+.sh-done { color:var(--good); }
+.sh-badge { display:inline-block; font:600 10px/1.35 var(--font); letter-spacing:.06em;
+  text-transform:uppercase; padding:6px 8px; border-radius:6px; margin-bottom:14px; }
+.sh-badge.real { color:#8FE39F; background:rgba(63,185,80,.12); border:1px solid rgba(63,185,80,.3); }
+.sh-badge.fake { color:#F0C36B; background:rgba(245,165,36,.10); border:1px solid rgba(245,165,36,.3); }
+.sh-badge.none { color:var(--dim); background:var(--surface-2); border:1px solid var(--border); }
+.sh-info dl { display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin:0 0 16px; font-size:12.5px; }
+.sh-info dt { color:var(--dim); } .sh-info dd { margin:0; font-variant-numeric:tabular-nums; }
+.sh-acts { display:flex; gap:8px; flex-wrap:wrap; }
+.sh-btn { font:600 12px/1 var(--font); color:var(--text); background:var(--surface-2);
+  border:1px solid var(--border); border-radius:8px; padding:10px 12px; cursor:pointer; }
+.sh-btn:hover { border-color:var(--accent); }
+.sh-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+@media (max-width: 860px) { .sh-info { display:none; } }

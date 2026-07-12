@@ -2196,7 +2196,7 @@ function applyDrawerFacet(key, val) {
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
 let lastGroupedCount = -1;      // so the grouped view repaints once enrichment lands
-const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "groups"];
+const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "groups", "shelf"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
@@ -2206,6 +2206,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   $("#reviews").hidden = mode !== "reviews";
   $("#health").hidden = mode !== "health";
   $("#groups").hidden = mode !== "groups";
+  $("#shelfview").hidden = mode !== "shelf";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -2229,6 +2230,7 @@ function renderAll() {
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
   if (activeTab === "health") { setSpecialMode("health"); renderHealth(); return; }
   if (activeTab === "groups") { setSpecialMode("groups"); renderGroups(); return; }
+  if (activeTab === "shelf") { setSpecialMode("shelf"); renderShelf(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = groupCollections(filterRows(null));
@@ -2285,7 +2287,7 @@ function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
   let tab = p.get("tab") === "series" ? "groups" : p.get("tab");   // old links still work
-  tab = ["home", "games", "completed", "onOrder", "groups", "reviews", "stats", "pick", "challenges", "health"].includes(tab) ? tab : "home";
+  tab = ["home", "games", "completed", "onOrder", "groups", "reviews", "stats", "pick", "challenges", "health", "shelf"].includes(tab) ? tab : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
