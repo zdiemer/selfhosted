@@ -414,12 +414,13 @@ function loadHeroShot(playing) {
 function wireHome(host, playing) {
   // Any card / hero button opens the game.
   host.querySelectorAll("[data-hk]").forEach((el) => {
-    el.onclick = () => {
-      const k = el.dataset.hk, sheetKey = el.dataset.hs;
-      const src = sheetKey === "completed" ? hCompleted() : sheetKey === "onOrder" ? hOrders() : hRows();
-      const row = src.find((r) => String(r._k || "") === k);
-      if (row) openDrawer(row, sheetKey);
-    };
+    const k = el.dataset.hk, sheetKey = el.dataset.hs;
+    const src = sheetKey === "completed" ? hCompleted() : sheetKey === "onOrder" ? hOrders() : hRows();
+    const row = src.find((r) => String(r._k || "") === k);
+    el.onclick = () => { if (row) openDrawer(row, sheetKey); };
+    // Hover-to-play trailers, same as the grid. Home is the tab you land on, so
+    // leaving it out meant the feature looked broken to anyone who never left it.
+    if (row && el.classList.contains("card")) wirePreviewFor(el, row);
   });
   host.querySelectorAll(".h-arrow").forEach((el) => {
     el.onclick = () => {

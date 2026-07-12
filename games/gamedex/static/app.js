@@ -1559,7 +1559,8 @@ function renderGrid(pageRows) {
 // embed is useless: tear it down and show something the user can actually click.
 const YT_ORIGIN = location.origin;
 const YT_TIMEOUT = 4500;
-let ytFailures = 0;
+let ytFailures = 0;               // consecutive; a play resets it
+const YT_GIVE_UP = 4;             // dead trailers are common; a wall is not
 let YT_BLOCKED = false;         // once YouTube is clearly refusing us, stop trying
 
 const ytSrc = (id, opts = {}) => {
@@ -1602,9 +1603,12 @@ function ytWatch(frame, onFail) {
   const timer = setTimeout(() => {
     cleanup();
     if (done) return;
-    // Two strikes and we stop asking: if YouTube is blocking this client, every
-    // further embed is just another wall.
-    if (++ytFailures >= 2) YT_BLOCKED = true;
+    // Enough consecutive strikes and we stop asking: if YouTube is walling this
+    // client, every further embed is just another wall. But a single dead embed
+    // is NOT that — IGDB's video ids go stale (deleted trailers, embedding turned
+    // off), and those fail exactly the same way from out here. Give it real
+    // evidence of a pattern before writing the feature off; any success resets.
+    if (++ytFailures >= YT_GIVE_UP) YT_BLOCKED = true;
     onFail();
   }, YT_TIMEOUT);
   return cleanup;
@@ -1620,11 +1624,16 @@ function ytWatch(frame, onFail) {
 // touch; and by prefers-reduced-motion.
 const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
-let previewTimer = null, previewCard = null;
+let previewTimer = null, previewCard = null, previewWatch = null;
 
 function stopPreview() {
   clearTimeout(previewTimer);
   previewTimer = null;
+  // Cancel the bot-wall watchdog FIRST. Without this, hovering off a card before
+  // the video has started still lets the watchdog fire 4.5s later and record a
+  // failure against YouTube — so two impatient hovers on a slow connection would
+  // trip YT_BLOCKED and kill previews for the rest of the session.
+  if (previewWatch) { previewWatch(); previewWatch = null; }
   if (!previewCard) return;
   const frame = previewCard.querySelector(".card-preview");
   if (frame) frame.remove();
@@ -1655,7 +1664,14 @@ function startPreview(card) {
   card.classList.add("previewing");
   // If YouTube shows a bot wall instead of playing, a dead iframe over the box
   // art is worse than no preview at all. Put the art back.
-  ytWatch(frame, () => { if (previewCard === card) stopPreview(); });
+  previewWatch = ytWatch(frame, () => { if (previewCard === card) stopPreview(); });
+}
+
+// Any surface that renders a .card can opt in: it just has to tell us which row
+// the card is for. The grid does this as it builds; Home does it after the fact.
+function wirePreviewFor(card, row) {
+  CARD_ROW.set(card, row);
+  wirePreview(card);
 }
 
 function wirePreview(card) {
