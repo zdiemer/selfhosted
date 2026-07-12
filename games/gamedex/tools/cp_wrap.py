@@ -39,6 +39,7 @@ from PIL import Image
 # Keyed by the aspect the finished wrap measures, which is how we recognise one.
 TEMPLATES = {
     "dvd":       (130, 14, 129, 183),   # PS1/PS2/Xbox/GC/Wii/DC — 273 x 183
+    "gc":        (124, 14, 124, 175),   # GameCube keepcase (GameTDB wrap, same ~1.51 ratio)
     "snes":      (133, 33, 133, 191),   # cardboard box
     "nes":       (127, 25, 127, 178),   # smaller and thinner than a SNES box
     "genesis":   (133, 28, 133, 184),

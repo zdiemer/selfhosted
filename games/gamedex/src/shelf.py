@@ -93,6 +93,7 @@ CUT_VERSION = "3"
 # Kept in step with tools/cp_wrap.py, which is what chose the template offline.
 TEMPLATES = {
     "dvd":     (130, 14, 129, 183),
+    "gc":      (124, 14, 124, 175),
     "snes":    (133, 33, 133, 191),
     "nes":     (127, 25, 127, 178),
     "genesis": (133, 28, 133, 184),
