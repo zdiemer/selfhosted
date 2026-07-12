@@ -26,7 +26,8 @@ const SHELF_PERSP_Y = 0.42;  // fraction of the viewport; must match .sh-pull CS
 const shClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const shLerp = (a, b, t) => a + (b - a) * t;
 const shPx = (mm) => Math.round(mm * PX_MM);
-const faceUrl = (k, f) => `/api/shelf/${encodeURIComponent(k)}/${f}.jpg`;
+const faceUrl = (k, f, v) =>
+  `/api/shelf/${encodeURIComponent(k)}/${f}.jpg${v ? `?v=${v}` : ""}`;
 
 async function loadShelf() {
   if (SHELF.loaded) return;
@@ -120,15 +121,16 @@ function paintShelfRows() {
           <div class="sh-row">
             ${board.map((g) => {
               const i = SHELF.games.indexOf(g);
+              const real = g.src === "wrap" || g.src === "upload";
               // The hue sits UNDER the scan, so a spine whose scan hasn't arrived yet
               // is the right colour rather than a black rectangle.
-              const bg = g.src === "wrap"
-                ? `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine")})`
+              const bg = real
+                ? `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine", g.uv)})`
                 : `background:${g.hue}`;
-              return `<button class="sh-spine${g.src === "wrap" ? " real" : ""}" data-i="${i}"
+              return `<button class="sh-spine${real ? " real" : ""}" data-i="${i}"
                          title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"
                          style="width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px;${bg}">
-                        ${g.src === "wrap" ? "" : `<span>${escapeHtml(g.t)}</span>`}
+                        ${real ? "" : `<span>${escapeHtml(g.t)}</span>`}
                       </button>`;
             }).join("")}
           </div>
@@ -180,10 +182,10 @@ function shBuild(i) {
 
   const cover = g.cover ? IMG(g.cover, "cover_big") : "";
   el.innerHTML =
-    g.src === "wrap" ? `
-      <div class="sh-face f-front"><img src="${faceUrl(g.k, "front")}" alt="" draggable="false"></div>
-      <div class="sh-face f-back wrapped"><img src="${faceUrl(g.k, "back")}" alt="" draggable="false"></div>
-      <div class="sh-face f-left wrapped"><img src="${faceUrl(g.k, "spine")}" alt="" draggable="false"></div>
+    (g.src === "wrap" || g.src === "upload") ? `
+      <div class="sh-face f-front"><img src="${faceUrl(g.k, "front", g.uv)}" alt="" draggable="false"></div>
+      <div class="sh-face f-back wrapped"><img src="${faceUrl(g.k, "back", g.uv)}" alt="" draggable="false"></div>
+      <div class="sh-face f-left wrapped"><img src="${faceUrl(g.k, "spine", g.uv)}" alt="" draggable="false"></div>
       <div class="sh-face f-right"></div><div class="sh-face f-top"></div><div class="sh-face f-bottom"></div>`
     : g.src === "cover" ? `
       <div class="sh-face f-front"><img src="${cover}" alt="" draggable="false"></div>
@@ -215,11 +217,14 @@ function shBuild(i) {
   shTo = { x: innerWidth / 2 - (innerWidth > 900 ? 130 : 0),   // leave room for the card
            y: po + (wantY - po) / s };
 
-  const src = g.src === "wrap"
-    ? `<span class="sh-badge real">Real box · Cover Project${g.region ? " · " + escapeHtml(g.region) : ""}</span>`
-    : g.src === "cover"
-      ? `<span class="sh-badge fake">Front only · IGDB</span>`
-      : `<span class="sh-badge none">No art anywhere</span>`;
+  const src =
+    g.src === "upload"
+      ? `<span class="sh-badge mine">Your upload</span>`
+      : g.src === "wrap"
+        ? `<span class="sh-badge real">Real box${g.region && g.region !== "user" ? " · " + escapeHtml(g.region) : ""}</span>`
+        : g.src === "cover"
+          ? `<span class="sh-badge fake">Front only · IGDB</span>`
+          : `<span class="sh-badge none">No art anywhere</span>`;
 
   document.getElementById("shInfo").innerHTML = `
     <h3>${escapeHtml(g.t)}</h3>
@@ -232,6 +237,7 @@ function shBuild(i) {
     </dl>
     <div class="sh-acts">
       <button class="sh-btn primary" id="shDetails">Full details</button>
+      <button class="sh-btn" id="shArt">${g.src === "upload" ? "Change art" : "Add / fix art"}</button>
       <button class="sh-btn" id="shBack">← Put it back</button>
     </div>`;
   document.getElementById("shBack").onclick = shelfClose;
@@ -240,6 +246,19 @@ function shBuild(i) {
     const row = (DATA.sheets.games.rows || []).find((r) => r._k === g.mk);
     if (row) openDrawer(row, "games");
   };
+  document.getElementById("shArt").onclick = () =>
+    openCoverEditor({ key: g.k, platform: g.p, title: g.t, hasUpload: g.src === "upload",
+      onDone: () => reloadShelfBox(g.k) });
+}
+
+// After an upload changes, refresh just this game's data + the pulled case, without a
+// full shelf reload.
+async function reloadShelfBox(k) {
+  const r = await fetch("/api/shelf");
+  if (r.ok) SHELF.games = (await r.json()).games || SHELF.games;
+  paintShelfRows();
+  const g = SHELF.games.find((x) => x.k === k);
+  if (g) shelfOpen(SHELF.games.indexOf(g));
 }
 
 function shPaint() {
@@ -383,3 +402,118 @@ addEventListener("keydown", (e) => {
     shelfClose();
   }
 });
+
+/* ============ the cover editor (shared: shelf card + main drawer) ============
+ * Two explicit choices, no auto-detect, because the user asked for it that way:
+ *   "Full box art"  — a back|spine|front wrap; we slice it into the three faces.
+ *   "Front only"    — just the front; the server builds a spine and a stand-in back.
+ * Plus a rotate control (some downloads come sideways) and, whatever it's for, this is
+ * the manual override — an upload beats whatever we auto-resolved.                    */
+function openCoverEditor({ key, platform, title, hasUpload, onDone }) {
+  let kind = "wrap", rotate = 0, file = null, objurl = null;
+
+  const host = document.createElement("div");
+  host.className = "ce-scrim";
+  host.innerHTML = `
+    <div class="ce" role="dialog" aria-label="Box art for ${escapeHtml(title)}">
+      <button class="ce-x" aria-label="Close">✕</button>
+      <h3>Box art</h3>
+      <div class="ce-sub">${escapeHtml(title)} · ${escapeHtml(platform)}</div>
+
+      <div class="ce-seg" role="tablist">
+        <button class="ce-opt on" data-kind="wrap">Full box art</button>
+        <button class="ce-opt" data-kind="front">Front only</button>
+      </div>
+      <p class="ce-hint" id="ceHint"></p>
+
+      <label class="ce-drop" id="ceDrop">
+        <input type="file" accept="image/*" hidden>
+        <div class="ce-empty"><b>Choose an image</b><span>or drop it here</span></div>
+        <div class="ce-prev" hidden><img alt=""><span class="ce-guides"></span></div>
+      </label>
+
+      <div class="ce-tools" hidden id="ceTools">
+        <button class="sh-btn" id="ceRot">↻ Rotate</button>
+        <span class="ce-dim" id="ceDim"></span>
+      </div>
+
+      <div class="ce-acts">
+        ${hasUpload ? `<button class="sh-btn ce-rm" id="ceRemove">Remove my art</button>` : `<span></span>`}
+        <div class="ce-right">
+          <button class="sh-btn" id="ceCancel">Cancel</button>
+          <button class="sh-btn primary" id="ceSave" disabled>Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+
+  const $ = (s) => host.querySelector(s);
+  const hint = $("#ceHint"), drop = $("#ceDrop"), input = drop.querySelector("input");
+  const prev = $(".ce-prev"), prevImg = prev.querySelector("img");
+  const empty = $(".ce-empty"), tools = $("#ceTools"), save = $("#ceSave"), dim = $("#ceDim");
+
+  const HINTS = {
+    wrap: "A full wrap — back, spine and front in one image (e.g. a Cover Project scan). We'll slice it into the case's three faces.",
+    front: "Just the front cover. We'll colour a spine from it and make a stand-in back.",
+  };
+  const setKind = (k) => {
+    kind = k;
+    host.querySelectorAll(".ce-opt").forEach((b) => b.classList.toggle("on", b.dataset.kind === k));
+    hint.textContent = HINTS[k];
+    prev.classList.toggle("wrap", k === "wrap");   // show slice guides for wraps
+  };
+  setKind("wrap");
+
+  const applyPreview = () => {
+    prevImg.style.transform = `rotate(${rotate}deg)`;
+    // when rotated 90/270 the image box swaps aspect; let CSS object-fit handle it
+    prevImg.classList.toggle("turned", rotate % 180 !== 0);
+  };
+  const loadFile = (f) => {
+    if (!f || !f.type.startsWith("image/")) return;
+    file = f; rotate = 0;
+    if (objurl) URL.revokeObjectURL(objurl);
+    objurl = URL.createObjectURL(f);
+    prevImg.onload = () => { dim.textContent = `${prevImg.naturalWidth}×${prevImg.naturalHeight}`; };
+    prevImg.src = objurl;
+    empty.hidden = true; prev.hidden = false; tools.hidden = false; save.disabled = false;
+    applyPreview();
+  };
+
+  host.querySelectorAll(".ce-opt").forEach((b) => b.onclick = () => setKind(b.dataset.kind));
+  input.onchange = () => loadFile(input.files[0]);
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    loadFile(e.dataTransfer.files[0]);
+  });
+  $("#ceRot").onclick = (e) => { e.preventDefault(); rotate = (rotate + 90) % 360; applyPreview(); };
+
+  const close = () => { if (objurl) URL.revokeObjectURL(objurl); host.remove(); };
+  $("#ceCancel").onclick = close;
+  $(".ce-x").onclick = close;
+  host.addEventListener("click", (e) => { if (e.target === host) close(); });
+
+  if (hasUpload) $("#ceRemove").onclick = async () => {
+    $("#ceRemove").disabled = true;
+    await fetch(`/api/shelf/${encodeURIComponent(key)}/cover`, { method: "DELETE" });
+    close(); onDone && onDone();
+  };
+
+  save.onclick = async () => {
+    if (!file) return;
+    save.disabled = true; save.textContent = "Saving…";
+    try {
+      const r = await fetch(
+        `/api/shelf/${encodeURIComponent(key)}/cover?kind=${kind}&rotate=${rotate}`,
+        { method: "POST", body: file });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      close(); onDone && onDone();
+    } catch (err) {
+      save.disabled = false; save.textContent = "Save";
+      hint.textContent = "Upload failed: " + err.message;
+      hint.classList.add("ce-err");
+    }
+  };
+}

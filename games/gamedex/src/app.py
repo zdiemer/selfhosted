@@ -206,6 +206,45 @@ def api_shelf_face(key: str, face: str):
                     headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
+def _platform_for(key: str) -> str | None:
+    """The platform of the game a box key belongs to. Key is '<matchkey>#<region>'."""
+    mk = key.rsplit("#", 1)[0]
+    for r in store.snapshot()["data"].get("games", {}).get("rows", []):
+        if r.get("_k") == mk:
+            return r.get("platform")
+    return None
+
+
+MAX_UPLOAD = 12 * 1024 * 1024
+
+
+@app.post("/api/shelf/{key}/cover")
+async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotate: int = 0):
+    """Store a hand-supplied cover for one game — the image bytes are the raw POST body.
+
+    This is the manual override: whatever you upload beats what we auto-resolved, which
+    is how you fix a wrong match or add art for a game no source covered."""
+    plat = _platform_for(key)
+    if plat is None:
+        return JSONResponse({"error": "unknown game"}, status_code=404)
+    body = await request.body()
+    if not body:
+        return JSONResponse({"error": "empty body"}, status_code=400)
+    if len(body) > MAX_UPLOAD:
+        return JSONResponse({"error": "image too large (max 12 MB)"}, status_code=413)
+    try:
+        entry = SHELF.set_cover(key, body, kind=kind, platform=plat, rotate=int(rotate))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "src": "upload", "case": entry["case"], "v": entry["v"]}
+
+
+@app.delete("/api/shelf/{key}/cover")
+def api_shelf_upload_delete(key: str):
+    """Drop a manual upload, reverting to the auto-resolved cover."""
+    return {"ok": SHELF.remove_cover(key)}
+
+
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 

@@ -20,15 +20,23 @@ from __future__ import annotations
 import collections
 import colorsys
 import io
+import json
 import logging
 import pathlib
 import threading
 import time
 
 import requests
-from PIL import Image
+from PIL import Image, ImageFilter
 
 log = logging.getLogger("gamedex.shelf")
+
+_BLUR = ImageFilter.GaussianBlur(9)
+
+
+def _hex(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 # Physical cases, in millimetres, for games with no scan to measure. Used only to
 # give the fallback box a believable shape.
@@ -150,15 +158,52 @@ def dominant_hue(im: Image.Image) -> str:
     return "#%02X%02X%02X" % (int(r * 255), int(g * 255), int(b * 255))
 
 
+# Which template a manually-uploaded WRAP is sliced with, by platform. A user uploads
+# an upright wrap (they orient it themselves with the rotate control), so unlike the
+# Cover Project scans there is no rotated-template weirdness here — just the slice ratio
+# and the case dimensions.
+UPLOAD_TEMPLATE = {
+    "Nintendo Switch": "switch", "Nintendo Switch 2": "switch",
+    "PlayStation 5": "bluray", "PlayStation 4": "bluray", "PlayStation 3": "bluray",
+    "Xbox One": "bluray", "Xbox Series X|S": "bluray", "Xbox 360": "bluray",
+    "PlayStation 2": "dvd", "Nintendo Wii": "dvd", "Nintendo Wii U": "dvd",
+    "Wii": "dvd", "Wii U": "dvd", "Xbox": "dvd", "Sega Dreamcast": "dvd",
+    "Dreamcast": "dvd", "PlayStation": "dvd", "Sega Saturn": "dvd", "Saturn": "dvd",
+    "Nintendo GameCube": "gc", "GameCube": "gc",
+    "Super Nintendo Entertainment System": "snes", "SNES": "snes",
+    "Nintendo Entertainment System": "nes", "NES": "nes",
+    "Nintendo 64": "n64", "Sega Genesis": "genesis", "Genesis": "genesis",
+}
+DEFAULT_UPLOAD_TEMPLATE = "bluray"
+
+
 class Shelf:
     def __init__(self, resolved: dict, cache_dir: pathlib.Path):
         self._wraps = resolved.get("wraps", {})
         self._hues = resolved.get("hues", {})
         self._dir = cache_dir
         self._dir.mkdir(parents=True, exist_ok=True)
+        # User uploads live in their OWN directory, so a CUT_VERSION cache-clear (which
+        # only sweeps self._dir) never touches art someone chose by hand. They also take
+        # priority over everything: a manual upload is the user correcting us.
+        self._udir = cache_dir / "uploads"
+        self._udir.mkdir(parents=True, exist_ok=True)
+        self._umanifest = self._udir / "manifest.json"
+        self._uploads = self._load_uploads()
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
         self._invalidate_stale_cache()
+
+    def _load_uploads(self) -> dict:
+        try:
+            return json.loads(self._umanifest.read_text())
+        except Exception:
+            return {}
+
+    def _save_uploads(self) -> None:
+        tmp = self._umanifest.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._uploads))
+        tmp.replace(self._umanifest)
 
     def _invalidate_stale_cache(self) -> None:
         """Drop the whole cut cache when the cutting logic changed, so a box that was
@@ -192,9 +237,12 @@ class Shelf:
             # a Japanese copy into one entry, and owning Chrono Trigger on both SNES and
             # Super Famicom then put two Super Famicom boxes on the shelf.
             key = f"{mk}#{(g.get('releaseRegion') or '').strip()}"
+            up = self._uploads.get(key)
             w = self._wraps.get(key)
             e = enrichment.get(mk) or {}
-            if w:
+            if up:                            # a manual upload wins over everything
+                case, src = up["case"], "upload"
+            elif w:
                 case, src = w["case"], "wrap"
             else:
                 mm = FALLBACK_CASE.get(g.get("platform"), DEFAULT_CASE)
@@ -210,9 +258,11 @@ class Shelf:
                 "done": bool(g.get("completed")),
                 "case": case,
                 "src": src,
-                "region": (w or {}).get("region") or "",
+                "region": (up or w or {}).get("region") or "",
                 "cover": e.get("cover"),      # IGDB image id, for the fallback front
                 "hue": self._hues.get(key, "#6E6E78"),   # the spine when we have no scan
+                "uv": (up or {}).get("v"),    # upload version, for cache-busting the faces
+                "backReal": (up or w or {}).get("back_is_real", bool(w)),
             })
         # Sort titles the way a person alphabetises a shelf: ignore a leading article.
         def alpha(t):
@@ -260,9 +310,16 @@ class Shelf:
     def face(self, key: str, face: str) -> bytes | None:
         """One face of one box. Cut from the scan the first time it's asked for, then
         read off disk forever. Two people pulling the same game at once cut it once."""
-        if face not in FACES or key not in self._wraps:
+        if face not in FACES:
             return None
         safe = key.replace("/", "_")
+        # A manual upload overrides the auto-resolved cover, so it's checked first.
+        if key in self._uploads:
+            up = self._udir / f"{safe}.{face}.jpg"
+            if up.exists():
+                return up.read_bytes()
+        if key not in self._wraps:
+            return None
         path = self._dir / f"{safe}.{face}.jpg"
         if path.exists():
             return path.read_bytes()
@@ -276,6 +333,85 @@ class Shelf:
                 log.warning("wrap %s: %s", key, e)
                 return None
         return path.read_bytes() if path.exists() else None
+
+    # ---------- manual uploads ----------
+
+    def has_upload(self, key: str) -> bool:
+        return key in self._uploads
+
+    def set_cover(self, key: str, data: bytes, kind: str, platform: str,
+                  rotate: int = 0) -> dict:
+        """Store a user-supplied cover for one game, as three cached faces.
+
+        kind='wrap' — a full back|spine|front box art, sliced by the platform's template.
+        kind='front' — just the front; we build the spine from its dominant colour and a
+        blurred stand-in back, exactly like the IGDB-front fallback but with real art.
+
+        `rotate` (0/90/180/270) is applied to the WHOLE image first, so the user can
+        straighten a sideways scan — which is why uploads never need the per-face
+        rotation the Cover Project scans do."""
+        if kind not in ("wrap", "front"):
+            raise ValueError("kind must be 'wrap' or 'front'")
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        if max(im.size) > 2400:                            # sanity cap before any work
+            s = 2400 / max(im.size)
+            im = im.resize((round(im.width * s), round(im.height * s)), Image.LANCZOS)
+        if rotate % 360:
+            im = im.rotate(-(rotate % 360), expand=True)   # clockwise, to match the UI
+
+        tpl_name = UPLOAD_TEMPLATE.get(platform, DEFAULT_UPLOAD_TEMPLATE)
+        back_mm, spine_mm, front_mm, h_mm = TEMPLATES[tpl_name]
+
+        if kind == "wrap":
+            total = back_mm + spine_mm + front_mm
+            x1 = round(im.width * back_mm / total)
+            x2 = round(im.width * (back_mm + spine_mm) / total)
+            faces = {
+                "back": im.crop((0, 0, x1, im.height)),
+                "spine": im.crop((x1, 0, x2, im.height)),
+                "front": im.crop((x2, 0, im.width, im.height)),
+            }
+        else:
+            hue = dominant_hue(im)
+            spine = Image.new("RGB", (max(8, round(im.height * spine_mm / h_mm)), im.height),
+                              _hex(hue))
+            back = im.filter(_BLUR).point(lambda p: int(p * 0.42))
+            faces = {"front": im, "spine": spine, "back": back}
+
+        safe = key.replace("/", "_")
+        for name, piece in faces.items():
+            long = max(piece.size)
+            if long > 600:
+                s = 600 / long
+                piece = piece.resize((max(1, round(piece.width * s)),
+                                      max(1, round(piece.height * s))), Image.LANCZOS)
+            tmp = self._udir / f"{safe}.{name}.tmp"
+            piece.save(tmp, "JPEG", quality=84, optimize=True)
+            tmp.replace(self._udir / f"{safe}.{name}.jpg")
+
+        # A monotonic version so the browser refetches after a re-upload — the face URL
+        # gets ?v=<n>, which changes even though the path is the same (faces are cached
+        # immutably otherwise).
+        prev = self._uploads.get(key, {}).get("v", 0)
+        entry = {"kind": kind, "template": tpl_name, "region": "user",
+                 "back_is_real": kind == "wrap", "v": prev + 1,
+                 "case": {"w": front_mm, "h": h_mm, "d": spine_mm}}
+        with self._guard:
+            self._uploads[key] = entry
+            self._save_uploads()
+        return entry
+
+    def remove_cover(self, key: str) -> bool:
+        """Drop a manual upload, reverting the game to its auto-resolved cover."""
+        with self._guard:
+            if key not in self._uploads:
+                return False
+            del self._uploads[key]
+            self._save_uploads()
+        safe = key.replace("/", "_")
+        for name in FACES:
+            (self._udir / f"{safe}.{name}.jpg").unlink(missing_ok=True)
+        return True
 
     def _cut(self, key: str, safe: str) -> None:
         w = self._wraps[key]

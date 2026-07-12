@@ -2,8 +2,8 @@ apiVersion: v2
 name: gamedex
 description: Gamedex — searchable browser for a Dropbox-hosted games spreadsheet
 type: application
-version: 1.11.0
+version: 1.11.1
 # appVersion tracks the gamedex image tag in values.yaml (image.tag).
-appVersion: "1.11.0"
+appVersion: "1.11.1"
 maintainers:
   - name: zachd

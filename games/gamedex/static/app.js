@@ -2121,6 +2121,12 @@ function openDrawer(row, sheetKey, keepStack) {
   let html = heroHtml(row, titleText);
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
+  // Box art override — same manual upload as the shelf, so a game's cover can be fixed
+  // from any detail card. Only for physical owned games, which is what the shelf holds.
+  const _physical = row._k && row.owned &&
+    ["physical", "both"].includes(String(row.format || "").trim().toLowerCase());
+  if (_physical) html += `<button class="sh-btn drawer-art" id="drawerArt">Manage box art</button>`;
+
   /* Your own history with the game was buried in the "Raw data" disclosure,
      alongside File Size and MAME Romset — and it's the most personal thing on the
      card: what you paid, when you started it, whether you finished, what you
@@ -2169,6 +2175,18 @@ function openDrawer(row, sheetKey, keepStack) {
     back.title = `Back to ${t}`;
   }
   wireCollections(body);
+  const artBtn = $("#drawerArt");
+  if (artBtn) artBtn.onclick = () => {
+    const key = `${row._k}#${String(row.releaseRegion || "").trim()}`;
+    // If the shelf is already loaded, we know whether this game has an upload; if not,
+    // default to "no" — the Remove button just won't show until the shelf's been opened.
+    const g = (typeof SHELF !== "undefined" ? SHELF.games : []).find((x) => x.k === key);
+    openCoverEditor({
+      key, platform: row.platform, title: row[titleCol.key],
+      hasUpload: g ? g.src === "upload" : false,
+      onDone: () => { if (typeof SHELF !== "undefined") SHELF.loaded = false; },
+    });
+  };
   // A grouped card's members open individually — with a way back to the group.
   body.querySelectorAll("[data-rlc]").forEach((el) => {
     el.onclick = () => {
