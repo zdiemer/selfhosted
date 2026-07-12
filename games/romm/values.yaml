@@ -68,16 +68,45 @@ config:
   excludePlatforms:
     # Not a platform, a stray folder on the share.
     - _romnas
-    # 172,809 entries across these six — more than every other platform on the
-    # share combined, and they're archived WEB games: IGDB has nothing to say
-    # about them, and RomM can't launch them. Scanning them would be hours of
-    # SMB traffic to produce a wall of unidentified files.
+    # 172,809 entries across these six — archived WEB games. IGDB has no metadata
+    # for them and RomM cannot launch them.
     - Flashpoint
     - Flashpoint-Flash
     - Flashpoint-HTML5
     - Flashpoint-Java
     - Flashpoint-Shockwave
     - Flashpoint-Unity
+    # RomM has no platform for any of these — they aren't in its 220-slug table and
+    # IGDB has no equivalent — so it cannot identify a single file in them. Scanning
+    # would be 243,974 entries of SMB traffic to produce a wall of unknown files.
+    # J2ME alone is 223,430: the biggest folder on the share, and the most useless.
+    - J2ME
+    - Symbian
+    - Visual Pinball
+    - GP2X
+    - Oric
+    - GP2X Caanoo
+    - Mophun
+    - Sam Coupe
+    - GP2X Wiz
+    - BREW
+    - MSX Turbo R
+    - DREAMM
+    - ExEn
+    - Didj
+    - GP32
+    - Apple Lisa
+    - Sufami Turbo
+    - Risc PC
+    - TI Calculators
+    - Keitai
+    - IBM OS2
+    - VideoNow XP
+    - DVD Games
+    - Action Max
+    - PlayStation Mobile
+    - iPod
+    - SNK
   # your-folder-name: romm-platform-name, for folders RomM can't identify.
   platformMap:
     "3DO": 3do
