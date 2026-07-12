@@ -168,18 +168,44 @@ function groupRow(g) {
 }
 
 // ---- the detail card's relationship map ----------------------------------
+// [key, label, single, progress] — progress sections are the ones that are a WHOLE
+// made of parts you collect (episodes, a bundle's games, DLC), so they show how far
+// through them you are.
 const REL_SECTIONS = [
-  ["parent", "Part of", true],
-  ["versionParent", "Edition of", true],
-  ["expandedGames", "Expanded editions", false],
-  ["remakes", "Remakes", false],
-  ["remasters", "Remasters", false],
-  ["ports", "Ports", false],
-  ["expansions", "Expansions", false],
-  ["standaloneExpansions", "Standalone expansions", false],
-  ["dlcs", "DLC", false],
-  ["bundles", "Bundles", false],
+  ["parent", "Part of", true, false],
+  ["versionParent", "Edition of", true, false],
+  ["episodes", "Episodes", false, true],
+  ["seasons", "Seasons", false, true],
+  ["bundleContents", "In this bundle", false, true],
+  ["expandedGames", "Expanded editions", false, false],
+  ["remakes", "Remakes", false, false],
+  ["remasters", "Remasters", false, false],
+  ["ports", "Ports", false, false],
+  ["forks", "Other versions", false, false],
+  ["expansions", "Expansions", false, true],
+  ["standaloneExpansions", "Standalone expansions", false, true],
+  ["dlcs", "DLC", false, true],
+  ["bundles", "Bundled in", false, false],
 ];
+
+// How far through a set of related games you are — beaten, owned, total.
+function relProgress(list) {
+  let done = 0, owned = 0;
+  for (const e of list) {
+    const mine = rowsByIgdbId().get(e.id) || [];
+    if (mine.some((r) => r.completed)) done++;
+    else if (mine.some((r) => r.owned)) owned++;
+  }
+  return { done, owned, total: list.length };
+}
+
+// True when this game already has an IGDB grouping — so the in-house sheet Collection
+// should stand aside for it (IGDB wins, the sheet is the fallback).
+const IGDB_GROUPS = ["episodes", "seasons", "bundleContents", "dlcs", "expansions", "standaloneExpansions"];
+function relationsHaveGrouping(detail) {
+  const rel = detail && detail.relations;
+  return !!rel && IGDB_GROUPS.some((k) => (rel[k] || []).length);
+}
 
 // A related game, annotated with whether it's in your collection.
 function relCardHtml(entry) {
@@ -206,12 +232,19 @@ function relationsHtml(detail) {
   if (!rel) return "";
 
   const sections = [];
-  for (const [key, label, single] of REL_SECTIONS) {
+  for (const [key, label, single, progress] of REL_SECTIONS) {
     const v = rel[key];
     const list = single ? (v ? [v] : []) : (v || []);
     if (!list.length) continue;
+    let head = `${escapeHtml(label)}<span class="muted">${single ? "" : ` ${list.length}`}</span>`;
+    if (progress && list.length) {
+      const p = relProgress(list);
+      const pct = Math.round((p.done / p.total) * 100);
+      head += `<span class="rl-prog"><span class="rl-prog-bar"><span style="width:${pct}%"></span></span>`
+        + `<span class="rl-prog-txt">${p.done} of ${p.total} beaten${p.owned ? ` · ${p.owned} more owned` : ""}</span></span>`;
+    }
     sections.push(`<div class="rl-sect">
-      <h4>${escapeHtml(label)}<span class="muted">${single ? "" : ` ${list.length}`}</span></h4>
+      <h4>${head}</h4>
       <div class="rl-row">${list.map(relCardHtml).join("")}</div>
     </div>`);
   }

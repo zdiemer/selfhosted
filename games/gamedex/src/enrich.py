@@ -121,7 +121,7 @@ VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
 # Bump when the shape or the source map of `stores` changes — the backfill
 # rebuilds every record instead of skipping the ones that already have a value.
 STORES_VERSION = "4"
-RELATIONS_VERSION = "2"
+RELATIONS_VERSION = "3"
 
 
 class Enricher:

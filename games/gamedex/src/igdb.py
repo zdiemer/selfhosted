@@ -232,9 +232,12 @@ class IgdbClient:
         "remakes.id,remakes.name,remakes.cover.image_id,"
         "remasters.id,remasters.name,remasters.cover.image_id,"
         "ports.id,ports.name,ports.cover.image_id,"
+        "forks.id,forks.name,forks.cover.image_id,"
         "bundles.id,bundles.name,bundles.cover.image_id,"
         "collections.id,collections.name;"
     )
+
+    _EPISODE, _SEASON, _BUNDLE = 6, 7, 3
 
     def relations_for(self, igdb_ids):
         """{igdb_id: relations} — the graph IGDB keeps and a spreadsheet can't.
@@ -242,6 +245,14 @@ class IgdbClient:
         Fetched by id in batches of 500, like stores_for: asking for all of this
         on every *search* would bloat 25 results per query, and we only need it
         once per game.
+
+        Two of the relationships have NO forward field and only exist as reverse
+        links, so they need their own passes:
+          episodes/seasons — an episode points UP via parent_game; the parent lists
+            nothing. (Tales of Monkey Island is a plain Main game; its five chapters
+            each have parent_game = it.)
+          bundle contents  — a game in a bundle points UP via bundles; the bundle
+            lists nothing.
         """
         out = {}
         for i in range(0, len(igdb_ids), 500):
@@ -251,15 +262,69 @@ class IgdbClient:
                 rel = self._relations(g)
                 if rel:
                     out[g["id"]] = rel
+
+        ids = [int(x) for x in igdb_ids]
+        self._add_episodes(out, ids)
+        self._add_bundle_contents(out, ids)
         return out
+
+    def _add_episodes(self, out, ids):
+        """Attach episodes/seasons — the children that point up via parent_game."""
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            offset = 0
+            while True:
+                body = (
+                    "fields id,name,game_type,parent_game,cover.image_id; "
+                    f"where parent_game = ({','.join(str(c) for c in chunk)}) "
+                    f"& game_type = ({self._EPISODE},{self._SEASON}); "
+                    f"limit 500; offset {offset}; sort id asc;"
+                )
+                got = self._post("games", body) or []
+                for g in got:
+                    pid = g.get("parent_game")
+                    if pid is None:
+                        continue
+                    rel = out.setdefault(pid, {"gameType": None, "gameTypeLabel": None})
+                    key = "episodes" if g.get("game_type") == self._EPISODE else "seasons"
+                    rel.setdefault(key, []).append(self._one(g))
+                if len(got) < 500:
+                    break
+                offset += 500
+
+    def _add_bundle_contents(self, out, ids):
+        """Attach a bundle's contents — the games that point up via `bundles`."""
+        bundles = {gid for gid, rel in out.items()
+                   if rel.get("gameType") == self._BUNDLE and gid in set(ids)}
+        bl = list(bundles)
+        for i in range(0, len(bl), 400):
+            chunk = bl[i:i + 400]
+            offset = 0
+            while True:
+                body = (
+                    "fields id,name,game_type,bundles,cover.image_id; "
+                    f"where bundles = ({','.join(str(c) for c in chunk)}); "
+                    f"limit 500; offset {offset}; sort id asc;"
+                )
+                got = self._post("games", body) or []
+                for g in got:
+                    for b in (g.get("bundles") or []):
+                        if b in bundles:
+                            out[b].setdefault("bundleContents", []).append(self._one(g))
+                if len(got) < 500:
+                    break
+                offset += 500
+
+    @staticmethod
+    def _one(x):
+        if not x:
+            return None
+        return {"id": x.get("id"), "name": x.get("name"),
+                "cover": (x.get("cover") or {}).get("image_id")}
 
     @classmethod
     def _relations(cls, g):
-        def one(x):
-            if not x:
-                return None
-            return {"id": x.get("id"), "name": x.get("name"),
-                    "cover": (x.get("cover") or {}).get("image_id")}
+        one = cls._one
 
         def many(key):
             return [one(x) for x in (g.get(key) or []) if x.get("name")]
@@ -277,6 +342,7 @@ class IgdbClient:
             "remakes": many("remakes"),
             "remasters": many("remasters"),
             "ports": many("ports"),
+            "forks": many("forks"),
             "bundles": many("bundles"),
             "collections": [c.get("name") for c in (g.get("collections") or []) if c.get("name")],
         }

@@ -761,6 +761,13 @@ function renderIgdbSection(key, el, status, detail) {
   if (relHost && status === "matched" && detail) {
     relHost.innerHTML = relationsHtml(detail);
     wireRelations(relHost);
+    // IGDB wins, the sheet Collection is the fallback: once IGDB confirms a grouping
+    // (episodes, a bundle's games, DLC…), fold away the in-house collection section so
+    // the same set isn't shown twice. It rendered synchronously; IGDB detail is async.
+    if (typeof relationsHaveGrouping === "function" && relationsHaveGrouping(detail)) {
+      const colSec = document.querySelector("#drawerBody .col-section");
+      if (colSec) colSec.hidden = true;
+    }
   }
   let content;
   if (status === "matched" && detail) { content = detailHtml(detail); fillHero(detail); }

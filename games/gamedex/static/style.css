@@ -2717,3 +2717,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* ---- home: closest challenges (three across) ---- */
 .h-chals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 @media (max-width: 900px) { .h-chals { grid-template-columns: 1fr; } }
+
+/* ---- related-games completion progress (episodes / bundle / DLC) ---- */
+.rl-sect h4 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rl-prog { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; text-transform: none; letter-spacing: 0; }
+.rl-prog-bar { width: 84px; height: 5px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.rl-prog-bar span { display: block; height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.rl-prog-txt { font: 500 11px var(--font); color: var(--dim); font-variant-numeric: tabular-nums; }
