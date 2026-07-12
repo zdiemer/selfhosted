@@ -20,19 +20,40 @@
 
 // ---- who owns what -------------------------------------------------------
 // igdbId -> the rows in your collection that matched it.
-let _byIgdb = null;
-const resetRelations = () => { _byIgdb = null; _relById = null; _bySlug = null; _byName = null; };
+let _byIgdb = null, _completedSet = null;
+const resetRelations = () => { _byIgdb = null; _completedSet = null; _relById = null; _bySlug = null; _byName = null; };
 
+// The completed sheet's rows, by object identity — for telling a beaten episode apart
+// from a backlog one. A row here IS finished; that's the whole point of the sheet.
+function completedRowSet() {
+  if (_completedSet) return _completedSet;
+  return (_completedSet = new Set(((DATA.sheets.completed || {}).rows) || []));
+}
+
+// igdb_id -> the rows that match it, across BOTH sheets. Episodes (and often
+// compilation members) live only in the COMPLETED sheet, so a games-sheet-only index
+// counted a fully-beaten episodic game as 0-done.
 function rowsByIgdbId() {
   if (_byIgdb) return _byIgdb;
   const m = new Map();
-  for (const r of ((DATA.sheets.games || {}).rows || [])) {
+  const add = (r) => {
     const id = (ENRICH[r._k] || {}).igdbId;
-    if (!id) continue;
+    if (!id) return;
     if (!m.has(id)) m.set(id, []);
     m.get(id).push(r);
-  }
+  };
+  for (const r of ((DATA.sheets.games || {}).rows || [])) add(r);
+  for (const r of ((DATA.sheets.completed || {}).rows || [])) add(r);
   return (_byIgdb = m);
+}
+
+// A related row's state in your collection. A completed-sheet row is beaten by
+// definition; a games-sheet row goes by its own Completed / Owned flags.
+function relRowState(r) {
+  if (!r) return "none";
+  if (r.completed || completedRowSet().has(r)) return "done";
+  if (r.owned) return "owned";
+  return "listed";
 }
 
 // The collection, indexed by IGDB SLUG. IGDB's similar_games entries carry a url
@@ -192,9 +213,9 @@ const REL_SECTIONS = [
 function relProgress(list) {
   let done = 0, owned = 0;
   for (const e of list) {
-    const mine = rowsByIgdbId().get(e.id) || [];
-    if (mine.some((r) => r.completed)) done++;
-    else if (mine.some((r) => r.owned)) owned++;
+    const states = (rowsByIgdbId().get(e.id) || []).map(relRowState);
+    if (states.includes("done")) done++;
+    else if (states.includes("owned")) owned++;
   }
   return { done, owned, total: list.length };
 }
@@ -210,14 +231,16 @@ function relationsHaveGrouping(detail) {
 // A related game, annotated with whether it's in your collection.
 function relCardHtml(entry) {
   const mine = rowsByIgdbId().get(entry.id) || [];
-  const row = mine.find((r) => r.completed) || mine.find((r) => r.owned) || mine[0];
+  const row = mine.find((r) => relRowState(r) === "done")
+    || mine.find((r) => relRowState(r) === "owned") || mine[0];
+  const state = relRowState(row);
+  const sheet = row && completedRowSet().has(row) ? "completed" : "games";
   const cover = entry.cover ? IMG(entry.cover, "cover_small") : (row ? coverSrc(ENRICH[row._k], "cover_small") : "");
-  const state = !row ? "none" : row.completed ? "done" : row.owned ? "owned" : "listed";
   const badge = { done: "✓ Beaten", owned: "● Owned", listed: "In your list", none: "Not in your collection" }[state];
   const art = cover
     ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">`
     : `<span class="rl-ph">${icon("i-library", 18)}</span>`;
-  return `<button class="rl-card rl-${state}"${row ? ` data-rlk="${escapeHtml(String(row._k))}"` : ""}
+  return `<button class="rl-card rl-${state}"${row ? ` data-rlk="${escapeHtml(String(row._k))}" data-rls="${sheet}"` : ""}
       title="${escapeHtml(entry.name)}">
     ${art}
     <span class="rl-txt">
@@ -262,8 +285,9 @@ function relationsHtml(detail) {
 function wireRelations(scope) {
   scope.querySelectorAll("[data-rlk]").forEach((el) => {
     el.onclick = () => {
-      const row = ((DATA.sheets.games || {}).rows || []).find((r) => String(r._k) === el.dataset.rlk);
-      if (row) openDrawerFrom(row, "games");     // navigation: keep a way back
+      const sheet = el.dataset.rls || "games";   // episodes open in the Completed sheet
+      const row = ((DATA.sheets[sheet] || {}).rows || []).find((r) => String(r._k) === el.dataset.rlk);
+      if (row) openDrawerFrom(row, sheet);        // navigation: keep a way back
     };
   });
 }
