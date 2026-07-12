@@ -311,20 +311,43 @@ function predictWhyHtml(row) {
   const up = p.signals.filter((sg) => sg.value >= base);
   const down = p.signals.filter((sg) => sg.value < base);
   const lead = down.length > up.length ? down : up;
-  const names = lead.slice(0, 2).map((sg) => sg.label).filter(Boolean);
+  /* Only things YOU rate can go in "you rate X higher". The model also feeds on
+     the critic score — kind "Critics", label "Metacritic" — and naming that here
+     produced "You rate Metacritic higher than most of what you own", which is
+     nonsense: you don't rate Metacritic, Metacritic rates the game. */
+  const taste = lead.filter((sg) => sg.kind !== "Critics");
+  const names = taste.slice(0, 2).map((sg) => sg.label).filter(Boolean);
   const gap = pts(p.score) - pts(base);
+  const critic = p.signals.find((sg) => sg.kind === "Critics");
+
   // Landing ON your average is not "better than your usual" — it's your usual.
   // Within a couple of points either way, the model is saying nothing much.
-  const verdict = Math.abs(gap) <= 2
-    ? `<b>About your usual.</b> Nothing here pulls it far from your ${pts(base)}% average.`
-    : gap > 0
-      ? `<b>Better than your usual.</b> You rate ${names.join(" and ")} higher than most of what you own.`
-      : `<b>Below your usual.</b> You rate ${names.join(" and ")} lower than most of what you own.`;
+  let verdict;
+  if (Math.abs(gap) <= 2) {
+    verdict = `<b>About your usual.</b> Nothing here pulls it far from your ${pts(base)}% average.`;
+  } else if (!names.length) {
+    // Nothing but the critic score to go on — so say that, rather than inventing
+    // a taste signal we don't have.
+    verdict = critic
+      ? `<b>${gap > 0 ? "Better" : "Below"} than your usual.</b> Little to go on beyond the critics, who gave it ${pts(critic.value)}.`
+      : `<b>${gap > 0 ? "Better" : "Below"} than your usual.</b> Not much to go on for this one.`;
+  } else {
+    const list = names.join(" and ");
+    verdict = gap > 0
+      ? `<b>Better than your usual.</b> You rate ${list} higher than most of what you own.`
+      : `<b>Below your usual.</b> You rate ${list} lower than most of what you own.`;
+  }
 
   const rows = p.signals.map((sg) => {
     const d = delta(sg.value);
+    // The critic score isn't a thing you've rated, so it doesn't get "N rated" and
+    // it says who's doing the rating.
+    const isCritic = sg.kind === "Critics";
+    const label = isCritic
+      ? `Critics <span>· ${escapeHtml(sg.label)} gave it ${pts(sg.value)}</span>`
+      : `${escapeHtml(sg.label)}${sg.n ? ` <span>· ${sg.n} rated</span>` : ""}`;
     return `<div class="vd-r">
-      <span class="vd-t">${escapeHtml(sg.label)}${sg.n ? ` <span>· ${sg.n} rated</span>` : ""}</span>
+      <span class="vd-t">${label}</span>
       <span class="vd-d ${d >= 0 ? "up" : "dn"}">${d >= 0 ? "+" : "−"}${Math.abs(d)} vs your average</span>
     </div>`;
   }).join("");
