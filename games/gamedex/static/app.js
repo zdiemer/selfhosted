@@ -1150,8 +1150,8 @@ const igdbFacetCols = () =>
       ]
     : [];
 // Bucketed facets available on the Games tab (playtime + Metacritic).
-function extraFacetCols() {
-  if (activeTab !== "games") return [];
+function extraFacetCols(tab = activeTab) {
+  if (tab !== "games") return [];
   return [
     { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
     { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },

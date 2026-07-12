@@ -386,11 +386,17 @@ function computeChallenge(c) {
   // The buckets this challenge is even about. Without this, a completion could
   // "clear" a bucket outside the challenge — beating a game on PC would count
   // toward the Unplayable challenge even though PC has no unplayable games.
+  // A challenge groups a game into one bucket, EXCEPT where the facet is itself
+  // multi-valued (IGDB themes, game modes): beating one game with three themes
+  // legitimately clears three buckets.
+  const groupsOf = c.groupMany
+    ? (r) => (c.groupMany(r) || []).filter((k) => k != null && k !== "").map(String)
+    : (r) => { const k = c.group(r); return k == null || k === "" ? [] : [String(k)]; };
+
   const universeKeys = new Set();
   for (const r of rows) {
     if (!universe(r)) continue;
-    const k = c.group(r);
-    if (k != null && k !== "") universeKeys.add(String(k));
+    for (const k of groupsOf(r)) universeKeys.add(k);
   }
 
   // Cleared: a bucket holding a game completed since the challenge began.
@@ -400,12 +406,11 @@ function computeChallenge(c) {
     if (!r.completed || !r.dateCompleted || r.dateCompleted <= start) continue;
     completedSinceStart++;
     if (!clear(r)) continue;
-    const k = c.group(r);
-    if (k == null || k === "") continue;
-    const ks = String(k);
-    if (!universeKeys.has(ks)) continue;
-    if (!cleared.has(ks)) cleared.set(ks, []);
-    cleared.get(ks).push(r);
+    for (const ks of groupsOf(r)) {
+      if (!universeKeys.has(ks)) continue;
+      if (!cleared.has(ks)) cleared.set(ks, []);
+      cleared.get(ks).push(r);
+    }
   }
   for (const list of cleared.values()) list.sort((a, b) => (a.dateCompleted < b.dateCompleted ? -1 : 1));
 
@@ -413,12 +418,11 @@ function computeChallenge(c) {
   const remaining = new Map();   // key -> candidate rows, best-rated first
   for (const r of rows) {
     if (!domain(r) || !pool(r)) continue;
-    const k = c.group(r);
-    if (k == null || k === "") continue;
-    const ks = String(k);
-    if (cleared.has(ks)) continue;
-    if (!remaining.has(ks)) remaining.set(ks, []);
-    remaining.get(ks).push(r);
+    for (const ks of groupsOf(r)) {
+      if (cleared.has(ks)) continue;
+      if (!remaining.has(ks)) remaining.set(ks, []);
+      remaining.get(ks).push(r);
+    }
   }
   for (const list of remaining.values()) {
     list.sort((a, b) => (combinedRating(b) ?? 0) - (combinedRating(a) ?? 0));
@@ -519,8 +523,16 @@ function renderChallenges() {
   const host = $("#challenges");
   if (!DATA) return;
 
+  if (chEditor.open) {
+    host.innerHTML = chEditorHtml();
+    wireEditor(host);
+    host.scrollTop = 0;
+    return;
+  }
+
+  const all = chAll();
   if (!chState.open) {
-    const results = CHALLENGES.map(computeChallenge);
+    const results = all.map(computeChallenge);
     const totalCleared = results.reduce((a, r) => a + r.cleared.size, 0);
     const totalBuckets = results.reduce((a, r) => a + r.total, 0);
     const finished = results.filter((r) => r.total && !r.remaining.size).length;
@@ -529,26 +541,34 @@ function renderChallenges() {
          <h1>Challenges</h1>
          <p>One game per platform, per genre, per year, per letter… Progress is read straight from the sheet: a bucket clears the day you finish something in it.</p>
          <div class="ch-hero-stats">
-           <span><b>${CHALLENGES.length}</b> challenges</span>
+           <span><b>${all.length}</b> challenges</span>
            <span><b>${totalCleared.toLocaleString()}</b> buckets cleared</span>
            <span><b>${(totalBuckets - totalCleared).toLocaleString()}</b> to go</span>
            ${finished ? `<span><b>${finished}</b> finished</span>` : ""}
          </div>
        </div>
-       <div class="ch-grid">${results.map(chCardHtml).join("")}</div>`;
-    for (const el of host.querySelectorAll(".ch-card")) {
+       <div class="ch-grid">${results.map(chCardHtml).join("")}
+         <button class="ch-card ch-new" id="chNew">
+           <span class="ch-new-plus">＋</span>
+           <b>New challenge</b>
+           <span class="muted">One per anything you can filter by — themes, storefronts, developers, Steam Deck rating.</span>
+         </button>
+       </div>`;
+    for (const el of host.querySelectorAll(".ch-card[data-ch]")) {
       el.onclick = () => { chState.open = el.dataset.ch; chState.showAll = null; renderChallenges(); nav(); };
     }
+    $("#chNew").onclick = () => chOpenEditor(null);
     return;
   }
 
-  const c = CHALLENGES.find((x) => x.id === chState.open) || CHALLENGES[0];
+  const c = all.find((x) => x.id === chState.open) || all[0];
   const res = computeChallenge(c);
   const times = c.timesCompleted
     ? `<span class="ch-badge">✓ cleared ${c.timesCompleted}× already</span>` : "";
   host.innerHTML =
     `<div class="ch-detail">
        <button class="ch-back" id="chBack">← All challenges</button>
+       ${c.custom ? `<button class="btn ghost ch-edit" id="chEdit">✎ Edit challenge</button>` : ""}
        <div class="ch-detail-head">
          <span class="ch-icon big">${c.icon}</span>
          <div>
@@ -574,6 +594,8 @@ function renderChallenges() {
      </div>`;
 
   $("#chBack").onclick = () => { chState.open = null; chState.showAll = null; renderChallenges(); nav(); };
+  const edit = $("#chEdit");
+  if (edit) edit.onclick = () => chOpenEditor(c.custom);
   for (const el of host.querySelectorAll(".ch-showall")) {
     el.onclick = () => { chState.showAll = el.dataset.showall; renderChallenges(); };
   }
@@ -587,4 +609,236 @@ function renderChallenges() {
     };
   }
   host.scrollIntoView({ block: "start" });
+}
+
+/* ===========================================================================
+   CUSTOM CHALLENGES
+
+   The built-ins are hand-written because each encodes a judgement — which
+   platform splits "count" as different, which franchises are contenders. But the
+   machinery underneath is general: a challenge is a way of grouping games into
+   buckets, plus a domain saying which games are in play. Both of those are things
+   the facet system already knows how to compute for any column, including the
+   enrichment-derived ones (IGDB theme, game mode, Steam Deck status).
+
+   So a custom challenge is: group by a facet, optionally filter by other facets,
+   pick a start date. It then runs through exactly the same computeChallenge as
+   the built-ins — same clearing rules, same candidate pool, same progress.
+
+   Stored in localStorage: gamedex has no accounts, and this is a personal goal
+   rather than shared data. Same place the saved views live.
+   =========================================================================== */
+
+const CH_CUSTOM_KEY = "gamedex.challenges";
+
+const chLoadCustom = () => {
+  try { return JSON.parse(localStorage.getItem(CH_CUSTOM_KEY) || "[]"); }
+  catch (_) { return []; }
+};
+const chStoreCustom = (list) =>
+  localStorage.setItem(CH_CUSTOM_KEY, JSON.stringify(list.slice(0, 40)));
+
+// Facets you can group a challenge by. Straight from the games sheet's own facet
+// columns, so anything filterable is also groupable — no separate list to keep in
+// sync as facets are added.
+function chGroupables() {
+  const sheetCols = ((DATA.sheets.games || {}).columns || []).filter((c) => c.facet);
+  // Ask for the GAMES tab's facets explicitly: we're sitting on the Challenges
+  // tab, and these builders default to whatever tab is active.
+  const igdb = typeof igdbFacetCols === "function" ? igdbFacetCols("games") : [];
+  const extra = typeof extraFacetCols === "function" ? extraFacetCols("games") : [];
+  return [...sheetCols, ...igdb, ...extra];
+}
+const chColByKey = (key) => chGroupables().find((c) => c.key === key);
+
+// The values a row falls into for a facet — reuses the grid's own accessor, so a
+// multi-valued facet (themes) yields several buckets and a plain one yields one.
+function chFacetVals(row, col) {
+  if (!col) return [];
+  return (typeof rowFacetItems === "function" ? rowFacetItems(row, col) : []).map((i) => i.key);
+}
+
+// A stored definition -> a challenge object computeChallenge understands.
+function chFromCustom(def) {
+  const groupCol = chColByKey(def.groupBy);
+  const filters = (def.filters || []).map((f) => ({ col: chColByKey(f.key), values: new Set(f.values) }))
+    .filter((f) => f.col && f.values.size);
+  return {
+    id: def.id,
+    icon: def.icon || "🎯",
+    name: def.name || "Custom challenge",
+    blurb: chCustomBlurb(def),
+    start: def.start || CH_DEFAULT_START,
+    custom: def,
+    // Every filter must match (AND across facets, OR within one).
+    domain: (r) => filters.every((f) => chFacetVals(r, f.col).some((v) => f.values.has(v))),
+    groupMany: (r) => chFacetVals(r, groupCol),
+  };
+}
+
+function chCustomBlurb(def) {
+  const g = chColByKey(def.groupBy);
+  const gl = g ? g.label : def.groupBy;
+  const fs = (def.filters || []).filter((f) => (f.values || []).length).map((f) => {
+    const c = chColByKey(f.key);
+    const lbl = (k) => (c && c.type === "bool") ? (k === "true" ? "Yes" : "No") : k;
+    const vs = f.values.map(lbl);
+    return `${c ? c.label : f.key} is ${vs.slice(0, 3).join(" or ")}${vs.length > 3 ? ` (+${vs.length - 3})` : ""}`;
+  });
+  return `Beat one game per ${gl}${fs.length ? `, limited to games where ${fs.join(" and ")}` : ""}.`;
+}
+
+// Built-ins first, then yours.
+const chAll = () => [...CHALLENGES, ...chLoadCustom().map(chFromCustom)];
+
+// ---- the builder ---------------------------------------------------------
+
+const chEditor = { open: false, def: null };
+
+const chBlankDef = () => ({
+  id: "custom-" + Math.random().toString(36).slice(2, 9),
+  name: "", icon: "🎯", groupBy: "platform", filters: [],
+  start: new Date().toISOString().slice(0, 10),
+});
+
+function chEditorHtml() {
+  const d = chEditor.def;
+  const cols = chGroupables();
+  const opt = (c, sel) => `<option value="${escapeHtml(c.key)}"${c.key === sel ? " selected" : ""}>${escapeHtml(c.label)}</option>`;
+  const filterRows = (d.filters || []).map((f, i) => {
+    const col = chColByKey(f.key);
+    const vals = col ? chFacetValues(col) : [];
+    return `<div class="chb-filter" data-fi="${i}">
+      <select class="chb-fkey">${cols.map((c) => opt(c, f.key)).join("")}</select>
+      <select class="chb-fval" multiple size="4">${vals.map((v) =>
+        `<option value="${escapeHtml(v.key)}"${(f.values || []).includes(v.key) ? " selected" : ""}>${escapeHtml(v.label)} (${v.n})</option>`).join("")}</select>
+      <button class="chb-del" data-fi="${i}" title="Remove this filter">✕</button>
+    </div>`;
+  }).join("");
+
+  return `<div class="chb">
+    <div class="chb-head">
+      <h2>${d._editing ? "Edit" : "New"} challenge</h2>
+      <button class="chb-close" id="chbClose">✕</button>
+    </div>
+    <label class="chb-row"><span>Name</span>
+      <input id="chbName" type="text" value="${escapeHtml(d.name)}" placeholder="One per Steam Deck rating…" maxlength="60">
+    </label>
+    <label class="chb-row"><span>Icon</span>
+      <input id="chbIcon" type="text" value="${escapeHtml(d.icon)}" maxlength="4" style="width:64px">
+    </label>
+    <label class="chb-row"><span>One per…</span>
+      <select id="chbGroup">${cols.map((c) => opt(c, d.groupBy)).join("")}</select>
+    </label>
+    <label class="chb-row"><span>Counting from</span>
+      <input id="chbStart" type="date" value="${escapeHtml(d.start)}">
+      <em>Completions before this date don't count — the same rule the built-ins use.</em>
+    </label>
+    <div class="chb-row chb-filters">
+      <span>Only these games</span>
+      <div>
+        ${filterRows || `<p class="muted">No filter — every game is in play.</p>`}
+        <button class="btn ghost" id="chbAddFilter">+ Add a filter</button>
+      </div>
+    </div>
+    <div class="chb-preview" id="chbPreview"></div>
+    <div class="chb-actions">
+      ${d._editing ? `<button class="btn danger" id="chbDelete">Delete</button>` : ""}
+      <span class="spacer"></span>
+      <button class="btn ghost" id="chbCancel">Cancel</button>
+      <button class="btn launch" id="chbSave">Save challenge</button>
+    </div>
+  </div>`;
+}
+
+// Distinct values for a facet, most common first — the same values the sidebar
+// offers, so a filter can't be built out of something that doesn't exist.
+function chFacetValues(col) {
+  const counts = new Map();
+  for (const r of chRows()) {
+    for (const it of (rowFacetItems(r, col) || [])) {
+      const k = it.key;
+      if (!counts.has(k)) counts.set(k, { n: 0, label: facetLabel(col, it.raw) });
+      counts.get(k).n++;
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1].n - a[1].n)
+    .slice(0, 200)
+    .map(([key, v]) => ({ key, label: v.label, n: v.n }));
+}
+
+// Live preview: how many buckets would this challenge actually have?
+function chPreview() {
+  const host = $("#chbPreview");
+  if (!host) return;
+  try {
+    const res = computeChallenge(chFromCustom(chEditor.def));
+    host.innerHTML = res.total
+      ? `<b>${res.total}</b> buckets · <b>${res.cleared.size}</b> already cleared by past completions · <b>${res.remaining.size}</b> to go`
+      : `<span class="muted">No buckets — that combination of facet and filters matches nothing.</span>`;
+  } catch (e) {
+    host.innerHTML = `<span class="muted">Can't evaluate that yet.</span>`;
+  }
+}
+
+function wireEditor(host) {
+  const d = chEditor.def;
+  const close = () => { chEditor.open = false; chEditor.def = null; renderChallenges(); };
+  $("#chbClose").onclick = close;
+  $("#chbCancel").onclick = close;
+  $("#chbName").oninput = (e) => { d.name = e.target.value; };
+  $("#chbIcon").oninput = (e) => { d.icon = e.target.value; };
+  $("#chbGroup").onchange = (e) => { d.groupBy = e.target.value; chPreview(); };
+  $("#chbStart").onchange = (e) => { d.start = e.target.value; chPreview(); };
+
+  $("#chbAddFilter").onclick = () => {
+    d.filters = d.filters || [];
+    d.filters.push({ key: chGroupables()[0].key, values: [] });
+    renderChallenges();
+  };
+  host.querySelectorAll(".chb-del").forEach((el) => {
+    el.onclick = () => { d.filters.splice(+el.dataset.fi, 1); renderChallenges(); };
+  });
+  host.querySelectorAll(".chb-fkey").forEach((el) => {
+    el.onchange = () => {
+      const i = +el.closest(".chb-filter").dataset.fi;
+      d.filters[i] = { key: el.value, values: [] };   // values belong to the old facet
+      renderChallenges();
+    };
+  });
+  host.querySelectorAll(".chb-fval").forEach((el) => {
+    el.onchange = () => {
+      const i = +el.closest(".chb-filter").dataset.fi;
+      d.filters[i].values = [...el.selectedOptions].map((o) => o.value);
+      chPreview();
+    };
+  });
+
+  $("#chbSave").onclick = () => {
+    if (!d.name.trim()) { $("#chbName").focus(); return; }
+    const list = chLoadCustom();
+    const i = list.findIndex((x) => x.id === d.id);
+    const clean = { id: d.id, name: d.name.trim(), icon: d.icon || "🎯",
+                    groupBy: d.groupBy, filters: d.filters || [], start: d.start };
+    if (i >= 0) list[i] = clean; else list.push(clean);
+    chStoreCustom(list);
+    chEditor.open = false; chEditor.def = null;
+    showToast(`Challenge "${clean.name}" saved`);
+    renderChallenges();
+  };
+  const del = $("#chbDelete");
+  if (del) del.onclick = () => {
+    chStoreCustom(chLoadCustom().filter((x) => x.id !== d.id));
+    chEditor.open = false; chEditor.def = null;
+    showToast("Challenge deleted");
+    renderChallenges();
+  };
+  chPreview();
+}
+
+function chOpenEditor(def) {
+  chEditor.open = true;
+  chEditor.def = def ? { ...def, _editing: true } : chBlankDef();
+  renderChallenges();
 }

@@ -401,6 +401,43 @@ td.cover { width: 46px; padding: 5px 8px; }
 }
 .btn.play:hover { filter: brightness(1.08); border-color: #22c55e; }
 
+/* ---- Custom challenge builder ------------------------------------------ */
+.ch-new {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 6px; text-align: left; border-style: dashed; cursor: pointer;
+}
+.ch-new-plus { font-size: 26px; color: var(--accent); line-height: 1; }
+.ch-new .muted { font-size: 12px; }
+.ch-edit { position: absolute; top: 0; right: 0; }
+
+.chb { max-width: 760px; margin: 0 auto; padding: 8px 4px 40px; }
+.chb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.chb-head h2 { font: 700 22px/1.2 var(--font-display, var(--font)); }
+.chb-close { background: none; border: 0; color: var(--text-2); font-size: 18px; cursor: pointer; }
+.chb-row {
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px;
+  align-items: start; padding: 14px 0; border-top: 1px solid var(--border);
+}
+.chb-row > span:first-child { font: 600 13px/2 var(--font); color: var(--text-2); }
+.chb-row input[type="text"], .chb-row input[type="date"], .chb-row select {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: 500 13px var(--font); max-width: 100%;
+}
+.chb-row em { display: block; grid-column: 2; font: 400 12px/1.5 var(--font); color: var(--text-2); font-style: normal; margin-top: 6px; }
+.chb-filter { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+.chb-filter select[multiple] { min-width: 220px; }
+.chb-del { background: none; border: 0; color: var(--text-2); cursor: pointer; font-size: 14px; padding: 6px; }
+.chb-del:hover { color: var(--bad); }
+.chb-preview {
+  margin: 18px 0 8px; padding: 12px 14px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font: 500 13px/1.5 var(--font); color: var(--text-2);
+}
+.chb-preview b { color: var(--accent); }
+.chb-actions { display: flex; align-items: center; gap: 10px; }
+.chb-actions .spacer { flex: 1; }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+
 .combinebtn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 10px; border-radius: 8px;
