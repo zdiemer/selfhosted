@@ -44,6 +44,22 @@ spec:
                 echo "waiting for mariadb..."; sleep 3
               done
               echo "mariadb is up"
+        - name: build-library
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["python3", "/builder/build.py"]
+          volumeMounts:
+            - name: nas
+              mountPath: /nas
+              readOnly: true
+            - name: library
+              mountPath: /romm/library
+            - name: config
+              mountPath: /romm/config/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: builder
+              mountPath: /builder
+              readOnly: true
       containers:
         - name: romm
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -55,11 +71,12 @@ spec:
             - secretRef:
                 name: {{ include "romm.fullname" . }}-env
           volumeMounts:
+            # The symlink tree. Its targets live under /nas, so the share has to be
+            # visible in this container too or every link would dangle.
             - name: library
-              mountPath: {{ .Values.smb.mountPath }}
-              {{- with .Values.smb.sharePath }}
-              subPath: {{ . }}
-              {{- end }}
+              mountPath: /romm/library
+            - name: nas
+              mountPath: /nas
               readOnly: true
             - name: data
               mountPath: /romm/resources
@@ -92,9 +109,16 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
-        - name: library
+        - name: nas
           persistentVolumeClaim:
             claimName: {{ include "romm.fullname" . }}-library
+        # Rebuilt on every start. It's only symlinks — cheap to make, and it can
+        # never drift from the share.
+        - name: library
+          emptyDir: {}
+        - name: builder
+          configMap:
+            name: {{ include "romm.fullname" . }}-library-builder
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "romm.fullname" . }}-data

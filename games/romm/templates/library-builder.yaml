@@ -1,0 +1,69 @@
+{{/*
+The library RomM sees is a tree of SYMLINKS into the read-only share.
+
+Why: RomM does not recurse. get_roms() lists files and directories at exactly one
+level, and every directory it finds becomes ONE multi-file game. That is correct
+for multi-disc games (BrainDead 13 (USA)/ -> one game, several discs), but it means
+a folder like 3DO/_hacks/ — 24 standalone fan-translations — would collapse into a
+single bogus "game" called _hacks with 24 "discs", with no metadata and no cover.
+
+The NAS layout is deliberate and we do not touch it. Instead the share is mounted
+read-only at /nas, and this init container builds /romm/library as symlinks:
+
+    /romm/library/Roms/3DO/BrainDead 13 (USA)  -> /nas/Roms/3DO/BrainDead 13 (USA)
+    /romm/library/Roms/3DO/Doctor Hauzer...chd -> /nas/Roms/3DO/_hacks/Doctor Hauzer...chd
+                                                                      ^^^^^^ lifted to top level
+
+So the nested games become real, individually-matched games, and the share is
+unchanged. Python's scandir/is_dir/open all follow symlinks, so scanning, hashing
+and playing work straight through them.
+
+Only the platforms RomM will actually scan are built — walking J2ME's 223,430
+entries to link files we then exclude would be absurd.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "romm.fullname" . }}-library-builder
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+data:
+  build.py: |
+    import os, sys, yaml, time
+
+    SRC = "/nas/{{ .Values.config.romsFolder }}"
+    DST = "/romm/library/{{ .Values.config.romsFolder }}"
+    cfg = yaml.safe_load(open("/romm/config/config.yml"))
+    wanted  = set((cfg.get("system") or {}).get("platforms") or {})
+    excluded = set((cfg.get("exclude") or {}).get("platforms") or [])
+    FLATTEN = set({{ .Values.config.flattenFolders | toJson }})
+    SKIP    = set({{ .Values.config.skipFolders | toJson }})
+    KEEP    = {"{{ .Values.config.firmwareFolder }}"}
+
+    t0 = time.time()
+    os.makedirs(DST, exist_ok=True)
+    links = flat = 0
+    for plat in sorted(os.listdir(SRC)):
+        if plat in excluded or plat not in wanted:
+            continue
+        src = os.path.join(SRC, plat)
+        if not os.path.isdir(src):
+            continue
+        dst = os.path.join(DST, plat)
+        os.makedirs(dst, exist_ok=True)
+        for e in os.scandir(src):
+            if e.name in SKIP:
+                continue
+            # Lift the contents of a flatten-folder up to the platform root, so each
+            # nested game becomes a game in its own right.
+            if e.name in FLATTEN and e.is_dir():
+                for sub in os.scandir(e.path):
+                    link = os.path.join(dst, sub.name)
+                    if not os.path.lexists(link):
+                        os.symlink(sub.path, link); flat += 1
+                continue
+            link = os.path.join(dst, e.name)   # includes _bios, kept as a folder
+            if not os.path.lexists(link):
+                os.symlink(e.path, link); links += 1
+    print(f"library: {links} entries linked, {flat} lifted out of {sorted(FLATTEN)} "
+          f"across {len(wanted)} platforms in {time.time()-t0:.0f}s", flush=True)

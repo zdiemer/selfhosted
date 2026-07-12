@@ -60,6 +60,21 @@ persistence:
 config:
   # The share's platform folders live under Roms/.
   romsFolder: "Roms"
+  # BIOS on this share lives at <platform>/_bios (67 platforms have one).
+  # RomM defaults to "bios" and so found zero firmware.
+  firmwareFolder: "_bios"
+  # RomM does not recurse: a sub-folder is always ONE game. That's right for
+  # multi-disc games, but wrong for these, which hold standalone games. The init
+  # container lifts their contents up to the platform root via symlinks, so each
+  # becomes a game in its own right — without touching the NAS layout.
+  flattenFolders:
+    - _hacks
+    - _extracted
+    - _dosbox
+  # Not games. _psn is unextracted .pkg files; _unused is what it says.
+  skipFolders:
+    - _psn
+    - _unused
   # Hashing reads every ROM in full. The playable set is 8.06 TB over a link that
   # sustains 107 MB/s, so this is a ~22h one-off — deliberately accepted, because
   # hashes are what Hasheous and RetroAchievements identify games BY. They're
