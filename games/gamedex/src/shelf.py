@@ -23,6 +23,7 @@ import io
 import logging
 import pathlib
 import threading
+import time
 
 import requests
 from PIL import Image
@@ -136,8 +137,8 @@ class Shelf:
     # ---------- what's on the shelf ----------
 
     def rows(self, games, enrichment) -> list[dict]:
-        """The physical games, in the order a shelf would hold them: by platform, then
-        by series, then by title — so a run of Zeldas stands together, like a real one."""
+        """The physical games, in the order a real shelf holds them: grouped by platform,
+        alphabetical within each — which is how you'd actually find one."""
         out = []
         for g in games:
             if not g.get("owned"):
@@ -168,10 +169,44 @@ class Shelf:
                 "cover": e.get("cover"),      # IGDB image id, for the fallback front
                 "hue": self._hues.get(key, "#6E6E78"),   # the spine when we have no scan
             })
-        out.sort(key=lambda r: (r["p"] or "", r["series"], r["year"] or 0, r["t"] or ""))
+        # Sort titles the way a person alphabetises a shelf: ignore a leading article.
+        def alpha(t):
+            t = (t or "").lower()
+            for a in ("the ", "a ", "an "):
+                if t.startswith(a):
+                    return t[len(a):]
+            return t
+        out.sort(key=lambda r: (r["p"] or "", alpha(r["t"])))
         return out
 
     # ---------- the faces ----------
+
+    def warm(self, delay: float = 0) -> None:
+        """Cut every wrap we haven't cut yet, in the background, at boot.
+
+        The shelf asks for 165 spines the moment it opens. Cutting them lazily means
+        165 cold requests, each of which downloads a 3-6 MB scan first — so the shelf
+        paints black rectangles and fills in over the next several minutes. Do it once,
+        up front, and every visit afterwards is served off the volume."""
+        todo = [k for k in self._wraps
+                if not (self._dir / f"{k.replace('/', '_')}.spine.jpg").exists()]
+        if not todo:
+            log.info("shelf: all %d wraps already cut", len(self._wraps))
+            return
+
+        def run():
+            if delay:
+                time.sleep(delay)              # let the parse + backfills finish first
+            # Strictly serial. This runs in the background and nobody is waiting on it,
+            # so there is nothing to buy with concurrency except peak memory — and peak
+            # memory is exactly what killed the pod. It is also politer to their CDN.
+            for n, k in enumerate(todo, 1):
+                self.face(k, "spine")          # _cut writes all three faces at once
+                if n % 25 == 0:
+                    log.info("shelf: cut %d/%d wraps", n, len(todo))
+            log.info("shelf: %d wraps cut and cached", len(todo))
+
+        threading.Thread(target=run, name="shelf-warm", daemon=True).start()
 
     def _lock(self, key: str) -> threading.Lock:
         with self._guard:
@@ -202,7 +237,15 @@ class Shelf:
         # We cache OUR OWN slices and never hotlink their CDN. One fetch per game, ever.
         r = requests.get(w["url"], timeout=120, headers={"User-Agent": "gamedex/1.0"})
         r.raise_for_status()
-        im = _strip(Image.open(io.BytesIO(r.content)).convert("RGB"))
+
+        im = Image.open(io.BytesIO(r.content))
+        # These scans are 300-600 dpi. A 3366x2100 JPEG is 6 MB on the wire and TWENTY
+        # ONE MEGABYTES decoded — and every crop and rotate copies it again. That OOM-
+        # killed the pod at a 512Mi limit. draft() tells libjpeg to decode at a reduced
+        # scale in the first place, which is free: we throw the detail away regardless,
+        # since no face is ever shown above 600px.
+        im.draft("RGB", (1700, 1700))
+        im = _strip(im.convert("RGB"))
 
         back_mm, spine_mm, front_mm, _ = TEMPLATES[w["template"]]
         total = back_mm + spine_mm + front_mm

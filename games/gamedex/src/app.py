@@ -112,6 +112,8 @@ store = DataStore(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.start()
+    # After the startup peak (xlsx parse + enrichment backfills), not during it.
+    SHELF.warm(delay=90)
     if enricher:
         enricher.start()
         logging.getLogger("gamedex").info("IGDB enrichment enabled (backfill=%s)", ENRICH_BACKFILL)

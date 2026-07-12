@@ -2426,25 +2426,25 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-tools { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .sh-empty { color:var(--dim); padding:40px 0; text-align:center; }
 
+/* a section of the shelf: one platform */
+.sh-section + .sh-section { margin-top:34px; }
+.sh-label { display:flex; align-items:baseline; gap:10px; padding:0 4px 2px;
+  border-bottom:1px solid var(--border); margin-bottom:2px; }
+.sh-label span { font:700 11px/1 var(--font); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--muted); }
+.sh-label em { font:600 11px/1 var(--font); font-style:normal; color:var(--dim);
+  font-variant-numeric:tabular-nums; }
+
 .sh-stage { position:relative; border:1px solid var(--border); border-radius:16px;
   background:radial-gradient(120% 30% at 50% 2%, rgba(124,92,255,.09), transparent 60%), var(--surface);
   padding:20px 20px 22px; overflow:hidden; }
 
-/* Each board carries its OWN camera. Put the perspective on the stage instead and the
-   vanishing point sits at 44% of a stage that grows with every board — a thousand px
-   below the case, which then shears into a parallelogram. The origin is a fixed pixel
-   offset from the board top, and SHELF_PERSP_Y in shelf.js must match it. */
-.sh-board { position:relative; padding-top:330px;
-  perspective:1600px; perspective-origin:50% 190px; }
-.sh-board + .sh-board { margin-top:14px; }
-.sh-headroom { position:absolute; left:0; right:0; top:0; height:330px; }
-.sh-prompt { position:absolute; left:0; right:0; top:44%; text-align:center;
-  font:600 11px/1 var(--font); letter-spacing:.16em; text-transform:uppercase;
-  color:var(--dim); opacity:0; transition:opacity .3s ease; pointer-events:none; }
-.sh-board:first-child .sh-prompt { opacity:.5; }
-.sh-stage.pulled .sh-prompt { opacity:0; }
+/* Boards are flat and tight. The case is NOT in the layout — see .sh-pull. */
+.sh-board { position:relative; }
+.sh-board + .sh-board { margin-top:10px; }
+
 .sh-row { display:flex; align-items:flex-end; justify-content:center; gap:2px;
-  padding:0 10px; min-height:120px; position:relative; }
+  padding:0 10px; position:relative; }
 .sh-plank { height:14px; margin:0 4px; border-radius:2px;
   background:linear-gradient(180deg, #54402E, #2E2118);
   box-shadow:0 12px 26px -10px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12); }
@@ -2452,7 +2452,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* A spine is a div. Two thousand games is two thousand divs — no 3D, no layers. */
 .sh-spine { position:relative; flex:0 0 auto; border:0; padding:0;
   border-radius:2px 2px 0 0; display:flex; align-items:center; justify-content:center;
-  cursor:pointer; color:#fff; transform-origin:bottom center;
+  cursor:pointer; color:#fff; transform-origin:bottom center; overflow:hidden;
   transition:transform .35s cubic-bezier(.2,.7,.25,1), filter .35s ease, opacity .2s linear;
   box-shadow:inset -3px 0 9px rgba(0,0,0,.5), inset 1px 0 0 rgba(255,255,255,.16),
              0 -2px 10px rgba(0,0,0,.3); }
@@ -2461,13 +2461,20 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   max-height:calc(100% - 20px); text-shadow:0 1px 2px rgba(0,0,0,.6); pointer-events:none; }
 .sh-spine:hover, .sh-spine:focus-visible { transform:translateY(-10px); filter:brightness(1.18); outline:none; }
 .sh-spine:focus-visible { box-shadow:0 0 0 2px var(--accent), inset -3px 0 9px rgba(0,0,0,.5); }
-.sh-spine.out { opacity:0; pointer-events:none; }          /* it's in your hand now */
-.sh-spine.lean { transform:rotate(-4deg) translateY(-1px); }  /* neighbour tips into the gap */
-.sh-stage.pulled .sh-spine:not(.out) { filter:brightness(.5) saturate(.65); }
+.sh-spine.out { opacity:0; pointer-events:none; }            /* it's in your hand now */
+.sh-spine.lean { transform:rotate(-4deg) translateY(-1px); } /* neighbour tips into the gap */
 
-.sh-veil { position:absolute; inset:0; background:rgba(0,0,0,.35); opacity:0;
-  pointer-events:none; transition:opacity .4s ease; z-index:1; }
-.sh-stage.pulled .sh-veil { opacity:1; pointer-events:auto; }
+/* The pulled case lives HERE — a fixed overlay over the viewport, not in the shelf.
+   Reserve headroom on every board instead and 31 platform sections reserve 31 screens
+   of empty air for one case. It also keeps the perspective origin tied to the VIEWPORT,
+   which never grows: tie it to a stage that gets taller with every board and the
+   vanishing point ends up a thousand pixels below the case, shearing it. */
+.sh-pull { position:fixed; inset:0; z-index:60; pointer-events:none;
+  perspective:1600px; perspective-origin:50% 42%; }
+.sh-veil { position:absolute; inset:0; background:rgba(0,0,0,.55); opacity:0;
+  pointer-events:none; transition:opacity .4s ease; backdrop-filter:blur(2px); }
+.sh-pull.open .sh-veil { opacity:1; pointer-events:auto; }
+.sh-pull.open .sh-case, .sh-pull.open .sh-info { pointer-events:auto; }
 
 /* ---- the ONE case ---- */
 .sh-case { position:absolute; left:0; top:0; z-index:2; display:none;
@@ -2530,10 +2537,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   color:rgba(255,255,255,.5); }
 
 /* ---- the card that comes up with it ---- */
-.sh-info { position:absolute; z-index:3; left:50%; top:26px; transform:translateX(150px);
-  width:min(300px, 32%); opacity:0; pointer-events:none;
+.sh-info { position:absolute; z-index:3; left:50%; top:50%; width:min(300px, 30%);
+  transform:translate(90px, -50%) translateY(8px); opacity:0; pointer-events:none;
   transition:opacity .35s ease .12s, transform .45s cubic-bezier(.2,.7,.25,1) .12s; }
-.sh-board.open .sh-info { opacity:1; pointer-events:auto; transform:translateX(180px); }
+.sh-pull.open .sh-info { opacity:1; transform:translate(120px, -50%); }
 .sh-info h3 { font:800 21px/1.2 var(--display); letter-spacing:-.02em; margin:0 0 5px; }
 .sh-plat { font:600 11px/1 var(--font); letter-spacing:.1em; text-transform:uppercase;
   color:var(--dim); margin-bottom:12px; }

@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "1.10.0"
+  tag: "1.10.1"
   pullPolicy: IfNotPresent
 
 service:
@@ -104,8 +104,12 @@ resources:
     cpu: 50m
     memory: 128Mi
   limits:
-    # ~17k rows parsed + held in memory; 512Mi is comfortable headroom.
-    memory: 512Mi
+    # ~17k rows parsed + held in memory, plus two enrichment backfills, plus the shelf
+    # cutting box scans (a 3366x2100 JPEG decodes to ~21MB of pixels and every crop
+    # copies it). The parse and the backfills were already close to 512Mi on their own;
+    # adding the image work OOM-killed the pod twice. The cutting is now draft-decoded,
+    # strictly serial, and deferred past the startup peak — but give it real headroom.
+    memory: 2Gi
 
 # RomM — a Play button on games we can emulate in the browser.
 # username/password live in values.local.yaml (a read-only VIEWER account).

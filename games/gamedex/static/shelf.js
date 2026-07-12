@@ -22,7 +22,7 @@ const SHELF_TILT_MAX = 34;
 const SHELF_PULL_Z = 210;
 const SHELF_PERSP = 1600;            // must match .sh-stage { perspective }
 const SHELF_TOP_GAP = 46;
-const SHELF_PERSP_Y = 190;   // px from the board top; must match .sh-board CSS
+const SHELF_PERSP_Y = 0.42;  // fraction of the viewport; must match .sh-pull CSS
 const shClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const shLerp = (a, b, t) => a + (b - a) * t;
 const shPx = (mm) => Math.round(mm * PX_MM);
@@ -65,8 +65,11 @@ async function renderShelf() {
       </div>
     </div>
     <div class="sh-stage" id="shStage">
-      <div class="sh-veil" id="shVeil"></div>
       <div class="sh-rows" id="shRows"></div>
+    </div>
+    <div class="sh-pull" id="shPull">
+      <div class="sh-veil" id="shVeil"></div>
+      <div class="sh-info" id="shInfo"></div>
     </div>`;
 
   const q = document.getElementById("shelfsearch");
@@ -95,30 +98,44 @@ function paintShelfRows() {
     rows.innerHTML = `<div class="sh-empty">Nothing on the shelf matches.</div>`;
     return;
   }
-  // A real shelf is stacked in boards, not one endless row.
-  const PER_BOARD = 44;
-  const boards = [];
-  for (let i = 0; i < games.length; i += PER_BOARD) boards.push(games.slice(i, i + PER_BOARD));
+  // A shelf has SECTIONS. Group by platform, label each, and wrap long platforms
+  // onto more boards — the label only goes on the first board of its platform.
+  const PER_BOARD = 40;
+  const sections = [];
+  for (const g of games) {
+    const last = sections[sections.length - 1];
+    if (!last || last.p !== g.p) sections.push({ p: g.p, games: [g] });
+    else last.games.push(g);
+  }
 
-  rows.innerHTML = boards.map((board, bi) => `
-    <div class="sh-board" data-b="${bi}">
-      <div class="sh-headroom"><div class="sh-prompt">Pull a game off the shelf</div></div>
-      <div class="sh-info"></div>
-      <div class="sh-row">
-        ${board.map((g) => {
-          const i = SHELF.games.indexOf(g);
-          const bg = g.src === "wrap"
-            ? `background:#111 center/100% 100% url(${faceUrl(g.k, "spine")})`
-            : `background:${g.hue}`;
-          return `<button class="sh-spine${g.src === "wrap" ? " real" : ""}" data-i="${i}"
-                     title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"
-                     style="width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px;${bg}">
-                    ${g.src === "wrap" ? "" : `<span>${escapeHtml(g.t)}</span>`}
-                  </button>`;
-        }).join("")}
-      </div>
-      <div class="sh-plank"></div>
-    </div>`).join("");
+  let b = 0;
+  rows.innerHTML = sections.map((sec) => {
+    const boards = [];
+    for (let i = 0; i < sec.games.length; i += PER_BOARD) boards.push(sec.games.slice(i, i + PER_BOARD));
+    return `<div class="sh-section">
+      <div class="sh-label"><span>${escapeHtml(sec.p || "Unknown")}</span>
+        <em>${sec.games.length}</em></div>
+      ${boards.map((board) => `
+        <div class="sh-board" data-b="${b++}">
+          <div class="sh-row">
+            ${board.map((g) => {
+              const i = SHELF.games.indexOf(g);
+              // The hue sits UNDER the scan, so a spine whose scan hasn't arrived yet
+              // is the right colour rather than a black rectangle.
+              const bg = g.src === "wrap"
+                ? `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine")})`
+                : `background:${g.hue}`;
+              return `<button class="sh-spine${g.src === "wrap" ? " real" : ""}" data-i="${i}"
+                         title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"
+                         style="width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px;${bg}">
+                        ${g.src === "wrap" ? "" : `<span>${escapeHtml(g.t)}</span>`}
+                      </button>`;
+            }).join("")}
+          </div>
+          <div class="sh-plank"></div>
+        </div>`).join("")}
+    </div>`;
+  }).join("");
 
   rows.onclick = (e) => {
     const b = e.target.closest(".sh-spine");
@@ -128,28 +145,32 @@ function paintShelfRows() {
 
 /* ---------- the one case ---------- */
 
+function shSpineAt(i) {
+  const s = document.querySelector(`.sh-spine[data-i="${i}"]`);
+  if (!s) return { x: innerWidth / 2, y: innerHeight };
+  const r = s.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
 const shState = { p: 0, vp: 0, rx: 0, ry: 0, vx: 0, vy: 0 };
 let shEl = null, shCur = -1, shTarget = 0, shPending = -1, shRaf = 0, shDrag = null;
 let shW = 0, shH = 0, shFrom = { x: 0, y: 0 }, shTo = { x: 0, y: 0 };
 const shReduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function shelfCase(board) {
-  if (!shEl) {
-    shEl = document.createElement("div");
-    shEl.className = "sh-case";
-    shEl.tabIndex = 0;
-    shEl.setAttribute("role", "img");
-    shBindCase(shEl);
-  }
-  if (shEl.parentElement !== board) board.appendChild(shEl);   // the case lives on ITS board
+function shelfCase() {
+  if (shEl && shEl.isConnected) return shEl;
+  shEl = document.createElement("div");
+  shEl.className = "sh-case";
+  shEl.tabIndex = 0;
+  shEl.setAttribute("role", "img");
+  shBindCase(shEl);
+  document.getElementById("shPull").appendChild(shEl);
   return shEl;
 }
 
 function shBuild(i) {
   const g = SHELF.games[i];
-  const spine = document.querySelector(`.sh-spine[data-i="${i}"]`);
-  const board = spine.closest(".sh-board");
-  const el = shelfCase(board);
+  const el = shelfCase();
   shW = shPx(g.case.w); shH = shPx(g.case.h);
   el.style.setProperty("--w", shW + "px");
   el.style.setProperty("--h", shH + "px");
@@ -180,16 +201,19 @@ function shBuild(i) {
   // Where the case has to START: exactly on top of the spine it came from. At
   // rotateY(90) the left wall lands at world z = 0 IF the case is pushed back by half
   // its width — and then its projection IS the spine's rectangle, to the pixel.
-  const sr = spine.getBoundingClientRect();
-  const gr = board.getBoundingClientRect();
-  shFrom = { x: sr.left - gr.left + sr.width / 2, y: sr.top - gr.top + sr.height / 2 };
+  shFrom = shSpineAt(i);
 
   // Coming toward you through a lens MAGNIFIES the case, and the magnification pushes
   // away from the perspective origin, not from the case's own centre. Solve for the
   // centre that leaves a fixed margin above the SCALED top edge, or tall boxes clip.
+  // Coming toward you through a lens MAGNIFIES the case, and the magnification pushes
+  // away from the perspective origin — not from the case's own centre. Solve for the
+  // centre that lands the case squarely in the middle of the view.
   const s = SHELF_PERSP / (SHELF_PERSP - SHELF_PULL_Z);
-  const po = SHELF_PERSP_Y;                     // must match .sh-board perspective-origin
-  shTo = { x: gr.width / 2, y: po + (SHELF_TOP_GAP - po + (shH * s) / 2) / s };
+  const po = innerHeight * SHELF_PERSP_Y;       // must match .sh-pull perspective-origin
+  const wantY = innerHeight * 0.46;
+  shTo = { x: innerWidth / 2 - (innerWidth > 900 ? 130 : 0),   // leave room for the card
+           y: po + (wantY - po) / s };
 
   const src = g.src === "wrap"
     ? `<span class="sh-badge real">Real box · Cover Project${g.region ? " · " + escapeHtml(g.region) : ""}</span>`
@@ -197,7 +221,7 @@ function shBuild(i) {
       ? `<span class="sh-badge fake">Front only · IGDB</span>`
       : `<span class="sh-badge none">No art anywhere</span>`;
 
-  board.querySelector(".sh-info").innerHTML = `
+  document.getElementById("shInfo").innerHTML = `
     <h3>${escapeHtml(g.t)}</h3>
     <div class="sh-plat">${escapeHtml(g.p)}${g.done ? ' · <span class="sh-done">Beaten</span>' : ""}</div>
     ${src}
@@ -260,8 +284,7 @@ function shTick() {
       const s = document.querySelector(`.sh-spine[data-i="${shCur}"]`);
       s?.classList.remove("out");
       s?.nextElementSibling?.classList.remove("lean");
-      document.querySelectorAll(".sh-board.open").forEach((b) => b.classList.remove("open"));
-      document.getElementById("shStage")?.classList.remove("pulled");
+      document.getElementById("shPull")?.classList.remove("open");
       shCur = -1;
       if (shPending >= 0) { const n = shPending; shPending = -1; shelfOpen(n); }
       return;
@@ -283,8 +306,7 @@ function shelfOpen(i) {
   const s = document.querySelector(`.sh-spine[data-i="${i}"]`);
   s.classList.add("out");
   s.nextElementSibling?.classList.add("lean");  // its neighbour tips into the gap
-  document.querySelector(`.sh-spine[data-i="${i}"]`).closest(".sh-board").classList.add("open");
-  document.getElementById("shStage").classList.add("pulled");
+  document.getElementById("shPull").classList.add("open");
   shTarget = 1;
   if (shReduced()) { shState.p = 1; shPaint(); return; }
   shKick();
@@ -293,6 +315,7 @@ function shelfOpen(i) {
 
 function shelfClose() {
   if (shCur < 0) return;
+  shFrom = shSpineAt(shCur);      // it goes back where the spine IS now, not where it was
   shTarget = 0;
   if (shReduced()) {
     shState.p = 0; shState.rx = shState.ry = 0; shPaint();
@@ -300,8 +323,7 @@ function shelfClose() {
     const s = document.querySelector(`.sh-spine[data-i="${shCur}"]`);
     s?.classList.remove("out");
     s?.nextElementSibling?.classList.remove("lean");
-    document.querySelectorAll(".sh-board.open").forEach((b) => b.classList.remove("open"));
-    document.getElementById("shStage")?.classList.remove("pulled");
+    document.getElementById("shPull")?.classList.remove("open");
     shCur = -1;
     if (shPending >= 0) { const n = shPending; shPending = -1; shelfOpen(n); }
     return;
