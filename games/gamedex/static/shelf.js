@@ -29,6 +29,82 @@ const shPx = (mm) => Math.round(mm * PX_MM);
 const faceUrl = (k, f, v) =>
   `/api/shelf/${encodeURIComponent(k)}/${f}.jpg${v ? `?v=${v}` : ""}`;
 
+/* A game with no scanned wrap doesn't get a flat coloured slab — it gets that
+ * system's STANDARD spine: the console's brand band up top, the game's title set
+ * automatically below. Brand colours are facts; the short label stands in for the
+ * logo we can't reproduce. Anything not in the table falls back to a neutral spine
+ * carrying the platform name, so every game reads as a real object on the shelf. */
+const SPINE_LOGOS = {
+  gameboy:  { base:"#9a93b4", band:"#2c2a45", bandInk:"#e8e6f2", ink:"#1b1a2a", label:"GAME BOY" },
+  gbc:      { base:"#5b4fa6", band:"#2a2170", bandInk:"#ffd23f", ink:"#ffffff", label:"GBC" },
+  gba:      { base:"#3a2e86", band:"#1c1550", bandInk:"#8b7bf0", ink:"#ffffff", label:"GBA" },
+  ds:       { base:"#eef0f4", band:"#0a6bd6", bandInk:"#ffffff", ink:"#16181d", label:"DS" },
+  n3ds:     { base:"#eef0f4", band:"#c8102e", bandInk:"#ffffff", ink:"#16181d", label:"3DS" },
+  nes:      { base:"#c3c3cb", band:"#242427", bandInk:"#e6352b", ink:"#16181d", label:"NES" },
+  snes:     { base:"#c9cad4", band:"#4f3f9a", bandInk:"#ffffff", ink:"#16181d", label:"SNES" },
+  n64:      { base:"#1b1b21", band:"#c8102e", bandInk:"#ffffff", ink:"#f2f2f5", label:"N64" },
+  gamecube: { base:"#463c85", band:"#221b4e", bandInk:"#b9b0e8", ink:"#ffffff", label:"GAMECUBE" },
+  wii:      { base:"#eef1f5", band:"#0a9bd6", bandInk:"#ffffff", ink:"#16181d", label:"Wii" },
+  wiiu:     { base:"#eef1f5", band:"#0a86c4", bandInk:"#ffffff", ink:"#16181d", label:"Wii U" },
+  switch:   { base:"#f3f4f6", band:"#e60012", bandInk:"#ffffff", ink:"#16181d", label:"SWITCH" },
+  switch2:  { base:"#f3f4f6", band:"#d1001c", bandInk:"#ffffff", ink:"#16181d", label:"SWITCH 2" },
+  ps1:      { base:"#1b1b20", band:"#3a3a44", bandInk:"#e9e9ef", ink:"#e9e9ef", label:"PS one" },
+  ps2:      { base:"#121219", band:"#1a3fd4", bandInk:"#ffffff", ink:"#eef0f6", label:"PS2" },
+  ps3:      { base:"#0e0e13", band:"#2a2a33", bandInk:"#e9e9ef", ink:"#eef0f6", label:"PS3" },
+  ps4:      { base:"#eef1f6", band:"#003791", bandInk:"#ffffff", ink:"#16181d", label:"PS4" },
+  ps5:      { base:"#f5f6f9", band:"#1a1a1f", bandInk:"#ffffff", ink:"#16181d", label:"PS5" },
+  psp:      { base:"#141418", band:"#2a2a33", bandInk:"#e9e9ef", ink:"#eef0f6", label:"PSP" },
+  vita:     { base:"#141418", band:"#0a6bd6", bandInk:"#ffffff", ink:"#eef0f6", label:"PS VITA" },
+  xbox:     { base:"#0f7d0f", band:"#0a5a0a", bandInk:"#eafff0", ink:"#ffffff", label:"XBOX" },
+  xbox360:  { base:"#eef2ee", band:"#0f7d0f", bandInk:"#ffffff", ink:"#16181d", label:"XBOX 360" },
+  xboxone:  { base:"#17191d", band:"#0f7d0f", bandInk:"#ffffff", ink:"#eef0f6", label:"XBOX ONE" },
+  xboxsx:   { base:"#0e0f12", band:"#0f7d0f", bandInk:"#ffffff", ink:"#eef0f6", label:"SERIES X|S" },
+  genesis:  { base:"#1a1a1e", band:"#c81d25", bandInk:"#ffffff", ink:"#f2f2f5", label:"GENESIS" },
+  dreamcast:{ base:"#eef1f5", band:"#e35205", bandInk:"#ffffff", ink:"#16181d", label:"DREAMCAST" },
+  saturn:   { base:"#141418", band:"#8a9099", bandInk:"#16181d", ink:"#eef0f6", label:"SATURN" },
+};
+const PLAT_KEY = {
+  "nintendo switch":"switch", "switch":"switch",
+  "nintendo switch 2":"switch2", "switch 2":"switch2",
+  "super nintendo entertainment system":"snes", "super nintendo":"snes", "snes":"snes",
+  "nintendo entertainment system":"nes", "nes":"nes",
+  "nintendo 64":"n64", "n64":"n64",
+  "nintendo gamecube":"gamecube", "gamecube":"gamecube",
+  "nintendo wii":"wii", "wii":"wii",
+  "nintendo wii u":"wiiu", "wii u":"wiiu",
+  "nintendo 3ds":"n3ds", "new nintendo 3ds":"n3ds", "3ds":"n3ds",
+  "nintendo ds":"ds", "nintendo dsi":"ds", "ds":"ds", "nds":"ds",
+  "nintendo game boy":"gameboy", "game boy":"gameboy",
+  "nintendo game boy color":"gbc", "game boy color":"gbc",
+  "nintendo game boy advance":"gba", "game boy advance":"gba",
+  "playstation":"ps1", "playstation 1":"ps1", "ps1":"ps1", "psx":"ps1", "ps one":"ps1",
+  "playstation 2":"ps2", "ps2":"ps2",
+  "playstation 3":"ps3", "ps3":"ps3",
+  "playstation 4":"ps4", "ps4":"ps4",
+  "playstation 5":"ps5", "ps5":"ps5",
+  "playstation portable":"psp", "psp":"psp",
+  "playstation vita":"vita", "ps vita":"vita", "vita":"vita",
+  "xbox":"xbox",
+  "xbox 360":"xbox360",
+  "xbox one":"xboxone",
+  "xbox series x|s":"xboxsx", "xbox series x":"xboxsx", "xbox series s":"xboxsx", "xbox series":"xboxsx",
+  "sega genesis":"genesis", "genesis":"genesis", "sega mega drive":"genesis", "mega drive":"genesis",
+  "sega dreamcast":"dreamcast", "dreamcast":"dreamcast",
+  "sega saturn":"saturn", "saturn":"saturn",
+};
+const spineStyle = (p) =>
+  SPINE_LOGOS[PLAT_KEY[(p || "").trim().toLowerCase()]] ||
+  { base:"#26262d", band:"#3a3a45", bandInk:"rgba(255,255,255,.82)", ink:"#f2f2f5",
+    label:(p || "Unknown").toUpperCase() };
+
+// The inner markup for a standard spine — shared by the flat shelf spine and the 3D
+// case's left wall, so a pulled game's spine matches the one it came from.
+function stdSpineHtml(g) {
+  const s = spineStyle(g.p);
+  return `<span class="sp-band" style="background:${s.band};color:${s.bandInk}">${escapeHtml(s.label)}</span>` +
+         `<span class="sp-name" style="color:${s.ink}">${escapeHtml(g.t)}</span>`;
+}
+
 async function loadShelf() {
   if (SHELF.loaded) return;
   const r = await fetch("/api/shelf");
@@ -90,6 +166,22 @@ function shelfVisible() {
     (!q || (g.t || "").toLowerCase().includes(q)));
 }
 
+// One spine on the flat shelf: a real scanned spine if we have a wrap, otherwise the
+// system's standard spine with the title set automatically.
+function shSpineHtml(g, i) {
+  const real = g.src === "wrap" || g.src === "upload";
+  const dims = `width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px`;
+  const t = `title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"`;
+  if (real) {
+    // The hue sits UNDER the scan, so a spine whose scan hasn't arrived yet is the
+    // right colour rather than a black rectangle.
+    const bg = `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine", g.uv)})`;
+    return `<button class="sh-spine real" data-i="${i}" ${t} style="${dims};${bg}"></button>`;
+  }
+  const s = spineStyle(g.p);
+  return `<button class="sh-spine std" data-i="${i}" ${t} style="${dims};background:${s.base}">${stdSpineHtml(g)}</button>`;
+}
+
 function paintShelfRows() {
   const rows = document.getElementById("shRows");
   if (!rows) return;
@@ -99,43 +191,41 @@ function paintShelfRows() {
     rows.innerHTML = `<div class="sh-empty">Nothing on the shelf matches.</div>`;
     return;
   }
-  // A shelf has SECTIONS. Group by platform, label each, and wrap long platforms
-  // onto more boards — the label only goes on the first board of its platform.
+  // One CONTINUOUS shelf. Games flow across boards regardless of platform, and each
+  // board highlights the platform SEGMENTS running through it — so a platform that
+  // spans three boards is labelled on all three, and the shelf reads as one run.
   const PER_BOARD = 40;
-  const sections = [];
-  for (const g of games) {
-    const last = sections[sections.length - 1];
-    if (!last || last.p !== g.p) sections.push({ p: g.p, games: [g] });
-    else last.games.push(g);
-  }
+  const idxOf = new Map(SHELF.games.map((g, i) => [g, i]));
+  const total = {};
+  for (const g of games) total[g.p] = (total[g.p] || 0) + 1;
+  const started = new Set();
 
-  let b = 0;
-  rows.innerHTML = sections.map((sec) => {
-    const boards = [];
-    for (let i = 0; i < sec.games.length; i += PER_BOARD) boards.push(sec.games.slice(i, i + PER_BOARD));
-    return `<div class="sh-section">
-      <div class="sh-label"><span>${escapeHtml(sec.p || "Unknown")}</span>
-        <em>${sec.games.length}</em></div>
-      ${boards.map((board) => `
-        <div class="sh-board" data-b="${b++}">
-          <div class="sh-row">
-            ${board.map((g) => {
-              const i = SHELF.games.indexOf(g);
-              const real = g.src === "wrap" || g.src === "upload";
-              // The hue sits UNDER the scan, so a spine whose scan hasn't arrived yet
-              // is the right colour rather than a black rectangle.
-              const bg = real
-                ? `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine", g.uv)})`
-                : `background:${g.hue}`;
-              return `<button class="sh-spine${real ? " real" : ""}" data-i="${i}"
-                         title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"
-                         style="width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px;${bg}">
-                        ${real ? "" : `<span>${escapeHtml(g.t)}</span>`}
-                      </button>`;
-            }).join("")}
-          </div>
-          <div class="sh-plank"></div>
-        </div>`).join("")}
+  const boards = [];
+  for (let i = 0; i < games.length; i += PER_BOARD) boards.push(games.slice(i, i + PER_BOARD));
+
+  rows.innerHTML = boards.map((board, bi) => {
+    // Consecutive same-platform spines form a labelled run within this board.
+    const runs = [];
+    for (const g of board) {
+      const last = runs[runs.length - 1];
+      if (!last || last.p !== g.p) runs.push({ p: g.p, games: [g] });
+      else last.games.push(g);
+    }
+    return `<div class="sh-board" data-b="${bi}">
+      <div class="sh-row">
+        ${runs.map((run) => {
+          const first = !started.has(run.p);
+          started.add(run.p);
+          const name = escapeHtml(run.p || "Unknown");
+          return `<div class="sh-run">
+            <div class="sh-spines">${run.games.map((g) => shSpineHtml(g, idxOf.get(g))).join("")}</div>
+            <div class="sh-seg${first ? " head" : ""}" title="${name}${first ? "" : " (continued)"}">
+              <span>${name}</span>${first ? `<em>${total[run.p]}</em>` : ""}
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="sh-plank"></div>
     </div>`;
   }).join("");
 
@@ -191,13 +281,13 @@ function shBuild(i) {
       <div class="sh-face f-front"><img src="${cover}" alt="" draggable="false"></div>
       <div class="sh-face f-back"><img src="${cover}" alt="" draggable="false">
         <div class="sh-blurb"><i></i><i></i><i></i><i></i><i></i><span>${escapeHtml(g.p)}</span></div></div>
-      <div class="sh-face f-left" style="background:${g.hue}"><span>${escapeHtml(g.t)}</span></div>
+      <div class="sh-face f-left std" style="background:${spineStyle(g.p).base}">${stdSpineHtml(g)}</div>
       <div class="sh-face f-right"></div><div class="sh-face f-top"></div><div class="sh-face f-bottom"></div>`
     : `
       <div class="sh-face f-front sh-blank" style="--tint:${g.hue}">
         <b>${escapeHtml(g.t)}</b><small>${escapeHtml(g.p)}</small></div>
       <div class="sh-face f-back sh-blank" style="--tint:${g.hue}"></div>
-      <div class="sh-face f-left" style="background:${g.hue}"><span>${escapeHtml(g.t)}</span></div>
+      <div class="sh-face f-left std" style="background:${spineStyle(g.p).base}">${stdSpineHtml(g)}</div>
       <div class="sh-face f-right"></div><div class="sh-face f-top"></div><div class="sh-face f-bottom"></div>`;
 
   // Where the case has to START: exactly on top of the spine it came from. At

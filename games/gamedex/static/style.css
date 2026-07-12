@@ -2473,13 +2473,24 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-tools .sel:focus { outline:none; border-color:var(--accent-line);
   box-shadow:0 0 0 4px var(--accent-soft); }
 
-/* a section of the shelf: one platform */
-.sh-section + .sh-section { margin-top:34px; }
-.sh-label { display:flex; align-items:baseline; gap:10px; padding:0 4px 2px;
-  border-bottom:1px solid var(--border); margin-bottom:2px; }
-.sh-label span { font:700 11px/1 var(--font); letter-spacing:.14em; text-transform:uppercase;
-  color:var(--muted); }
-.sh-label em { font:600 11px/1 var(--font); font-style:normal; color:var(--dim);
+/* One platform's stretch of a board: its spines, with a highlighted label segment
+   pinned under them. The segment is absolute so a run is exactly as wide as its
+   spines — narrow runs clip the label (tooltip has the full name) instead of bulging. */
+.sh-run { position:relative; display:flex; flex-direction:column; justify-content:flex-end;
+  padding-bottom:26px; min-width:0; }
+.sh-run + .sh-run { margin-left:7px; }
+.sh-spines { display:flex; align-items:flex-end; gap:2px; }
+.sh-seg { position:absolute; left:0; right:0; bottom:0; height:22px; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; gap:6px; padding:0 7px;
+  border-radius:3px; border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, transparent),
+    color-mix(in srgb, var(--accent) 9%, transparent)); }
+.sh-seg.head { border-color:color-mix(in srgb, var(--accent) 50%, transparent);
+  background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 30%, transparent),
+    color-mix(in srgb, var(--accent) 12%, transparent)); }
+.sh-seg span { font:700 9.5px/1 var(--font); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sh-seg em { flex:0 0 auto; font:700 9px/1 var(--font); font-style:normal; color:var(--accent);
   font-variant-numeric:tabular-nums; }
 
 .sh-stage { position:relative; border:1px solid var(--border); border-radius:16px;
@@ -2488,9 +2499,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* Boards are flat and tight. The case is NOT in the layout — see .sh-pull. */
 .sh-board { position:relative; }
-.sh-board + .sh-board { margin-top:10px; }
+.sh-board + .sh-board { margin-top:18px; }
 
-.sh-row { display:flex; align-items:flex-end; justify-content:center; gap:2px;
+.sh-row { display:flex; align-items:flex-end; justify-content:center; gap:0;
   padding:0 10px; position:relative; }
 .sh-plank { height:14px; margin:0 4px; border-radius:2px;
   background:linear-gradient(180deg, #54402E, #2E2118);
@@ -2510,6 +2521,19 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-spine:focus-visible { box-shadow:0 0 0 2px var(--accent), inset -3px 0 9px rgba(0,0,0,.5); }
 .sh-spine.out { opacity:0; pointer-events:none; }            /* it's in your hand now */
 .sh-spine.lean { transform:rotate(-4deg) translateY(-1px); } /* neighbour tips into the gap */
+
+/* A standard system spine: brand band on top, title set automatically below. Shared
+   by the flat shelf spine (.sh-spine.std) and the 3D case's left wall (.f-left.std). */
+.sh-spine.std { flex-direction:column; align-items:stretch; justify-content:flex-start; }
+.std .sp-band { flex:0 0 auto; max-height:46%; display:flex; align-items:center;
+  justify-content:center; padding:5px 0; overflow:hidden; writing-mode:vertical-rl;
+  text-orientation:mixed; font:800 8px/1 var(--font); letter-spacing:.08em;
+  text-transform:uppercase; white-space:nowrap; text-shadow:none;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.22); }
+.std .sp-name { flex:1 1 auto; display:flex; align-items:center; justify-content:center;
+  writing-mode:vertical-rl; text-orientation:mixed; font:700 9px/1.05 var(--font);
+  letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  padding:7px 0; max-height:100%; }
 
 /* The pulled case lives HERE — a fixed overlay over the viewport, not in the shelf.
    Reserve headroom on every board instead and 31 platform sections reserve 31 screens
@@ -2577,6 +2601,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   color:rgba(255,255,255,.95); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   max-height:calc(var(--h) - 24px); text-shadow:0 1px 2px rgba(0,0,0,.55); }
 .sh-case .f-left.wrapped { padding:0; }
+.sh-case .f-left.std { flex-direction:column; align-items:stretch; justify-content:flex-start;
+  padding:0; box-shadow:inset -2px 0 7px rgba(0,0,0,.32), inset 1px 0 0 rgba(255,255,255,.14); }
+.sh-case .f-left.std .sp-band { font-size:9px; }
+.sh-case .f-left.std .sp-name { font-size:11px; }
 
 /* no art anywhere: a plain case with the title on it, and nothing pretending otherwise */
 .sh-blank { display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -2625,7 +2653,6 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .sh-row::-webkit-scrollbar { display:none; }
   .sh-spine { scroll-snap-align:center; }
   .sh-plank { margin:0 14px; }
-  .sh-label { padding-left:14px; padding-right:14px; }
 
   /* The detail card was hidden on mobile — which took the menu and Full Details with
      it, and left the pulled box with nothing to act on. Show it as a bottom sheet. */
