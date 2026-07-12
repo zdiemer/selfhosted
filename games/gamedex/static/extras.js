@@ -13,7 +13,7 @@ const loadViews = () => {
   try { return JSON.parse(localStorage.getItem(VIEWS_KEY) || "[]"); }
   catch (_) { return []; }
 };
-const storeViews = (v) => localStorage.setItem(VIEWS_KEY, JSON.stringify(v.slice(0, 24)));
+const storeViews = (v) => prefsSave("views", v.slice(0, 24));
 
 function describeView() {
   const st = tabState[activeTab];
@@ -211,3 +211,69 @@ function applyCoverAccent(row) {
     drawer.style.setProperty("--accent-soft", accent.replace(")", " / 16%)").replace("hsl(", "hsl("));
   });
 }
+
+/* ---- prefs: saved views + custom challenges, server-side --------------------
+   These lived in localStorage, which means they existed on exactly one browser:
+   a challenge built on the desktop was invisible on the phone, and clearing site
+   data threw the work away.
+
+   The server is now the source of truth, with localStorage kept as a MIRROR —
+   this is a PWA, so it has to keep working offline, and a failed write should
+   never be a lost edit. Reads come from the mirror (synchronous, which is what
+   every call site already assumes); writes go to both.
+   -------------------------------------------------------------------------- */
+
+// Literal, not the consts: challenges.js loads AFTER this file, so referencing
+// CH_CUSTOM_KEY here would hit its temporal dead zone at parse time.
+const PREFS_KEYS = { views: "gamedex.views", challenges: "gamedex.challenges" };
+
+const prefsLocal = (key) => {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEYS[key]) || "[]"); }
+  catch (_) { return []; }
+};
+const prefsMirror = (key, val) => {
+  try { localStorage.setItem(PREFS_KEYS[key], JSON.stringify(val)); } catch (_) {}
+};
+
+// Write-through. The mirror updates first so the UI is never waiting on a
+// round-trip, then the server catches up.
+async function prefsSave(key, val) {
+  prefsMirror(key, val);
+  try {
+    const r = await fetch(`api/prefs/${key}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(val),
+    });
+    if (!r.ok) throw new Error(await r.text());
+  } catch (e) {
+    // Offline, or the backend is down. The edit is safe locally and will be
+    // pushed the next time anything saves; say so rather than pretend.
+    if (typeof showToast === "function") showToast("Saved on this device — couldn't reach the server");
+  }
+}
+
+// On boot: the server wins, except where this browser has something the server
+// has never seen (the localStorage era), which gets pushed up once.
+async function loadPrefs() {
+  let remote = {};
+  try {
+    const r = await fetch("api/prefs");
+    if (r.ok) remote = (await r.json()).prefs || {};
+  } catch (_) {
+    return;                    // offline: carry on with whatever is in the mirror
+  }
+  for (const key of Object.keys(PREFS_KEYS)) {
+    const server = remote[key];
+    const local = prefsLocal(key);
+    if (Array.isArray(server) && server.length) {
+      prefsMirror(key, server);                 // server is the truth
+    } else if (local.length) {
+      await prefsSave(key, local);              // migrate this browser's history up
+      log("prefs: migrated " + local.length + " " + key + " from localStorage");
+    }
+  }
+  if (typeof renderViews === "function") renderViews();
+  if (activeTab === "challenges" && typeof renderChallenges === "function") renderChallenges();
+}
+const log = (m) => console.info("[gamedex] " + m);

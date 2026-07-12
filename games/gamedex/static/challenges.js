@@ -635,8 +635,9 @@ const chLoadCustom = () => {
   try { return JSON.parse(localStorage.getItem(CH_CUSTOM_KEY) || "[]"); }
   catch (_) { return []; }
 };
-const chStoreCustom = (list) =>
-  localStorage.setItem(CH_CUSTOM_KEY, JSON.stringify(list.slice(0, 40)));
+// Write-through to the server (see extras.js); localStorage stays as the offline
+// mirror, so a challenge built on the desktop shows up on the phone.
+const chStoreCustom = (list) => prefsSave("challenges", list.slice(0, 40));
 
 // Facets you can group a challenge by. Straight from the games sheet's own facet
 // columns, so anything filterable is also groupable — no separate list to keep in

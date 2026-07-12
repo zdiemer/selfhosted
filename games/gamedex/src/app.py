@@ -20,12 +20,13 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import prefs as prefs_mod
 import romm
 
 from arcadedb import ArcadeDbClient
@@ -127,6 +128,28 @@ ROMM = romm.RommClient(
 )
 if ROMM.enabled:
     ROMM.start()
+
+
+# Saved views + custom challenges, so they follow you between browsers.
+PREFS = prefs_mod.Prefs(os.environ.get("PREFS_DB", "/data/prefs.sqlite"))
+
+
+@app.get("/api/prefs")
+def api_prefs_get():
+    return {"prefs": PREFS.get_all()}
+
+
+@app.put("/api/prefs/{key}")
+async def api_prefs_put(key: str, request: Request):
+    try:
+        value = await request.json()
+    except Exception:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    try:
+        PREFS.put(key, value)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True}
 
 
 @app.get("/api/romm")
