@@ -289,40 +289,61 @@ function heroStatsHtml(row) {
 // Show the model's working. A prediction you can't interrogate is a horoscope.
 // Each signal is a bar read against your own average, so it's obvious at a glance
 // what pulled the number up and what dragged it down.
+/* The prediction: a verdict, then the evidence.
+
+   It used to be a four-column grid of tiny bars measured against a hairline you
+   had to hover to identify, with values like "49 ×16" — model internals. The
+   number is the most interesting thing on the card and it read like a debug view.
+
+   The insight that reshaped it: "Compilation: 55" means nothing on its own. Is 55
+   good? Only against YOUR average of 70. Every signal here is already a comparison,
+   so print the comparison instead of making the reader compute it. */
 function predictWhyHtml(row) {
   const p = typeof predictedCached === "function" ? predictedCached(row) : null;
   if (!p || !p.signals || !p.signals.length) return "";
   const base = p.baseline;
   const conf = p.confidence >= 0.75 ? "high" : p.confidence >= 0.5 ? "fair" : "low";
+  const pts = (v) => Math.round(v * 100);
+  const delta = (v) => pts(v) - pts(base);
+
+  // What the number MEANS, in a sentence. The signals already say which way each
+  // one pulls; the verdict is just the sum of them, said out loud.
+  const up = p.signals.filter((sg) => sg.value >= base);
+  const down = p.signals.filter((sg) => sg.value < base);
+  const lead = down.length > up.length ? down : up;
+  const names = lead.slice(0, 2).map((sg) => sg.label).filter(Boolean);
+  const gap = pts(p.score) - pts(base);
+  // Landing ON your average is not "better than your usual" — it's your usual.
+  // Within a couple of points either way, the model is saying nothing much.
+  const verdict = Math.abs(gap) <= 2
+    ? `<b>About your usual.</b> Nothing here pulls it far from your ${pts(base)}% average.`
+    : gap > 0
+      ? `<b>Better than your usual.</b> You rate ${names.join(" and ")} higher than most of what you own.`
+      : `<b>Below your usual.</b> You rate ${names.join(" and ")} lower than most of what you own.`;
 
   const rows = p.signals.map((sg) => {
-    const above = sg.value >= base;
-    const pct = Math.max(2, sg.value * 100);
-    return `<div class="pw-row">
-      <span class="pw-kind">${escapeHtml(sg.kind)}</span>
-      <span class="pw-label" title="${escapeHtml(sg.label)}">${escapeHtml(sg.label)}</span>
-      <span class="pw-track">
-        <span class="pw-fill ${above ? "up" : "down"}" style="--w:${pct.toFixed(1)}%"></span>
-        <span class="pw-base" style="left:${(base * 100).toFixed(1)}%" title="Your average, ${Math.round(base * 100)}%"></span>
-      </span>
-      <span class="pw-val ${above ? "up" : "down"}">${Math.round(sg.value * 100)}${sg.n ? `<i>×${sg.n}</i>` : ""}</span>
+    const d = delta(sg.value);
+    return `<div class="vd-r">
+      <span class="vd-t">${escapeHtml(sg.label)}${sg.n ? ` <span>· ${sg.n} rated</span>` : ""}</span>
+      <span class="vd-d ${d >= 0 ? "up" : "dn"}">${d >= 0 ? "+" : "−"}${Math.abs(d)} vs your average</span>
     </div>`;
   }).join("");
 
-  return `<details class="pw" open>
-    <summary>
-      <span class="pw-head">
-        <span class="pw-eyebrow">${icon("i-trend", 13)} Predicted for you</span>
-        <span class="pw-score ${ratingClass(p.score)}">${Math.round(p.score * 100)}<small>%</small></span>
+  const m = typeof tasteModel === "function" ? tasteModel() : {};
+  const err = m && m.eval && m.eval.mae != null ? ` Model error: ±${(m.eval.mae * 100).toFixed(1)} points.` : "";
+
+  return `<div class="vd">
+    <div class="vd-top">
+      <span class="vd-num ${ratingClass(p.score)}">${pts(p.score)}<small>%</small></span>
+      <span class="vd-side">
+        <span class="vd-eye">${icon("i-trend", 12)} You'd probably rate this</span>
+        <span class="vd-say">${verdict}</span>
       </span>
-      <span class="pw-conf pw-${conf}">${conf} confidence</span>
-    </summary>
-    <div class="pw-body">
-      ${rows}
-      <p class="pw-foot">Learned from your ${(tasteModel().n || 0).toLocaleString()} rated games.
-        The line is your own average, ${Math.round(base * 100)}%.</p>
+      <span class="vd-conf vd-${conf}">${conf} confidence</span>
     </div>
-  </details>`;
+    <div class="vd-why">${rows}</div>
+    <p class="vd-foot">Your average across ${(m.n || 0).toLocaleString()} rated games is ${pts(base)}%.${err}</p>
+  </div>`;
 }
 
 function heroHtml(row, titleText) {
@@ -2048,17 +2069,35 @@ function openDrawer(row, sheetKey, keepStack) {
   let html = heroHtml(row, titleText);
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
-  let raw = "";
+  /* Your own history with the game was buried in the "Raw data" disclosure,
+     alongside File Size and MAME Romset — and it's the most personal thing on the
+     card: what you paid, when you started it, whether you finished, what you
+     thought. It gets its own section now; the rest stays behind the disclosure. */
+  const MINE = ["owned", "completed", "rating", "priority", "playingStatus", "playingProgress",
+                "datePurchased", "purchasePrice", "condition", "format",
+                "dateStarted", "dateCompleted", "completionTime", "notes"];
+  const cell = (c, v) => {
+    const isNotes = c.type === "text" && String(v).length > 140;
+    return isNotes
+      ? `<div class="detail-row notes"><div class="k">${escapeHtml(c.label)}</div><div class="v">${escapeHtml(String(v))}</div></div>`
+      : `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
+  };
+
+  let raw = "", mine = "";
   for (const c of cols) {
     if (c.key === titleCol.key || c.key === "platform") continue;
     const v = row[c.key];
     if (v === undefined || v === null || v === "") continue;
-    const isNotes = c.type === "text" && String(v).length > 140;
-    if (isNotes) {
-      raw += `<div class="detail-row notes"><div class="k">${escapeHtml(c.label)}</div><div class="v">${escapeHtml(String(v))}</div></div>`;
-    } else {
-      raw += `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
-    }
+    if (MINE.includes(c.key)) mine += cell(c, v);
+    else raw += cell(c, v);
+  }
+  if (mine && !row._collection) {
+    html += `<div class="mine-sect">
+      <h3>${icon("i-star", 15)} Your history with this game</h3>
+      <div class="mine-rows">${mine}</div>
+    </div>`;
+  } else if (mine) {
+    raw = mine + raw;          // a grouped card's values are aggregates, not yours
   }
   html += (typeof editionsHtml === "function" ? editionsHtml(row) : "");
   html += `<div id="relations"></div>`;
