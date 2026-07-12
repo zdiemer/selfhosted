@@ -1830,11 +1830,14 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   box-shadow: 0 0 0 4px var(--bg);
 }
 .tl-card {
-  display: flex; gap: 14px; width: 100%; text-align: left;
+  display: flex; gap: 14px; width: 100%; text-align: left; align-items: flex-start;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: 13px; margin: 8px 0 14px; font-family: inherit; color: var(--text);
   transition: border-color .16s;
 }
+/* Without flex-start the cover stretches to the (now tall) expanded card height,
+   ignoring its aspect-ratio and bleeding out. Pin it to the top at its own size. */
+.tl-card .tl-cover { align-self: flex-start; }
 .tl-card:hover { border-color: var(--accent-line); }
 .tl-cover {
   width: 58px; aspect-ratio: 3 / 4; flex: none; object-fit: cover; border-radius: var(--r-sm);
@@ -2421,8 +2424,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .igdb-head { gap: 14px; }
   .cover-big { width: 106px; }
   .detail-row { grid-template-columns: 116px 1fr; }
-  .similar a { flex-basis: 84px; }
-  .similar img { width: 84px; }
+  /* The items are <button class="sim">, not <a> — so the old `.similar a` never
+     matched, the flex-basis stayed 62px while the img grew to 84px, and the covers
+     overflowed their slots and touched. Widen the slot to match the image. */
+  .similar .sim { flex-basis: 84px; }
+  .similar .sim img, .similar .sim-ph { width: 84px; }
   .lb-nav { width: 42px; height: 56px; font-size: 24px; }
   .lb-prev { left: 6px; }
   .lb-next { right: 6px; }

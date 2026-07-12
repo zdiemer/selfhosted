@@ -27,7 +27,12 @@ function tlSnippet(notes) {
 }
 
 function tlFull(notes) {
-  return notes ? String(notes).replace(/\s+/g, " ").trim() : "";
+  // Keep the review's line breaks — the paragraphs are how it was written. Collapse
+  // only runs of blank lines and trailing spaces; the CSS renders it with pre-line.
+  return notes
+    ? String(notes).replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ")
+        .replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim()
+    : "";
 }
 
 function tlEntry(r, i) {
