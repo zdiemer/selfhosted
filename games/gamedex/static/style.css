@@ -1830,26 +1830,40 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   box-shadow: 0 0 0 4px var(--bg);
 }
 .tl-card {
-  display: flex; gap: 14px; width: 100%; text-align: left; cursor: pointer;
+  display: flex; gap: 14px; width: 100%; text-align: left;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: 13px; margin: 8px 0 14px; font-family: inherit; color: var(--text);
-  transition: transform .16s var(--ease), border-color .16s;
+  transition: border-color .16s;
 }
-.tl-card:hover { transform: translateX(3px); border-color: var(--accent-line); }
+.tl-card:hover { border-color: var(--accent-line); }
 .tl-cover {
   width: 58px; aspect-ratio: 3 / 4; flex: none; object-fit: cover; border-radius: var(--r-sm);
   background: var(--surface-2); border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center; font-size: 18px;
 }
+.tl-cover.tl-open { cursor: pointer; transition: transform .16s var(--ease); }
+.tl-cover.tl-open:hover { transform: scale(1.04); }
 .tl-body { flex: 1; min-width: 0; }
 .tl-body header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .tl-body h3 { font-family: var(--display); font-size: 15px; letter-spacing: -.01em; }
+.tl-title {
+  background: none; border: 0; padding: 0; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; letter-spacing: inherit;
+}
+.tl-title:hover { color: var(--accent); }
+.tl-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .tl-score { font: 700 15px var(--display); flex: none; font-variant-numeric: tabular-nums; }
 .tl-meta { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
 .tl-quote {
   margin-top: 8px; font-size: 12.5px; line-height: 1.62; color: var(--muted);
-  border-left: 2px solid var(--border); padding-left: 10px;
+  border-left: 2px solid var(--border); padding-left: 10px; white-space: pre-line;
 }
+.tl-expanded .tl-quote { border-left-color: var(--accent-line); color: var(--text); }
+.tl-more {
+  margin: 7px 0 0 12px; background: none; border: 0; padding: 0; cursor: pointer;
+  font: 600 11.5px var(--font); color: var(--accent); letter-spacing: .02em;
+}
+.tl-more:hover { text-decoration: underline; }
 
 /* ---- Saved views --------------------------------------------------------- */
 .views {

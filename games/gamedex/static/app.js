@@ -888,7 +888,6 @@ async function loadAllEnrichment() {
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
       else if (activeTab === "home") patchHomeCovers();   // in place: a full re-render flickers
-      else if (activeTab === "reviews") patchReviewCovers();
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab === "health") renderHealth();
       else if (activeTab === "groups") patchGroupCovers();
@@ -2215,14 +2214,13 @@ function applyDrawerFacet(key, val) {
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
 let lastGroupedCount = -1;      // so the grouped view repaints once enrichment lands
-const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "groups", "shelf"];
+const SPECIAL_TABS = ["home", "stats", "pick", "challenges", "health", "groups", "shelf"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
   $("#picker").hidden = mode !== "pick";
   $("#challenges").hidden = mode !== "challenges";
   $("#home").hidden = mode !== "home";
-  $("#reviews").hidden = mode !== "reviews";
   $("#health").hidden = mode !== "health";
   $("#groups").hidden = mode !== "groups";
   $("#shelfview").hidden = mode !== "shelf";
@@ -2243,7 +2241,6 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
 
 function renderAll() {
   if (activeTab === "home") { setSpecialMode("home"); renderHome(); return; }
-  if (activeTab === "reviews") { setSpecialMode("reviews"); renderReviews(); return; }
   if (activeTab === "stats") { setSpecialMode("stats"); renderStats(); return; }
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
@@ -2306,7 +2303,7 @@ function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
   let tab = p.get("tab") === "series" ? "groups" : p.get("tab");   // old links still work
-  tab = ["home", "games", "completed", "onOrder", "groups", "reviews", "stats", "pick", "challenges", "health", "shelf"].includes(tab) ? tab : "home";
+  tab = ["home", "games", "completed", "onOrder", "groups", "stats", "pick", "challenges", "health", "shelf"].includes(tab) ? tab : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
@@ -3293,7 +3290,6 @@ function cmdkCandidates(q) {
       { kind: "Tab", label: "Completed", icon: "i-trophy", run: () => switchTab("completed") },
       { kind: "Tab", label: "On Order", icon: "i-package", run: () => switchTab("onOrder") },
       { kind: "Tab", label: "Groupings", icon: "i-layers", run: () => switchTab("groups") },
-      { kind: "Tab", label: "Reviews", icon: "i-review", run: () => switchTab("reviews") },
       { kind: "Tab", label: "Stats", icon: "i-stats", run: () => switchTab("stats") },
       { kind: "Tab", label: "Pick", icon: "i-dice", run: () => switchTab("pick") },
       { kind: "Tab", label: "Challenges", icon: "i-target", run: () => switchTab("challenges") },
@@ -3303,7 +3299,7 @@ function cmdkCandidates(q) {
   // Tabs
   const tabs = [["home", "Home", "i-home"], ["games", "All Games", "i-library"],
                 ["completed", "Completed", "i-trophy"], ["onOrder", "On Order", "i-package"],
-                ["reviews", "Reviews", "i-review"], ["stats", "Stats", "i-stats"],
+                ["stats", "Stats", "i-stats"],
                 ["pick", "Pick", "i-dice"], ["challenges", "Challenges", "i-target"],
                 ["health", "Health", "i-health"], ["groups", "Groupings", "i-layers"]];
   for (const [id, label, ico] of tabs) {

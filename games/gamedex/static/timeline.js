@@ -26,30 +26,45 @@ function tlSnippet(notes) {
   return s.slice(0, s.lastIndexOf(" ", TL_SNIPPET)) + "…";
 }
 
+function tlFull(notes) {
+  return notes ? String(notes).replace(/\s+/g, " ").trim() : "";
+}
+
 function tlEntry(r, i) {
   const cs = coverSrc(ENRICH[r._k], "cover_big");
   const cover = cs
-    ? `<img class="tl-cover" loading="lazy" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="tl-cover ph">${icon("i-library", 20)}</div>`;
+    ? `<img class="tl-cover tl-open" loading="lazy" src="${escapeHtml(cs)}" alt="">`
+    : `<div class="tl-cover ph tl-open">${icon("i-library", 20)}</div>`;
   const score = r.rating != null
     ? `<span class="tl-score ${ratingClass(r.rating)}">${Math.round(r.rating * 100)}</span>` : "";
   const bits = [r.platform, r.playTime != null ? fmtHours(r.playTime) : null]
     .filter(Boolean).map((x) => escapeHtml(String(x))).join(" · ");
-  const quote = tlSnippet(r.notes);
+  // The review reads inline now (the old Reviews tab folded into the timeline):
+  // a snippet with "Read more" to expand the full text in place. Cover + title
+  // still open the drawer.
+  const full = tlFull(r.notes);
+  const snippet = tlSnippet(r.notes);
+  const long = full.length > snippet.length;
+  const review = full
+    ? `<div class="tl-review">
+         <p class="tl-quote">${escapeHtml(snippet)}</p>
+         ${long ? `<button class="tl-more" type="button">Read more</button>` : ""}
+       </div>`
+    : "";
   return `<article class="tl-entry" data-tk="${escapeHtml(String(r._k || ""))}" data-ti="${i}"
       style="--d:${Math.min(i, 12) * 45}ms">
     <div class="tl-when">
       <b>${escapeHtml(r.date ? fmtDate(r.date).replace(/,? \d{4}$/, "") : "—")}</b>
     </div>
     <div class="tl-dot"></div>
-    <button class="tl-card">
+    <div class="tl-card">
       ${cover}
       <div class="tl-body">
-        <header><h3>${escapeHtml(String(r.game))}</h3>${score}</header>
+        <header><h3><button type="button" class="tl-open tl-title">${escapeHtml(String(r.game))}</button></h3>${score}</header>
         <div class="tl-meta">${bits}</div>
-        ${quote ? `<p class="tl-quote">${escapeHtml(quote)}</p>` : ""}
+        ${review}
       </div>
-    </button>
+    </div>
   </article>`;
 }
 
@@ -108,9 +123,15 @@ function renderTimeline(rows) {
   host.innerHTML = `<div class="tl">${sections}</div>`;
 
   host.querySelectorAll(".tl-entry").forEach((el) => {
-    el.querySelector(".tl-card").onclick = () => {
-      const row = flat[+el.dataset.ti];
-      if (row) openDrawer(row, "completed");
+    const row = flat[+el.dataset.ti];
+    // Cover and title open the drawer; the review expands in place.
+    el.querySelectorAll(".tl-open").forEach((o) => o.onclick = () => { if (row) openDrawer(row, "completed"); });
+    const more = el.querySelector(".tl-more");
+    if (more) more.onclick = () => {
+      const q = el.querySelector(".tl-quote");
+      const open = el.classList.toggle("tl-expanded");
+      q.textContent = open ? tlFull(row.notes) : tlSnippet(row.notes);
+      more.textContent = open ? "Show less" : "Read more";
     };
   });
 
