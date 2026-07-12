@@ -840,6 +840,18 @@ const columns = () => sheet().columns;
 const searchCols = () => columns().filter((c) => c.search).map((c) => c.key);
 const colByKey = (key) => columns().find((c) => c.key === key);
 
+/* Sort keys that aren't sheet columns. The estimated rating is computed in the
+   browser (ridge regression over your own ratings), so there is no cell to sort
+   on — cmpBy has to be told how to get the value instead of reading a[key]. */
+const VIRTUAL_SORTS = [
+  { key: "__predicted", label: "Estimated rating", type: "number", kind: "predicted",
+    get: (row) => (typeof predictedOf === "function" ? predictedOf(row) : null),
+    // Only where a prediction is meaningful: the model is trained on games you've
+    // rated, and "what would I make of this" is a question about the backlog.
+    on: () => activeTab === "games" },
+];
+const sortMeta = (key) => VIRTUAL_SORTS.find((v) => v.key === key) || colByKey(key);
+
 // Virtual facets sourced from IGDB enrichment (array-valued, joined via row._k).
 const IGDB_FACET_DEFS = [
   { key: "__igdb_genre", label: "IGDB Genre", source: "genres" },
@@ -1427,7 +1439,9 @@ function releaseDateScore(v) {
   return Infinity;                                          // Early Access/TBD → newest
 }
 function cmpBy(a, b, spec) {
-  const x = a[spec.key], y = b[spec.key];
+  const v = spec.kind && VIRTUAL_SORTS.find((s) => s.kind === spec.kind);
+  const x = v ? v.get(a) : a[spec.key];
+  const y = v ? v.get(b) : b[spec.key];
   if (spec.kind === "playingRank") return playingRank(x) - playingRank(y);
   if (spec.kind === "releaseDateDesc") return releaseDateScore(y) - releaseDateScore(x);
   const xm = isBlank(x), ym = isBlank(y);
@@ -1855,7 +1869,8 @@ function patchEnrichedCells() {
 // Grid has no clickable headers — a Sort dropdown + direction toggle stand in.
 function populateGridSort() {
   const sel = $("#gridsort");
-  const cols = columns().filter((c) => c.sort);   // all sortable, not just shown
+  const cols = columns().filter((c) => c.sort)   // all sortable, not just shown
+    .concat(VIRTUAL_SORTS.filter((v) => v.on()));
   const eff = effectiveSort();
   const usingDefault = !(tabState[activeTab].sort && tabState[activeTab].sort.length);
   const cur = usingDefault ? "__default" : eff[0].key;
@@ -3013,7 +3028,11 @@ $("#gridsort").addEventListener("change", (e) => {
   const st = tabState[activeTab];
   const k = e.target.value;
   if (k === "__default") st.sort = null;
-  else { const c = colByKey(k); st.sort = [{ key: k, dir: c && c.type === "text" ? "asc" : "desc", type: c && c.type }]; }
+  else {
+    const c = sortMeta(k);
+    st.sort = [{ key: k, dir: c && c.type === "text" ? "asc" : "desc",
+                 type: c && c.type, kind: c && c.kind }];
+  }
   st.page = 1;
   renderTable(currentFiltered);
   nav();
