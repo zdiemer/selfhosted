@@ -34,6 +34,43 @@ function chartLink(fn) {
 
 const chartFmt = (v) => v.toLocaleString();
 
+/* A real tooltip, because the native SVG <title> can't do what these charts need:
+   it waits a second to appear, can't be styled, and turns a list of games into an
+   unreadable smear. Anything with data-tip gets one. Multi-line text is fine —
+   the box renders newlines. */
+let _tipEl = null;
+function chartTipEl() {
+  if (!_tipEl) {
+    _tipEl = document.createElement("div");
+    _tipEl.className = "charttip";
+    _tipEl.hidden = true;
+    document.body.appendChild(_tipEl);
+  }
+  return _tipEl;
+}
+const tipAttr = (text) => (text ? ` data-tip="${escapeHtml(String(text))}"` : "");
+
+function showTip(el, ev) {
+  const tip = chartTipEl();
+  tip.textContent = el.getAttribute("data-tip");
+  tip.hidden = false;
+  const pad = 14, r = tip.getBoundingClientRect();
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;   // flip near the right edge
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+  tip.style.left = Math.max(8, x) + "px";
+  tip.style.top = Math.max(8, y) + "px";
+}
+const hideTip = () => { if (_tipEl) _tipEl.hidden = true; };
+
+// A bar/dot/cell knows the games behind it; say so, and cap the list.
+function tipList(title, names, total) {
+  const shown = names.slice(0, 6);
+  const more = (total ?? names.length) - shown.length;
+  return [title, ...shown.map((n) => "· " + n), more > 0 ? `+ ${more.toLocaleString()} more` : ""]
+    .filter(Boolean).join("\n");
+}
+
 /* Horizontal bars — the workhorse. data: [{label, value, link?, hint?}] */
 function barsH(data, opts = {}) {
   const { fmt = chartFmt, colorBy = "index", max: maxOpt } = opts;
@@ -46,7 +83,7 @@ function barsH(data, opts = {}) {
     const neg = d.value < 0;
     const tag = d.link ? "button" : "div";
     return `<${tag} class="bar${d.link ? " linked" : ""}${neg ? " neg" : ""}"${chartLink(d.link)}
-      title="${escapeHtml(String(d.label))} — ${escapeHtml(fmt(d.value))}">
+      ${tipAttr(d.tip || `${d.label} — ${fmt(d.value)}`)}>
       <span class="bar-lbl">${escapeHtml(String(d.label))}</span>
       <span class="bar-track">
         <span class="bar-fill" style="--w:${pct.toFixed(1)}%;--c1:${c1};--c2:${c2};--d:${i * 28}ms"></span>
@@ -69,7 +106,7 @@ function barsV(data, opts = {}) {
     const pct = d.value ? Math.max(2, (d.value / max) * 100) : 0;
     const tag = d.link ? "button" : "div";
     return `<${tag} class="col${d.link ? " linked" : ""}"${chartLink(d.link)}
-      title="${escapeHtml(String(d.label))} — ${escapeHtml(fmt(d.value))}">
+      ${tipAttr(d.tip || `${d.label} — ${fmt(d.value)}`)}>
       ${showVals ? `<span class="col-val">${d.value ? escapeHtml(fmt(d.value)) : ""}</span>` : ""}
       <span class="col-track">
         <span class="col-fill" style="--h:${pct.toFixed(1)}%;--c1:${c1};--c2:${c2};--d:${i * 22}ms"></span>
@@ -164,7 +201,16 @@ function wireCharts(host) {
       const fn = CHART_LINKS[+el.dataset.cl];
       if (fn) fn();
     });
+    // One delegated tooltip for every bar, dot, cell and spoke on the page.
+    host.addEventListener("mousemove", (e) => {
+      const el = e.target.closest("[data-tip]");
+      if (el) showTip(el, e); else hideTip();
+    });
+    host.addEventListener("mouseleave", hideTip);
+    host.addEventListener("scroll", hideTip, true);
+    window.addEventListener("scroll", hideTip, { passive: true });
   }
+  hideTip();
   animateCharts(host);
   animateCounters(host);
 }
@@ -186,43 +232,84 @@ const facetLink = (tab, key, val) => () => {
    same-y; these give each question a shape that suits it.
    ========================================================================== */
 
-/* Area/line — a running total over time. Draws itself in with a dash offset. */
+/* Area/line — a running total over time. Draws itself in with a dash offset.
+
+   Takes one OR MORE series sharing an x axis, because a single line rarely
+   answers the question on its own: "games finished" only means something next to
+   "games acquired", and the gap between them IS the backlog. */
 function areaLine(data, opts = {}) {
-  const { fmt = chartFmt, color = 0, height = 190, label = "" } = opts;
-  if (data.length < 2) return `<div class="s-empty">Not enough data</div>`;
+  return multiLine([{ points: data, color: opts.color || 0, label: opts.label || "" }], opts);
+}
+
+function multiLine(series, opts = {}) {
+  const { fmt = chartFmt, height = 190 } = opts;
+  const live = series.filter((s) => s.points && s.points.length >= 2);
+  if (!live.length) return `<div class="s-empty">Not enough data</div>`;
   const W = 620, H = height, PAD = { l: 6, r: 6, t: 14, b: 22 };
-  const [c1, c2] = chartColor(color);
-  const max = Math.max(1, ...data.map((d) => d.value));
-  const x = (i) => PAD.l + (i / (data.length - 1)) * (W - PAD.l - PAD.r);
+  // Every series shares one x axis and one y scale — otherwise two lines on the
+  // same chart would be a lie.
+  //
+  // The axis is the union of all series' points, SORTED. First-seen order is a
+  // trap: Finished starts in 2007 and Acquired in 2008, so 2007 would land after
+  // 2026 and the line would snap backwards across the chart. Points carry a
+  // numeric x when they have one; otherwise fall back to arrival order.
+  const xOf = new Map();
+  let seq = 0;
+  for (const s of live) {
+    for (const p of s.points) {
+      if (!xOf.has(p.label)) xOf.set(p.label, p.x != null ? p.x : seq);
+      seq++;
+    }
+  }
+  const labels = [...xOf.keys()].sort((a, b) => xOf.get(a) - xOf.get(b));
+  const n = labels.length;
+  const max = Math.max(1, ...live.flatMap((s) => s.points.map((p) => p.value)));
+  const x = (i) => PAD.l + (n > 1 ? (i / (n - 1)) : 0) * (W - PAD.l - PAD.r);
   const y = (v) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b);
-  const pts = data.map((d, i) => [x(i), y(d.value)]);
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-  const area = `${line} L${x(data.length - 1).toFixed(1)},${(H - PAD.b).toFixed(1)} L${x(0).toFixed(1)},${(H - PAD.b).toFixed(1)} Z`;
+
+  let defs = "", paths = "", dots = "";
+  live.forEach((s, si) => {
+    const [c1, c2] = chartColor(s.color ?? si);
+    const at = new Map(s.points.map((p) => [p.label, p]));
+    const seq = labels.map((l, i) => ({ i, p: at.get(l) })).filter((o) => o.p);
+    const line = seq.map((o, k) => `${k ? "L" : "M"}${x(o.i).toFixed(1)},${y(o.p.value).toFixed(1)}`).join(" ");
+    const first = seq[0], last = seq[seq.length - 1];
+    const area = `${line} L${x(last.i).toFixed(1)},${(H - PAD.b).toFixed(1)} L${x(first.i).toFixed(1)},${(H - PAD.b).toFixed(1)} Z`;
+    const uid = "ln" + Math.abs(hashStr(labels.join("|") + (s.label || "") + si));
+    defs += `<linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${c1}" stop-opacity="${live.length > 1 ? ".22" : ".42"}"/>
+      <stop offset="1" stop-color="${c1}" stop-opacity="0"/></linearGradient>`;
+    paths += `<path class="ln-area" d="${area}" fill="url(#${uid})"/>
+      <path class="ln-line" d="${line}" fill="none" stroke="${c2}" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>`;
+    // The hover target: fat, invisible, and it says what the value is.
+    dots += seq.map((o) =>
+      `<circle class="ln-dot" cx="${x(o.i).toFixed(1)}" cy="${y(o.p.value).toFixed(1)}" r="9" fill="transparent"
+        ${tipAttr(o.p.tip || `${s.label ? s.label + " · " : ""}${o.p.label} — ${fmt(o.p.value)}`)}/>`).join("");
+  });
+
   // Label every nth point so the axis never collides with itself.
-  const step = Math.ceil(data.length / 10);
-  const ticks = data.map((d, i) => (i % step === 0 || i === data.length - 1)
-    ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="s-axis">${escapeHtml(String(d.label))}</text>` : "").join("");
-  const dots = data.map((d, i) =>
-    `<circle class="ln-dot" cx="${x(i).toFixed(1)}" cy="${y(d.value).toFixed(1)}" r="8" fill="transparent">
-       <title>${escapeHtml(String(d.label))} — ${escapeHtml(fmt(d.value))}</title></circle>`).join("");
-  const uid = "ln" + Math.abs(hashStr(JSON.stringify(data.map((d) => d.label)) + color));
-  return `<svg viewBox="0 0 ${W} ${H}" class="s-svg lnchart" preserveAspectRatio="xMidYMid meet">
-    <defs><linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${c1}" stop-opacity=".42"/>
-      <stop offset="1" stop-color="${c1}" stop-opacity="0"/></linearGradient></defs>
-    <path class="ln-area" d="${area}" fill="url(#${uid})"/>
-    <path class="ln-line" d="${line}" fill="none" stroke="${c2}" stroke-width="2.5"
-      stroke-linecap="round" stroke-linejoin="round"/>
-    ${dots}${ticks}
-    ${label ? `<text x="${PAD.l}" y="12" class="s-val">${escapeHtml(label)}</text>` : ""}
-  </svg>`;
+  const step = Math.ceil(n / 10);
+  const ticks = labels.map((l, i) => (i % step === 0 || i === n - 1)
+    ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="s-axis">${escapeHtml(String(l))}</text>` : "").join("");
+  const legend = live.filter((s) => s.label).map((s, si) => {
+    const [, c2] = chartColor(s.color ?? si);
+    return `<span class="ln-key"><i style="background:${c2}"></i>${escapeHtml(s.label)}</span>`;
+  }).join("");
+
+  return `<div class="ln-wrap">
+    <svg viewBox="0 0 ${W} ${H}" class="s-svg lnchart" preserveAspectRatio="xMidYMid meet">
+      <defs>${defs}</defs>${paths}${dots}${ticks}
+    </svg>
+    ${legend ? `<div class="ln-legend">${legend}</div>` : ""}
+  </div>`;
 }
 const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
 
 /* Calendar heatmap — one cell per day, GitHub-style. Shows *rhythm*: the
    bar-chart-by-month version hid that you finish things in bursts. */
 function heatmap(counts, year, opts = {}) {
-  const { onDay = null } = opts;
+  const { onDay = null, tipFor = null } = opts;
   const start = new Date(Date.UTC(year, 0, 1));
   const days = (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 366 : 365;
   const max = Math.max(1, ...Object.values(counts));
@@ -240,9 +327,10 @@ function heatmap(counts, year, opts = {}) {
     const wk = Math.floor(idx / 7), dow = idx % 7;
     const x = 24 + wk * (CELL + GAP), y = TOP + dow * (CELL + GAP);
     const lvl = n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4));
+    const tip = n && tipFor ? tipFor(iso, n) : `${iso} — ${n} finished`;
     cells += `<rect class="hm-cell hm-l${lvl}${n && onDay ? " linked" : ""}" x="${x}" y="${y}"
       width="${CELL}" height="${CELL}" rx="2.5"${n && onDay ? chartLink(() => onDay(iso)) : ""}
-      style="--d:${(wk * 6)}ms"><title>${iso} — ${n} finished</title></rect>`;
+      ${tipAttr(tip)} style="--d:${(wk * 6)}ms"/>`;
     const m = date.getUTCMonth();
     if (m !== lastMonth && dow <= 1) {
       months += `<text x="${x}" y="9" class="s-axis">${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m]}</text>`;
@@ -304,14 +392,15 @@ function radar(axes, opts = {}) {
   const labels = axes.map((a, i) => {
     const [x, y] = pt(i, 1.19);
     const anchor = x < cx - 4 ? "end" : x > cx + 4 ? "start" : "middle";
-    return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}" class="rd-lbl">
-      ${escapeHtml(String(a.label))}<title>${escapeHtml(String(a.label))} — ${a.hint || a.value}</title></text>`;
+    return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}" class="rd-lbl"
+      ${tipAttr(a.tip || `${a.label} — ${a.hint || a.value}`)}>${escapeHtml(String(a.label))}</text>`;
   }).join("");
   return `<svg viewBox="0 0 ${size} ${size}" class="s-svg radar">
     ${rings}${spokes}
     <polygon class="rd-poly" points="${poly}" fill="${c1}" fill-opacity=".28" stroke="${c2}" stroke-width="2"/>
     ${axes.map((a, i) => { const [x, y] = pt(i, a.value / max);
-      return `<circle class="rd-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${c2}"/>`; }).join("")}
+      return `<circle class="rd-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="${c2}" fill-opacity=".9"
+        ${tipAttr(a.tip || `${a.label} — ${a.hint || a.value}`)}/>`; }).join("")}
     ${labels}
   </svg>`;
 }

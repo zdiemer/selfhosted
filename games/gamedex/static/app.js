@@ -981,6 +981,8 @@ function quantityFromNotes(notes) {
 // Map the sheet's Condition to a GameEye price key.
 const _COND_KEY = { complete: "geCib", cib: "geCib", loose: "geLoose", new: "geNew" };
 // Collection value for an owned row: GameEye price for its condition × quantity.
+const r0 = (v) => typeof v === "number" && v > 0;   // a real price, not free/blank
+
 function collectionValueOf(row) {
   const e = ENRICH[row._k];
   if (!e) return null;
@@ -2137,7 +2139,11 @@ const statCard = (v, l, pre = "", post = "") => {
     : `<div class="s-num">${v == null ? "—" : escapeHtml(String(v))}</div>`;
   return `<div class="stat-card">${body}<div class="s-cap">${escapeHtml(l)}</div></div>`;
 };
-const statPanel = (title, body, cls = "") => `<div class="stat-panel ${cls}"><h3>${escapeHtml(title)}</h3>${body}</div>`;
+const last = (pts) => (pts && pts.length ? pts[pts.length - 1].value.toLocaleString() : "0");
+
+const statPanel = (title, body, cls = "", note = "") =>
+  `<div class="stat-panel ${cls}"><h3>${escapeHtml(title)}</h3>${
+    note ? `<p class="s-note">${escapeHtml(note)}</p>` : ""}${body}</div>`;
 
 const usd = (v) => "$" + Math.round(v).toLocaleString();
 const yr2 = (y) => `'${String(y).slice(2)}`;
@@ -2196,8 +2202,15 @@ function yearInReview(rows, games) {
 
   // Day-by-day, not month-by-month: monthly bars hid the fact that completions
   // come in bursts.
-  const byDay = {};
-  mine.forEach((r) => { if (/^\d{4}-\d{2}-\d{2}/.test(String(r.date))) byDay[String(r.date).slice(0, 10)] = (byDay[String(r.date).slice(0, 10)] || 0) + 1; });
+  const byDay = {}, gamesByDay = {};
+  mine.forEach((r) => {
+    if (!/^\d{4}-\d{2}-\d{2}/.test(String(r.date))) return;
+    const d = String(r.date).slice(0, 10);
+    byDay[d] = (byDay[d] || 0) + 1;
+    (gamesByDay[d] = gamesByDay[d] || []).push(String(r.game));
+  });
+  // A count tells you a day was busy; the names tell you what the day WAS.
+  const dayTip = (iso, n) => tipList(`${fmtDate(iso)} — ${n} finished`, gamesByDay[iso] || []);
   const showDay = (iso) => {
     const st = tabState.completed;
     st.facets = {}; st.search = ""; st.sort = null; st.page = 1;
@@ -2227,7 +2240,7 @@ function yearInReview(rows, games) {
         ${gameChip(worst, "Least favourite")}
       </div>
     </div>
-    ${statPanel(`Every day of ${y}`, heatmap(byDay, y, { onDay: showDay }), "wide")}
+    ${statPanel(`Every day of ${y}`, heatmap(byDay, y, { onDay: showDay, tipFor: dayTip }), "wide")}
     ${statPanel(`The best of ${y}`, posterRow(top, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide")}
     ${statPanel(`What you played in ${y}`, donut(topCounts(mine.map((r) => r.genre), 7)))}
     ${statPanel(`Where you played in ${y}`, barsH(topCounts(mine.map((r) => r.platform), 8)))}
@@ -2301,8 +2314,15 @@ function renderStats() {
   resetChartLinks();
 
   // Counts of a field, as bars that filter that tab when clicked.
+  // A bar is a pile of games. Say which ones — a count you can't interrogate is
+  // just a number.
+  const nameOf = (r) => String(r.game || r.title || "");
   const countBars = (src, field, n, tab) =>
-    topCounts(src.map((r) => r[field]), n).map((d) => ({ ...d, link: facetLink(tab, field, d.label) }));
+    topCounts(src.map((r) => r[field]), n).map((d) => {
+      const members = src.filter((r) => r[field] === d.label);
+      return { ...d, link: facetLink(tab, field, d.label),
+               tip: tipList(`${d.label} — ${d.value.toLocaleString()} games`, members.map(nameOf), members.length) };
+    });
 
   // --- completed ---
   const hours = rows.reduce((a, r) => a + (r.playTime || 0), 0);
@@ -2331,13 +2351,28 @@ function renderStats() {
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
   const best = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 10)
     .map((r) => ({ label: r.game, value: Math.round(r.rating * 100), link: gameLink(r, "completed") }));
-  // Running total of everything ever finished.
-  const cumYears = [...new Set(rows.map((r) => yearOf(r.date)).filter(Boolean))].sort((a, b) => a - b);
-  let run = 0;
-  const cumulative = cumYears.map((yy) => {
-    run += rows.filter((r) => yearOf(r.date) === yy).length;
-    return { label: yr2(yy), value: run };
-  });
+  // Running total of everything ever finished, set against the two ways a game
+  // arrives. A finishing rate on its own says nothing; the GAP between the lines
+  // is the backlog, drawn.
+  //
+  //   Acquired  — Date Purchased. 2008-2026, the long history.
+  //   Added     — Date Added. Flat until 2024 because that is when the column
+  //               started being filled in, which is honest rather than broken.
+  const cumFrom = (src, dateOf) => {
+    const per = new Map();
+    for (const r of src) { const y = yearOf(dateOf(r)); if (y) per.set(y, (per.get(y) || 0) + 1); }
+    let run = 0;
+    return [...per.keys()].sort((a, b) => a - b).map((yy) => {
+      run += per.get(yy);
+      // x is the real year: this axis is shared with series that start in other
+      // years, and "'07" sorts as a string in ways nobody wants.
+      return { x: yy, label: yr2(yy), value: run,
+               tip: `${yy} — ${run.toLocaleString()} (+${per.get(yy).toLocaleString()} that year)` };
+    });
+  };
+  const cumulative = cumFrom(rows, (r) => r.date);
+  const cumAcquired = cumFrom(games.filter((r) => r.purchasePrice != null), (r) => r.datePurchased);
+  const cumAdded = cumFrom(games, (r) => r.dateAdded);
   // Every rated game as a dot against the critics.
   const scatterPts = rows
     .filter((r) => r.rating != null && r.criticScore != null)
@@ -2350,7 +2385,10 @@ function renderStats() {
     gN.set(r.genre, (gN.get(r.genre) || 0) + 1);
   }
   const genreRadar = [...gN.entries()].filter(([, n]) => n >= 15)
-    .map(([g, n]) => ({ label: g, value: gSum.get(g) / n, hint: `${Math.round((gSum.get(g) / n) * 100)}% over ${n} games` }))
+    .map(([g, n]) => ({
+      label: g, value: gSum.get(g) / n,
+      tip: `${g}\nYour average: ${Math.round((gSum.get(g) / n) * 100)}%\nAcross ${n} finished games`,
+    }))
     .sort((a, b) => b.value - a.value).slice(0, 8);
   const bestRows = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 12);
 
@@ -2387,6 +2425,22 @@ function renderStats() {
     return { label: yr2(yy), value: Math.round(runSpend) };
   });
   const topValueRows = valued.slice(0, 12).map((x) => x.r);
+  // What a game is worth NOW minus what you paid for it. This is the one thing
+  // the price data knows that the crown-jewels wall can't show: a $60 game worth
+  // $58 is not a find, and a $5 one worth $180 is. Both ends, because the losses
+  // are the more interesting half.
+  const moved = ownedPhys
+    .map((r) => ({ r, gain: (collectionValueOf(r) ?? NaN) - r.purchasePrice }))
+    .filter((x) => r0(x.r.purchasePrice) && isFinite(x.gain) && Math.abs(x.gain) >= 1)
+    .sort((a, b) => b.gain - a.gain);
+  const moverCount = moved.length;
+  const moverBar = (x) => ({
+    label: x.r.title, value: Math.round(x.gain), link: gameLink(x.r, "games"),
+    tip: `${x.r.title}\nPaid ${usd(x.r.purchasePrice)} · now ${usd(collectionValueOf(x.r))}\n${
+      x.gain > 0 ? "Up" : "Down"} ${usd(Math.abs(x.gain))}`,
+  });
+  const movers = [...moved.slice(0, 8).map(moverBar), ...moved.slice(-5).reverse().map(moverBar)]
+    .filter((b, i, a) => a.findIndex((o) => o.label === b.label) === i);   // tiny sets can overlap
   const topSales = games.map((r) => ({ r, v: salesOf(r) })).filter((x) => x.v != null)
     .sort((a, b) => b.v - a.v).slice(0, 10)
     .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
@@ -2410,10 +2464,16 @@ function renderStats() {
       ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo")}
     </div>` +
     sect("Completed games", [
-      statPanel("Games finished, cumulatively", areaLine(cumulative, { color: 0, label: `${rows.length.toLocaleString()} all told` }), "wide"),
+      statPanel("Finished vs added, cumulatively", multiLine([
+        { points: cumAcquired, color: 3, label: `Acquired · ${last(cumAcquired)}` },
+        { points: cumAdded, color: 1, label: `Added to the sheet · ${last(cumAdded)}` },
+        { points: cumulative, color: 0, label: `Finished · ${rows.length.toLocaleString()}` },
+      ]), "wide",
+      "The gap between the lines is your backlog. Acquired uses Date Purchased; Added uses Date Added, which only starts in 2024 — that is when you began recording it, not a gap in the chart."),
       statPanel("Your hall of fame", posterRow(bestRows, { note: (r) => `${Math.round(r.rating * 100)}%` }), "wide"),
       statPanel("You vs the critics", scatter(scatterPts, { xLabel: "Critics", yLabel: "You" })),
-      statPanel("Your taste, by genre", radar(genreRadar, { color: 4 })),
+      statPanel("Your taste, by genre", radar(genreRadar, { color: 4 }), "",
+        "Your average rating per genre (0-100%), for genres you've finished 15+ games in. A long spoke means you rate that genre highly — not that you play it a lot."),
       statPanel("Completions per year", barsV(yearData), "wide"),
       statPanel("Completions by month", barsV(monthData, { color: 1 })),
       statPanel("By release decade", barsV(decadeData, { color: 4 })),
@@ -2437,7 +2497,7 @@ function renderStats() {
     sect("Purchases & collection", [
       statPanel("Spending per year", barsV(spendData, { color: 3, fmt: usd }), "wide"),
       statPanel("Games bought per year", barsV(boughtData, { color: 5 })),
-      statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, label: usd(totalSpent) + " all in" }), "wide"),
+      statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, fmt: usd, label: usd(totalSpent) + " all in" }), "wide"),
       ...(VALUE_HISTORY && VALUE_HISTORY.length > 1
         ? [statPanel("Collection value over time",
             areaLine(VALUE_HISTORY.map((h) => ({ label: fmtDate(h.day).replace(/,.*/, ""), value: Math.round(h.total) })),
@@ -2446,7 +2506,8 @@ function renderStats() {
             `<div class="s-empty">Recording daily from today — a trend needs at least two points.
              ${VALUE_HISTORY && VALUE_HISTORY.length ? `First snapshot: ${escapeHtml(fmtDate(VALUE_HISTORY[0].day))} at ${usd(VALUE_HISTORY[0].total)}.` : ""}</div>`, "wide")]),
       statPanel("The crown jewels", posterRow(topValueRows, { note: (r) => usd(collectionValueOf(r)) }), "wide"),
-      statPanel("Most valuable owned", barsH(topValue, { fmt: usd })),
+      statPanel("Biggest movers", barsH(movers, { fmt: (v) => (v > 0 ? "+" : "-") + usd(Math.abs(v)) }), "wide",
+        `What it's worth now minus what you paid, across ${moverCount.toLocaleString()} games where we know both. Up is profit.`),
       statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
       statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
     ]) +

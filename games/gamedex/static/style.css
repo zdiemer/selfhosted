@@ -1153,6 +1153,30 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .ln-area { opacity: 0; transition: opacity .9s var(--ease) .3s; }
 .s-svg.drawn .ln-line, .drawn .ln-line { stroke-dashoffset: 0; }
 .s-svg.drawn .ln-area, .drawn .ln-area { opacity: 1; }
+/* The in-chart caption ("$55,837 all in"). This had NO rule at all, so SVG text
+   fell back to a black fill — fine on the light theme, invisible on the dark. */
+.s-val { fill: var(--text); font: 700 12px var(--font); }
+.s-note {
+  margin: -4px 0 12px; max-width: 62ch;
+  font: 400 12px/1.5 var(--font); color: var(--text-2);
+}
+.ln-wrap { display: flex; flex-direction: column; gap: 8px; }
+.ln-legend { display: flex; flex-wrap: wrap; gap: 14px; padding-left: 4px; }
+.ln-key { display: inline-flex; align-items: center; gap: 6px; font: 600 11px/1 var(--font); color: var(--text-2); }
+.ln-key i { width: 10px; height: 3px; border-radius: 2px; }
+
+/* One tooltip for every chart. The native SVG <title> waits a second, can't be
+   styled, and mangles a list of names. */
+.charttip {
+  position: fixed; z-index: 9999; pointer-events: none;
+  max-width: 300px; padding: 9px 11px; border-radius: 10px;
+  background: var(--tip-bg, rgba(15, 18, 26, .96));
+  color: #fff; border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: 0 12px 32px -10px rgba(0, 0, 0, .55);
+  font: 500 12px/1.55 var(--font); white-space: pre-line;
+}
+.hm-cell[data-tip], .rd-dot[data-tip] { cursor: default; }
+
 .ln-dot { cursor: default; }
 .ln-dot:hover { fill: var(--accent); fill-opacity: .35; }
 
