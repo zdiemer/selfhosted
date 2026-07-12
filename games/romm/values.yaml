@@ -65,9 +65,149 @@ config:
   # dragged over the network for a checksum nobody asked for.
   skipHashCalculation: true
   # Folders that aren't game platforms, or that we don't want RomM walking.
-  excludePlatforms: []
+  excludePlatforms:
+    - _romnas
   # your-folder-name: romm-platform-name, for folders RomM can't identify.
-  platformMap: {}
+  platformMap:
+    "3DO": 3do
+    "Acorn Archimedes": acorn-archimedes
+    "American Laser Games": arcade
+    "Amiga": amiga
+    "Amiga CD32": amiga-cd32
+    "Amstrad CPC": acpc
+    "Amstrad PCW": amstrad-pcw
+    "Android": android
+    "Apple II": appleii
+    "Apple IIGS": apple-iigs
+    "Arcadia 2001": arcadia-2001
+    "Arduboy": arduboy
+    "Astrocade": astrocade
+    "Atari 2600": atari2600
+    "Atari 5200": atari5200
+    "Atari 7800": atari7800
+    "Atari 8-bit": atari8bit
+    "Atari ST": atari-st
+    "Atomiswave": arcade
+    "BBC Micro": bbcmicro
+    "BlackBerry": blackberry
+    "CD-i": philips-cd-i
+    "CDTV": commodore-cdtv
+    "Channel F": fairchild-channel-f
+    "Chihiro": arcade
+    "CoCo": trs-80-color-computer
+    "ColecoVision": colecovision
+    "Commodore 128": c64
+    "Commodore 64": c64
+    "Commodore PET": cpet
+    "Commodore Plus-4": c-plus-4
+    "DSiWare": nintendo-dsi
+    "Dragon 32-64": dragon-32-slash-64
+    "Dreamcast": dc
+    "Dreamcast VMU": visual-memory-unit-slash-visual-memory-system
+    "FM Towns": fm-towns
+    "FM-7": fm-7
+    "FM77AV": fm-7
+    "Famicom Disk System": fds
+    "Fire TV": amazon-fire-tv
+    "Flashpoint": browser
+    "Flashpoint-Flash": browser
+    "Flashpoint-HTML5": browser
+    "Flashpoint-Java": browser
+    "Flashpoint-Shockwave": browser
+    "Flashpoint-Unity": browser
+    "Game Boy": gb
+    "Game Boy Advance": gba
+    "Game Boy Color": gbc
+    "Game Gear": gamegear
+    "GameCube": ngc
+    "Genesis": genesis
+    "Gizmondo": gizmondo
+    "Intellivision": intellivision
+    "Jaguar": jaguar
+    "Jaguar CD": atari-jaguar-cd
+    "LaserActive": laseractive
+    "Laserdisc Arcade": arcade
+    "Loopy": casio-loopy
+    "Lynx": lynx
+    "MAME": arcade
+    "MS-DOS": dos
+    "MSX": msx
+    "MSX2": msx2
+    "Mac OS": mac
+    "Master System": sms
+    "N-Gage": ngage
+    "N-Gage 2.0": ngage
+    "NES": nes
+    "Namco System 2x6": arcade
+    "Naomi": arcade
+    "Naomi 2": arcade
+    "Neo Geo CD": neo-geo-cd
+    "Neo Geo Pocket": neo-geo-pocket
+    "Neo Geo Pocket Color": neo-geo-pocket-color
+    "New Nintendo 3DS": new-nintendo-3ds
+    "Nintendo 3DS": 3ds
+    "Nintendo 64": n64
+    "Nintendo 64DD": 64dd
+    "Nintendo DS": nds
+    "Nintendo DSi": nintendo-dsi
+    "Nuon": nuon
+    "Odyssey": odyssey
+    "Odyssey 2": odyssey-2
+    "Ouya": ouya
+    "PC-6001": nec-pc-6000-series
+    "PC-88": pc-8800-series
+    "PC-98": pc-9800-series
+    "PC-FX": pc-fx
+    "PS Vita": psvita
+    "PS2": ps2
+    "PS3": ps3
+    "PS4": ps4
+    "PSP": psp
+    "PSX": psx
+    "Palm OS": palm-os
+    "Pippin": apple-pippin
+    "Playdate": playdate
+    "Playdia": playdia
+    "Pokemon Mini": pokemon-mini
+    "SG-1000": sg1000
+    "SNES": snes
+    "Satellaview": satellaview
+    "Saturn": saturn
+    "ScummVM": scummvm
+    "Sega 32X": sega32
+    "Sega CD": segacd
+    "Sega Pico": sega-pico
+    "Sharp X1": x1
+    "Sharp X68000": sharp-x68000
+    "Singe Arcade": arcade
+    "SuperGrafx": supergrafx
+    "SuperVision": supervision
+    "Switch": switch
+    "TI-99-4A": ti-99
+    "TeknoParrot": arcade
+    "Triforce": arcade
+    "TurboGrafx-16": tg16
+    "TurboGrafx-CD": turbografx-cd
+    "VIC-20": vic-20
+    "Vectrex": vectrex
+    "Virtual Boy": virtualboy
+    "Wii": wii
+    "Wii U": wiiu
+    "WiiWare": wii
+    "Windows 3.x": win
+    "Windows 9x": win
+    "Windows Mobile": windows-mobile
+    "Windows Phone": winphone
+    "WonderSwan": wonderswan
+    "WonderSwan Color": wonderswan-color
+    "Xbox": xbox
+    "Xbox 360": xbox360
+    "ZX Spectrum": zxs
+    "ZX81": zx81
+    "Zeebo": zeebo
+    "Zodiac": zod
+    "e-Reader": e-reader-slash-card-e-reader
+    "iOS": ios
 
 romm:
   # REQUIRED — set in values.local.yaml. Generate with:
@@ -117,6 +257,8 @@ ingress:
 resources:
   requests:
     cpu: 100m
-    memory: 256Mi
+    memory: 512Mi
   limits:
-    memory: 1Gi
+    # A scan of 167 platforms sat at 990Mi against the old 1Gi limit — it was one
+    # big platform away from being OOM-killed mid-scan.
+    memory: 3Gi
