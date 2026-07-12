@@ -48,7 +48,7 @@ function revCard(r, i) {
   const cs = coverSrc(ENRICH[r._k], "cover_big");
   const cover = cs
     ? `<img class="rev-cover" loading="lazy" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="rev-cover ph">🎮</div>`;
+    : `<div class="rev-cover ph">${icon("i-library", 22)}</div>`;
   const open = !!revState.open[r._k];
   const words = wordCount(r.notes);
   const bits = [r.platform, r.releaseYear, r.date ? fmtDate(r.date) : null]
@@ -57,7 +57,7 @@ function revCard(r, i) {
     ? `<span class="rev-score ${ratingClass(r.rating)}">${Math.round(r.rating * 100)}</span>` : "";
   const critic = r.criticScore != null
     ? `<span class="rev-critic">critics ${Math.round(r.criticScore * 100)}</span>` : "";
-  const time = r.playTime != null ? `<span class="rev-time">⏱ ${fmtHours(r.playTime)}</span>` : "";
+  const time = r.playTime != null ? `<span class="rev-time">${icon("i-clock", 12)} ${fmtHours(r.playTime)}</span>` : "";
   return `<article class="rev${open ? " open" : ""}">
     <button class="rev-art" data-rk="${escapeHtml(String(r._k || ""))}" aria-label="Open ${escapeHtml(String(r.game))}">${cover}</button>
     <div class="rev-body">
@@ -100,7 +100,7 @@ function renderReviews() {
       <h1>Reviews</h1>
       <p>${all.length.toLocaleString()} reviews · ${totalWords.toLocaleString()} words you’ve written about games.</p>
       <div class="rev-controls">
-        <input id="revQ" type="search" placeholder="Search reviews…" value="${escapeHtml(revState.q)}" autocomplete="off">
+        ${searchField("revQ", "Search reviews…", revState.q)}
         <label class="ctl">Sort
           <select id="revSort">${Object.entries(REV_SORTS).map(([k, v]) =>
             `<option value="${k}"${k === revState.sort ? " selected" : ""}>${escapeHtml(v.label)}</option>`).join("")}</select>

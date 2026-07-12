@@ -4,43 +4,127 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gamedex</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Fonts are self-hosted (see style.css). No external requests: the PWA has to
+       work offline, and every byte here ships in the image. -->
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <meta name="theme-color" content="#0a0c11" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0B0D12" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#F5F6FA" media="(prefers-color-scheme: light)" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Gamedex" />
   <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎮</text></svg>" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+
+  <!-- Rich link previews. A shared link used to unfurl as a bare URL and a title;
+       these give it the mark, a sentence, and the numbers that make it worth a click. -->
+  <meta name="description" content="14,752 games catalogued, 1,707 beaten. Browse, filter and play a personal games collection — with metadata from IGDB, HowLongToBeat, Metacritic and a dozen other sources." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Gamedex" />
+  <meta property="og:title" content="Gamedex — a games collection, catalogued" />
+  <meta property="og:description" content="14,752 games catalogued, 1,707 beaten. Browse, filter and play a personal games collection — with metadata from IGDB, HowLongToBeat, Metacritic and a dozen other sources." />
+  <meta property="og:url" content="https://games.zachd.duckdns.org/" />
+  <meta property="og:image" content="https://games.zachd.duckdns.org/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Gamedex — a games collection, catalogued" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Gamedex — a games collection, catalogued" />
+  <meta name="twitter:description" content="14,752 games catalogued, 1,707 beaten. Browse, filter and play a personal games collection." />
+  <meta name="twitter:image" content="https://games.zachd.duckdns.org/og.png" />
 </head>
 <body>
+<!-- ==========================================================================
+     Icon sprite. One 24px grid, 1.9px stroke, everything on currentColor so it
+     inherits the theme — which is the entire reason emoji had to go: they render
+     as a different picture on every OS and ignore your accent colour completely.
+
+     Inlined rather than fetched: the CSP blocks external hosts, the PWA has to
+     work offline, and 31 icons cost less than one round-trip.
+     ========================================================================== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B6CFF"/><stop offset="1" stop-color="#4F2FE0"/>
+    </linearGradient>
+
+    <!-- The Gamedex mark: a cartridge — notched shoulder, label, contact pins.
+         One shape that survives 16px (favicon) and 512px (PWA install icon). -->
+    <symbol id="mark" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="15" fill="url(#grad)"/>
+      <path d="M16 15h21.5L48 25.5V49a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4z" fill="#fff"/>
+      <rect x="21" y="20.5" width="22" height="16" rx="3" fill="#4F2FE0" opacity=".15"/>
+      <path d="M29.9 24.6h4.2v2.8h2.8v4.2h-2.8v2.8h-4.2v-2.8h-2.8v-4.2h2.8z" fill="#4F2FE0"/>
+      <rect x="22.5" y="42.5" width="4.2" height="5.5" rx="1.2" fill="#4F2FE0" opacity=".8"/>
+      <rect x="29.9" y="42.5" width="4.2" height="5.5" rx="1.2" fill="#4F2FE0" opacity=".8"/>
+      <rect x="37.3" y="42.5" width="4.2" height="5.5" rx="1.2" fill="#4F2FE0" opacity=".8"/>
+    </symbol>
+
+    <!-- ICONS · 24px grid, 2px stroke, currentColor. The whole set the app needs. -->
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-4V14h-7v7.5h-4A1.5 1.5 0 0 1 3 20z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></g></symbol>
+    <symbol id="i-trophy" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 5.5H4.5V8a3 3 0 0 0 3 3M17 5.5h2.5V8a3 3 0 0 1-3 3"/><path d="M12 14v3M8.5 20h7l-.8-3h-5.4z"/></g></symbol>
+    <symbol id="i-package" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 7.6 12 3l9 4.6v8.8L12 21l-9-4.6z"/><path d="M3 7.6 12 12l9-4.4M12 12v9"/></g></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3 3 7.5 12 12l9-4.5z"/><path d="M3 12.5 12 17l9-4.5M3 16.8 12 21.3l9-4.5"/></g></symbol>
+    <symbol id="i-review" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H15l5 5v12.5A1.5 1.5 0 0 1 18.5 22H5.5A1.5 1.5 0 0 1 4 20.5z"/><path d="M14.5 3v5.5H20M8 13h8M8 17h5"/></g></symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V4"/><path d="M4 20h16"/><path d="M8 17V11M12.5 17V7M17 17v-4"/></g></symbol>
+    <symbol id="i-dice" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><circle cx="8.5" cy="8.5" r="1.35" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.35" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.35" fill="currentColor" stroke="none"/></g></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></g></symbol>
+    <symbol id="i-health" viewBox="0 0 24 24"><path d="M3 12.5h4L9.5 7l3.5 10 2.5-6.5h5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></g></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3.5 5.5h17l-6.5 7.6v6.4l-4 1.8v-8.2z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></g></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="9" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="9" rx="1.4"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.4"/><rect x="13.5" y="15.5" width="7" height="5" rx="1.4"/></g></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></g></symbol>
+    <symbol id="i-timeline" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3.5v17"/><circle cx="12" cy="7.5" r="2.4"/><circle cx="12" cy="16.5" r="2.4"/></g></symbol>
+    <symbol id="i-combine" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="3.5" width="12" height="12" rx="2.5"/><path d="M8.5 20.5h9a3 3 0 0 0 3-3v-9"/></g></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/></g></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4.4"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/></g></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-theme" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4.6"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4"/></g></symbol>
+    <symbol id="i-command" viewBox="0 0 24 24"><path d="M8.5 3a2.5 2.5 0 1 0 0 5h2.5V5.5A2.5 2.5 0 0 0 8.5 3M15.5 3a2.5 2.5 0 1 1 0 5H13V5.5A2.5 2.5 0 0 1 15.5 3M8.5 21a2.5 2.5 0 1 1 0-5H11v2.5A2.5 2.5 0 0 1 8.5 21M15.5 21a2.5 2.5 0 1 0 0-5H13v2.5a2.5 2.5 0 0 0 2.5 2.5M8 8h8v8H8z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7.5 4.8 19 12 7.5 19.2z" fill="currentColor" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5H19.5V10.5"/><path d="m19.5 4.5-8 8"/><path d="M18 14v5.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19.5v-11A1.5 1.5 0 0 1 5.5 7H11"/></g></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.6 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 10l6.1-.9z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.8 4.7 4.7L19.5 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4.5v15M4.5 12h15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m14.5 5.5 4 4"/></g></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M9 6.5V4.2A1.2 1.2 0 0 1 10.2 3h3.6A1.2 1.2 0 0 1 15 4.2v2.3"/><path d="M6.5 6.5 7.4 20a1.2 1.2 0 0 0 1.2 1.1h6.8A1.2 1.2 0 0 0 16.6 20l.9-13.5"/></g></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="16" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></g></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.3l3.4 2"/></g></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.8 21.5 20H2.5z"/><path d="M12 10v4.2"/><circle cx="12" cy="17.4" r=".2" stroke-width="2.2"/></g></symbol>
+    <symbol id="i-trend" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 16.5 5.5-6 4 3.5 7.5-8"/><path d="M15 6h5.5v5.5"/></g></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
   <header class="topbar">
-    <button id="brand" class="brand" title="Back to the home page (clears filters)" aria-label="Home">🎮 <span>Gamedex</span></button>
-    <input id="search" type="search" placeholder="Search title, genre, publisher, notes…" autocomplete="off" />
-    <div class="freshness" id="freshness"></div>
-    <button id="cmdk" class="kbdbtn" title="Search everything (Ctrl K)" aria-label="Command palette">
-      <span>⌘K</span>
+    <button id="brand" class="brand" title="Back to the home page (clears filters)" aria-label="Home">
+      <svg class="brand-mark" width="26" height="26" aria-hidden="true"><use href="#mark"/></svg>
+      <span class="brand-word">Game<span>dex</span></span>
     </button>
-    <button id="theme" class="refreshbtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-    <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data">⟳</button>
+    <span class="field field-top">
+      <svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Search title, genre, publisher, notes…" autocomplete="off" />
+    </span>
+    <div class="freshness" id="freshness"></div>
+    <button id="cmdk" class="kbdbtn" title="Search everything" aria-label="Command palette"><kbd id="cmdkMod">Ctrl</kbd><kbd>K</kbd></button>
+    <button id="theme" class="refreshbtn" title="Toggle light / dark" aria-label="Toggle theme"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-theme"/></svg></button>
+    <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
   </header>
   <div class="progress" id="progress" hidden><div class="progress-bar" id="progressBar"></div></div>
   <div id="toast" class="toast" hidden></div>
 
   <nav class="tabs" id="tabs">
-    <button data-tab="home" class="active">🏠 Home</button>
-    <button data-tab="games">🎮 All Games</button>
-    <button data-tab="completed">🏆 Completed</button>
-    <button data-tab="onOrder">📦 On Order</button>
-    <button data-tab="groups">🗂 Groupings</button>
-    <button data-tab="reviews">📝 Reviews</button>
-    <button data-tab="stats">📊 Stats</button>
-    <button data-tab="pick">🎲 Pick</button>
-    <button data-tab="challenges">🎯 Challenges</button>
-    <button data-tab="health">🩺 Health</button>
+    <button data-tab="home" class="active"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg><span>Home</span></button>
+    <button data-tab="games"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-library"/></svg><span>All Games</span></button>
+    <button data-tab="completed"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-trophy"/></svg><span>Completed</span></button>
+    <button data-tab="onOrder"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-package"/></svg><span>On Order</span></button>
+    <button data-tab="groups"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-layers"/></svg><span>Groupings</span></button>
+    <button data-tab="reviews"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-review"/></svg><span>Reviews</span></button>
+    <button data-tab="stats"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-stats"/></svg><span>Stats</span></button>
+    <button data-tab="pick"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-dice"/></svg><span>Pick</span></button>
+    <button data-tab="challenges"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-target"/></svg><span>Challenges</span></button>
+    <button data-tab="health"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-health"/></svg><span>Health</span></button>
   </nav>
 
   <main class="layout">
@@ -48,7 +132,7 @@
     <aside class="facets" id="facets"></aside>
     <section class="results">
       <div class="resultbar">
-        <button id="facetToggle" class="facet-toggle">☰ Filters</button>
+        <button id="facetToggle" class="facet-toggle"><svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-filter"/></svg>Filters</button>
         <span id="count">Loading…</span>
         <span id="enrichstatus" class="enrichstatus" hidden></span>
         <button id="resetsort" class="linkbtn" hidden>Reset sort</button>
@@ -65,11 +149,11 @@
             </select>
           </label>
           <button id="combine" class="combinebtn" aria-pressed="false"
-                  title="Combine editions of the same game into one entry (IGDB)">⧉ Combine</button>
+                  title="Combine editions of the same game into one entry (IGDB)"><svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-combine"/></svg>Combine</button>
           <span class="viewtoggle">
-            <button id="viewTable" title="List view" aria-label="List view">☰</button>
-            <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view">▦</button>
-            <button id="viewTimeline" title="Timeline (completed games)" aria-label="Timeline view" hidden>⏳</button>
+            <button id="viewTable" title="List view" aria-label="List view"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-list"/></svg></button>
+            <button id="viewGrid" class="active" title="Grid view" aria-label="Grid view"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-grid"/></svg></button>
+            <button id="viewTimeline" title="Timeline (completed games)" aria-label="Timeline view" hidden><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-timeline"/></svg></button>
           </span>
         </div>
       </div>
@@ -98,25 +182,25 @@
   <div class="drawer-overlay" id="overlay" hidden>
     <div class="drawer" id="drawer" role="dialog" aria-modal="true">
       <button class="drawer-back" id="drawerBack" hidden>← Back</button>
-      <button class="drawer-close" id="drawerClose" aria-label="Close">✕</button>
+      <button class="drawer-close" id="drawerClose" aria-label="Close"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-close"/></svg></button>
       <div id="drawerBody"></div>
     </div>
   </div>
 
   <!-- Mobile: filters/sort reachable without scrolling back to the top -->
   <div class="fab" id="fab">
-    <button id="fabFilters">☰ Filters</button>
-    <button id="fabSort">⇅ Sort &amp; view</button>
+    <button id="fabFilters"><svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-filter"/></svg>Filters</button>
+    <button id="fabSort"><svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-sort"/></svg>Sort</button>
     <button id="fabTop" title="Back to top" aria-label="Back to top">↑</button>
   </div>
   <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
   <div class="sheet" id="sheet" hidden>
-    <div class="sheet-head"><b>Sort &amp; view</b><button id="sheetClose" aria-label="Close">✕</button></div>
+    <div class="sheet-head"><b>Sort &amp; view</b><button id="sheetClose" aria-label="Close"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-close"/></svg></button></div>
     <div class="sheet-body" id="sheetBody"></div>
   </div>
 
   <div class="lightbox" id="lightbox" hidden>
-    <button class="lb-close" id="lbClose" aria-label="Close">✕</button>
+    <button class="lb-close" id="lbClose" aria-label="Close"><svg class="ico" width="20" height="20" aria-hidden="true"><use href="#i-close"/></svg></button>
     <button class="lb-nav lb-prev" id="lbPrev" aria-label="Previous">‹</button>
     <img id="lbImg" alt="" />
     <button class="lb-nav lb-next" id="lbNext" aria-label="Next">›</button>

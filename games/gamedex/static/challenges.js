@@ -261,72 +261,72 @@ const CH_FRANCHISE_CONTENDERS = new Set([
 // keySort: how to order buckets in the detail view (default: biggest first)
 const CHALLENGES = [
   {
-    id: "platform", icon: "🕹️", name: "One Per Platform",
+    id: "platform", icon: "i-dice", name: "One Per Platform",
     blurb: "Beat a game on every platform — counting the splits that actually feel different: Famicom apart from NES, XBLA apart from disc, MAME apart from the rest.",
     group: platformCompletionId,
   },
   {
-    id: "genre", icon: "🎭", name: "One Per Genre",
+    id: "genre", icon: "i-library", name: "One Per Genre",
     blurb: "Beat a game in every genre in the collection, from visual novels to twin-stick shooters.",
     group: (r) => r.genre || null,
   },
   {
-    id: "year", icon: "📅", name: "One Per Year",
+    id: "year", icon: "i-calendar", name: "One Per Year",
     blurb: "Beat a game from every release year the collection covers.",
     group: (r) => r.releaseYear || null,
     keySort: (k) => -Number(k),
   },
   {
-    id: "letter", icon: "🔤", name: "One Per Letter",
+    id: "letter", icon: "i-list", name: "One Per Letter",
     blurb: "Beat a game starting with every letter of the alphabet (leading articles dropped, so The Last of Us is an L).",
     group: chFirstLetter,
     keySort: (k) => k,
   },
   {
-    id: "region", icon: "🌍", name: "One Per Region",
+    id: "region", icon: "i-target", name: "One Per Region",
     blurb: "Beat a game released in every region the collection reaches.",
     group: (r) => r.releaseRegion || null,
   },
   {
-    id: "playtime", icon: "⏱️", name: "One Per Playtime",
+    id: "playtime", icon: "i-clock", name: "One Per Playtime",
     blurb: "Beat a game of every length, hour by hour — a 3-hour game, a 4-hour game, and so on up.",
     group: chPlaytimeBucket,
     keySort: (k) => (k === "No Playtime" ? 1e9 : k === "Under 1 Hour" ? -1 : parseInt(k, 10)),
   },
   {
-    id: "rating", icon: "⭐", name: "One Per Rating",
+    id: "rating", icon: "i-star", name: "One Per Rating",
     blurb: "Beat a game in every 10% band of combined rating — the great, the mediocre and the truly dire.",
     start: "2026-01-09", timesCompleted: 2,
     group: chRatingBucket,
     keySort: (k) => -parseInt(k, 10),
   },
   {
-    id: "percentile", icon: "📈", name: "One Per Percentile",
+    id: "percentile", icon: "i-trend", name: "One Per Percentile",
     blurb: "Beat a game from every percentile band of the collection's rating distribution, from the bottom 1% to the top.",
     start: "2025-12-16", timesCompleted: 3,
     group: chPercentileBucket,
     keySort: (k) => -parseFloat(k),
   },
   {
-    id: "length", icon: "📏", name: "One Per Title Length",
+    id: "length", icon: "i-sort", name: "One Per Title Length",
     blurb: "Beat a game of every title length, counted in characters with the spaces taken out.",
     group: (r) => String(r.title).replace(/ /g, "").length,
     keySort: (k) => Number(k),
   },
   {
-    id: "developer", icon: "🏢", name: "One Per Top Developer",
+    id: "developer", icon: "i-package", name: "One Per Top Developer",
     blurb: "Beat a game by each of the 50 developers best represented in the collection.",
     domain: (r) => chTopDevelopers().has(r.developer),
     group: (r) => r.developer || null,
   },
   {
-    id: "franchise", icon: "⚔️", name: "One Per Franchise Contender",
+    id: "franchise", icon: "i-trophy", name: "One Per Franchise Contender",
     blurb: "Beat a game from every franchise on the shortlist — the series worth actually playing through.",
     domain: (r) => CH_FRANCHISE_CONTENDERS.has(r.franchise),
     group: (r) => r.franchise || null,
   },
   {
-    id: "added", icon: "➕", name: "One Per Added Date",
+    id: "added", icon: "i-plus", name: "One Per Added Date",
     blurb: "Beat a game added to the sheet in every month it's been kept — clearing the backlog a vintage at a time.",
     start: "2025-04-18", timesCompleted: 1,
     domain: (r) => !!r.dateAdded,
@@ -334,21 +334,21 @@ const CHALLENGES = [
     keySort: (k, rows) => rows[0].dateAdded, sortDesc: true,
   },
   {
-    id: "purchased", icon: "🛒", name: "One Per Purchase Date",
+    id: "purchased", icon: "i-package", name: "One Per Purchase Date",
     blurb: "Beat a game bought in every month I've been buying them.",
     domain: (r) => !!r.datePurchased,
     group: (r) => chMonth(r.datePurchased),
     keySort: (k, rows) => rows[0].datePurchased, sortDesc: true,
   },
   {
-    id: "price", icon: "💵", name: "One Per Purchase Price",
+    id: "price", icon: "i-trend", name: "One Per Purchase Price",
     blurb: "Beat a game bought at every whole-dollar price point.",
     domain: (r) => r.purchasePrice != null && r.purchasePrice > 0,
     group: chPriceBucket,
     keySort: (k) => parseFloat(String(k).replace("$", "")) || 0,
   },
   {
-    id: "limitedprint", icon: "📦", name: "One Per Limited Print",
+    id: "limitedprint", icon: "i-package", name: "One Per Limited Print",
     blurb: "Beat a game from every limited-print label — Limited Run, iam8bit, Super Rare and the rest of the boutique pressings.",
     domain: (r) => !!chNoteFacts(r).limitedPrint,
     group: (r) => chNoteFacts(r).limitedPrint || null,
@@ -364,7 +364,7 @@ const CHALLENGES = [
     },
   },
   {
-    id: "unplayable", icon: "🚫", name: "One Per Platform (Unplayable)",
+    id: "unplayable", icon: "i-alert", name: "One Per Platform (Unplayable)",
     blurb: "The stubborn half of the platform challenge: the games marked unplayable — no dump, no hardware, no way in — one per platform.",
     pool: (r) => r.playable !== "Yes" && !r.completed,
     clear: () => true,
@@ -468,7 +468,7 @@ function chCardHtml(res) {
     ? `<span class="ch-badge">✓ cleared ${c.timesCompleted}×</span>` : "";
   return `<button class="ch-card${done ? " ch-done" : ""}" data-ch="${c.id}">
     <div class="ch-card-top">
-      <span class="ch-icon">${c.icon}</span>
+      <span class="ch-icon">${glyph(c.icon, 20)}</span>
       ${chRing(res.pct)}
     </div>
     <h3>${escapeHtml(c.name)}</h3>
@@ -484,7 +484,7 @@ function chCardHtml(res) {
 // A candidate/clearing game as a compact chip.
 function chGameChip(row, note) {
   const cs = coverSrc(ENRICH[row._k], "cover_small");
-  const art = cs ? `<img src="${cs}" alt="" loading="lazy">` : `<span class="ch-chip-ph">🎮</span>`;
+  const art = cs ? `<img src="${cs}" alt="" loading="lazy">` : `<span class="ch-chip-ph">${icon("i-library", 16)}</span>`;
   const cr = combinedRating(row);
   const sub = [row.platform, row.releaseYear].filter(Boolean).map(String).map(escapeHtml).join(" · ");
   const meta = note
@@ -570,7 +570,7 @@ function renderChallenges() {
        <button class="ch-back" id="chBack">← All challenges</button>
        ${c.custom ? `<button class="btn ghost ch-edit" id="chEdit">✎ Edit challenge</button>` : ""}
        <div class="ch-detail-head">
-         <span class="ch-icon big">${c.icon}</span>
+         <span class="ch-icon big">${glyph(c.icon, 30)}</span>
          <div>
            <h1>${escapeHtml(c.name)}</h1>
            <p>${escapeHtml(c.blurb)}</p>
@@ -666,7 +666,7 @@ function chFromCustom(def) {
     .filter((f) => f.col && f.values.size);
   return {
     id: def.id,
-    icon: def.icon || "🎯",
+    icon: def.icon || "i-target",
     name: def.name || "Custom challenge",
     blurb: chCustomBlurb(def),
     start: def.start || CH_DEFAULT_START,
@@ -698,7 +698,7 @@ const chEditor = { open: false, def: null };
 
 const chBlankDef = () => ({
   id: "custom-" + Math.random().toString(36).slice(2, 9),
-  name: "", icon: "🎯", groupBy: "platform", filters: [],
+  name: "", icon: "i-target", groupBy: "platform", filters: [],
   start: new Date().toISOString().slice(0, 10),
 });
 
@@ -820,7 +820,7 @@ function wireEditor(host) {
     if (!d.name.trim()) { $("#chbName").focus(); return; }
     const list = chLoadCustom();
     const i = list.findIndex((x) => x.id === d.id);
-    const clean = { id: d.id, name: d.name.trim(), icon: d.icon || "🎯",
+    const clean = { id: d.id, name: d.name.trim(), icon: d.icon || "i-target",
                     groupBy: d.groupBy, filters: d.filters || [], start: d.start };
     if (i >= 0) list[i] = clean; else list.push(clean);
     chStoreCustom(list);

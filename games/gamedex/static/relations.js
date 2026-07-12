@@ -190,7 +190,7 @@ function relCardHtml(entry) {
   const badge = { done: "✓ Beaten", owned: "● Owned", listed: "In your list", none: "Not in your collection" }[state];
   const art = cover
     ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">`
-    : `<span class="rl-ph">🎮</span>`;
+    : `<span class="rl-ph">${icon("i-library", 18)}</span>`;
   return `<button class="rl-card rl-${state}"${row ? ` data-rlk="${escapeHtml(String(row._k))}"` : ""}
       title="${escapeHtml(entry.name)}">
     ${art}
@@ -220,7 +220,7 @@ function relationsHtml(detail) {
   const kind = rel.gameTypeLabel && rel.gameTypeLabel !== "Main game"
     ? `<span class="rl-kind">${escapeHtml(rel.gameTypeLabel)}${rel.versionTitle ? ` · ${escapeHtml(rel.versionTitle)}` : ""}</span>` : "";
   return `<div class="rl">
-    <div class="rl-head"><h3>🔗 Related games</h3>${kind}</div>
+    <div class="rl-head"><h3>${icon("i-layers", 16)} Related games</h3>${kind}</div>
     ${sections.join("")}
   </div>`;
 }
@@ -241,7 +241,7 @@ function editionsHtml(row) {
   const ms = row._members;
   if (!ms || ms.length < 2) return "";
   return `<div class="rl">
-    <div class="rl-head"><h3>🗂 Your copies <span class="muted">${ms.length}</span></h3></div>
+    <div class="rl-head"><h3>${icon("i-combine", 16)} Your copies <span class="muted">${ms.length}</span></h3></div>
     <div class="rl-copies">${ms.map((m, i) => {
       const e = ENRICH[m._k] || {};
       const kind = e.rel && e.rel.type && e.rel.type !== "Main game" ? e.rel.type : "";

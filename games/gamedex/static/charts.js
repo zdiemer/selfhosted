@@ -441,7 +441,7 @@ function posterRow(rows, opts = {}) {
     const cs = coverSrc(ENRICH[r._k], "cover_big");
     const art = cs
       ? `<img loading="lazy" src="${escapeHtml(cs)}" alt="">`
-      : `<span class="poster-ph">🎮</span>`;
+      : `<span class="poster-ph">${icon("i-library", 22)}</span>`;
     const label = note ? note(r) : "";
     return `<button class="poster"${chartLink(() => openDrawer(r, r.game ? "completed" : "games"))}
       title="${escapeHtml(String(r.title || r.game))}">

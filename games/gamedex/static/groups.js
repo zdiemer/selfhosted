@@ -21,15 +21,15 @@ const grRows = () => ((DATA.sheets.games || {}).rows || []).filter((r) => r.titl
    Vale"), not lists. Splitting on punctuation would invent studios. One row
    belongs to exactly one group per axis. */
 const GROUPINGS = [
-  { id: "series", label: "Series", icon: "🎬", key: (r) => r.franchise,
+  { id: "series", label: "Series", icon: "i-timeline", key: (r) => r.franchise,
     units: "franchises", blurb: "Franchises in release order. How far through Castlevania are you?" },
-  { id: "developer", label: "Developers", icon: "🛠️", key: (r) => r.developer,
+  { id: "developer", label: "Developers", icon: "i-edit", key: (r) => r.developer,
     units: "studios", blurb: "Every studio you own something by — and what you never got round to." },
-  { id: "publisher", label: "Publishers", icon: "🏢", key: (r) => r.publisher,
+  { id: "publisher", label: "Publishers", icon: "i-package", key: (r) => r.publisher,
     units: "publishers", blurb: "Who put it on the shelf, rather than who made it." },
-  { id: "genre", label: "Genres", icon: "🎯", key: (r) => r.genre,
+  { id: "genre", label: "Genres", icon: "i-target", key: (r) => r.genre,
     units: "genres", blurb: "What you actually play, as opposed to what you buy." },
-  { id: "platform", label: "Platforms", icon: "🕹️", key: (r) => r.platform,
+  { id: "platform", label: "Platforms", icon: "i-dice", key: (r) => r.platform,
     units: "platforms", blurb: "A shelf per machine, with how much of it you've finished." },
 ];
 const grouping = (id) => GROUPINGS.find((g) => g.id === id);
@@ -83,7 +83,7 @@ function groupCardHtml(s) {
   const cs = art ? coverSrc(ENRICH[art._k], "cover_big") : "";
   const complete = s.done === s.games.length;
   return `<button class="fr-card${complete ? " done" : ""}" data-fr="${escapeHtml(s.name)}" data-fk="${escapeHtml(String((art && art._k) || ""))}">
-    ${cs ? `<img class="fr-art" loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-art ph">🎮</span>`}
+    ${cs ? `<img class="fr-art" loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-art ph">${icon("i-library", 22)}</span>`}
     <span class="fr-body">
       <b>${escapeHtml(s.name)}</b>
       <span class="muted">${s.done} of ${s.games.length} finished${s.owned ? ` · ${s.owned} owned` : ""}</span>
@@ -103,7 +103,7 @@ function groupGameRow(g, i) {
   const t = playtimeOf(g);
   return `<button class="fr-game fr-${state}" data-fg="${escapeHtml(String(g._k || ""))}" data-fi="${i}">
     <span class="fr-mark">${mark}</span>
-    ${cs ? `<img loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-ph">🎮</span>`}
+    ${cs ? `<img loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-ph">${icon("i-library", 16)}</span>`}
     <span class="fr-game-t"><b>${escapeHtml(String(g.title))}</b><span class="muted">${bits}</span></span>
     <span class="fr-game-x">${t != null ? `<span class="muted">${fmtHours(t)}</span>` : ""}${score}</span>
   </button>`;
@@ -131,7 +131,7 @@ function renderGroups() {
         <button class="ch-back" id="grBack">← All ${escapeHtml(g.units)}</button>
         <div class="fr-head">
           <div>
-            <span class="h-eyebrow">${g.icon} ${escapeHtml(g.label)}</span>
+            <span class="h-eyebrow">${glyph(g.icon, 14)} ${escapeHtml(g.label)}</span>
             <h1>${escapeHtml(s.name)}</h1>
             <p class="muted">${s.games.length} games · ${s.done} finished · ${s.owned} owned</p>
             <div class="ch-bar big" style="margin:14px 0 0"><span style="width:${(s.pct * 100).toFixed(1)}%"></span></div>
@@ -165,7 +165,7 @@ function renderGroups() {
       <h1>${g.icon} ${escapeHtml(g.label)}</h1>
       <p>${all.length.toLocaleString()} ${escapeHtml(g.units)} with ${MIN_GROUP}+ games · ${finished.toLocaleString()} finished end to end.</p>
       <div class="rev-controls">
-        <input id="grQ" type="search" placeholder="Find a ${escapeHtml(g.units.replace(/e?s$/, ""))}…" value="${escapeHtml(groupState.q)}" autocomplete="off">
+        ${searchField("grQ", `Find a ${g.units.replace(/e?s$/, "")}…`, groupState.q)}
         <label class="ctl">Sort
           <select id="grSort">${Object.entries(GROUP_SORTS).map(([k, v]) =>
             `<option value="${k}"${k === groupState.sort ? " selected" : ""}>${escapeHtml(v.label)}</option>`).join("")}</select>
@@ -198,7 +198,7 @@ function renderGroupMenu(host) {
     const top = all.slice().sort((a, b) => b.games.length - a.games.length).slice(0, 3);
     const done = all.filter((s) => s.done === s.games.length).length;
     return `<button class="gr-tile" data-gk="${escapeHtml(g.id)}">
-      <span class="gr-icon">${g.icon}</span>
+      <span class="gr-icon">${glyph(g.icon, 26)}</span>
       <span class="gr-tile-b">
         <b>${escapeHtml(g.label)}</b>
         <span class="gr-n">${all.length.toLocaleString()} ${escapeHtml(g.units)}${done ? ` · ${done.toLocaleString()} finished` : ""}</span>

@@ -141,7 +141,7 @@ function homeCard(row, sheet, note) {
   const title = escapeHtml(String(row.title || row.game || "Untitled"));
   const cover = cs
     ? `<img class="card-cover${pixel}" loading="lazy" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="card-cover ph">🎮</div>`;
+    : `<div class="card-cover ph">${icon("i-library", 26)}</div>`;
   const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
     .map((x) => escapeHtml(String(x))).join(" · ");
   return `<button class="card h-card" data-hk="${escapeHtml(String(row._k || ""))}" data-hs="${sheet}">
@@ -192,7 +192,7 @@ function heroSection(playing) {
     <div class="h-hero-bg${bg ? " on" : ""}"></div>
     ${pager}
     <div class="h-hero-inner">
-      ${cs ? `<img class="h-hero-cover" src="${escapeHtml(cs)}" alt="">` : `<div class="h-hero-cover ph">🎮</div>`}
+      ${cs ? `<img class="h-hero-cover" src="${escapeHtml(cs)}" alt="">` : `<div class="h-hero-cover ph">${icon("i-library", 34)}</div>`}
       <div class="h-hero-txt">
         <span class="h-eyebrow">Continue playing</span>
         <h1>${escapeHtml(String(row.title))}</h1>
@@ -226,7 +226,7 @@ function onThisDay() {
     homeCard(r, "completed", `You finished it ${agoText(yearsAgo(r.date))}`));
 
   const today = hToday().toLocaleDateString(undefined, { month: "long", day: "numeric" });
-  return `<div class="h-otd-head"><h2>📅 On this day <span class="muted">${escapeHtml(today)}</span></h2></div>` +
+  return `<div class="h-otd-head"><h2>${icon("i-calendar", 17)} On this day <span class="muted">${escapeHtml(today)}</span></h2></div>` +
     shelf("otdDone", `<span class="h-sub">You finished these</span>`, doneCards) +
     shelf("otdRel", `<span class="h-sub">Released on this date</span>`, relCards);
 }
@@ -240,7 +240,7 @@ function challengeSpotlight() {
   const r = live[0];
   const buckets = chSortBuckets(r, r.remaining).slice(0, 4);
   return `<section class="h-sect">
-    <div class="h-sect-head"><h2>🎯 Closest challenge</h2>
+    <div class="h-sect-head"><h2>${icon("i-target", 17)} Closest challenge</h2>
       <div class="h-sect-act"><button class="linkbtn" id="hChalAll">See all →</button></div></div>
     <button class="h-chal" id="hChal">
       <span class="ch-icon big">${r.c.icon}</span>
@@ -323,21 +323,21 @@ function renderHome() {
       <div class="h-picks">${picks.map((p) =>
         homeCard(p.row, "games", `<span class="h-why">${escapeHtml(p.why)}</span>`)).join("")}</div>
     </section>` : "") +
-    shelf("hRecs", "💡 Because you liked…", recRows.map(({ row, rec }) =>
+    shelf("hRecs", `${icon("i-star", 16)} Because you liked…`, recRows.map(({ row, rec }) =>
       homeCard(row, "games", `<span class="h-why">Like ${escapeHtml(rec.because.slice(0, 2).join(" & "))}</span>`))) +
-    shelf("hLoved", "🔮 You'd probably love", loved.map(({ r, p }) =>
+    shelf("hLoved", `${icon("i-trend", 16)} You'd probably love`, loved.map(({ r, p }) =>
       homeCard(r, "games", `<span class="h-why">~${Math.round(p.score * 100)}% predicted</span>`))) +
-    shelf("hPlaying", "🎮 Now playing", playing.map((r) => homeCard(r, "games",
+    shelf("hPlaying", `${icon("i-play", 16)} Now playing`, playing.map((r) => homeCard(r, "games",
       r.playingProgress != null ? `${Math.round(+r.playingProgress * 100)}% through` : ""))) +
-    shelf("hNext", "⏭️ Up next", upNext.map((r) => homeCard(r, "games"))) +
-    shelf("hHold", "⏸️ On hold", onHold.map((r) => homeCard(r, "games",
+    shelf("hNext", `${icon("i-play", 16)} Up next`, upNext.map((r) => homeCard(r, "games"))) +
+    shelf("hHold", `${icon("i-clock", 16)} On hold`, onHold.map((r) => homeCard(r, "games",
       r.dateStarted ? `Started ${escapeHtml(fmtDate(r.dateStarted))}` : ""))) +
     onThisDay() +
-    shelf("hRecent", "🏆 Recently finished", recent.map((r) => homeCard(r, "completed",
+    shelf("hRecent", `${icon("i-trophy", 16)} Recently finished`, recent.map((r) => homeCard(r, "completed",
       r.rating != null ? `You gave it ${Math.round(r.rating * 100)}%` : (r.date ? escapeHtml(fmtDate(r.date)) : "")))) +
-    shelf("hAdded", "➕ Recently added", added.map((r) => homeCard(r, "games",
+    shelf("hAdded", `${icon("i-plus", 16)} Recently added`, added.map((r) => homeCard(r, "games",
       r.dateAdded ? `Added ${escapeHtml(fmtDate(r.dateAdded))}` : ""))) +
-    shelf("hOrder", "📦 On order", orders.map((r) => homeCard(r, "onOrder",
+    shelf("hOrder", `${icon("i-package", 16)} On order`, orders.map((r) => homeCard(r, "onOrder",
       [r.orderedDate ? `Ordered ${escapeHtml(fmtDate(r.orderedDate))}` : "", r.vendor ? escapeHtml(String(r.vendor)) : ""]
         .filter(Boolean).join(" · ")))) +
     challengeSpotlight();

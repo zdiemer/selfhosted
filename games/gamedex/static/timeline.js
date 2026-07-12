@@ -30,7 +30,7 @@ function tlEntry(r, i) {
   const cs = coverSrc(ENRICH[r._k], "cover_big");
   const cover = cs
     ? `<img class="tl-cover" loading="lazy" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="tl-cover ph">🎮</div>`;
+    : `<div class="tl-cover ph">${icon("i-library", 20)}</div>`;
   const score = r.rating != null
     ? `<span class="tl-score ${ratingClass(r.rating)}">${Math.round(r.rating * 100)}</span>` : "";
   const bits = [r.platform, r.playTime != null ? fmtHours(r.playTime) : null]

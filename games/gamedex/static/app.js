@@ -29,6 +29,16 @@ const combineOn = () => tabState[activeTab].combine;
 
 const $ = (sel) => document.querySelector(sel);
 
+/* Icons. `icon("i-play")` -> inline SVG that inherits currentColor.
+   `glyph(v)` renders an icon id if it looks like one, and otherwise passes the
+   value straight through — because a custom challenge's icon is an emoji YOU
+   chose, and that's data, not chrome. */
+const icon = (id, size = 16) =>
+  `<svg class="ico" width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
+const glyph = (v, size = 16) =>
+  (typeof v === "string" && v.startsWith("i-")) ? icon(v, size) : `<span class="emo">${v || ""}</span>`;
+
+
 // ---- formatting ---------------------------------------------------------
 function fmtHours(h) {
   const total = Math.round(h * 60);
@@ -228,7 +238,7 @@ function detailHtml(d) {
           const mark = s.row.completed ? `<i class="sim-done" title="Beaten">✓</i>`
             : s.row.owned ? `<i class="sim-owned" title="Owned">●</i>` : "";
           return `<button class="sim" data-simk="${escapeHtml(String(s.row._k || ""))}" title="${escapeHtml(s.name)}">
-            ${cover ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">` : `<span class="sim-ph">🎮</span>`}
+            ${cover ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">` : `<span class="sim-ph">${icon("i-library", 18)}</span>`}
             ${mark}
             <span>${escapeHtml(s.name)}</span>
           </button>`;
@@ -297,7 +307,7 @@ function predictWhyHtml(row) {
   return `<details class="pw" open>
     <summary>
       <span class="pw-head">
-        <span class="pw-eyebrow">🔮 Predicted for you</span>
+        <span class="pw-eyebrow">${icon("i-trend", 13)} Predicted for you</span>
         <span class="pw-score ${ratingClass(p.score)}">${Math.round(p.score * 100)}<small>%</small></span>
       </span>
       <span class="pw-conf pw-${conf}">${conf} confidence</span>
@@ -317,7 +327,7 @@ function heroHtml(row, titleText) {
     ? `<img class="cover-big${pixel}" id="heroCover" src="${escapeHtml(cs)}" alt="">`
     : coverPending(row)
       ? `<div class="cover-big skel" id="heroCover"></div>`
-      : `<div class="cover-big ph" id="heroCover">🎮</div>`;
+      : `<div class="cover-big ph" id="heroCover">${icon("i-library", 40)}</div>`;
   const bits = [row.platform, row.releaseYear || row.releaseDate || row.release, row.genre]
     .filter((x) => x != null && x !== "")
     .map((x) => `<span class="pill facet-link" data-fk="${x === row.platform ? "platform" : x === row.genre ? "genre" : "releaseYear"}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`);
@@ -387,7 +397,7 @@ function mapControlHtml(key) {
   if (ENRICH_SOURCES.includes("steamx")) rows.push({ id: "steamx", label: "Steam Deck / ProtonDB", ph: "store.steampowered.com/app/<appid>/" });
   if (ENRICH_SOURCES.includes("speedrun")) rows.push({ id: "speedrun", label: "speedrun.com", ph: "speedrun.com/<game>" });
   if (ENRICH_SOURCES.includes("guides")) rows.push({ id: "guides", label: "StrategyWiki guide", ph: "strategywiki.org/wiki/<Page>" });
-  return `<details class="map-menu"><summary>🔧 Fix mapping</summary>` +
+  return `<details class="map-menu"><summary>${icon("i-edit", 13)} Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
       <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
       <button class="btn" data-map-go>Map</button>
@@ -520,7 +530,7 @@ function gameyeHtml(key) {
     const total = ge[key2] * qty;
     mine = `<div class="hltb-row mine"><span>Your copy${qty > 1 ? ` ×${qty}` : ""}${cond ? ` (${escapeHtml(cond)})` : ""}</span><b>$${total.toFixed(2)}</b></div>`;
   }
-  return `<div class="hltb"><div class="hltb-head">💵 Value (GameEye)</div>` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-trend", 15)} Value (GameEye)</div>` +
     rows.map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>$${v.toFixed(2)}</b></div>`).join("") + mine +
     (ge.url ? `<a class="hltb-link" href="${escapeHtml(ge.url)}" target="_blank" rel="noopener">View on GameEye ↗</a>` : "") +
     `</div>`;
@@ -542,7 +552,7 @@ function arcadeHtml(key) {
     ["Manufacturer", a.manufacturer], ["Year", a.year],
   ].filter(([, v]) => v)
     .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
-  return `<div class="hltb"><div class="hltb-head">🕹️ Arcade cabinet${a.romset ? ` <span class="muted">${escapeHtml(a.romset)}</span>` : ""}</div>` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-dice", 15)} Arcade cabinet${a.romset ? ` <span class="muted">${escapeHtml(a.romset)}</span>` : ""}</div>` +
     (shots ? `<div class="adb-arts">${shots}</div>` : "") + spec +
     (a.history ? `<details class="adb-history"><summary>MAME history</summary><p>${escapeHtml(a.history)}</p></details>` : "") +
     (a.url ? `<a class="hltb-link" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">View on Arcade Database ↗</a>` : "") +
@@ -559,7 +569,7 @@ function vndbHtml(key) {
   ].filter(([, x]) => x)
     .map(([l, x]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(x))}</b></div>`).join("");
   if (!rows) return "";
-  return `<div class="hltb"><div class="hltb-head">📖 Visual novel (VNDB)</div>${rows}` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-review", 15)} Visual novel (VNDB)</div>${rows}` +
     (v.url ? `<a class="hltb-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">View on VNDB ↗</a>` : "") +
     `</div>`;
 }
@@ -569,7 +579,7 @@ function salesHtml(key) {
   if (!v || v.units == null) return "";
   const rows = [["Shipped", v.shipped], ["Sold", v.sold]].filter(([, x]) => x != null)
     .map(([l, x]) => `<div class="hltb-row"><span>${l}</span><b>${x.toLocaleString()}</b></div>`).join("");
-  return `<div class="hltb"><div class="hltb-head">📈 Sales (VGChartz)</div>${rows}` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-trend", 15)} Sales (VGChartz)</div>${rows}` +
     `<div class="hltb-note muted">VGChartz estimate${v.console ? ` · ${escapeHtml(v.console)}` : ""}</div>` +
     (v.url ? `<a class="hltb-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">View on VGChartz ↗</a>` : "") +
     `</div>`;
@@ -586,7 +596,7 @@ function thumbyHtml(key) {
   // card. Show it, so they aren't blank.
   const vid = t.video
     ? `<video class="thumby-vid" src="${escapeHtml(t.video)}" autoplay muted loop playsinline></video>` : "";
-  return `<div class="hltb"><div class="hltb-head">🔬 ${escapeHtml(t.platform || "Thumby")}</div>` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-target", 15)} ${escapeHtml(t.platform || "Thumby")}</div>` +
     (art ? `<div class="adb-arts">${art}</div>` : "") + vid +
     (t.description ? `<p class="thumby-desc">${escapeHtml(t.description)}</p>` : "") +
     (t.url ? `<a class="hltb-link" href="${escapeHtml(t.url)}" target="_blank" rel="noopener">View on GitHub ↗</a>` : "") +
@@ -611,7 +621,7 @@ function steamxHtml(key) {
   const ach = a
     ? `<div class="hltb-row"><span>Achievements</span><b>${a.count} <span class="muted">· median ${a.medianPercent}% · rarest ${a.rarestPercent}%</span></b></div>` : "";
   if (!(deck || proton || rev || own || ccu || ach)) return "";
-  return `<div class="hltb"><div class="hltb-head">🐧 Steam</div>${deck}${proton}${rev}${own}${ccu}${ach}` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-play", 15)} Steam</div>${deck}${proton}${rev}${own}${ccu}${ach}` +
     (x.protonUrl ? `<a class="hltb-link" href="${escapeHtml(x.protonUrl)}" target="_blank" rel="noopener">View on ProtonDB ↗</a>` : "") +
     `</div>`;
 }
@@ -622,7 +632,7 @@ function speedrunHtml(key) {
   if (!r || !r.wrTime) return "";
   const rows = (r.categories || []).slice(0, 3).map((c) =>
     `<div class="hltb-row"><span>${escapeHtml(c.category)}</span><b>${escapeHtml(c.time)}</b></div>`).join("");
-  return `<div class="hltb"><div class="hltb-head">🏁 World records</div>${rows}` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-trophy", 15)} World records</div>${rows}` +
     (r.url ? `<a class="hltb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Leaderboards on speedrun.com ↗</a>` : "") +
     `</div>`;
 }
@@ -632,7 +642,7 @@ function guidesHtml(key) {
   if (!g) return "";
   const secs = (g.sections || []).slice(0, 6)
     .map((x) => `<span class="chip">${escapeHtml(x)}</span>`).join("");
-  return `<div class="hltb"><div class="hltb-head">📖 Guide (StrategyWiki)</div>` +
+  return `<div class="hltb"><div class="hltb-head">${icon("i-review", 15)} Guide (StrategyWiki)</div>` +
     (secs ? `<div class="chips">${secs}</div>` : "") +
     `<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">${g.hasWalkthrough ? "Read the walkthrough" : "Open the guide"} ↗</a></div>`;
 }
@@ -840,6 +850,17 @@ const columns = () => sheet().columns;
 const searchCols = () => columns().filter((c) => c.search).map((c) => c.key);
 const colByKey = (key) => columns().find((c) => c.key === key);
 
+/* One search field. There were three — the top bar, Groupings and Reviews — each
+   styled separately and drifting apart. Same markup everywhere now, so the icon,
+   the height, the radius and the focus ring can't disagree. */
+function searchField(id, placeholder, value = "", cls = "") {
+  return `<span class="field ${cls}">
+    <svg class="ico" width="15" height="15" aria-hidden="true"><use href="#i-search"/></svg>
+    <input id="${id}" type="search" placeholder="${escapeHtml(placeholder)}"
+      value="${escapeHtml(String(value))}" autocomplete="off" spellcheck="false">
+  </span>`;
+}
+
 /* Sort keys that aren't sheet columns. The estimated rating is computed in the
    browser (ridge regression over your own ratings), so there is no cell to sort
    on — cmpBy has to be told how to get the value instead of reading a[key]. */
@@ -1038,7 +1059,7 @@ function rommHtml(row) {
   const id = rommRomId(row);
   if (!id) return "";
   return `<a class="btn play" href="${escapeHtml(rommPlayUrl(id))}" target="_blank" rel="noopener"
-     title="Play in the browser via RomM">🕹 Play now</a>`;
+     title="Play in the browser via RomM">${icon("i-play", 15)} Play now</a>`;
 }
 
 // The map arrives after the drawer may already be open; fill it in rather than
@@ -1398,7 +1419,12 @@ function renderFacets() {
         st.expanded[filterKey] = fi.value;
         paintOptions();          // this group only; the input is never replaced
       };
-      body.appendChild(fi);
+      // Same field as every other search box: icon inside, one focus ring.
+      const fwrap = document.createElement("span");
+      fwrap.className = "field field-facet";
+      fwrap.innerHTML = `<svg class="ico" width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg>`;
+      fwrap.appendChild(fi);
+      body.appendChild(fwrap);
     }
 
     paintOptions();
@@ -1625,10 +1651,10 @@ function cardBodyHtml(row) {
   const parts = [row.platform, relDisp].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
   if (pt != null) parts.push("⏱ " + fmtHours(pt));
   const cv = collectionValueOf(row);
-  if (cv != null) parts.push("💵 $" + cv.toFixed(2));
+  if (cv != null) parts.push("$" + cv.toFixed(2));
   if (row._members && row._members.length > 1) parts.push(`⧉ ${row._members.length} copies`);
   const units = salesOf(row);
-  if (units != null) parts.push("📈 " + fmtUnits(units));
+  if (units != null) parts.push("↗ " + fmtUnits(units));
   const rating = row.rating != null
     ? `<span class="card-rating ${ratingClass(row.rating)}" title="My rating">${Math.round(row.rating * 100)}</span>` : "";
   const mc = metacriticOf(row);
@@ -1656,7 +1682,7 @@ function renderGrid(pageRows) {
     const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
     const cover = cs
       ? `<img class="card-cover${pixel}" loading="lazy" src="${cs}" alt="">`
-      : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : "🎮"}</div>`;
+      : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : icon("i-library", 26)}</div>`;
     const card = document.createElement("div");
     card.style.setProperty("--i", Math.min(i, 24) * 22 + "ms");   // fan-in stagger
     // A part-finished collection is yellow, and that beats the green "done"
@@ -1852,7 +1878,7 @@ function patchEnrichedCells() {
     } else if (!cs && cur && cur.classList.contains("skel") &&
                (ENRICH_COMPLETE || NO_MATCH.has(card.dataset.k) || (card.dataset.k in ENRICH))) {
       cur.classList.remove("skel");                    // resolved, just no cover
-      cur.textContent = "🎮";
+      cur.innerHTML = icon("i-library", 26);
     }
     const body = card.querySelector(".card-body");
     if (body) body.innerHTML = cardBodyHtml(row);      // text only — safe to redraw
@@ -1924,7 +1950,7 @@ function renderPager(pages) {
 // A real empty state beats an empty grid.
 function emptyState(title, hint, action) {
   return `<div class="empty">
-    <div class="empty-art">🕹️</div>
+    <div class="empty-art">${icon("i-library", 40)}</div>
     <h3>${escapeHtml(title)}</h3>
     <p>${escapeHtml(hint)}</p>
     ${action ? `<button class="btn" id="emptyAction">${escapeHtml(action)}</button>` : ""}
@@ -2728,14 +2754,14 @@ function pickGame() {
 
 function pickCard(row) {
   const cs = coverSrc(ENRICH[row._k], "cover_big");
-  const cover = cs ? `<img src="${cs}" alt="">` : `<div class="pick-ph">🎮</div>`;
+  const cover = cs ? `<img src="${cs}" alt="">` : `<div class="pick-ph">${icon("i-library", 30)}</div>`;
   const pt = playtimeOf(row), mc = metacriticOf(row);
   const bits = [row.platform, row.releaseYear, row.genre].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
   if (pt != null) bits.push("⏱ " + fmtHours(pt));
   if (mc != null) bits.push("★ " + Math.round(mc * 100));
   return `<div class="pick-card">${cover}<div class="pick-info"><h2>${escapeHtml(String(row.title))}</h2>
     <div class="pick-meta">${bits.join(" · ")}</div>
-    <div class="pick-actions"><button class="pick-reroll" id="pickReroll">🎲 Re-roll</button>
+    <div class="pick-actions"><button class="pick-reroll" id="pickReroll">${icon("i-dice", 15)} Re-roll</button>
     <span class="muted">Tap the card for full details</span></div></div></div>`;
 }
 
@@ -2764,7 +2790,7 @@ function renderPicker() {
         <select id="pickTime">${TIMES.map(([m, l]) =>
           `<option value="${m}" ${m === pickState.minutes ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select>
       </label>
-      <button id="pickBtn" class="pick-btn">🎲 Pick for me</button>
+      <button id="pickBtn" class="pick-btn">${icon("i-dice", 16)} Pick for me</button>
       <span class="pick-count">${pool.length.toLocaleString()} game${pool.length === 1 ? "" : "s"} in pool</span>
     </div>
     <div class="pick-result" id="pickResult">${pickState.picked && pool.includes(pickState.picked)
@@ -2795,7 +2821,13 @@ $("#search").addEventListener("input", (e) => {
     syncURL(false);        // replace so typing doesn't flood history
   }, 140);
 });
-$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { switchTab(e.target.dataset.tab, true); nav(); } });
+// closest(), not e.target: a tab now contains an <svg> and a <span>, so the click
+// lands on the icon and e.target.dataset.tab is undefined. This is exactly what
+// broke navigation when the emoji became icons.
+$("#tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (btn) { switchTab(btn.dataset.tab, true); nav(); }
+});
 $("#clear").addEventListener("click", () => {
   const st = tabState[activeTab];
   st.search = ""; st.facets = {}; st.page = 1;
@@ -2870,10 +2902,16 @@ function currentTheme() {
 }
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
-  $("#theme").textContent = t === "dark" ? "☀" : "☾";
+  // Show the mode you'd switch TO, so the control says what it does.
+  $("#theme").innerHTML = icon(t === "dark" ? "i-sun" : "i-moon", 16);
   $("#theme").title = t === "dark" ? "Switch to light" : "Switch to dark";
 }
 applyTheme(currentTheme());
+// The shortcut differs by platform, so the keycap should too.
+{
+  const mod = $("#cmdkMod");
+  if (mod && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)) mod.textContent = "\u2318";
+}
 $("#theme").addEventListener("click", () => {
   const next = currentTheme() === "dark" ? "light" : "dark";
   localStorage.setItem(THEME_KEY, next);
@@ -2890,25 +2928,26 @@ function cmdkCandidates(q) {
   const needle = q.toLowerCase().trim();
   if (!needle) {
     return [
-      { kind: "Tab", label: "🏠 Home", run: () => switchTab("home") },
-      { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
-      { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
-      { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
-      { kind: "Tab", label: "🗂 Groupings", run: () => switchTab("groups") },
-      { kind: "Tab", label: "📝 Reviews", run: () => switchTab("reviews") },
-      { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
-      { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
-      { kind: "Tab", label: "🎯 Challenges", run: () => switchTab("challenges") },
-      { kind: "Tab", label: "🩺 Health", run: () => switchTab("health") },
+      { kind: "Tab", label: "Home", icon: "i-home", run: () => switchTab("home") },
+      { kind: "Tab", label: "All Games", icon: "i-library", run: () => switchTab("games") },
+      { kind: "Tab", label: "Completed", icon: "i-trophy", run: () => switchTab("completed") },
+      { kind: "Tab", label: "On Order", icon: "i-package", run: () => switchTab("onOrder") },
+      { kind: "Tab", label: "Groupings", icon: "i-layers", run: () => switchTab("groups") },
+      { kind: "Tab", label: "Reviews", icon: "i-review", run: () => switchTab("reviews") },
+      { kind: "Tab", label: "Stats", icon: "i-stats", run: () => switchTab("stats") },
+      { kind: "Tab", label: "Pick", icon: "i-dice", run: () => switchTab("pick") },
+      { kind: "Tab", label: "Challenges", icon: "i-target", run: () => switchTab("challenges") },
+      { kind: "Tab", label: "Health", icon: "i-health", run: () => switchTab("health") },
     ];
   }
   // Tabs
-  const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
-                ["onOrder", "📦 On Order"], ["reviews", "📝 Reviews"], ["stats", "📊 Stats"],
-                ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"], ["health", "🩺 Health"],
-                ["groups", "🗂 Groupings"]];
-  for (const [id, label] of tabs) {
-    if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
+  const tabs = [["home", "Home", "i-home"], ["games", "All Games", "i-library"],
+                ["completed", "Completed", "i-trophy"], ["onOrder", "On Order", "i-package"],
+                ["reviews", "Reviews", "i-review"], ["stats", "Stats", "i-stats"],
+                ["pick", "Pick", "i-dice"], ["challenges", "Challenges", "i-target"],
+                ["health", "Health", "i-health"], ["groups", "Groupings", "i-layers"]];
+  for (const [id, label, ico] of tabs) {
+    if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, icon: ico, run: () => switchTab(id) });
   }
   // Games — prefix matches first, then substring. Capped, so typing stays fast.
   const rows = (DATA.sheets.games || {}).rows || [];
@@ -2974,7 +3013,7 @@ function cmdkRender() {
   host.innerHTML = cmdk.results.map((r, i) => {
     const cover = r.row ? coverSrc(ENRICH[r.row._k], "cover_small") : "";
     const art = r.row
-      ? (cover ? `<img src="${escapeHtml(cover)}" alt="">` : `<span class="cmdk-ph">🎮</span>`)
+      ? (cover ? `<img src="${escapeHtml(cover)}" alt="">` : `<span class="cmdk-ph">${icon("i-library", 15)}</span>`)
       : "";
     return `<button class="cmdk-item${i === cmdk.sel ? " sel" : ""}" data-i="${i}">
       ${art}<span class="cmdk-txt"><b>${escapeHtml(r.label)}</b>${r.sub ? `<span>${escapeHtml(r.sub)}</span>` : ""}</span>

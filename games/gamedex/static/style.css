@@ -1,6 +1,22 @@
+/* Self-hosted. These used to come from Google on every load — two preconnects and
+   a render-blocking stylesheet, which is also the reason the "offline" PWA wasn't.
+
+   Archivo 800 for display: a grotesque with catalogue heft, poster-loud at weight.
+   IBM Plex Sans for the interface: built for data, and not Inter. */
+@font-face {
+  font-family: "Archivo";
+  src: url("fonts/archivo-800.woff2") format("woff2");
+  font-weight: 800; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Plex";
+  src: url("fonts/plex-sans.woff2") format("woff2");
+  font-weight: 100 700; font-style: normal; font-display: swap;
+}
+
 /* ==========================================================================
    Gamedex — design system
-   Violet/cyan on near-black. Outfit for display, Inter for text.
+   Violet on near-black. Archivo for display, IBM Plex Sans for text.
    ========================================================================== */
 :root {
   color-scheme: dark;
@@ -62,7 +78,8 @@
   --sh-3: 0 24px 64px rgba(0, 0, 0, .6);
   --glow: 0 0 0 1px var(--accent-line), 0 10px 34px rgba(124, 92, 255, .20);
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --display: "Outfit", system-ui, sans-serif;
+  --display: "Archivo", system-ui, sans-serif;
+  --font: "Plex", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
 /* Light theme. Set by the toggle (data-theme) or, absent a choice, by the OS. */
@@ -126,7 +143,7 @@
 html, body { margin: 0; height: 100%; }
 body {
   color: var(--text);
-  font: 400 14px/1.5 "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font: 400 14px/1.5 var(--font);
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -178,32 +195,75 @@ a { color: var(--accent-2); }
   border-bottom: 1px solid var(--border-soft);
   position: sticky; top: 0; z-index: 20;
 }
+/* ---- identity ----------------------------------------------------------
+   The mark is a cartridge; the wordmark sets "dex" quieter than "Game", because
+   the second half is the part that means catalogue and the first is just what it
+   catalogues. */
 .brand {
-  font-family: var(--display); font-weight: 800; font-size: 17px;
-  white-space: nowrap; letter-spacing: -.02em;
+  display: inline-flex; align-items: center; gap: 9px;
   background: none; border: none; padding: 0; color: var(--text);
   cursor: pointer; flex-shrink: 0; transition: opacity .14s, transform .14s var(--ease);
 }
-.brand:hover { opacity: .82; transform: translateY(-1px); }
+.brand:hover { opacity: .85; transform: translateY(-1px); }
 .brand:active { transform: none; }
-.brand span {
-  background: linear-gradient(92deg, var(--accent) 10%, var(--accent-2));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+.brand-mark { flex-shrink: 0; }
+.brand-word {
+  font-family: var(--display); font-weight: 800; font-size: 19px;
+  letter-spacing: -.02em; white-space: nowrap;
 }
-#search {
-  flex: 1; max-width: 560px;
-  min-width: 0;              /* flex items default to min-width:auto — an input's
-                                intrinsic size would then force page overflow */
-  padding: 10px 14px;
+.brand-word span { color: var(--muted); }
+
+/* Icons inherit the theme — the whole reason emoji had to go. Never set a fill
+   or stroke here: currentColor is doing the work. */
+.ico { flex-shrink: 0; vertical-align: -.15em; }
+button .ico, a .ico { pointer-events: none; }
+
+/* Keyboard focus was the browser default, which is an accessibility gap rather
+   than a polish item. */
+:where(button, a, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* ---- the search field, once -------------------------------------------------
+   Three of these had drifted apart (top bar, Groupings, Reviews). One component
+   now: the icon sits inside, the input owns the box, and focus is the same
+   everywhere. */
+.field { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.field .ico {
+  position: absolute; left: 12px; color: var(--dim); pointer-events: none;
+  transition: color .15s var(--ease);
+}
+.field input {
+  width: 100%; min-width: 0;      /* an input's intrinsic size would force overflow */
+  padding: 9px 14px 9px 34px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--text); font-size: 14px; font-family: inherit;
-  transition: border-color .16s, box-shadow .16s, background .16s;
+  color: var(--text); font: 400 13.5px var(--font);
+  transition: border-color .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
 }
-#search::placeholder { color: var(--dim); }
-#search:focus { outline: none; border-color: var(--accent-line); background: var(--surface-2); box-shadow: 0 0 0 4px var(--accent-soft); }
+.field input::placeholder { color: var(--dim); }
+.field input:focus {
+  outline: none; border-color: var(--accent-line);
+  background: var(--surface-2); box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.field input:focus + .ico, .field:focus-within .ico { color: var(--accent); }
+.field input::-webkit-search-cancel-button { filter: grayscale(1) opacity(.5); }
+.field-top { flex: 1; max-width: 560px; }
+
 .freshness { margin-left: auto; color: var(--dim); font-size: 11.5px; text-align: right; line-height: 1.35; }
+/* The command-palette button is two keycaps, not a glyph: ⌘ is a Mac-only symbol
+   and reads as noise anywhere else, and this says exactly what to press. */
+.kbdbtn { display: inline-flex; align-items: center; gap: 3px; padding: 0 8px; }
+.kbdbtn kbd {
+  font: 600 10.5px/1 var(--font); color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 5px;
+  padding: 4px 5px; min-width: 18px; text-align: center;
+}
+.kbdbtn:hover kbd { color: var(--text); border-color: var(--accent-line); }
+
 .refreshbtn {
   background: var(--surface); color: var(--muted); border: 1px solid var(--border);
   border-radius: 10px; width: 38px; height: 38px; cursor: pointer; font-size: 17px;
@@ -243,10 +303,14 @@ a { color: var(--accent-2); }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   position: relative; background: transparent; border: none;
+  display: inline-flex; align-items: center; gap: 8px;
   color: var(--muted); padding: 13px 16px; cursor: pointer;
   font: 600 13.5px/1 var(--display); white-space: nowrap;
   transition: color .16s;
 }
+/* The icon takes the accent when the tab is active — the thing emoji could never
+   do, and the whole reason for the swap. */
+.tabs button.active .ico { color: var(--accent); }
 .tabs button::after {
   content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px;
   border-radius: 2px 2px 0 0; background: linear-gradient(90deg, var(--accent), var(--accent-2));
@@ -280,7 +344,10 @@ a { color: var(--accent-2); }
 .facet-head .chev { color: var(--dim); font-size: 10px; transition: transform .2s var(--ease); }
 .facet.collapsed .chev { transform: rotate(-90deg); }
 .facet.collapsed .facet-body { display: none; }
+.field-facet { display: flex; width: 100%; }
+.field-facet .ico { left: 10px; }
 .facet-filter {
+  padding-left: 30px !important;
   width: 100%; margin: 6px 0; padding: 6px 9px;
   border-radius: var(--r-sm); border: 1px solid var(--border);
   background: var(--bg-2); color: var(--text); font-size: 12px; font-family: inherit;
@@ -463,6 +530,17 @@ td.cover { width: 46px; padding: 5px 8px; }
 }
 .card.playing .card-preview { opacity: 1; }
 .card.playing .card-cover { opacity: 0; transition: opacity .45s var(--ease); }
+
+/* Placeholders hold an ICON now, not a character — so they need to centre a box,
+   and the icon should sit back rather than shout. */
+.card-cover.ph, .cover-big.ph, .h-hero-cover.ph, .fr-art.ph, .rev-cover.ph,
+.tl-cover.ph, .pick-ph, .poster-ph, .sim-ph, .rl-ph, .fr-ph, .cmdk-ph, .ch-chip-ph,
+.empty-art {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--dim); opacity: .55;
+}
+.emo { font-size: 1.05em; line-height: 1; }        /* a user-chosen challenge emoji */
+.ch-icon, .gr-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
 
 .card-cover.ph {
   background: var(--surface-2);
@@ -780,7 +858,7 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 .igdb-side { flex: 1; min-width: 0; }
 .igdb-rating { font-family: var(--display); font-size: 30px; font-weight: 800; margin-bottom: 10px; line-height: 1; }
-.igdb-rating small { font-size: 11.5px; font-weight: 500; color: var(--dim); font-family: "Inter"; }
+.igdb-rating small { font-size: 11.5px; font-weight: 500; color: var(--dim); font-family: var(--font); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
 .chip {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
@@ -1296,7 +1374,7 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .s-svg.drawn .rd-poly, .drawn .rd-poly { opacity: 1; transform: none; }
 .rd-dot { opacity: 0; transition: opacity .5s var(--ease) .3s; }
 .s-svg.drawn .rd-dot, .drawn .rd-dot { opacity: 1; }
-.rd-lbl { fill: var(--muted); font-size: 9.5px; font-family: "Inter"; }
+.rd-lbl { fill: var(--muted); font-size: 9.5px; font-family: var(--font); }
 
 /* Poster rows — pictures, so the page isn't wall-to-wall geometry. */
 .posters { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 10px; }
