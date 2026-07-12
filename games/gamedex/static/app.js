@@ -1571,8 +1571,9 @@ const ytSrc = (id, opts = {}) => {
   return `https://www.youtube.com/embed/${id}?${p}`;
 };
 
-// Watch a player: call onFail() if it hasn't started within YT_TIMEOUT.
-function ytWatch(frame, onFail) {
+// Watch a player: onPlay() the moment it truly starts, onFail() if it never does
+// within YT_TIMEOUT.
+function ytWatch(frame, onFail, onPlay) {
   let done = false;
   const onMsg = (e) => {
     if (!/youtube(-nocookie)?\.com$/.test(new URL(e.origin).hostname.replace(/^www\./, ""))) return;
@@ -1584,6 +1585,7 @@ function ytWatch(frame, onFail) {
       done = true;
       ytFailures = 0;
       cleanup();
+      if (onPlay) onPlay();
     }
   };
   const cleanup = () => {
@@ -1626,6 +1628,20 @@ const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matc
 const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
 let previewTimer = null, previewCard = null, previewWatch = null;
 
+// Where in the trailer to start. Rolled once per video and then remembered, so
+// hovering the same card twice shows you the same moment — a clip that jumps
+// somewhere new on every hover reads as a glitch, not as variety. Still rolled
+// fresh on each page load, so it isn't the same forever.
+const PREVIEW_START = new Map();
+const previewStart = (vid) => {
+  if (!PREVIEW_START.has(vid)) {
+    // Somewhere in the middle: trailers open on publisher logos, so 0 would show
+    // an ident every time.
+    PREVIEW_START.set(vid, 15 + Math.floor(Math.random() * 45));
+  }
+  return PREVIEW_START.get(vid);
+};
+
 function stopPreview() {
   clearTimeout(previewTimer);
   previewTimer = null;
@@ -1637,7 +1653,7 @@ function stopPreview() {
   if (!previewCard) return;
   const frame = previewCard.querySelector(".card-preview");
   if (frame) frame.remove();
-  previewCard.classList.remove("previewing");
+  previewCard.classList.remove("previewing", "playing");
   previewCard = null;
 }
 
@@ -1648,14 +1664,14 @@ function startPreview(card) {
   if (!vid || card === previewCard) return;
   stopPreview();
   previewCard = card;
-  // Somewhere in the middle: trailers run ~1–2 minutes and the interesting part
-  // is never at the front. We can't know the duration, so pick a safe window.
-  const start = 15 + Math.floor(Math.random() * 45);
   const frame = document.createElement("iframe");
   frame.className = "card-preview";
   frame.src = ytSrc(vid, {
     autoplay: "1", mute: "1", controls: "0", disablekb: "1",
-    iv_load_policy: "3", fs: "0", start: String(start),
+    iv_load_policy: "3", fs: "0", start: String(previewStart(vid)),
+    // Loop it. Left to run out, the player draws a big endscreen replay button
+    // over the card — and a preview that stops isn't a preview.
+    loop: "1", playlist: vid,
   });
   frame.allow = "autoplay; encrypted-media";
   frame.tabIndex = -1;
@@ -1664,7 +1680,13 @@ function startPreview(card) {
   card.classList.add("previewing");
   // If YouTube shows a bot wall instead of playing, a dead iframe over the box
   // art is worse than no preview at all. Put the art back.
-  previewWatch = ytWatch(frame, () => { if (previewCard === card) stopPreview(); });
+  // Hold the box art up until the video is genuinely PLAYING, then cross-fade.
+  // YouTube flashes its own chrome (a big pause bezel) for the ~1.5s it spends
+  // booting the player, and we cannot style that away through a cross-origin
+  // iframe — so simply don't show it. If the embed never plays, the art stays.
+  previewWatch = ytWatch(frame,
+    () => { if (previewCard === card) stopPreview(); },
+    () => { if (previewCard === card) card.classList.add("playing"); });
 }
 
 // Any surface that renders a .card can opt in: it just has to tell us which row

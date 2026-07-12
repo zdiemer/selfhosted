@@ -394,12 +394,14 @@ td.cover { width: 46px; padding: 5px 8px; }
 .card-preview {
   position: absolute; inset: 0; width: 100%; height: 100%;
   border: 0; pointer-events: none; z-index: 0;
-  opacity: 0; animation: previewin .5s var(--ease) .35s forwards;
+  /* Revealed by .playing, which JS sets only once the player reports it really
+     started. Fading in on a timer instead would show YouTube's boot chrome. */
+  opacity: 0; transition: opacity .45s var(--ease);
   /* A 16:9 video in a 3:4 box: fill it and crop, rather than letterbox. */
   transform: scale(1.9);
 }
-@keyframes previewin { to { opacity: 1; } }
-.card.previewing .card-cover { opacity: 0; transition: opacity .5s var(--ease) .35s; }
+.card.playing .card-preview { opacity: 1; }
+.card.playing .card-cover { opacity: 0; transition: opacity .45s var(--ease); }
 
 .card-cover.ph {
   background: var(--surface-2);
