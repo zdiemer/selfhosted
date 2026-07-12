@@ -85,9 +85,9 @@ FACES = ("front", "spine", "back")
 
 # Bump when the CUTTING logic changes, so already-cached faces on the volume are
 # thrown away and recut. Without this, a fix to how a box is sliced never reaches a
-# box that was cut wrong the first time. (v2: rotated templates stopped rotating the
-# spine — it was already thin-and-tall — and only turn the flat faces.)
-CUT_VERSION = "2"
+# box that was cut wrong the first time. (v3: on rotated templates the back turns the
+# opposite way from the front, to cancel the 3D mirror on the back face.)
+CUT_VERSION = "3"
 
 # Cover Project's print templates, in millimetres: back | spine | front | height.
 # Kept in step with tools/cp_wrap.py, which is what chose the template offline.
@@ -301,11 +301,16 @@ class Shelf:
             "front": im.crop((x2, 0, im.width, im.height)),
         }
         # On a rotated-scan platform (SNES, N64) the ART inside each panel is on its
-        # side, but the panels do NOT all fix the same way. The spine strip is already
-        # thin-and-tall — the shape the spine face wants — so rotating it turns it into
-        # a wide sliver that then gets stretched across the spine (the "spine is a
-        # stretched piece of the front" bug). Only the flat faces turn.
-        rot = {"front": w["rot"], "back": w["rot"], "spine": 0} if w["rot"] else {}
+        # side, and the three faces do NOT fix the same way:
+        #   spine — already thin-and-tall, the shape the spine face wants. Rotating it
+        #     turns it into a wide sliver that gets stretched across the spine.
+        #   front — turn it upright: rot90.
+        #   back  — turn it the OTHER way: rot270. The back sits on a face that is
+        #     mirrored in 3D (rotateY(180)), and a 90-degree turn lands on a mirror
+        #     differently than a 0-degree one — so the same rot90 that fixes the front
+        #     leaves the back upside-down. The opposite turn cancels the mirror.
+        #   (A normal box's back is rot0 and needs no help; its mirror is correct.)
+        rot = {"front": w["rot"], "back": (w["rot"] + 180) % 360, "spine": 0} if w["rot"] else {}
         for name, piece in cuts.items():
             if rot.get(name):
                 piece = piece.rotate(rot[name], expand=True)

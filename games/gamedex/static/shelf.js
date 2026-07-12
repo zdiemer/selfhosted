@@ -260,11 +260,14 @@ function shPaint() {
 function shTick() {
   shRaf = 0;
   if (!shDrag) {
-    shState.vp = (shState.vp + (shTarget - shState.p) * 0.14) * 0.74;
+    // Putting a box back is snappier than pulling it out — pulling is a reveal you
+    // want to watch, putting back is done. Stiffer spring on the way home.
+    const home = shTarget === 0;
+    shState.vp = (shState.vp + (shTarget - shState.p) * (home ? 0.26 : 0.14)) * (home ? 0.70 : 0.74);
     shState.p = shClamp(shState.p + shState.vp, -0.02, 1.06);
-    if (shTarget === 0) {                       // going home: unwind the turn too
-      shState.vx = (shState.vx + (0 - shState.rx) * 0.09) * 0.76;
-      shState.vy = (shState.vy + (0 - shState.ry) * 0.09) * 0.76;
+    if (home) {                                 // going home: unwind the turn too
+      shState.vx = (shState.vx + (0 - shState.rx) * 0.20) * 0.70;
+      shState.vy = (shState.vy + (0 - shState.ry) * 0.20) * 0.70;
     } else {
       shState.vx *= 0.93; shState.vy *= 0.93;   // in hand: momentum, bleeding off
     }
