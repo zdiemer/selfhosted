@@ -46,8 +46,11 @@ Working list. Checked = shipped and deployed.
 
 ## Next
 
-- [ ] **Launch: RomM** — deep-link emulated titles into the RomM instance we
-      already run. Not an IGDB storefront, so it needs a RomM lookup by name.
+- [ ] **Launch: RomM** — BLOCKED. We do not actually run RomM: `games/romm/` is a
+      chart with no Helm release and no pod, and its README lists manual NAS/SMB
+      prerequisites that were never done. Deep-linking emulated titles needs the
+      instance up first (and then a lookup by name — RomM isn't an IGDB storefront,
+      so there's no id to build a URI from).
 - [ ] **Launch: EA / Ubisoft / Battle.net** — not currently possible: IGDB has no
       external_game_source for any of them, so there's no offer/app id to build a
       URI from. Would need another source (or hand-maintained ids).
