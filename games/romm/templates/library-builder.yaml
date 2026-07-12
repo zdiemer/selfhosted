@@ -40,9 +40,18 @@ data:
     SKIP    = set({{ .Values.config.skipFolders | toJson }})
     KEEP    = {"{{ .Values.config.firmwareFolder }}"}
 
+    # RomM looks for firmware at <library>/<firmware_folder>/<platform> — NOT at
+    # <platform>/<firmware_folder>. (config has_structure_path_b is False for a
+    # roms-at-root layout, so get_firmware_fs_structure returns "_bios/3DO".) The
+    # share has it the other way round, at Roms/3DO/_bios, so link it across.
+    # It must ALSO be kept out of the platform folder, or RomM reads it as a
+    # multi-file game called "_bios".
+    FW = "/romm/library/{{ .Values.config.firmwareFolder }}"
+
     t0 = time.time()
     os.makedirs(DST, exist_ok=True)
-    links = flat = 0
+    os.makedirs(FW, exist_ok=True)
+    links = flat = fw = 0
     for plat in sorted(os.listdir(SRC)):
         if plat in excluded or plat not in wanted:
             continue
@@ -51,8 +60,14 @@ data:
             continue
         dst = os.path.join(DST, plat)
         os.makedirs(dst, exist_ok=True)
+        bios = os.path.join(src, "{{ .Values.config.firmwareFolder }}")
+        if os.path.isdir(bios):
+            link = os.path.join(FW, plat)
+            if not os.path.lexists(link):
+                os.symlink(bios, link); fw += 1
+
         for e in os.scandir(src):
-            if e.name in SKIP:
+            if e.name in SKIP or e.name == "{{ .Values.config.firmwareFolder }}":
                 continue
             # Lift the contents of a flatten-folder up to the platform root, so each
             # nested game becomes a game in its own right.
@@ -62,8 +77,9 @@ data:
                     if not os.path.lexists(link):
                         os.symlink(sub.path, link); flat += 1
                 continue
-            link = os.path.join(dst, e.name)   # includes _bios, kept as a folder
+            link = os.path.join(dst, e.name)
             if not os.path.lexists(link):
                 os.symlink(e.path, link); links += 1
-    print(f"library: {links} entries linked, {flat} lifted out of {sorted(FLATTEN)} "
-          f"across {len(wanted)} platforms in {time.time()-t0:.0f}s", flush=True)
+    print(f"library: {links} entries linked, {flat} lifted out of {sorted(FLATTEN)}, "
+          f"{fw} platforms with firmware, across {len(wanted)} platforms "
+          f"in {time.time()-t0:.0f}s", flush=True)

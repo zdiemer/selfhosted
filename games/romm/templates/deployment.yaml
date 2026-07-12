@@ -18,6 +18,11 @@ spec:
         # Restart pod when rendered env Secret changes (e.g. new scraper key).
         checksum/env: {{ include (print $.Template.BasePath "/romm-env.yaml") . | sha256sum }}
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        # The symlink tree is built by an init container from this script. Without
+        # this, editing the builder changes only a ConfigMap, the Deployment spec is
+        # untouched, no new pod is made, and the init container never re-runs — so
+        # the fix silently doesn't apply.
+        checksum/builder: {{ include (print $.Template.BasePath "/library-builder.yaml") . | sha256sum }}
       labels:
         {{- include "romm.selectorLabels" . | nindent 8 }}
     spec:
