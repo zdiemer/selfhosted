@@ -28,6 +28,8 @@ import re
 
 from openpyxl import load_workbook
 
+import notes as notes_mod
+
 # Excel's day 0. Serials count days after this; using 1899-12-30 (rather than
 # 1900-01-01) absorbs Excel's phantom 1900-02-29 for every modern date.
 _EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
@@ -89,6 +91,16 @@ _GAMES = [
     ("File Size",            "text",   False, False, False),
     ("MAME Romset",          "text",   False, False, False),
     ("Notes",                "text",   False, True,  False),
+    # Derived from Notes (see notes.py). The sheet packs eight different facts
+    # into one free-text cell; these unpack it into things you can filter on.
+    ("Digital Platform",     "text",   True,  False, False),
+    ("Subscription",         "text",   True,  False, False),
+    ("Limited Print",        "text",   True,  False, False),
+    ("Edition",              "text",   True,  False, False),
+    ("Required Accessory",   "text",   True,  False, False),
+    ("Physical Media",       "text",   True,  False, False),
+    ("Delisted",             "bool",   True,  False, False),
+    ("Damaged",              "bool",   True,  False, False),
 ]
 
 _COMPLETED = [
@@ -301,6 +313,19 @@ def _parse_sheet(ws, schema):
     return {"columns": _columns_for(schema), "rows": out_rows}
 
 
+def _inject_notes_fields(sheet: dict):
+    """Unpack the Notes cell into the columns declared in the schema.
+
+    Notes is one free-text field carrying eight different facts (storefront,
+    subscription, boutique label, edition, delisted, damaged, accessory, media).
+    Each row gets whichever of them its Notes value encodes — see notes.py, which
+    ports GamesMaster's __process_notes, order and all.
+    """
+    for row in sheet["rows"]:
+        for k, v in notes_mod.process(row.get("notes")).items():
+            row[k] = v
+
+
 def _inject_release_year(sheet: dict, src_key: str):
     """Add a facetable Release Year column derived from a date column (for the
     Completed sheet, which stores only a full release date, not a year)."""
@@ -344,6 +369,9 @@ def parse_workbook(data: bytes) -> dict:
     # Guarantee all three keys exist even if a sheet was missing.
     for key in _SHEET_ORDER:
         result.setdefault(key, {"columns": _columns_for(_SCHEMA_BY_KEY[key]), "rows": []})
+
+    # Notes is one cell doing eight jobs; unpack it into filterable columns.
+    _inject_notes_fields(result["games"])
 
     # Completed sheet only carries a full release date — derive a year facet.
     _inject_release_year(result["completed"], "release")
