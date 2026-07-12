@@ -865,13 +865,45 @@ function searchField(id, placeholder, value = "", cls = "") {
    browser (ridge regression over your own ratings), so there is no cell to sort
    on — cmpBy has to be told how to get the value instead of reading a[key]. */
 const VIRTUAL_SORTS = [
-  { key: "__predicted", label: "Estimated rating", type: "number", kind: "predicted",
+  { key: "__predicted", label: "Estimated Rating", type: "number", kind: "predicted",
     get: (row) => (typeof predictedOf === "function" ? predictedOf(row) : null),
-    // Only where a prediction is meaningful: the model is trained on games you've
-    // rated, and "what would I make of this" is a question about the backlog.
+    on: () => activeTab === "games" },
+  // These three have fallback chains, which is exactly why they can't be plain
+  // columns: the best answer lives in a different source per game. The facets
+  // already resolve them, so sorting reuses the same accessors rather than
+  // inventing a second, divergent answer.
+  { key: "__critic", label: "Critic Rating", type: "number", kind: "critic",
+    get: (row) => metacriticOf(row),        // Metacritic scrape → sheet's column
+    on: () => activeTab === "games" },
+  { key: "__user", label: "User Rating", type: "number", kind: "user",
+    get: (row) => userRatingOf(row),        // IGDB → VNDB → GameFAQs
+    on: () => activeTab === "games" },
+  { key: "__esttime", label: "Estimated Time", type: "number", kind: "esttime",
+    get: (row) => playtimeOf(row),          // HLTB → VNDB → the sheet's estimate
     on: () => activeTab === "games" },
 ];
 const sortMeta = (key) => VIRTUAL_SORTS.find((v) => v.key === key) || colByKey(key);
+
+/* The sort menu on All Games. Every sortable column used to be offered — thirty-odd
+   options, most of which nobody would ever sort by (File Size, MAME Romset, English).
+   A curated list of the ones that answer a real question, in the order you'd reach
+   for them: what it is, what it's worth, what it cost, when you played it. */
+const GAMES_SORT_MENU = [
+  "title", "platform", "releaseDate",
+  "rating", "__critic", "__user", "__predicted",
+  "priority",
+  "datePurchased", "purchasePrice",
+  "dateStarted", "dateCompleted", "completionTime", "__esttime",
+];
+// The sheet's own headers read as filing-cabinet labels ("Date Purchased"); in a
+// sort menu you want the thing first.
+const SORT_LABEL = {
+  rating: "Rating (yours)",
+  datePurchased: "Purchased Date",
+  dateStarted: "Started Date",
+  dateCompleted: "Completed Date",
+};
+const sortLabel = (c) => SORT_LABEL[c.key] || c.label;
 
 // Virtual facets sourced from IGDB enrichment (array-valued, joined via row._k).
 const IGDB_FACET_DEFS = [
@@ -1895,16 +1927,20 @@ function patchEnrichedCells() {
 // Grid has no clickable headers — a Sort dropdown + direction toggle stand in.
 function populateGridSort() {
   const sel = $("#gridsort");
-  const cols = columns().filter((c) => c.sort)   // all sortable, not just shown
-    .concat(VIRTUAL_SORTS.filter((v) => v.on()));
+  const games = activeTab === "games";
+  const cols = games
+    ? GAMES_SORT_MENU.map(sortMeta).filter(Boolean)
+    : columns().filter((c) => c.sort).concat(VIRTUAL_SORTS.filter((v) => v.on()));
   const eff = effectiveSort();
   const usingDefault = !(tabState[activeTab].sort && tabState[activeTab].sort.length);
-  const cur = usingDefault ? "__default" : eff[0].key;
-  sel.innerHTML = `<option value="__default">Default</option>` +
-    cols.map((c) => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join("");
-  sel.value = cols.some((c) => c.key === cur) ? cur : "__default";
+  // No "Default" entry on All Games: the default IS Release Date, so say so and
+  // select it. A menu item called "Default" tells you nothing about what you get.
+  const cur = usingDefault ? (games ? "releaseDate" : "__default") : eff[0].key;
+  sel.innerHTML = (games ? "" : `<option value="__default">Default</option>`) +
+    cols.map((c) => `<option value="${c.key}">${escapeHtml(sortLabel(c))}</option>`).join("");
+  sel.value = cols.some((c) => c.key === cur) ? cur : (games ? "releaseDate" : "__default");
   $("#gridsortdir").textContent = eff[0].dir === "asc" ? "▲" : "▼";
-  $("#gridsortdir").disabled = usingDefault;
+  $("#gridsortdir").disabled = false;      // Release Date can be flipped like anything else
 }
 
 function renderPager(pages) {
@@ -3086,8 +3122,9 @@ $("#facetBackdrop").addEventListener("click", () => setFacets(false));
 $("#gridsort").addEventListener("change", (e) => {
   const st = tabState[activeTab];
   const k = e.target.value;
-  if (k === "__default") st.sort = null;
-  else {
+  if (k === "__default" || (activeTab === "games" && k === "releaseDate")) {
+    st.sort = null;          // the default: releaseDateDesc, which ranks "Early Access" newest
+  } else {
     const c = sortMeta(k);
     st.sort = [{ key: k, dir: c && c.type === "text" ? "asc" : "desc",
                  type: c && c.type, kind: c && c.kind }];
