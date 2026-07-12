@@ -391,6 +391,22 @@ td.cover { width: 46px; padding: 5px 8px; }
 }
 /* Hover-to-play trailer preview: sits over the art, under the scrim, so the
    title stays readable while the video runs. */
+/* Combine is a MODE, not a view: it applies to the list and the grid alike, so
+   it sits outside the view toggle rather than pretending to be a third view. */
+.combinebtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-2); font: 600 12px/1 var(--font);
+  cursor: pointer; white-space: nowrap;
+  transition: background .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease);
+}
+.combinebtn:hover { color: var(--text); border-color: var(--accent-soft); }
+.combinebtn.active {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent-ink, var(--accent));
+}
+
 .card-preview {
   position: absolute; inset: 0; width: 100%; height: 100%;
   border: 0; pointer-events: none; z-index: 0;

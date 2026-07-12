@@ -2,7 +2,13 @@
 
 // ---- config -------------------------------------------------------------
 let PAGE_SIZE = 50;
-let viewMode = "grid";             // "table" | "grid" | "grouped" | "timeline" (completed only)
+// How each tab presents its rows. This is PER TAB: one shared global meant the
+// Completed tab's timeline followed you onto other tabs and rendered there.
+//   view    — "table" | "grid" | "timeline" (Completed only)
+//   combine — fold rows that are the same IGDB game into one entry. Orthogonal
+//             to the view: a list can be combined just as a grid can.
+const VIEW_DEFAULT = { games: "grid", completed: "timeline", onOrder: "grid" };
+const COMBINE_DEFAULT = { games: true, completed: false, onOrder: false };
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -12,9 +18,14 @@ let activeTab = "home";
 const TABS = ["games", "completed", "onOrder"];
 // Per-tab UI state, isolated so switching tabs preserves filters.
 const tabState = {};
+// Filters/search/sort/page — wiped when you navigate to a tab afresh.
+const freshState = () => ({ search: "", facets: {}, expanded: {}, sort: null, page: 1 });
+// View/combine are display PREFERENCES, not filters: they survive a tab switch.
 for (const t of TABS) {
-  tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
+  tabState[t] = { ...freshState(), view: VIEW_DEFAULT[t], combine: COMBINE_DEFAULT[t] };
 }
+const viewOf = () => tabState[activeTab].view;
+const combineOn = () => tabState[activeTab].combine;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -793,7 +804,7 @@ async function loadAllEnrichment() {
         // the grid paints before that map arrives, so the first render has
         // nothing to group by. Re-render, but only when the grouping actually
         // changes, or we'd flash the grid on every poll.
-        if (viewMode === "grouped") {
+        if (!SPECIAL_TABS.includes(activeTab) && combineOn()) {
           resetRelations();
           const n = groupByGame(currentFiltered).length;
           if (n !== lastGroupedCount) { lastGroupedCount = n; renderTable(currentFiltered); }
@@ -1378,9 +1389,9 @@ function onHeaderClick(col, shift) {
 // Dispatcher: sort → paginate → render as table or grid.
 function renderTable(rows) {
   const st = tabState[activeTab];
-  // Grouped: rows sharing an IGDB id ARE the same game, so collapse them before
+  // Combining: rows sharing an IGDB id ARE the same game, so collapse them before
   // sorting and paging — otherwise the counts and page numbers would lie.
-  const base = viewMode === "grouped" ? groupByGame(rows) : rows;
+  const base = st.combine ? groupByGame(rows) : rows;
   const sorted = sortRows(base);
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   if (st.page > pages) st.page = pages;
@@ -1390,16 +1401,20 @@ function renderTable(rows) {
   // The timeline is a view of the Completed rows — same filters, same search.
   const canTimeline = activeTab === "completed";
   $("#viewTimeline").hidden = !canTimeline;
-  if (viewMode === "timeline" && !canTimeline) viewMode = "grid";
-  $("#tablewrap").hidden = viewMode !== "table";
-  $("#gridwrap").hidden = !(viewMode === "grid" || viewMode === "grouped");
-  $("#timeline").hidden = viewMode !== "timeline";
-  $("#pager").style.display = viewMode === "timeline" ? "none" : "";
-  for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"],
-                         ["viewGrouped", "grouped"], ["viewTimeline", "timeline"]]) {
-    $("#" + id).classList.toggle("active", viewMode === m);
+  if (st.view === "timeline" && !canTimeline) st.view = "grid";
+  const view = st.view;
+  $("#tablewrap").hidden = view !== "table";
+  $("#gridwrap").hidden = view !== "grid";
+  $("#timeline").hidden = view !== "timeline";
+  $("#pager").style.display = view === "timeline" ? "none" : "";
+  for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"], ["viewTimeline", "timeline"]]) {
+    $("#" + id).classList.toggle("active", view === m);
   }
-  if (viewMode === "timeline") {
+  // Combining is meaningless on the timeline, which plots completions by date.
+  $("#combine").hidden = view === "timeline";
+  $("#combine").classList.toggle("active", st.combine);
+  $("#combine").setAttribute("aria-pressed", String(!!st.combine));
+  if (view === "timeline") {
     renderTimeline(rows);
     $("#count").textContent = `${rows.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
     renderViews();
@@ -1409,14 +1424,14 @@ function renderTable(rows) {
   populateGridSort();                   // non-primary columns like Date Added)
   if (!sorted.length) {
     const filtered = st.search || Object.keys(st.facets).length;
-    const host = viewMode === "grid" ? $("#grid") : $("#tbody");
-    host.innerHTML = viewMode === "grid"
+    const host = view === "grid" ? $("#grid") : $("#tbody");
+    host.innerHTML = view === "grid"
       ? emptyState("No games match", filtered ? "Try loosening a filter or clearing the search." : "Nothing here yet.", filtered ? "Clear filters" : null)
       : `<tr><td colspan="99">${emptyState("No games match", "Try loosening a filter.", null)}</td></tr>`;
-    if (viewMode === "grid") $("#thead").innerHTML = "";
+    if (view === "grid") $("#thead").innerHTML = "";
     const act = $("#emptyAction");
     if (act) act.onclick = () => { st.search = ""; st.facets = {}; st.page = 1; $("#search").value = ""; renderAll(); nav(); };
-  } else if (viewMode === "grid" || viewMode === "grouped") renderGrid(pageRows);
+  } else if (view === "grid") renderGrid(pageRows);
   else renderTableView(pageRows);
 
   maybeEnrich(pageRows);
@@ -1917,7 +1932,13 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   // Filters/sort don't apply on Stats/Pick — leave only "back to top".
   $("#fabFilters").hidden = special;
   $("#fabSort").hidden = special;
-  if (special) { setSheet(false); setFacets(false); $("#tablewrap").hidden = true; $("#gridwrap").hidden = true; }
+  if (special) {
+    setSheet(false); setFacets(false);
+    $("#tablewrap").hidden = true;
+    $("#gridwrap").hidden = true;
+    $("#timeline").hidden = true;    // ← was left on screen, showing through Series
+    $("#views").hidden = true;
+  }
 }
 
 function renderAll() {
@@ -1934,7 +1955,15 @@ function renderAll() {
   renderTable(currentFiltered);
 }
 
-function switchTab(tab) {
+// reset: a deliberate navigation to a tab (clicking it) starts clean. Filters you
+// set on All Games shouldn't still be there when you come back to it later — the
+// only state that should survive is what's in the URL, which is how back/forward
+// and shared links restore a view on purpose.
+function switchTab(tab, reset) {
+  if (reset && tabState[tab]) {
+    const keep = tabState[tab];
+    tabState[tab] = { ...freshState(), view: keep.view, combine: keep.combine };
+  }
   activeTab = tab;
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
   if (!SPECIAL_TABS.includes(tab)) $("#search").value = tabState[tab].search;
@@ -1957,7 +1986,8 @@ function syncURL(push) {
     if (chState.open) p.set("ch", chState.open);
   } else if (activeTab !== "stats") {
     const st = tabState[activeTab];
-    if (viewMode !== "grid") p.set("view", viewMode);
+    if (st.view !== VIEW_DEFAULT[activeTab]) p.set("view", st.view);
+    if (st.combine !== COMBINE_DEFAULT[activeTab]) p.set("combine", st.combine ? "1" : "0");
     if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
     if (st.search) p.set("q", st.search);
     if (st.page > 1) p.set("page", String(st.page));
@@ -1977,9 +2007,10 @@ function applyStateFromURL() {
     if (tab === "series") { seriesState.open = p.get("fr") || null; }
     applyingState = false; switchTab(tab); return;
   }
-  viewMode = ["table", "timeline", "grouped"].includes(p.get("view")) ? p.get("view") : "grid";
-  PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   const st = tabState[tab];
+  st.view = ["table", "grid", "timeline"].includes(p.get("view")) ? p.get("view") : VIEW_DEFAULT[tab];
+  st.combine = p.has("combine") ? p.get("combine") === "1" : COMBINE_DEFAULT[tab];
+  PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   st.search = p.get("q") || "";
   st.page = parseInt(p.get("page"), 10) || 1;
   const sort = p.get("sort");
@@ -1987,8 +2018,6 @@ function applyStateFromURL() {
   st.facets = {};
   for (const [k, v] of p.entries()) if (k.startsWith("f.")) st.facets[k.slice(2)] = new Set(v.split("~"));
   $("#pagesize").value = String(PAGE_SIZE);
-  $("#viewTable").classList.toggle("active", viewMode === "table");
-  $("#viewGrid").classList.toggle("active", viewMode === "grid");
   applyingState = false;
   switchTab(tab);
 }
@@ -2588,7 +2617,7 @@ $("#search").addEventListener("input", (e) => {
     syncURL(false);        // replace so typing doesn't flood history
   }, 140);
 });
-$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { switchTab(e.target.dataset.tab); nav(); } });
+$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { switchTab(e.target.dataset.tab, true); nav(); } });
 $("#clear").addEventListener("click", () => {
   const st = tabState[activeTab];
   st.search = ""; st.facets = {}; st.page = 1;
@@ -2609,13 +2638,19 @@ $("#pagesize").addEventListener("change", (e) => {
   nav();
 });
 function setView(mode) {
-  viewMode = mode;                      // renderTable paints the active state
+  tabState[activeTab].view = mode;      // renderTable paints the active state
   renderTable(currentFiltered);
 }
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
-$("#viewGrouped").addEventListener("click", () => { setView("grouped"); nav(); });
 $("#viewTimeline").addEventListener("click", () => { setView("timeline"); nav(); });
+$("#combine").addEventListener("click", () => {
+  const st = tabState[activeTab];
+  st.combine = !st.combine;
+  st.page = 1;                          // the row count just changed under us
+  renderTable(currentFiltered);
+  nav();
+});
 // ---- Mobile floating controls ------------------------------------------
 // On mobile the page is one scroller, so the result bar scrolls away. Move the
 // sort/per-page/view cluster into a bottom sheet and reach it from a FAB.
@@ -2803,7 +2838,7 @@ $("#cmdkInput").addEventListener("keydown", (e) => {
 
 // Wordmark = home: back to the landing page with nothing filtered/sorted.
 $("#brand").addEventListener("click", () => {
-  for (const t of TABS) tabState[t] = { search: "", facets: {}, expanded: {}, sort: null, page: 1 };
+  for (const t of TABS) tabState[t] = { ...freshState(), view: tabState[t].view, combine: tabState[t].combine };
   pickState.selector = "backlog"; pickState.param = ""; pickState.picked = null;
   $("#search").value = "";
   setFacets(false);
