@@ -86,9 +86,14 @@ spec:
             - name: data
               mountPath: /romm/resources
               subPath: resources
+            {{- if .Values.saves.enabled }}
+            - name: saves
+              mountPath: /romm/assets
+            {{- else }}
             - name: data
               mountPath: /romm/assets
               subPath: assets
+            {{- end }}
             # RomM keeps its background-task queue in an in-image Redis. Without a
             # volume here the queue is lost on every restart.
             - name: data
@@ -124,6 +129,11 @@ spec:
         - name: builder
           configMap:
             name: {{ include "romm.fullname" . }}-library-builder
+        {{- if .Values.saves.enabled }}
+        - name: saves
+          persistentVolumeClaim:
+            claimName: {{ include "romm.fullname" . }}-saves
+        {{- end }}
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "romm.fullname" . }}-data

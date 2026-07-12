@@ -1,0 +1,49 @@
+{{- if .Values.saves.enabled }}
+{{/*
+The saves share, mounted READ-WRITE. Deliberately a separate volume from the
+library: the games share is read-only and must stay that way, and RomM has no
+reason to write anywhere near the ROMs. Saves, states, screenshots and uploaded
+assets all live under /romm/assets, which is what this backs.
+*/}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "romm.fullname" . }}-saves
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    {{- toYaml .Values.saves.mountOptions | nindent 4 }}
+    - vers={{ .Values.saves.vers }}
+  csi:
+    driver: smb.csi.k8s.io
+    readOnly: false
+    volumeHandle: {{ include "romm.fullname" . }}-saves
+    volumeAttributes:
+      source: {{ printf "//%s/%s" .Values.saves.host .Values.saves.share | quote }}
+      subDir: {{ .Values.saves.sharePath | quote }}
+    nodeStageSecretRef:
+      name: {{ include "romm.fullname" . }}-smb-creds
+      namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "romm.fullname" . }}-saves
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: {{ include "romm.fullname" . }}-saves
+  resources:
+    requests:
+      storage: 100Gi
+{{- end }}

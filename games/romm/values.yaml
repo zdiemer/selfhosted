@@ -45,6 +45,25 @@ smb:
   sharePath: ""
   # SMB username/password live in values.local.yaml.
 
+# Saves and states. RomM never writes to the library — assets are a separate tree
+# (users/<id>/saves/<platform>/<rom_id>/<emulator>/) — so this share is the only
+# one mounted read-write, and the games share stays strictly read-only.
+#
+# Note this does NOT interop with the desktop emulators already in game_data
+# (retroarch/, melonds/, rpcs3/...). RomM writes its own layout; it will not read
+# or write their save files.
+saves:
+  enabled: true
+  host: "192.168.4.36"
+  share: "game_data"
+  sharePath: "zach/romm"     # subPath inside the share
+  vers: "3.0"
+  mountOptions:
+    - dir_mode=0775
+    - file_mode=0664
+    - noserverino
+  # Credentials come from smb.username/smb.password (same NAS user).
+
 persistence:
   data:
     # One PVC, subPathed into /romm/resources, /romm/assets and /redis-data.
