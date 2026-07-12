@@ -1102,6 +1102,14 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .bars.diverging .bar.neg .bar-val { color: var(--bad); }
 .bars.diverging .bar:not(.neg) .bar-val { color: var(--good); }
 
+/* A single number that IS the chart. */
+.s-big { display: flex; flex-direction: column; gap: 6px; padding: 14px 0 6px; }
+.s-big b {
+  font: 800 44px/1 var(--display); letter-spacing: -.03em; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.s-big span { color: var(--muted); font-size: 13px; }
+
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 12px; }
 
 /* The three numbers the page is actually about get their own rank. Everything

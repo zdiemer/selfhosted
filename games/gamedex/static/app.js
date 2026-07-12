@@ -2265,7 +2265,10 @@ function syncURL(push) {
     if (groupState.open) p.set("gk", groupState.open);
   } else if (activeTab === "challenges") {
     if (chState.open) p.set("ch", chState.open);
-  } else if (activeTab !== "stats") {
+  } else if (tabState[activeTab]) {
+    // Guarded on tabState, not on a list of tab names. Home, Reviews and Health
+    // have no row state, and the old `!== "stats"` test let them fall in here and
+    // blow up on tabState["health"].view.
     const st = tabState[activeTab];
     if (st.view !== VIEW_DEFAULT[activeTab]) p.set("view", st.view);
     if (st.combine !== COMBINE_DEFAULT[activeTab]) p.set("combine", st.combine ? "1" : "0");
@@ -2718,6 +2721,54 @@ function renderStats() {
     return { label: yr2(yy), value: Math.round(runSpend) };
   });
   const topValueRows = valued.slice(0, 12).map((x) => x.r);
+
+  /* ---- ported from GamePicker's statistics/ selectors --------------------- */
+
+  // Spend by quarter. A year is too coarse to see a Steam sale in.
+  const qMap = new Map();
+  for (const r of purchases) {
+    const d = String(r.datePurchased);
+    if (!/^\d{4}-\d{2}/.test(d)) continue;
+    const q = `${d.slice(0, 4)} Q${Math.floor((+d.slice(5, 7) - 1) / 3) + 1}`;
+    qMap.set(q, (qMap.get(q) || 0) + r.purchasePrice);
+  }
+  const quarterly = [...qMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-16)
+    .map(([q, v]) => ({ label: q.replace(" ", "\u2009"), value: Math.round(v) }));
+
+  // How hard you actually played it: hours finished / days it took.
+  const paced = rows.filter((r) => r.playTime > 0 && r.started && r.date && r.date >= r.started)
+    .map((r) => {
+      const days = Math.max(1, (new Date(r.date) - new Date(r.started)) / 864e5);
+      return { r, perDay: r.playTime / days, days };
+    });
+  const bingeRows = paced.slice().sort((a, b) => b.perDay - a.perDay).slice(0, 10)
+    .map((x) => ({ label: x.r.game, value: Math.round(x.perDay * 10) / 10, link: gameLink(x.r, "completed"),
+                   tip: `${x.r.game}\n${fmtHours(x.r.playTime)} over ${Math.round(x.days)} day${x.days < 2 ? "" : "s"}` }));
+
+  // How many games you had on the go at once. A sweep over start/finish events.
+  const events = [];
+  for (const r of rows) {
+    if (!r.started || !r.date || r.date < r.started) continue;
+    events.push([r.started, 1], [r.date, -1]);
+  }
+  events.sort((a, b) => String(a[0]).localeCompare(String(b[0])) || a[1] - b[1]);
+  let cur = 0, peak = 0, peakOn = null;
+  for (const [d, delta] of events) {
+    cur += delta;
+    if (cur > peak) { peak = cur; peakOn = d; }
+  }
+
+  // Buy it, then actually play it — how long does that take?
+  const gapMonths = games
+    .filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
+    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5 / 30.4)
+    .filter((m) => m >= 0);
+  const gapBuckets = [
+    ["Same month", (m) => m < 1], ["1-3 months", (m) => m >= 1 && m < 3],
+    ["3-6 months", (m) => m >= 3 && m < 6], ["6-12 months", (m) => m >= 6 && m < 12],
+    ["1-2 years", (m) => m >= 12 && m < 24], ["2-5 years", (m) => m >= 24 && m < 60],
+    ["5 years+", (m) => m >= 60],
+  ].map(([label, test]) => ({ label, value: gapMonths.filter(test).length }));
   // What a game is worth NOW minus what you paid for it. This is the one thing
   // the price data knows that the crown-jewels wall can't show: a $60 game worth
   // $58 is not a find, and a $5 one worth $180 is. Both ends, because the losses
@@ -2786,6 +2837,12 @@ function renderStats() {
       statPanel("Longest playthroughs", barsH(longest, { fmt: (v) => v + "h" })),
       statPanel("Biggest me-vs-critic gaps", barsH(gaps, { fmt: (v) => (v > 0 ? "+" : "") + v, diverging: true }), "",
         "Green: you rated it higher than the critics did. Red: lower."),
+      statPanel("Hardest you've binged", barsH(bingeRows, { fmt: (v) => v + "h/day" }), "",
+        "Hours played divided by the days it took. The top of this list is a lost weekend."),
+      statPanel("Games on the go at once", `<div class="s-big">
+          <b>${peak}</b><span>at once, peaking ${peakOn ? escapeHtml(fmtDate(peakOn)) : "—"}</span>
+        </div>`, "",
+        "Counted from start and finish dates: how many playthroughs were open at the same time."),
     ]) +
     sect("Backlog", [
       statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),
@@ -2809,6 +2866,10 @@ function renderStats() {
         `What it's worth now minus what you paid, across ${moverCount.toLocaleString()} games where we know both. Up is profit.`),
       statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
       statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
+      statPanel("Spending by quarter", barsV(quarterly, { fmt: usd, tone: "warn" }), "wide",
+        "A year is too coarse to see a Steam sale in."),
+      statPanel("Bought, then finally played", barsH(gapBuckets), "",
+        `How long a game waits between the till and the credits. ${gapMonths.length.toLocaleString()} games where we know both dates.`),
     ]) +
     predictionPanel();
   const yp = $("#yrPick");
@@ -2837,6 +2898,28 @@ const modeIncludes = (r, m) => { const e = ENRICH[r._k]; return !!(e && e.gameMo
 // Each selector filters the backlog (games not completed). `param` selectors
 // take a value (platform/genre/…); `topBy` narrows to extremes before the roll.
 // Curated + expanded from zdiemer/GamePicker's selector library.
+/* ---- the fun ones ---------------------------------------------------------
+   Ported from zdiemer/GamePicker's characteristics/ selectors. These exist because
+   sometimes you don't want a good game, you want an EXCUSE — a reason to play this
+   one rather than that one. */
+
+// The month/day you were born. Read from the sheet's own data would be nice, but
+// there's nowhere to put it — so it's a setting, remembered per browser.
+const BIRTHDAY_KEY = "gamedex.birthday";
+const birthday = () => localStorage.getItem(BIRTHDAY_KEY) || "";     // "MM-DD"
+
+const alphaOnly = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const isPalindrome = (t) => {
+  const a = alphaOnly(t);
+  return a.length >= 5 && a === [...a].reverse().join("");
+};
+// "Obscure" = nobody has rated it anywhere. Not bad, not unknown to YOU — unknown
+// to everyone, which is a different and more interesting thing.
+const isObscure = (r) => {
+  const e = ENRICH[r._k] || {};
+  return metacriticOf(r) == null && userRatingOf(r) == null && salesOf(r) == null && !e.igdbId;
+};
+
 const SELECTORS = [
   { id: "backlog", label: "Anything in my backlog", group: "General", filter: () => true },
   { id: "neverstarted", label: "Never started", group: "General", filter: (r) => r.owned && !r.dateStarted && !r.playingStatus },
@@ -2848,6 +2931,26 @@ const SELECTORS = [
   { id: "upnext", label: "Up next", group: "Status", filter: (r) => r.playingStatus === "Up Next" },
   { id: "onhold", label: "On hold", group: "Status", filter: (r) => r.playingStatus === "On Hold" },
   { id: "priority", label: "High priority", group: "Status", filter: (r) => priorityRank(r.priority) >= 4 },
+
+  // ---- for the hell of it ----
+  { id: "birthday", label: "Released on my birthday", group: "For the hell of it",
+    filter: (r) => {
+      const b = birthday();
+      return !!b && typeof r.releaseDate === "string" && r.releaseDate.slice(5, 10) === b;
+    } },
+  { id: "palindrome", label: "Palindrome titles", group: "For the hell of it",
+    filter: (r) => isPalindrome(r.title) },
+  { id: "longtitle", label: "Absurdly long titles", group: "For the hell of it",
+    filter: (r) => String(r.title || "").length > 45,
+    topBy: { by: (r) => String(r.title).length, desc: true, take: 150 } },
+  { id: "shorttitle", label: "One-word titles", group: "For the hell of it",
+    filter: (r) => String(r.title || "").trim().split(/\s+/).length === 1 },
+  { id: "obscure", label: "Nobody has heard of these", group: "For the hell of it",
+    filter: isObscure },
+  { id: "coop", label: "Playable with someone else", group: "For the hell of it",
+    filter: (r) => { const e = ENRICH[r._k] || {}; return e.coopLocal > 1 || e.coopOnline > 1; } },
+  { id: "couch", label: "Co-op on one couch", group: "For the hell of it",
+    filter: (r) => (ENRICH[r._k] || {}).coopLocal > 1 },
   { id: "maxpriority", label: "Top priority", group: "Status", filter: (r) => Number(r.priority) >= 5 },
 
   { id: "onesit", label: "One sitting (under 2h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 2; } },
@@ -2938,6 +3041,13 @@ function renderPicker() {
   const opts = Object.entries(groups).map(([g, ss]) =>
     `<optgroup label="${g}">${ss.map((s) => `<option value="${s.id}" ${s.id === sel.id ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}</optgroup>`).join("");
   let paramHtml = "";
+  // The birthday selector needs a birthday. There's nowhere in the sheet to keep
+  // one, so it lives in this browser — set it once.
+  if (sel.id === "birthday") {
+    const b = birthday();
+    paramHtml = `<input id="pickBday" type="date" value="${b ? `2000-${b}` : ""}"
+      title="Only the month and day are used" style="max-width:170px">`;
+  }
   if (sel.param) {
     // Rank values by how many backlog games each has (keeps big lists usable).
     const vals = topCounts(pickEligible().map((r) => r[sel.param]), 200).map((x) => `${x.label}`);
@@ -2964,6 +3074,15 @@ function renderPicker() {
   const pp = $("#pickParam");
   if (pp) pp.onchange = (e) => { pickState.param = e.target.value; pickState.picked = null; renderPicker(); nav(); };
   $("#pickTime").onchange = (e) => { pickState.minutes = +e.target.value; pickState.picked = null; renderPicker(); nav(); };
+  const bd = $("#pickBday");
+  if (bd) bd.onchange = (e) => {
+    const v = e.target.value;                       // yyyy-mm-dd; only MM-DD is used
+    if (v) localStorage.setItem(BIRTHDAY_KEY, v.slice(5, 10));
+    else localStorage.removeItem(BIRTHDAY_KEY);
+    pickState.picked = null;
+    renderPicker();
+  };
+
   $("#pickBtn").onclick = () => { pickGame(); nav(); };
   const card = host.querySelector(".pick-card");
   if (card) {

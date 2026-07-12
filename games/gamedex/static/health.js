@@ -22,6 +22,50 @@ const hzNorm = (s) => String(s || "").toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   .replace(/[^a-z0-9]/g, "");
 
+/* A title reduced to what a typo would actually change. Roman numerals become
+   digits, "&" becomes "and", accents are stripped, and everything that isn't a
+   letter or a digit goes — so only a real letter-level difference survives. */
+const _ROMAN = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7",
+                 viii: "8", ix: "9", x: "10", xi: "11", xii: "12", xiii: "13" };
+function hzTitleKey(t) {
+  return String(t || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    // Editions and tags in brackets are a different EDITION, not a different
+    // spelling: "Resident Evil 4" vs "Resident Evil 4 [VR]".
+    .replace(/[[(][^\])]*[\])]/g, " ")
+    // A leading article is a cataloguing convention, not a typo: IGDB files it as
+    // "A Total War Saga: Troy", the sheet doesn't.
+    .replace(/^(a|an|the)\s+/, "")
+    .replace(/&/g, "and")
+    .replace(/[×x]/g, "x")
+    .split(/\s+/)
+    .map((w) => {
+      const bare = w.replace(/[^a-z0-9]/g, "");
+      return _ROMAN[bare] || bare;
+    })
+    .join("")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+// Levenshtein, bounded. We only care whether it's 1-2 edits, so bail out early
+// rather than filling a 60x60 matrix for every one of 14,752 titles.
+function hzEditDistance(a, b, max = 3) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;       // no path back under the threshold
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 // ---- match confidence ----------------------------------------------------
 // Every automatic match already carried a score and nobody ever saw it.
 // MatchValidator.match_score is 0-15: 5 for matching the title at all, 5 MORE if
@@ -177,6 +221,56 @@ const HEALTH_CHECKS = [
     find: () => hzGames().filter((r) => { const c = hzConf(r); return c != null && c > 5 && c < CONF_EXACT; })
       .sort((a, b) => hzConf(a) - hzConf(b)),
     detail: hzConfDetail,
+  },
+  {
+    id: "misspelled", severity: "warn", sheet: "games",
+    title: "Title may be misspelled",
+    why: "The sheet's title and IGDB's differ by a letter or two — close enough to be the same game, "
+       + "far enough apart that one of them is a typo. Note that it isn't always yours: IGDB spells "
+       + "Slayers X as 'Vengance'. Punctuation, roman numerals, bracketed editions and leading "
+       + "articles are normalised away first, so what's left is a genuine letter-level difference.",
+    find: () => hzGames().filter((r) => {
+      const e = ENRICH[r._k];
+      if (!e || !e.name || e.manualMatch) return false;
+      // Only where the match is CONFIDENT: a low-confidence match differing by two
+      // characters is a bad match, not a typo, and it's already flagged as one.
+      if (typeof e.confidence === "number" && e.confidence < CONF_EXACT) return false;
+      /* Compare on LETTERS, not on punctuation and numerals. Raw edit distance
+         flagged 665 games, and almost none were typos:
+
+           "Helldivers II"          vs "Helldivers 2"            roman numeral
+           "Command & Conquer: X"   vs "Command & Conquer X"     a colon
+           "Invincible VS"          vs "Invincible Vs."          a full stop
+
+         Those are style differences between two catalogues, not misspellings.
+         Normalise them away and what's left is a genuine letter-level typo. */
+      const a = hzTitleKey(r.title), b = hzTitleKey(e.name);
+      if (!a || !b || a === b) return false;
+      const d = hzEditDistance(a, b);
+      return d > 0 && d <= 2 && Math.min(a.length, b.length) >= 10;
+    }),
+    detail: (r) => `sheet: "${r.title}" · IGDB: "${(ENRICH[r._k] || {}).name}"`,
+  },
+  {
+    id: "incompletecol", severity: "info", sheet: "games",
+    title: "Collections you've only partly finished",
+    why: "A compilation where you've beaten some of the games inside but never marked the "
+       + "collection itself complete. Either there's more to play, or the parent row needs ticking.",
+    find: () => {
+      if (typeof buildCollections !== "function") return [];
+      buildCollections();
+      const out = [];
+      for (const c of (typeof collectionAll === "function" ? collectionAll() : [])) {
+        if (!c.parent || c.complete) continue;
+        if (!c.members.length) continue;
+        out.push(c.parent);
+      }
+      return out;
+    },
+    detail: (r) => {
+      const c = typeof collectionOfParent === "function" ? collectionOfParent(r) : null;
+      return c ? `${c.members.length} of its games finished, collection not marked complete` : "";
+    },
   },
   {
     id: "nopriority", severity: "info", sheet: "games",
