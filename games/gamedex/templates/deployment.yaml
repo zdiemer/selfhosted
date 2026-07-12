@@ -48,6 +48,22 @@ spec:
               value: {{ .Values.dropbox.filename | quote }}
             - name: REFRESH_INTERVAL_SECONDS
               value: {{ .Values.refreshIntervalSeconds | quote }}
+            # RomM: play emulated games in the browser. The credentials are a
+            # read-only viewer account — gamedex only ever READS the rom list.
+            - name: ROMM_URL
+              value: {{ (.Values.romm | default dict).url | default "" | quote }}
+            - name: ROMM_PUBLIC_URL
+              value: {{ (.Values.romm | default dict).publicUrl | default "" | quote }}
+            - name: ROMM_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: romm-username
+            - name: ROMM_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: romm-password
             - name: IGDB_CLIENT_ID
               valueFrom:
                 secretKeyRef:

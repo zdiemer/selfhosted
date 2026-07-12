@@ -393,6 +393,14 @@ td.cover { width: 46px; padding: 5px 8px; }
    title stays readable while the video runs. */
 /* Combine is a MODE, not a view: it applies to the list and the grid alike, so
    it sits outside the view toggle rather than pretending to be a third view. */
+/* Play in the browser (RomM). Deliberately louder than the store links — an
+   emulated game you can start right now beats a storefront you can buy from. */
+.btn.play {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border-color: #16a34a; color: #fff; font-weight: 700;
+}
+.btn.play:hover { filter: brightness(1.08); border-color: #22c55e; }
+
 .combinebtn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 10px; border-radius: 8px;

@@ -954,13 +954,88 @@ function storeUrl(key, id) {
   }
 }
 
+/* ---- RomM: play it in the browser --------------------------------------
+   Joined on (IGDB game id, platform) — an id join on both axes, not a title
+   match. The catch is that the two systems name the same machine differently:
+   the sheet says "PlayStation", the NAS folder is "PSX". 27 of the 45 playable
+   platforms are spelled identically; these are the rest.
+
+   "PC" -> "MS-DOS" is the interesting one. A PC row only lights up if the SAME
+   IGDB game also exists in the DOS folder — so Doom gets a Play button and a
+   modern Steam game simply doesn't match. The id join makes that safe. */
+const ROMM_PLATFORM = {
+  "PlayStation": "PSX",
+  "PlayStation Portable": "PSP",
+  "Sega Genesis": "Genesis",
+  "Sega Saturn": "Saturn",
+  "Sega Master System": "Master System",
+  "Sega Game Gear": "Game Gear",
+  "Commodore Amiga": "Amiga",
+  "Commodore Amiga CD32": "Amiga CD32",
+  "Commodore VIC-20": "VIC-20",
+  "Commodore Plus/4": "Commodore Plus-4",
+  "Philips CD-i": "CD-i",
+  "Atari Jaguar": "Jaguar",
+  "Atari Lynx": "Lynx",
+  "Neo-Geo Pocket": "Neo Geo Pocket",
+  "Neo-Geo Pocket Color": "Neo Geo Pocket Color",
+  "Arcade": "MAME",
+  "PC": "MS-DOS",
+};
+
+let ROMM = { enabled: false, baseUrl: "", roms: {} };
+async function loadRomm() {
+  try {
+    const r = await fetch("/api/romm");
+    if (!r.ok) return;
+    ROMM = await r.json();
+    if (ROMM.enabled) patchPlayButtons();
+  } catch (_) { /* RomM being down must never break gamedex */ }
+}
+
+// The rom id for this row, or null. Requires BOTH the game and the platform to
+// agree — a PSX Doom must not offer to play the 3DO one.
+function rommRomId(row) {
+  if (!ROMM.enabled || !row) return null;
+  const e = ENRICH[row._k];
+  if (!e || !e.igdbId) return null;
+  const folder = ROMM_PLATFORM[row.platform] || row.platform;
+  const id = ROMM.roms[`${e.igdbId}|${folder}`];
+  return id != null ? id : null;
+}
+
+const rommPlayUrl = (id) => `${ROMM.baseUrl}/console/rom/${id}/play`;
+
+function rommHtml(row) {
+  const id = rommRomId(row);
+  if (!id) return "";
+  return `<a class="btn play" href="${escapeHtml(rommPlayUrl(id))}" target="_blank" rel="noopener"
+     title="Play in the browser via RomM">🕹 Play now</a>`;
+}
+
+// The map arrives after the drawer may already be open; fill it in rather than
+// re-render (the same trap the enrichment map set five times over).
+function patchPlayButtons() {
+  const body = $("#drawerBody");
+  if (!body || !drawerRow) return;
+  if (body.querySelector(".btn.play")) return;          // already there
+  const html = rommHtml(drawerRow);
+  if (!html) return;
+  let host = body.querySelector(".hero-actions");
+  if (host) { host.insertAdjacentHTML("afterbegin", html); return; }
+  // A game with no storefront at all has no actions row yet — give it one.
+  const hero = body.querySelector(".hero") || body.firstElementChild;
+  if (hero) hero.insertAdjacentHTML("beforeend", `<div class="hero-actions">${html}</div>`);
+}
+
 function launchHtml(row) {
   const t = launchTarget(row);
-  if (!t) return "";
+  if (!t) return rommHtml(row);
   const external = /^https?:/.test(t.href);
-  return t.kind === "launch"
+  const store = t.kind === "launch"
     ? `<a class="btn launch" href="${escapeHtml(t.href)}">${escapeHtml(t.label)}</a>`
     : `<a class="btn ghost" href="${escapeHtml(t.href)}"${external ? ' target="_blank" rel="noopener"' : ""}>${escapeHtml(t.label)}${external ? " ↗" : ""}</a>`;
+  return rommHtml(row) + store;      // playing it beats buying it
 }
 
 // Units sold/shipped (VGChartz estimate). Only major releases have a figure.
@@ -2073,6 +2148,7 @@ async function load() {
   setFreshness();
   applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
+  loadRomm();                   // which games we can actually play in the browser
   loadValueHistory();           // daily collection-value snapshots (for the trend chart)
   loadRecs();                   // "because you liked …"
 }

@@ -46,6 +46,12 @@ Working list. Checked = shipped and deployed.
 
 ## Next
 
+- [ ] **BUG: permanent loading skeleton when a game has no metadata** — a row that
+      resolves to no match anywhere keeps its shimmer placeholder forever instead of
+      settling into a "no metadata" state. The skeleton is only cleared when a cover
+      arrives, so a game that will never have one shimmers indefinitely. Needs the
+      cleared-with-no-result case handled, not just the cleared-with-a-cover case.
+
 - [ ] **Match confidence for SECONDARY sources** — HLTB, Metacritic, GameEye, VNDB,
       VGChartz, speedrun and guides all compute MatchValidator.match_score and then
       drop it on the floor; only the primary IGDB match persists a score (now shown

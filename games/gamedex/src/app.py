@@ -26,6 +26,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import romm
+
 from arcadedb import ArcadeDbClient
 from enrich import Enricher
 from fallback import FallbackClient
@@ -114,6 +116,27 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Gamedex", lifespan=lifespan)
+
+# RomM: an exact (igdb_id, platform) -> rom id map, refreshed in the background.
+# Only the mapping is ever served; the credentials stay here.
+ROMM = romm.RommClient(
+    base_url=os.getenv("ROMM_URL", ""),
+    public_url=os.getenv("ROMM_PUBLIC_URL", ""),
+    username=os.getenv("ROMM_USERNAME", ""),
+    password=os.getenv("ROMM_PASSWORD", ""),
+)
+if ROMM.enabled:
+    ROMM.start()
+
+
+@app.get("/api/romm")
+def api_romm():
+    """{"<igdb_id>|<platform folder>": rom_id} — the frontend turns a hit into
+    <baseUrl>/console/rom/<id>/play. Empty (not an error) when RomM is off."""
+    if not ROMM.enabled:
+        return {"enabled": False, "roms": {}}
+    return ROMM.snapshot()
+
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
