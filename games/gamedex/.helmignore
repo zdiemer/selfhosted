@@ -13,3 +13,8 @@ upgrade.sh
 README.md
 TODO.md
 *.tar
+*.png
+*.jpg
+*.mjs
+.gitignore
+values.local.yaml
