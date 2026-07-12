@@ -505,6 +505,11 @@ td.cover { width: 46px; padding: 5px 8px; }
 .chb-actions .spacer { flex: 1; }
 .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 
+/* Tags sit under the summary. Several chip groups in a row need to read as one
+   set, not three stacked bars. */
+.tag-row .v { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-row .chips { display: contents; }
+
 .combinebtn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 10px; border-radius: 8px;

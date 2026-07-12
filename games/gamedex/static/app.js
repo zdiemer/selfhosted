@@ -246,9 +246,14 @@ function detailHtml(d) {
     : "";
 
   const text = d.summary || d.storyline;
-  // The cover, score and chips live in the hero now — this is just the prose.
+  // Genre / theme / mode, under the summary. They're a way INTO the collection
+  // (every chip is a filter), so they belong next to the prose that made you
+  // curious, not stacked above the cover.
+  const tags = chips(d.genres, "__igdb_genre") + chips(d.themes, "__igdb_theme")
+    + chips(d.gameModes, "__igdb_mode");
   return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
+    (tags ? `<div class="detail-row notes tag-row"><div class="k">Tags</div><div class="v">${tags}</div></div>` : "") +
     meta.join("") + shots + simHtml +
     igdbAttr(d);
 }
@@ -671,13 +676,10 @@ function fillHero(detail) {
     img.className = "cover-big"; img.id = "heroCover"; img.alt = ""; img.src = cs;
     coverEl.replaceWith(img);
   }
-  if (chipsEl) {
-    const rating = detail.rating != null
-      ? `<span class="chip score ${ratingClass(detail.rating)}">★ ${Math.round(detail.rating * 100)} IGDB</span>` : "";
-    chipsEl.innerHTML = rating
-      + chips(detail.genres, "__igdb_genre") + chips(detail.themes, "__igdb_theme")
-      + chips(detail.gameModes, "__igdb_mode");
-  }
+  // Chips moved out of the hero: they crowded the cover and title, and the IGDB
+  // score chip repeated the "Players" figure already in the stat strip. They live
+  // under the summary now, which is where you're reading about the game anyway.
+  if (chipsEl) chipsEl.innerHTML = "";
 }
 
 function renderIgdbSection(key, el, status, detail) {
