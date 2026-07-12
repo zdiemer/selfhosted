@@ -15,6 +15,7 @@ stringData:
   DB_USER: {{ .Values.db.user | quote }}
   DB_PASSWD: {{ required "db.password required in values.local.yaml" .Values.db.password | quote }}
   ROMM_PORT: "8080"
+  HASHEOUS_API_ENABLED: {{ .Values.romm.hasheous | quote }}
   SCAN_TIMEOUT: {{ .Values.romm.scanTimeout | quote }}
   ENABLE_SCHEDULED_RESCAN: {{ .Values.romm.scheduledRescan | quote }}
   ENABLE_RESCAN_ON_FILESYSTEM_CHANGE: {{ .Values.romm.rescanOnChange | quote }}

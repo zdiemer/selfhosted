@@ -60,10 +60,12 @@ persistence:
 config:
   # The share's platform folders live under Roms/.
   romsFolder: "Roms"
-  # CRITICAL at this scale. RomM otherwise hashes every ROM it scans — across a
-  # 78 TB library on the far side of an SMB link, that is the entire collection
-  # dragged over the network for a checksum nobody asked for.
-  skipHashCalculation: true
+  # Hashing reads every ROM in full. The playable set is 8.06 TB over a link that
+  # sustains 107 MB/s, so this is a ~22h one-off — deliberately accepted, because
+  # hashes are what Hasheous and RetroAchievements identify games BY. They're
+  # cached in the DB afterwards, not recomputed on later scans.
+  # It is only worth paying if something consumes the hashes: see romm.hasheous.
+  skipHashCalculation: false
   # Folders that aren't game platforms, or that we don't want RomM walking.
   excludePlatforms:
     # Everything RomM cannot PLAY IN THE BROWSER. RomM's EmulatorJS build ships a
@@ -254,7 +256,15 @@ romm:
   # from the UI, then turn these on once we know how it behaves.
   scheduledRescan: false
   rescanOnChange: false
-  scanTimeout: 14400        # 4h, RomM's default
+  # RomM's default is 4h. A hashing scan of 8 TB takes ~22h, so the default would
+  # kill the job at hour 4 — three quarters of the way through nothing.
+  scanTimeout: 172800       # 48h
+
+  # Hash-based identification. Free, no API key. This is the whole reason to pay
+  # for hashing: IGDB matches on FILENAME, so it fumbles badly-named dumps,
+  # regional variants and aftermarket rips. Hasheous matches on the checksum, so
+  # it doesn't care what the file is called.
+  hasheous: true
 
   # Optional scrapers (all set in values.local.yaml).
   igdb:
