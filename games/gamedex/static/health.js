@@ -66,6 +66,24 @@ function hzEditDistance(a, b, max = 3) {
   return prev[b.length];
 }
 
+// Edit distance, capped: we only ever ask "is this within 2 edits", so bail early
+// rather than compute the full matrix for a pair that's obviously miles apart.
+function hzEdit(a, b, max = 3) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;      // whole row already over budget
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 // ---- match confidence ----------------------------------------------------
 // Every automatic match already carried a score and nobody ever saw it.
 // MatchValidator.match_score is 0-15: 5 for matching the title at all, 5 MORE if
@@ -270,6 +288,50 @@ const HEALTH_CHECKS = [
     detail: (r) => {
       const c = typeof collectionOfParent === "function" ? collectionOfParent(r) : null;
       return c ? `${c.members.length} of its games finished, collection not marked complete` : "";
+    },
+  },
+  {
+    id: "typo", severity: "warn", sheet: "games",
+    title: "Possible typo in the title",
+    why: "The title matched IGDB, but not EXACTLY — and what IGDB calls it is only a character or two "
+       + "away from what the sheet calls it. That gap is almost always a typo on our side rather than a "
+       + "different game. (A genuinely different game doesn't land one edit away from yours.) Upstream "
+       + "does this with a spellchecker and a dictionary; we don't need one, because we already store "
+       + "what IGDB thinks the game is called.",
+    find: () => hzGames().filter((r) => {
+      const e = ENRICH[r._k];
+      if (!e || !e.name || e.manualMatch) return false;
+      if (typeof e.confidence !== "number" || e.confidence >= CONF_EXACT) return false;  // exact title: nothing to fix
+      const a = hzNorm(r.title), b = hzNorm(e.name);
+      if (!a || !b || a === b) return false;
+      const d = hzEdit(a, b);
+      // 1-2 edits on a title of reasonable length. Beyond that it's a subtitle or
+      // a different edition, not a slip of the keyboard.
+      return d > 0 && d <= 2 && Math.min(a.length, b.length) >= 6;
+    }).sort((a, b) => hzEdit(hzNorm(a.title), hzNorm((ENRICH[a._k] || {}).name || ""))
+                    - hzEdit(hzNorm(b.title), hzNorm((ENRICH[b._k] || {}).name || ""))),
+    detail: (r) => {
+      const e = ENRICH[r._k] || {};
+      return `IGDB calls it \u201c${e.name}\u201d`;
+    },
+  },
+  {
+    id: "incompletecoll", severity: "info", sheet: "games",
+    title: "Collections you started but never finished",
+    why: "A compilation with games finished inside it, but the compilation itself isn't marked complete. "
+       + "Either there's more of it to play, or the parent row needs ticking.",
+    find: () => {
+      if (typeof buildCollections !== "function") return [];
+      buildCollections();
+      const out = [];
+      for (const c of (typeof collectionsAll === "function" ? collectionsAll() : [])) {
+        if (c.parent && !c.parent.completed && c.members.length) out.push(c.parent);
+      }
+      return out;
+    },
+    detail: (r) => {
+      const c = typeof collectionOfParent === "function" ? collectionOfParent(r) : null;
+      return c ? `${c.members.length} game${c.members.length === 1 ? "" : "s"} inside it finished` : "";
     },
   },
   {

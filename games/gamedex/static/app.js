@@ -2908,6 +2908,51 @@ const modeIncludes = (r, m) => { const e = ENRICH[r._k]; return !!(e && e.gameMo
 const BIRTHDAY_KEY = "gamedex.birthday";
 const birthday = () => localStorage.getItem(BIRTHDAY_KEY) || "";     // "MM-DD"
 
+/* Pick a game by the colour of its box.
+
+   The cover's dominant colour is already computed for the drawer's accent
+   (extras.js coverAccent: a tiny canvas, near-black and near-white pixels thrown
+   away, the colourful ones weighted up). So this needs no new machinery — just a
+   hue bucket and somewhere to put the answer. Covers resolve asynchronously, so
+   the pool fills in as the art loads; that's why the count climbs while you look
+   at it. */
+const HUE_BUCKETS = [
+  { id: "red", label: "Red", test: (h, s) => s > .18 && (h < 18 || h >= 342) },
+  { id: "orange", label: "Orange", test: (h, s) => s > .18 && h >= 18 && h < 45 },
+  { id: "yellow", label: "Yellow", test: (h, s) => s > .18 && h >= 45 && h < 68 },
+  { id: "green", label: "Green", test: (h, s) => s > .18 && h >= 68 && h < 160 },
+  { id: "blue", label: "Blue", test: (h, s) => s > .18 && h >= 160 && h < 255 },
+  { id: "purple", label: "Purple", test: (h, s) => s > .18 && h >= 255 && h < 300 },
+  { id: "pink", label: "Pink", test: (h, s) => s > .18 && h >= 300 && h < 342 },
+  { id: "mono", label: "Black, white or grey", test: (h, s) => s <= .18 },
+];
+
+const COVER_HUE = new Map();     // matchKey -> bucket id
+function coverHueOf(row) {
+  if (COVER_HUE.has(row._k)) return COVER_HUE.get(row._k);
+  const src = coverSrc(ENRICH[row._k], "cover_small");
+  if (!src) return null;
+  coverAccent(src, (accent) => {
+    const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(accent) ||
+              /#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(accent);
+    if (!m) return;
+    const base = accent.startsWith("#") ? 16 : 10;
+    const [r, g, b] = [parseInt(m[1], base), parseInt(m[2], base), parseInt(m[3], base)];
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    const sat = max ? d / max : 0;
+    let h = 0;
+    if (d) {
+      if (max === r) h = 60 * (((g - b) / d) % 6);
+      else if (max === g) h = 60 * ((b - r) / d + 2);
+      else h = 60 * ((r - g) / d + 4);
+    }
+    if (h < 0) h += 360;
+    const hit = HUE_BUCKETS.find((x) => x.test(h, sat));
+    COVER_HUE.set(row._k, hit ? hit.id : null);
+  });
+  return COVER_HUE.get(row._k) ?? null;
+}
+
 const alphaOnly = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const isPalindrome = (t) => {
   const a = alphaOnly(t);
@@ -2951,7 +2996,14 @@ const SELECTORS = [
     filter: (r) => { const e = ENRICH[r._k] || {}; return e.coopLocal > 1 || e.coopOnline > 1; } },
   { id: "couch", label: "Co-op on one couch", group: "For the hell of it",
     filter: (r) => (ENRICH[r._k] || {}).coopLocal > 1 },
-  { id: "maxpriority", label: "Top priority", group: "Status", filter: (r) => Number(r.priority) >= 5 },
+  { id: "colour", label: "By the colour of the box", group: "For the hell of it",
+    param: "__hue",
+    paramVals: () => HUE_BUCKETS.map((b) => b.label),
+    filter: (r, p) => {
+      const want = HUE_BUCKETS.find((b) => b.label === p);
+      return !!want && coverHueOf(r) === want.id;
+    } },
+  { id: "maxpriority", label: "Top priority", group: "Status", filter: (r) => priorityRank(r.priority) >= 5 },
 
   { id: "onesit", label: "One sitting (under 2h)", group: "Playtime", filter: (r) => { const p = playtimeOf(r); return p != null && p < 2; } },
   { id: "quick", label: "Quick (under 5h)", group: "Playtime", filter: quickF },
@@ -3049,8 +3101,12 @@ function renderPicker() {
       title="Only the month and day are used" style="max-width:170px">`;
   }
   if (sel.param) {
-    // Rank values by how many backlog games each has (keeps big lists usable).
-    const vals = topCounts(pickEligible().map((r) => r[sel.param]), 200).map((x) => `${x.label}`);
+    // A param is usually a row FIELD (platform, genre). Some are computed — the
+    // colour of the box isn't in the sheet — so a selector can supply its own.
+    const vals = sel.paramVals
+      ? sel.paramVals()
+      // Rank values by how many backlog games each has (keeps big lists usable).
+      : topCounts(pickEligible().map((r) => r[sel.param]), 200).map((x) => `${x.label}`);
     if (!vals.includes(pickState.param)) pickState.param = vals[0] || "";
     paramHtml = `<select id="pickParam">${vals.map((v) => `<option ${v === pickState.param ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}</select>`;
   }
