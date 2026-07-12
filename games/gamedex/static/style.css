@@ -2469,7 +2469,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    of empty air for one case. It also keeps the perspective origin tied to the VIEWPORT,
    which never grows: tie it to a stage that gets taller with every board and the
    vanishing point ends up a thousand pixels below the case, shearing it. */
-.sh-pull { position:fixed; inset:0; z-index:60; pointer-events:none;
+.sh-pull { position:fixed; inset:0; z-index:36; pointer-events:none;
   perspective:1600px; perspective-origin:50% 42%; }
 .sh-veil { position:absolute; inset:0; background:rgba(0,0,0,.55); opacity:0;
   pointer-events:none; transition:opacity .4s ease; backdrop-filter:blur(2px); }

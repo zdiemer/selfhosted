@@ -40,6 +40,7 @@ from PIL import Image
 TEMPLATES = {
     "dvd":       (130, 14, 129, 183),   # PS1/PS2/Xbox/GC/Wii/DC — 273 x 183
     "snes":      (133, 33, 133, 191),   # cardboard box
+    "nes":       (127, 25, 127, 178),   # smaller and thinner than a SNES box
     "genesis":   (133, 28, 133, 184),
     "n64":       (133, 33, 133, 190),
     "switch":    (105, 11, 105, 170),
@@ -70,8 +71,23 @@ def _saturation(im: Image.Image) -> float:
 # Genesis (1.598) and N64 (1.574) are within 2% of each other, so the aspect alone
 # CANNOT tell them apart — pick by aspect and every SNES box comes out a Genesis
 # box, 5mm too thin. The platform knows; ask it.
+# Templates whose panels Cover Project stores ROTATED 90 degrees.
+#
+# A US SNES box and an N64 box are LANDSCAPE — logo across the top, the SUPER NINTENDO
+# band along the bottom, the red Nintendo 64 band down the right. Their scans hold each
+# panel on its side, so the wrap measures the same ~1.60 either way and NOTHING in the
+# geometry can tell you which. An NES box, on a similar aspect, is genuinely PORTRAIT
+# with its title bar running up the left edge.
+#
+# So this is not detectable, it is knowable. I tried: a saturation test and a text-line
+# test both get it wrong, and both were confident. They read the sideways Zelda logo on
+# the N64 box as the real cover, and they turned MadWorld — a portrait Wii case — into
+# landscape. It is a fact about a platform's scans; look at one and write it down.
+TEMPLATE_ROT = {"snes": 90, "n64": 90}
+
+
 PLATFORM_TEMPLATE = {
-    "super_nintendo": "snes", "nes": "snes",
+    "super_nintendo": "snes", "nes": "nes",
     "genesis": "genesis", "sega_cd": "genesis", "sega_32x": "genesis",
     "nintendo_64": "n64",
     "playstation_1": "dvd", "playstation_2": "dvd", "playstation_3": "bluray",

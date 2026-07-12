@@ -237,7 +237,7 @@ function shBuild(i) {
   document.getElementById("shBack").onclick = shelfClose;
   document.getElementById("shDetails").onclick = () => {
     // The app already has a detail card. Reuse it rather than inventing a second one.
-    const row = (DATA.sheets.games.rows || []).find((r) => r._k === g.k);
+    const row = (DATA.sheets.games.rows || []).find((r) => r._k === g.mk);
     if (row) openDrawer(row, "games");
   };
 }

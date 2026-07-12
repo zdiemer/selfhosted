@@ -33,9 +33,9 @@ log = logging.getLogger("gamedex.shelf")
 # Physical cases, in millimetres, for games with no scan to measure. Used only to
 # give the fallback box a believable shape.
 FALLBACK_CASE = {
-    "Super Nintendo Entertainment System": (133, 191, 33),
+    "Super Nintendo Entertainment System": (191, 133, 33),   # landscape
     "Nintendo Entertainment System": (127, 178, 25),
-    "Nintendo 64": (133, 190, 33),
+    "Nintendo 64": (190, 133, 33),      # landscape, like the real box
     "Sega Genesis": (133, 184, 28),
     "Nintendo GameCube": (125, 175, 15),
     "Sega Dreamcast": (140, 190, 15),
@@ -61,6 +61,23 @@ FALLBACK_CASE = {
     "Nintendo Game Boy Advance": (92, 133, 22),
     "Nintendo Game Boy": (92, 133, 22),
     "Nintendo Game Boy Color": (92, 133, 22),
+    # The sheet mostly uses shorthands, and a platform missing from this table silently
+    # gets a generic DVD case — which is how a fallback SNES box came out portrait.
+    # A US SNES box and an N64 box are LANDSCAPE (see TEMPLATE_ROT in tools/cp_wrap.py).
+    "SNES": (191, 133, 33),
+    "NES": (127, 178, 25),
+    "Genesis": (133, 184, 28),
+    "Game Boy": (92, 133, 22),
+    "Game Boy Color": (92, 133, 22),
+    "Game Boy Advance": (92, 133, 22),
+    "GameCube": (125, 175, 15),
+    "Wii": (135, 190, 14),
+    "Wii U": (135, 190, 14),
+    "Dreamcast": (140, 190, 15),
+    "Saturn": (142, 125, 10),
+    "PSP": (105, 170, 14),
+    "PS Vita": (105, 137, 12),
+    "3DO": (142, 125, 10),
 }
 DEFAULT_CASE = (135, 190, 14)
 
@@ -71,6 +88,7 @@ FACES = ("front", "spine", "back")
 TEMPLATES = {
     "dvd":     (130, 14, 129, 183),
     "snes":    (133, 33, 133, 191),
+    "nes":     (127, 25, 127, 178),
     "genesis": (133, 28, 133, 184),
     "n64":     (133, 33, 133, 190),
     "switch":  (105, 11, 105, 170),
@@ -145,11 +163,15 @@ class Shelf:
                 continue
             if (g.get("format") or "").strip().lower() not in ("physical", "both"):
                 continue                      # a digital game is not an object
-            key = g.get("_k")
-            if not key:
+            mk = g.get("_k")
+            if not mk:
                 continue                      # no match key: nothing to hang art off
+            # The BOX is keyed by game AND region: title|platform|year collapses a US and
+            # a Japanese copy into one entry, and owning Chrono Trigger on both SNES and
+            # Super Famicom then put two Super Famicom boxes on the shelf.
+            key = f"{mk}#{(g.get('releaseRegion') or '').strip()}"
             w = self._wraps.get(key)
-            e = enrichment.get(key) or {}
+            e = enrichment.get(mk) or {}
             if w:
                 case, src = w["case"], "wrap"
             else:
@@ -157,7 +179,8 @@ class Shelf:
                 case = {"w": mm[0], "h": mm[1], "d": mm[2]}
                 src = "cover" if e.get("cover") else "blank"
             out.append({
-                "k": key,
+                "k": key,                     # the box (per region)
+                "mk": mk,                     # the game, for the detail card
                 "t": g.get("title"),
                 "p": g.get("platform"),
                 "series": g.get("franchise") or "",

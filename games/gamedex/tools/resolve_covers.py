@@ -42,7 +42,8 @@ from PIL import Image, ImageOps
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from coverproject_index import slugify                      # noqa: E402
-from cp_wrap import TEMPLATES, PLATFORM_TEMPLATE, _aspect, TOLERANCE, _saturation   # noqa: E402
+from cp_wrap import (TEMPLATES, PLATFORM_TEMPLATE, TEMPLATE_ROT, _aspect,   # noqa: E402
+                     TOLERANCE, _saturation)
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / 'src'))
 from shelf import dominant_hue                            # noqa: E402
 
@@ -120,7 +121,27 @@ PLATFORM_DIR = {
 REGION_RANK = {"US": 0, "NA": 0, "": 1, "CA": 2, "EU": 3, "UK": 3, "AU": 4, "BR": 5, "JP": 6}
 REGION_OF_SHEET = {"North America": "US", "Europe": "EU", "Japan": "JP", "Australia": "AU"}
 
-MIN_SCORE = 0.12          # below this, the scan doesn't look like this game — drop it
+MIN_SCORE = 0.05          # below this, the scan doesn't look like this game at all
+
+# Cover Project hosts fan-made covers alongside real scans, under the real game's slug.
+# The only NES "The Legend of Zelda" scan in the archive is a ROM-hack cover ("Zelda:
+# The Legend of Link") using Breath of the Wild art — and it is close enough to the real
+# thing, once reduced to a fingerprint, that no threshold can reject it without also
+# rejecting genuine matches. So it gets named. This list is expected to grow slowly;
+# that is the honest cost of a community archive.
+BLOCKED = {
+    "nes.legendofzeldathe_US.1624582424465806971.jpg",   # fan ROM-hack cover, not the box
+}
+
+
+def row_key(row) -> str:
+    """The key a BOX hangs off.
+
+    NOT the enrichment key: that is title|platform|year, and it collapses a US and a
+    Japanese copy of the same game into one entry — so owning both Chrono Trigger on
+    SNES and on Super Famicom got you two Super Famicom boxes on the shelf. The region
+    is part of which box you own."""
+    return f"{row['_k']}#{(row.get('releaseRegion') or '').strip()}"
 ROTATE_MARGIN = 0.03      # a turned panel must beat the upright one by this much
 TEXT_SIDEWAYS = 0.85      # back-cover text lines: below this the page reads sideways
 
@@ -139,18 +160,22 @@ def thumb_of(url: str) -> str:
     return f"{stem}_thumb.{ext}"
 
 
-def fingerprint(im: Image.Image, size=(32, 40)) -> list[float] | None:
-    """A tiny normalised grayscale signature. Contrast-equalised so a dim scan and a
-    bright IGDB render of the same art still land on each other."""
-    g = ImageOps.equalize(im.convert("L")).resize(size, Image.LANCZOS)
-    px = list(g.getdata())
-    n = len(px)
-    mean = sum(px) / n
-    var = sum((p - mean) ** 2 for p in px) / n
+def fingerprint(im: Image.Image, size=(28, 36)) -> list[float] | None:
+    """A tiny normalised COLOUR signature.
+
+    This used to be grayscale, and that is how Animal Crossing: City Folk ended up
+    wearing the Balls of Fury box: strip the colour out and a lot of unrelated art
+    looks alike. Keeping the channels separates them (that pair scores -0.08 in
+    colour and +0.08 in grey)."""
+    px = list(im.convert("RGB").resize(size, Image.LANCZOS).getdata())
+    v = [c for p in px for c in p]
+    n = len(v)
+    mean = sum(v) / n
+    var = sum((x - mean) ** 2 for x in v) / n
     if var < 1e-6:
         return None
     sd = var ** 0.5
-    return [(p - mean) / sd for p in px]
+    return [(x - mean) / sd for x in v]
 
 
 def similarity(a, b) -> float:
@@ -237,6 +262,8 @@ def resolve(game, idx, cover_fp):
 
     best = None
     for c in ranked[:4]:
+        if c["url"].rsplit("/", 1)[-1] in BLOCKED:
+            continue
         raw = get(thumb_of(c["url"]), 45) or get(c["url"], 90)
         if not raw:
             continue
@@ -257,18 +284,15 @@ def resolve(game, idx, cover_fp):
         tpl = (tpl_name, TEMPLATES[tpl_name])
 
         back, _, front = panels(im, tpl[1])
-        score = similarity(fingerprint(front), cover_fp)
 
-        # A last safety net, deliberately weak. The correlation between a box front and
-        # an IGDB cover is noisy (0.15-0.55 on scans I know are right), so it is only
-        # ever allowed to VETO a scan that is sideways AND doesn't look like the game.
-        # It is not trusted enough to choose a rotation on its own.
-        rot = 0
-        if text_lines(back) < TEXT_SIDEWAYS:
-            turned = max((similarity(fingerprint(front.rotate(r, expand=True)), cover_fp), r)
-                         for r in (90, 270))
-            if turned[0] > score + ROTATE_MARGIN:
-                rot, score = turned[1], turned[0]
+        # Some platforms' scans are simply stored on their side — see TEMPLATE_ROT. That
+        # is not something to detect, it's something to know: an N64 box is landscape,
+        # and no heuristic here gets that right (both of mine read the sideways Zelda
+        # logo as the real cover).
+        rot = TEMPLATE_ROT.get(tpl[0], 0)
+        if rot:
+            front = front.rotate(rot, expand=True)
+        score = similarity(fingerprint(front), cover_fp)
 
         if best is None or score > best["score"]:
             _, spine_mm, front_mm, h_mm = tpl[1]
@@ -278,8 +302,11 @@ def resolve(game, idx, cover_fp):
             best = {"url": c["url"], "region": c["region"], "rot": rot,
                     "template": tpl[0], "case": {"w": w, "h": h, "d": spine_mm},
                     "score": round(score, 4)}
-        if best and best["score"] >= 0.30:
-            break                                  # good enough; stop shopping
+    # A scan that looks nothing like the game IS NOT THE GAME. Cover Project carries
+    # fan covers and the odd mislabelled upload; this is the only thing standing between
+    # them and your shelf.
+    if not best or best["score"] < MIN_SCORE:
+        return None
     return best
 
 
@@ -302,8 +329,11 @@ def main():
     print(f"  {len(phys)} physical games owned", file=sys.stderr)
 
     def one(r):
-        key = r["_k"]
-        e = enr.get(key) or {}
+        # The BOX is keyed per region; ENRICHMENT is still keyed per game. Mixing the
+        # two up looks up the cover under a key that cannot exist and quietly resolves
+        # nothing at all.
+        key = row_key(r)
+        e = enr.get(r["_k"]) or {}
         fp = hue = None
         if e.get("cover"):
             raw = get(IGDB_IMG.format(e["cover"]), 45)
