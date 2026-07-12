@@ -1,0 +1,100 @@
+{{/*
+RomM requires MariaDB. It is not optional and there is no SQLite fallback:
+ROMM_DB_DRIVER defaults to "mariadb" and the app fails to start without a
+reachable server. So the database ships with the chart rather than being a
+prerequisite someone has to remember.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "romm.fullname" . }}-db
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  MARIADB_DATABASE: {{ .Values.db.name | quote }}
+  MARIADB_USER: {{ .Values.db.user | quote }}
+  MARIADB_PASSWORD: {{ required "db.password required in values.local.yaml" .Values.db.password | quote }}
+  MARIADB_ROOT_PASSWORD: {{ required "db.rootPassword required in values.local.yaml" .Values.db.rootPassword | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "romm.fullname" . }}-db
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.persistence.db.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.db.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "romm.fullname" . }}-db
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3306
+      targetPort: mysql
+      name: mysql
+  selector:
+    {{- include "romm.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "romm.fullname" . }}-db
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: one RWO volume, never two mysqld on it at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "romm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: db
+  template:
+    metadata:
+      labels:
+        {{- include "romm.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: db
+    spec:
+      containers:
+        - name: mariadb
+          image: "{{ .Values.db.image }}"
+          ports:
+            - name: mysql
+              containerPort: 3306
+          envFrom:
+            - secretRef:
+                name: {{ include "romm.fullname" . }}-db
+          volumeMounts:
+            - name: db
+              mountPath: /var/lib/mysql
+          livenessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            initialDelaySeconds: 45
+            periodSeconds: 20
+          readinessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.db.resources | nindent 12 }}
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: {{ include "romm.fullname" . }}-db

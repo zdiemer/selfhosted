@@ -1,0 +1,31 @@
+{{/*
+RomM's config.yml. Two settings here are not cosmetic at this library's scale:
+
+  skip_hash_calculation — RomM otherwise CRC/MD5/SHA1s every ROM it scans. The
+    share is 78 TB over SMB; hashing it would drag the whole library across the
+    network for no benefit we need.
+
+  roms_folder — the share already has a `Roms/` folder full of platforms, so
+    point RomM at it rather than reshaping 78 TB to suit the default.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "romm.fullname" . }}-config
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    filesystem:
+      roms_folder: {{ .Values.config.romsFolder | quote }}
+      skip_hash_calculation: {{ .Values.config.skipHashCalculation }}
+    {{- with .Values.config.excludePlatforms }}
+    exclude:
+      platforms:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.config.platformMap }}
+    system:
+      platforms:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}

@@ -1,7 +1,22 @@
 image:
   repository: rommapp/romm
-  tag: "3.11.0"
+  tag: "4.9.2"
   pullPolicy: IfNotPresent
+
+# RomM requires MariaDB. There is no SQLite option: ROMM_DB_DRIVER defaults to
+# "mariadb" and the app will not start without a reachable server.
+db:
+  image: mariadb:11.4
+  name: romm
+  user: romm
+  password: ""              # values.local.yaml
+  rootPassword: ""          # values.local.yaml
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
 
 service:
   type: ClusterIP
@@ -10,8 +25,8 @@ service:
 # SMB share mounted read-only into the container. Point this at the share
 # that already serves ROMs to your Steam Deck — we just add a k8s consumer.
 smb:
-  host: ""                  # NAS host or IP (e.g. 192.168.1.50)
-  share: ""                 # Share name, no leading slash (e.g. Games/ROMs)
+  host: "192.168.4.36"      # the NAS on the LAN
+  share: "games"            # //192.168.4.36/games
   vers: "3.0"               # Pin SMB protocol; Windows 10/11 speak 3.x
   # Extra mount options. Read-only perms by default (0555 dirs, 0444 files).
   mountOptions:
@@ -22,22 +37,49 @@ smb:
   # layout expects /romm/library/roms/<platform>/<file>. If your share's root
   # *is* the per-platform folders, mount it at /romm/library/roms (default).
   # If your share's root contains roms/ and bios/ already, use /romm/library.
-  mountPath: /romm/library/roms
-  # Subpath under the share to mount (""="mount the whole share").
+  # The share's root holds Roms/ and Emulators/, so mount the whole thing at
+  # /romm/library and tell RomM its roms folder is "Roms" (config.romsFolder).
+  # The alternative — mounting Roms/ at /romm/library/roms — would work too, but
+  # this way the layout in RomM matches the layout on the NAS.
+  mountPath: /romm/library
   sharePath: ""
   # SMB username/password live in values.local.yaml.
 
 persistence:
   data:
-    # One PVC, subPathed into /romm/resources, /romm/assets, /romm/config.
-    size: 20Gi
+    # One PVC, subPathed into /romm/resources, /romm/assets and /redis-data.
+    # Covers and screenshots for a library this size add up — 20Gi was optimistic.
+    size: 50Gi
     storageClass: ""        # "" → cluster default StorageClass
     accessMode: ReadWriteOnce
+  db:
+    size: 10Gi
+    storageClass: ""
+
+# Written to /romm/config/config.yml.
+config:
+  # The share's platform folders live under Roms/.
+  romsFolder: "Roms"
+  # CRITICAL at this scale. RomM otherwise hashes every ROM it scans — across a
+  # 78 TB library on the far side of an SMB link, that is the entire collection
+  # dragged over the network for a checksum nobody asked for.
+  skipHashCalculation: true
+  # Folders that aren't game platforms, or that we don't want RomM walking.
+  excludePlatforms: []
+  # your-folder-name: romm-platform-name, for folders RomM can't identify.
+  platformMap: {}
 
 romm:
   # REQUIRED — set in values.local.yaml. Generate with:
   #   openssl rand -hex 32
   authSecretKey: ""
+
+  # Scanning is MANUAL to begin with: 167 platform folders over SMB is not
+  # something to discover the hard way on a schedule. Trigger scans per platform
+  # from the UI, then turn these on once we know how it behaves.
+  scheduledRescan: false
+  rescanOnChange: false
+  scanTimeout: 14400        # 4h, RomM's default
 
   # Optional scrapers (all set in values.local.yaml).
   igdb:
@@ -60,8 +102,8 @@ romm:
     clientSecret: ""        # values.local.yaml
 
 ingress:
-  # Disabled for LAN-only v1. Flip on after the DuckDNS follow-up — see README.
-  enabled: false
+  # RomM has its own login, so unlike gamedex this isn't open to the world.
+  enabled: true
   className: traefik
   host: romm.zachd.duckdns.org
   tls:

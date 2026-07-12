@@ -17,9 +17,33 @@ spec:
       annotations:
         # Restart pod when rendered env Secret changes (e.g. new scraper key).
         checksum/env: {{ include (print $.Template.BasePath "/romm-env.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
       labels:
         {{- include "romm.selectorLabels" . | nindent 8 }}
     spec:
+      # Kubernetes injects legacy service-discovery env vars for every Service in
+      # the namespace: our Service is called "romm", so the pod was handed
+      # ROMM_PORT=tcp://10.43.x.x:8080. RomM reads ROMM_PORT as the port nginx
+      # should listen on, got a URL, and crash-looped on
+      #   [emerg] invalid host in "tcp://10.43.214.72:8080" of the "listen" directive
+      # Nothing needs those vars — we address the DB by DNS.
+      enableServiceLinks: false
+      # RomM crashes rather than retries if the database isn't up yet.
+      initContainers:
+        - name: wait-for-db
+          image: "{{ .Values.db.image }}"
+          command:
+            - sh
+            - -c
+            - |
+              # --skip-ssl: MariaDB 11.4 serves TLS with a self-signed cert by
+              # default and the client verifies it, so a plain ping fails with
+              # "TLS/SSL error: self-signed certificate" even though the server is
+              # healthy. We only want to know it's accepting connections.
+              until mariadb-admin ping -h "{{ include "romm.fullname" . }}-db" --silent --skip-ssl; do
+                echo "waiting for mariadb..."; sleep 3
+              done
+              echo "mariadb is up"
       containers:
         - name: romm
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -43,15 +67,22 @@ spec:
             - name: data
               mountPath: /romm/assets
               subPath: assets
+            # RomM keeps its background-task queue in an in-image Redis. Without a
+            # volume here the queue is lost on every restart.
             - name: data
-              mountPath: /romm/config
-              subPath: config
+              mountPath: /redis-data
+              subPath: redis
+            - name: config
+              mountPath: /romm/config/config.yml
+              subPath: config.yml
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /
@@ -67,3 +98,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "romm.fullname" . }}-data
+        - name: config
+          configMap:
+            name: {{ include "romm.fullname" . }}-config

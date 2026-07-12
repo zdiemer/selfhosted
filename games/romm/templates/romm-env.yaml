@@ -7,7 +7,22 @@ metadata:
 type: Opaque
 stringData:
   ROMM_AUTH_SECRET_KEY: {{ required "romm.authSecretKey required in values.local.yaml" .Values.romm.authSecretKey | quote }}
-  DB_DRIVER: "sqlite"
+  # RomM has no SQLite driver — ROMM_DB_DRIVER defaults to mariadb and the app
+  # will not start without a database. The chart ships one.
+  DB_HOST: {{ printf "%s-db" (include "romm.fullname" .) | quote }}
+  DB_PORT: "3306"
+  DB_NAME: {{ .Values.db.name | quote }}
+  DB_USER: {{ .Values.db.user | quote }}
+  DB_PASSWD: {{ required "db.password required in values.local.yaml" .Values.db.password | quote }}
+  ROMM_PORT: "8080"
+  SCAN_TIMEOUT: {{ .Values.romm.scanTimeout | quote }}
+  ENABLE_SCHEDULED_RESCAN: {{ .Values.romm.scheduledRescan | quote }}
+  ENABLE_RESCAN_ON_FILESYSTEM_CHANGE: {{ .Values.romm.rescanOnChange | quote }}
+  {{- with .Values.ingress }}
+  {{- if .enabled }}
+  ROMM_BASE_URL: {{ printf "https://%s" .host | quote }}
+  {{- end }}
+  {{- end }}
   {{- with .Values.romm.igdb }}
   {{- if .clientId }}
   IGDB_CLIENT_ID: {{ .clientId | quote }}
