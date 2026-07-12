@@ -2992,7 +2992,7 @@ const SELECTORS = [
     filter: (r) => String(r.title || "").trim().split(/\s+/).length === 1 },
   { id: "obscure", label: "Nobody has heard of these", group: "For the hell of it",
     filter: isObscure },
-  { id: "coop", label: "Playable with someone else", group: "For the hell of it",
+  { id: "cooptimus", label: "Verified co-op (Co-Optimus)", group: "For the hell of it",
     filter: (r) => { const e = ENRICH[r._k] || {}; return e.coopLocal > 1 || e.coopOnline > 1; } },
   { id: "couch", label: "Co-op on one couch", group: "For the hell of it",
     filter: (r) => (ENRICH[r._k] || {}).coopLocal > 1 },
@@ -3025,7 +3025,7 @@ const SELECTORS = [
   { id: "cheap", label: "Cheap (under $10)", group: "Ownership & price", filter: (r) => r.purchasePrice != null && r.purchasePrice > 0 && r.purchasePrice < 10 },
   { id: "unplayedbuy", label: "Unplayed purchases", group: "Ownership & price", filter: (r) => r.owned && r.purchasePrice != null },
 
-  { id: "coop", label: "Co-op", group: "Play style", filter: (r) => modeIncludes(r, "co-op") || modeIncludes(r, "cooperative") },
+  { id: "coopmodes", label: "Co-op (per IGDB)", group: "Play style", filter: (r) => modeIncludes(r, "co-op") || modeIncludes(r, "cooperative") },
   { id: "multi", label: "Multiplayer", group: "Play style", filter: (r) => modeIncludes(r, "multiplayer") },
   { id: "solo", label: "Single-player", group: "Play style", filter: (r) => modeIncludes(r, "single player") },
   { id: "vr", label: "VR games", group: "Play style", filter: (r) => !!r.vr },
@@ -3426,7 +3426,6 @@ $("#gridsortdir").addEventListener("click", () => {
     nav();
   }
 });
-function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; }
 $("#drawerBack").addEventListener("click", drawerBack);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });
 $("#drawerBody").addEventListener("click", (e) => {
