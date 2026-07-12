@@ -83,6 +83,12 @@ DEFAULT_CASE = (135, 190, 14)
 
 FACES = ("front", "spine", "back")
 
+# Bump when the CUTTING logic changes, so already-cached faces on the volume are
+# thrown away and recut. Without this, a fix to how a box is sliced never reaches a
+# box that was cut wrong the first time. (v2: rotated templates stopped rotating the
+# spine — it was already thin-and-tall — and only turn the flat faces.)
+CUT_VERSION = "2"
+
 # Cover Project's print templates, in millimetres: back | spine | front | height.
 # Kept in step with tools/cp_wrap.py, which is what chose the template offline.
 TEMPLATES = {
@@ -151,6 +157,21 @@ class Shelf:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        self._invalidate_stale_cache()
+
+    def _invalidate_stale_cache(self) -> None:
+        """Drop the whole cut cache when the cutting logic changed, so a box that was
+        sliced wrong the first time gets a fresh, correct cut instead of the old one."""
+        stamp = self._dir / ".cut-version"
+        if stamp.exists() and stamp.read_text().strip() == CUT_VERSION:
+            return
+        n = 0
+        for f in self._dir.glob("*.jpg"):
+            f.unlink(missing_ok=True)
+            n += 1
+        stamp.write_text(CUT_VERSION)
+        if n:
+            log.info("shelf: cut logic changed (v%s) — cleared %d cached faces", CUT_VERSION, n)
 
     # ---------- what's on the shelf ----------
 
@@ -279,9 +300,15 @@ class Shelf:
             "spine": im.crop((x1, 0, x2, im.height)),
             "front": im.crop((x2, 0, im.width, im.height)),
         }
+        # On a rotated-scan platform (SNES, N64) the ART inside each panel is on its
+        # side, but the panels do NOT all fix the same way. The spine strip is already
+        # thin-and-tall — the shape the spine face wants — so rotating it turns it into
+        # a wide sliver that then gets stretched across the spine (the "spine is a
+        # stretched piece of the front" bug). Only the flat faces turn.
+        rot = {"front": w["rot"], "back": w["rot"], "spine": 0} if w["rot"] else {}
         for name, piece in cuts.items():
-            if w["rot"]:
-                piece = piece.rotate(w["rot"], expand=True)
+            if rot.get(name):
+                piece = piece.rotate(rot[name], expand=True)
             # 600px on the long edge is more than a 250px case can show, and turns a
             # 6 MB scan into ~40 KB.
             long = max(piece.size)
