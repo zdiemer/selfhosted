@@ -22,6 +22,30 @@ const hzNorm = (s) => String(s || "").toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   .replace(/[^a-z0-9]/g, "");
 
+// ---- match confidence ----------------------------------------------------
+// Every automatic match already carried a score and nobody ever saw it.
+// MatchValidator.match_score is 0-15: 5 for matching the title at all, 5 MORE if
+// that title was exact, then +1 each for platform, release date, publisher,
+// developer and franchise. So >= 10 means the title matched exactly; below that
+// the matcher settled for something that merely looked similar.
+const CONF_EXACT = 10;
+
+const hzConf = (r) => {
+  const e = ENRICH[r._k];
+  if (!e || e.manualMatch) return null;        // you picked it by hand; not ours to doubt
+  if (!e.igdbId && !e.source) return null;     // nothing matched at all — that's "nometa"
+  return typeof e.confidence === "number" ? e.confidence : null;
+};
+
+// The one thing that makes a bad match obvious: what it matched you TO.
+const hzConfDetail = (r) => {
+  const e = ENRICH[r._k] || {};
+  const c = hzConf(r);
+  const name = e.name && hzNorm(e.name) !== hzNorm(r.title)
+    ? `matched \u201c${e.name}\u201d` : "same title";
+  return `${name} \u00b7 ${c}/15 \u00b7 ${e.source || "igdb"}`;
+};
+
 // severity: "error" = almost certainly wrong · "warn" = probably worth a look ·
 // "info" = just a gap you may not care about.
 const HEALTH_CHECKS = [
@@ -132,6 +156,27 @@ const HEALTH_CHECKS = [
       const e = ENRICH[r._k];
       return !e || (!e.igdbId && !e.source && !e.cover && !e.coverUrl);
     }),
+  },
+  {
+    id: "titleonly", severity: "error", sheet: "games",
+    title: "Matched on a fuzzy title and nothing else",
+    why: "Confidence 5/15 or less: the matcher accepted a title that was merely SIMILAR, and nothing "
+       + "corroborated it — not the platform, not the release year, not the publisher, developer or "
+       + "franchise. These are where a wrong cover, a wrong score or a wrong launch link comes from. "
+       + "Open one, check the matched name against yours, and pin the right game with Match manually.",
+    find: () => hzGames().filter((r) => { const c = hzConf(r); return c != null && c <= 5; })
+      .sort((a, b) => hzConf(a) - hzConf(b)),
+    detail: hzConfDetail,
+  },
+  {
+    id: "lowconf", severity: "warn", sheet: "games",
+    title: "Low-confidence metadata match",
+    why: "Confidence 6-9/15: the title was a fuzzy match rather than an exact one, though something else "
+       + "agreed (platform, year, publisher…). Usually right — a subtitle or a \u00ae the sheet spells "
+       + "differently — but this is the pile worth spot-checking.",
+    find: () => hzGames().filter((r) => { const c = hzConf(r); return c != null && c > 5 && c < CONF_EXACT; })
+      .sort((a, b) => hzConf(a) - hzConf(b)),
+    detail: hzConfDetail,
   },
   {
     id: "nopriority", severity: "info", sheet: "games",

@@ -24,11 +24,17 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes",
-               "name", "stores", "url")
+               "name", "stores", "url", "confidence")
+# `confidence` is MatchValidator.match_score, 0-15: title matched 5, title EXACT
+# a further 5, then +1 each for platform, release date, publisher, developer and
+# franchise. It has been recorded on every automatic match since day one and
+# never shown to anyone — which is how a bad match stays invisible.
 # igdbId/source let the UI tell IGDB matches from fallback (IGN/GameSpot/Steam)
 # ones, and spot games with no metadata at all.
+# `name` is what we matched you TO. Without it a low-confidence warning is just a
+# number; with it, "Backbone -> Backbone: Prologue" tells you at a glance.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
-                "igdbId", "source", "stores", "url")
+                "igdbId", "source", "stores", "url", "confidence", "name")
 
 
 def _light_relations(rec):
@@ -471,8 +477,18 @@ class Enricher:
                 out.update(extract(entry[1]))
         return out
 
+    def _manual(self, table, keys):
+        """The subset of keys whose match was set by hand."""
+        if not keys:
+            return set()
+        with self._db_lock:
+            qs = ",".join("?" * len(keys))
+            return {r[0] for r in self._db.execute(
+                f"SELECT match_key FROM {table} WHERE manual=1 AND match_key IN ({qs})", keys)}
+
     def get_light(self, keys):
         igdb = self._get("enrichment", keys)
+        manual = self._manual("enrichment", keys)
         sec = {src: self._get(src, keys) for src in self._secondary}
         items, pending = {}, []
         for k in keys:
@@ -481,6 +497,8 @@ class Enricher:
             if e and e[0] == "matched":
                 base["video"] = _light_video(e[1])
                 base["rel"] = _light_relations(e[1])
+                if k in manual:
+                    base["manualMatch"] = True
             for src, extract in _SECONDARY_LIGHT.items():
                 entry = sec.get(src, {}).get(k)
                 if entry and entry[0] == "matched":
@@ -511,12 +529,15 @@ class Enricher:
     def get_all_light(self):
         out = {}
         with self._db_lock:
-            for mk, data in self._db.execute("SELECT match_key,data FROM enrichment WHERE status='matched'"):
+            for mk, data, manual in self._db.execute(
+                    "SELECT match_key,data,manual FROM enrichment WHERE status='matched'"):
                 if data:
                     d = json.loads(data)
                     out[mk] = {f: d.get(f) for f in _FACET_LIGHT}
                     out[mk]["video"] = _light_video(d)
                     out[mk]["rel"] = _light_relations(d)
+                    if manual:
+                        out[mk]["manualMatch"] = True
             for src, extract in _SECONDARY_LIGHT.items():
                 if src not in self._secondary:
                     continue
