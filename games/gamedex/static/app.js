@@ -795,7 +795,7 @@ async function loadAllEnrichment() {
       else if (activeTab === "reviews") patchReviewCovers();
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab === "health") renderHealth();
-      else if (activeTab === "series") patchSeriesCovers();
+      else if (activeTab === "groups") patchGroupCovers();
       else if (activeTab !== "pick") {
         patchEnrichedCells();
         patchTimelineCovers();          // the Completed tab's third view
@@ -1916,7 +1916,7 @@ function applyDrawerFacet(key, val) {
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
 let lastGroupedCount = -1;      // so the grouped view repaints once enrichment lands
-const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "series"];
+const SPECIAL_TABS = ["home", "reviews", "stats", "pick", "challenges", "health", "groups"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
@@ -1925,7 +1925,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   $("#home").hidden = mode !== "home";
   $("#reviews").hidden = mode !== "reviews";
   $("#health").hidden = mode !== "health";
-  $("#series").hidden = mode !== "series";
+  $("#groups").hidden = mode !== "groups";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -1948,7 +1948,7 @@ function renderAll() {
   if (activeTab === "pick") { setSpecialMode("pick"); renderPicker(); return; }
   if (activeTab === "challenges") { setSpecialMode("challenges"); renderChallenges(); return; }
   if (activeTab === "health") { setSpecialMode("health"); renderHealth(); return; }
-  if (activeTab === "series") { setSpecialMode("series"); renderSeries(); return; }
+  if (activeTab === "groups") { setSpecialMode("groups"); renderGroups(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = groupCollections(filterRows(null));
@@ -1980,8 +1980,9 @@ function syncURL(push) {
     if (pickState.selector) p.set("sel", pickState.selector);
     if (pickState.param) p.set("pp", pickState.param);
     if (pickState.minutes) p.set("mins", String(pickState.minutes));
-  } else if (activeTab === "series") {
-    if (seriesState.open) p.set("fr", seriesState.open);
+  } else if (activeTab === "groups") {
+    if (groupState.kind) p.set("g", groupState.kind);
+    if (groupState.open) p.set("gk", groupState.open);
   } else if (activeTab === "challenges") {
     if (chState.open) p.set("ch", chState.open);
   } else if (activeTab !== "stats") {
@@ -2000,11 +2001,18 @@ function syncURL(push) {
 function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
-  const tab = ["home", "games", "completed", "onOrder", "series", "reviews", "stats", "pick", "challenges", "health"].includes(p.get("tab")) ? p.get("tab") : "home";
+  let tab = p.get("tab") === "series" ? "groups" : p.get("tab");   // old links still work
+  tab = ["home", "games", "completed", "onOrder", "groups", "reviews", "stats", "pick", "challenges", "health"].includes(tab) ? tab : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
-    if (tab === "series") { seriesState.open = p.get("fr") || null; }
+    if (tab === "groups") {
+      // ?fr=<franchise> was the old Series link; it means the franchise axis.
+      const legacy = p.get("fr");
+      groupState.kind = legacy ? "series" : (p.get("g") || null);
+      groupState.open = legacy || p.get("gk") || null;
+      groupState.q = "";
+    }
     applyingState = false; switchTab(tab); return;
   }
   const st = tabState[tab];
@@ -2052,7 +2060,7 @@ async function load() {
   resetCollections();
   resetHealth();
   resetSearchCache();
-  resetSeries();
+  resetGroups();
   resetTaste();
   resetRelations();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
@@ -2716,7 +2724,7 @@ function cmdkCandidates(q) {
       { kind: "Tab", label: "🎮 All Games", run: () => switchTab("games") },
       { kind: "Tab", label: "🏆 Completed", run: () => switchTab("completed") },
       { kind: "Tab", label: "📦 On Order", run: () => switchTab("onOrder") },
-      { kind: "Tab", label: "🎬 Series", run: () => switchTab("series") },
+      { kind: "Tab", label: "🗂 Groupings", run: () => switchTab("groups") },
       { kind: "Tab", label: "📝 Reviews", run: () => switchTab("reviews") },
       { kind: "Tab", label: "📊 Stats", run: () => switchTab("stats") },
       { kind: "Tab", label: "🎲 Pick", run: () => switchTab("pick") },
@@ -2728,7 +2736,7 @@ function cmdkCandidates(q) {
   const tabs = [["home", "🏠 Home"], ["games", "🎮 All Games"], ["completed", "🏆 Completed"],
                 ["onOrder", "📦 On Order"], ["reviews", "📝 Reviews"], ["stats", "📊 Stats"],
                 ["pick", "🎲 Pick"], ["challenges", "🎯 Challenges"], ["health", "🩺 Health"],
-                ["series", "🎬 Series"]];
+                ["groups", "🗂 Groupings"]];
   for (const [id, label] of tabs) {
     if (label.toLowerCase().includes(needle)) out.push({ kind: "Tab", label, run: () => switchTab(id) });
   }
