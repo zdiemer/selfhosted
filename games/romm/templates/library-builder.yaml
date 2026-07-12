@@ -31,7 +31,10 @@ data:
   build.py: |
     import os, sys, yaml, time
 
-    SRC = "/nas/{{ .Values.config.romsFolder }}"
+    # The share lives under the library root (see the deployment): RomM resolves
+    # real files and rejects anything outside base_path, so symlinks must point
+    # to targets INSIDE /romm/library.
+    SRC = "/romm/library/.nas/{{ .Values.config.romsFolder }}"
     DST = "/romm/library/{{ .Values.config.romsFolder }}"
     cfg = yaml.safe_load(open("/romm/config/config.yml"))
     wanted  = set((cfg.get("system") or {}).get("platforms") or {})

@@ -53,8 +53,14 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           command: ["python3", "/builder/build.py"]
           volumeMounts:
+            # Mounted INSIDE the library root on purpose. RomM's validate_path()
+            # resolves any real file it is handed and rejects it if it lands
+            # outside base_path — so a symlink pointing at /nas made firmware
+            # blow up with "Path _bios/3DO/goldstar.bin is outside the base
+            # directory /romm/library". With the share under the base, every
+            # resolved path stays inside it.
             - name: nas
-              mountPath: /nas
+              mountPath: /romm/library/.nas
               readOnly: true
             - name: library
               mountPath: /romm/library
@@ -80,8 +86,14 @@ spec:
             # visible in this container too or every link would dangle.
             - name: library
               mountPath: /romm/library
+            # Mounted INSIDE the library root on purpose. RomM's validate_path()
+            # resolves any real file it is handed and rejects it if it lands
+            # outside base_path — so a symlink pointing at /nas made firmware
+            # blow up with "Path _bios/3DO/goldstar.bin is outside the base
+            # directory /romm/library". With the share under the base, every
+            # resolved path stays inside it.
             - name: nas
-              mountPath: /nas
+              mountPath: /romm/library/.nas
               readOnly: true
             - name: data
               mountPath: /romm/resources
