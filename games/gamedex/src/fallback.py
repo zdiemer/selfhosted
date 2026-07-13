@@ -20,6 +20,7 @@ import requests
 
 from excel_game import ExcelGame
 from igdb import RateLimiter, platform_from_str
+from keitai import KeitaiClient
 from match_validator import MatchValidator
 
 log = logging.getLogger("gamedex.fallback")
@@ -326,7 +327,10 @@ class _LaunchBox:
 class FallbackClient:
     def __init__(self, gamespot_key: str = None, gamespot_enabled: bool = False):
         v = MatchValidator()
-        self._clients = {"ign": _Ign(v), "steam": _Steam(v), "launchbox": _LaunchBox(v)}
+        self._clients = {"ign": _Ign(v), "steam": _Steam(v), "launchbox": _LaunchBox(v),
+                         # Japanese feature phones (DoJa/i-mode). Only ever asked about
+                         # those platforms, where it is the ONLY source that knows anything.
+                         "keitai": KeitaiClient(v)}
         # GameSpot is OFF by default: its API now 301s to a Cloudflare-protected
         # page (403 "Just a moment…"), so it matches nothing — and at 200 req/hr
         # it stalled the chain ~18s per IGDB miss. Kept for if it ever returns.
@@ -343,7 +347,13 @@ class FallbackClient:
 
     def match(self, title, platform=None, year=None):
         game = ExcelGame(title=title, platform=platform_from_str(platform), release_year=year)
-        for name in self._chain:
+        # Keitai Wiki is the only source that knows the Japanese feature phones, and the
+        # only one worth asking about them — so for DoJa it goes FIRST, and for everything
+        # else it isn't asked at all.
+        chain = list(self._chain)
+        if KeitaiClient.serves(platform):
+            chain = ["keitai"] + chain
+        for name in chain:
             try:
                 res = self._clients[name].match(game)
                 if res:
