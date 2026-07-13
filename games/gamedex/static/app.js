@@ -1009,7 +1009,7 @@ const GAMES_SORT_MENU = [
   "title", "platform", "releaseDate",
   "rating", "__critic", "__user", "__predicted",
   "priority",
-  "datePurchased", "purchasePrice",
+  "datePurchased", "dateAdded", "purchasePrice",
   "dateStarted", "dateCompleted", "completionTime", "__esttime",
 ];
 // The sheet's own headers read as filing-cabinet labels ("Date Purchased"); in a
@@ -1017,6 +1017,7 @@ const GAMES_SORT_MENU = [
 const SORT_LABEL = {
   rating: "Rating (yours)",
   datePurchased: "Purchased Date",
+  dateAdded: "Added Date",
   dateStarted: "Started Date",
   dateCompleted: "Completed Date",
 };
