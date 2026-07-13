@@ -1883,20 +1883,46 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 .groups { flex: 1; overflow-y: auto; padding: 26px 20px 60px; }
 .groups .fr-index-head, .groups .gr-tiles { max-width: 1180px; margin-left: auto; margin-right: auto; }
 
-/* Your best game in the group: the one you rated highest AND actually finished. */
-.fr-best {
-  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
-  margin: 2px 0 1px; padding: 3px 9px 3px 4px;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--surface); max-width: 100%;
+/* Your favourite game in a group, on that group's own page: the one you rated highest AND
+   actually finished. It gets the cover, the score and your own words — a series is worth
+   opening because you remember what it meant, and a one-line pill can't say that. */
+.fr-fav { margin-bottom: 22px; }
+.fr-fav .h-eyebrow { display: block; margin-bottom: 8px; }
+.fr-fav-card {
+  display: flex; align-items: flex-start; gap: 16px; width: 100%; text-align: left;
+  padding: 16px; cursor: pointer;
+  border: 1px solid var(--accent-line); border-radius: var(--r);
+  background: linear-gradient(150deg, var(--accent-soft), transparent 70%), var(--surface-2);
+  transition: border-color .16s var(--ease), transform .16s var(--ease);
 }
-.fr-best b {
-  flex: none; font: 800 11px/1 var(--display); font-variant-numeric: tabular-nums;
-  padding: 4px 6px; border-radius: 999px; background: var(--surface-2);
+.fr-fav-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.fr-fav-art {
+  width: 74px; flex: none; aspect-ratio: 3 / 4; object-fit: cover;
+  border-radius: 6px; border: 1px solid var(--border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .35); background: var(--surface);
 }
-.fr-best > span {
-  font: 500 12px/1.3 var(--font); color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.fr-fav-art.ph { display: flex; align-items: center; justify-content: center; color: var(--dim); }
+.fr-fav-b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.fr-fav-b > b { font: 700 17px/1.25 var(--display); letter-spacing: -.01em; }
+.fr-fav-b .muted { font-size: 12.5px; }
+/* The review, clamped: enough to remember it by, not the whole essay. */
+.fr-fav-q {
+  margin-top: 4px; quotes: none; font: 400 13px/1.6 var(--font); color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.fr-fav-score {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding-left: 6px;
+}
+.fr-fav-score b { font: 800 26px/1 var(--display); font-variant-numeric: tabular-nums; }
+.fr-fav-score i {
+  font-style: normal; font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--dim); white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .fr-fav-card { gap: 12px; padding: 13px; }
+  .fr-fav-art { width: 58px; }
+  .fr-fav-score b { font-size: 21px; }
 }
 
 .gr-tiles { display: grid; gap: 12px; margin: 18px 0 32px; }

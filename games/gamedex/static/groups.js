@@ -168,23 +168,48 @@ function groupCardHtml(s) {
     || s.games[0];
   const cs = art ? coverSrc(ENRICH[art._k], "cover_big") : "";
   const complete = s.done === s.games.length;
-  const bestHtml = best
-    ? `<span class="fr-best" title="Your highest-rated game you've finished in this group">
-         <b class="${ratingClass(best.rating)}">${Math.round(best.rating * 100)}</b>
-         <span>${escapeHtml(String(best.title || best.game || ""))}</span>
-       </span>`
-    : "";
   return `<button class="fr-card${complete ? " done" : ""}" data-fr="${escapeHtml(s.name)}" data-fk="${escapeHtml(String((art && art._k) || ""))}">
     ${cs ? `<img class="fr-art" loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-art ph">${icon("i-library", 22)}</span>`}
     <span class="fr-body">
       <b>${escapeHtml(s.name)}</b>
-      ${bestHtml}
       <span class="muted">${s.done} of ${s.games.length} finished${s.owned ? ` · ${s.owned} owned` : ""}</span>
       ${groupCardStats(s)}
       <span class="ch-bar"><span style="width:${(s.pct * 100).toFixed(1)}%"></span></span>
     </span>
     ${complete ? `<span class="fr-done">✓</span>` : ""}
   </button>`;
+}
+
+/* The best thing in the group, on the group's own page. Not a pill in a list — the whole
+   point of opening a series is remembering what it meant, so give it the cover, the score,
+   and what I actually wrote about it at the time. The review lives on the Completed sheet,
+   which historyOf() already joins for the drawer. */
+function groupFavHtml(s) {
+  const best = groupBest(s);
+  if (!best) return "";
+  const i = s.games.indexOf(best);
+  const cs = coverSrc(ENRICH[best._k], "cover_big");
+  const h = typeof historyOf === "function" ? historyOf(best) : {};
+  const bits = [best.platform, best.releaseYear].filter(Boolean).map(String).map(escapeHtml).join(" · ");
+  const when = h.finished ? `Finished ${escapeHtml(fmtDate(h.finished))}` : "";
+  const played = h.playTime != null ? `${escapeHtml(fmtHours(h.playTime))} played` : "";
+  const meta = [bits, when, played].filter(Boolean).join(" · ");
+  const review = h.review ? String(h.review) : "";
+  return `<div class="fr-fav">
+    <span class="h-eyebrow">${icon("i-star", 13)} Your favourite here</span>
+    <button class="fr-fav-card" data-fg="${escapeHtml(String(best._k || ""))}" data-fi="${i}">
+      ${cs ? `<img class="fr-fav-art" loading="lazy" src="${escapeHtml(cs)}" alt="">`
+           : `<span class="fr-fav-art ph">${icon("i-library", 22)}</span>`}
+      <span class="fr-fav-b">
+        <b>${escapeHtml(String(best.title || best.game || ""))}</b>
+        <span class="muted">${meta}</span>
+        ${review ? `<q class="fr-fav-q">${escapeHtml(review)}</q>` : ""}
+      </span>
+      <span class="fr-fav-score ${ratingClass(best.rating)}">
+        <b>${Math.round(best.rating * 100)}</b><i>my rating</i>
+      </span>
+    </button>
+  </div>`;
 }
 
 function groupGameRow(g, i) {
@@ -233,6 +258,7 @@ function renderGroups() {
           ${typeof chRing === "function" ? chRing(s.pct, 84) : ""}
         </div>
         ${groupStatsHtml(s)}
+        ${groupFavHtml(s)}
         ${s.next ? `<div class="fr-next">
           <span class="h-eyebrow">Play next</span>
           ${groupGameRow(s.next, s.games.indexOf(s.next))}
