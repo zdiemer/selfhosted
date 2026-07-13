@@ -3026,7 +3026,7 @@ function applyDrawerFacet(key, val) {
 // ---- orchestration ------------------------------------------------------
 let currentFiltered = [];
 let lastGroupedCount = -1;      // so the grouped view repaints once enrichment lands
-const SPECIAL_TABS = ["home", "stats", "pick", "challenges", "health", "groups", "shelf"];
+const SPECIAL_TABS = ["home", "stats", "pick", "challenges", "health", "groups", "shelf", "picross"];
 function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challenges"
   const special = SPECIAL_TABS.includes(mode);
   $("#stats").hidden = mode !== "stats";
@@ -3036,6 +3036,7 @@ function setSpecialMode(mode) {   // null | "home" | "stats" | "pick" | "challen
   $("#health").hidden = mode !== "health";
   $("#groups").hidden = mode !== "groups";
   $("#shelfview").hidden = mode !== "shelf";
+  $("#picross").hidden = mode !== "picross";
   $(".resultbar").hidden = special;
   $("#pager").style.display = special ? "none" : "";
   document.querySelector(".facets").style.display = special ? "none" : "";
@@ -3059,6 +3060,7 @@ function renderAll() {
   if (activeTab === "health") { setSpecialMode("health"); renderHealth(); return; }
   if (activeTab === "groups") { setSpecialMode("groups"); renderGroups(); return; }
   if (activeTab === "shelf") { setSpecialMode("shelf"); renderShelf(); return; }
+  if (activeTab === "picross") { setSpecialMode("picross"); renderPicross(); return; }
   setSpecialMode(null);
   renderFacets();
   currentFiltered = groupCollections(filterRows(null));
@@ -3115,7 +3117,10 @@ function applyStateFromURL() {
   applyingState = true;
   const p = new URLSearchParams(location.search);
   let tab = p.get("tab") === "series" ? "groups" : p.get("tab");   // old links still work
-  tab = ["home", "games", "completed", "onOrder", "groups", "stats", "pick", "challenges", "health", "shelf"].includes(tab) ? tab : "home";
+  // "picross" is in here but NOT in the nav — it's reached from Home, the palette, or a
+  // direct link, and a link has to actually work.
+  tab = ["home", "games", "completed", "onOrder", "groups", "stats", "pick", "challenges",
+         "health", "shelf", "picross"].includes(tab) ? tab : "home";
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
@@ -4225,11 +4230,15 @@ const cmdk = { open: false, sel: 0, results: [] };
 // Read the tab list from the live header, so the palette can never go stale — adding
 // or removing a tab (Shelf in, Reviews out) updates it for free.
 function cmdkTabs() {
-  return [...document.querySelectorAll("#tabs button[data-tab]")].map((b) => ({
+  const tabs = [...document.querySelectorAll("#tabs button[data-tab]")].map((b) => ({
     id: b.dataset.tab,
     label: (b.querySelector("span") || {}).textContent || b.dataset.tab,
     icon: ((b.querySelector("use") || {}).getAttribute?.("href") || "#i-home").slice(1),
   }));
+  // Picross has no nav button on purpose — it's a once-a-day thing, and the nav is already
+  // ten deep. It lives on Home. But it must still be REACHABLE, so the palette knows it.
+  tabs.push({ id: "picross", label: "Daily Picross", icon: "i-target" });
+  return tabs;
 }
 
 function cmdkCandidates(q) {

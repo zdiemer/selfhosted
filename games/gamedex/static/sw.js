@@ -11,13 +11,13 @@
    The cache name carries the build version, so a deploy evicts the old shell
    rather than serving stale JS forever. */
 
-const VERSION = "v1.20.1";
+const VERSION = "v1.21.3";
 const SHELL = `gamedex-shell-${VERSION}`;
 const DATA = `gamedex-data-${VERSION}`;
 
 const SHELL_URLS = [
   "./", "./index.html", "./style.css", "./app.js", "./charts.js", "./home.js",
-  "./reviews.js", "./health.js", "./collections.js", "./challenges.js",
+  "./picross.js", "./konami.js", "./reviews.js", "./health.js", "./collections.js", "./challenges.js",
   "./groups.js", "./icon.svg",
   "./fonts/archivo-800.woff2", "./fonts/plex-sans.woff2", "./timeline.js", "./extras.js", "./predict.js", "./relations.js",
   "./manifest.webmanifest", "./icon.svg",

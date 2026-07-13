@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 log = logging.getLogger("gamedex.prefs")
 
 # Anything not on this list is refused, so a stray key can't fill the disk.
-KEYS = {"views", "challenges"}
+KEYS = {"views", "challenges", "picross"}   # picross: the daily streak, so it follows you between devices
 MAX_BYTES = 256 * 1024      # a pref is a small list of definitions, not a payload
 
 

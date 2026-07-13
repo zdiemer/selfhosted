@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import picross as picross_mod
 import prefs as prefs_mod
 import romm
 import gamerankings as gr_mod
@@ -278,6 +279,74 @@ def api_gamerankings():
     data = store.snapshot()["data"]
     rows = list(data.get("games", {}).get("rows", [])) + list(data.get("completed", {}).get("rows", []))
     return GR.for_rows(rows)
+
+
+# ---- the daily Picross ----------------------------------------------------
+PICROSS = picross_mod.Picross(os.environ.get("PICROSS_DIR", "/data/picross"))
+
+
+def _picross_candidates() -> list[dict]:
+    """Games worth waking up to. A cover you'd RECOGNISE, so: something I own or finished,
+    with real box art — a 15x15 silhouette of a game I've never heard of is just a shape."""
+    if not enricher:
+        return []
+    data = store.snapshot()["data"]
+    light = enricher.get_all_light()          # {matchKey: {cover, ...}}
+    out = []
+    for r in data.get("games", {}).get("rows", []):
+        if not (r.get("owned") or r.get("completed")):
+            continue
+        cover = (light.get(r.get("_k")) or {}).get("cover")
+        if not cover:
+            continue
+        out.append({"key": r["_k"], "title": r.get("title"), "platform": r.get("platform"),
+                    "year": r.get("releaseYear"), "cover": cover})
+    return out
+
+
+def _today() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+@app.get("/api/picross/daily")
+def api_picross_daily():
+    """The clues, and nothing that spoils it — the solution stays on the server."""
+    puz = PICROSS.daily(_today(), _picross_candidates())
+    if not puz:
+        return {"ok": False, "reason": "no puzzle today"}
+    return {"ok": True, **picross_mod.Picross.public(puz)}
+
+
+class PicrossSolve(BaseModel):
+    grid: list[list[int]]
+
+
+@app.post("/api/picross/solve")
+def api_picross_solve(body: PicrossSolve):
+    """Marking your own homework is no fun, so the answer never left the building. Send the
+    grid; if it's right, you get the game you just drew."""
+    puz = PICROSS.daily(_today(), _picross_candidates())
+    if not puz:
+        return {"ok": False}
+    solved = body.grid == puz["grid"]
+    return {"ok": True, "solved": solved, "game": puz["game"] if solved else None}
+
+
+class PicrossGuess(BaseModel):
+    title: str
+
+
+@app.post("/api/picross/guess")
+def api_picross_guess(body: PicrossGuess):
+    """Name it before you finish it. Compared on the normalised title, so punctuation and
+    case don't decide whether you were right."""
+    puz = PICROSS.daily(_today(), _picross_candidates())
+    if not puz:
+        return {"ok": False}
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    correct = norm(body.title) == norm(puz["game"]["title"])
+    return {"ok": True, "correct": correct, "game": puz["game"] if correct else None}
 
 
 @app.get("/api/uploads")
