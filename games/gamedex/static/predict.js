@@ -72,6 +72,14 @@ const PRED_MULTI = {
   igdbDev: (r) => (ENRICH[r._k] || {}).developers || [],
   igdbPub: (r) => (ENRICH[r._k] || {}).publishers || [],
   igdbFran: (r) => (ENRICH[r._k] || {}).franchises || [],
+  // Keywords, perspective and engine. Measured, honestly: worth about 0.03 points on the
+  // same cross-validation — consistently positive across every seed, but small. They earn
+  // their place only because the data is already in the payload for the facets; if it cost
+  // a fetch it would not be worth it. The fine-grained vocabulary I expected to be a big win
+  // (metroidvania, soulslike) turns out to be mostly saying what genre already said.
+  igdbKeyword: (r) => (ENRICH[r._k] || {}).keywords || [],
+  igdbPersp: (r) => (ENRICH[r._k] || {}).perspectives || [],
+  igdbEngine: (r) => (ENRICH[r._k] || {}).engines || [],
 };
 const PRED_MULTI_KEYS = Object.keys(PRED_MULTI);
 const pnorm = (s) => String(s).trim().toLowerCase();
@@ -412,10 +420,14 @@ function predictRating(row) {
   }
   // The IGDB tags — the genres and themes the sheet's single-word column never named, and
   // now a real part of the number, so they belong in the working too.
-  for (const [f, kind] of [["igdbGenre", "Genre"], ["igdbTheme", "Theme"]]) {
+  for (const [f, kind] of [["igdbGenre", "Genre"], ["igdbTheme", "Theme"],
+                           ["igdbPersp", "Perspective"], ["igdbKeyword", "Keyword"]]) {
     for (const raw of PRED_MULTI[f](row)) {
       const e = m.multi[f].get(pnorm(raw));
-      if (!e || e.n < 5 || said.has(pnorm(raw))) continue;
+      // Keywords are fine-grained, so a handful of games behind one says nothing. Ask more
+      // of them than of a genre before letting one explain a number.
+      const floor = f === "igdbKeyword" ? 8 : 5;
+      if (!e || e.n < floor || said.has(pnorm(raw))) continue;
       said.add(pnorm(raw));
       signals.push({ kind, label: String(raw), value: e.sum / e.n, n: e.n, taste: true });
     }

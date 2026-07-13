@@ -36,6 +36,8 @@ _FIELDS = (
     "aggregated_rating,aggregated_rating_count,"
     "alternative_names.name,platforms.name,release_dates.y,"
     "genres.name,themes.name,game_modes.name,player_perspectives.name,"
+    "keywords.name,game_engines.name,"
+    "age_ratings.rating_category,age_ratings.organization,"
     "cover.image_id,screenshots.image_id,artworks.image_id,"
     "videos.video_id,videos.name,"
     "involved_companies.company.name,involved_companies.developer,"
@@ -45,6 +47,32 @@ _FIELDS = (
     "similar_games.cover.image_id,"
     # Storefront ids — this is what lets the UI hand off to `steam://`.
     "external_games.external_game_source,external_games.uid,external_games.url;"
+)
+
+# Keywords that describe the SHOP or the PLUMBING, not the game. Drawn from a census of the
+# actual library rather than guessed: unfiltered, the single most common keyword across 2,000
+# games was "steam achievements", and after a first pass it was "digital distribution" (1,773).
+# Neither tells you anything about a game. What's left underneath is the good stuff —
+# metroidvania, female protagonist, multiple endings, bullet hell, cozy.
+#
+# Word boundaries matter here: `\bsteam\b` must not eat "steampunk", which is a real and
+# useful tag. It doesn't, and the census confirms steampunk survives.
+_KEYWORD_JUNK = re.compile(
+    # storefronts and platform holders
+    r"\b(steam|epic games?|gog|itch\.io|xbox|playstation|nintendo|origin|uplay)\b"
+    r"|digital distribution|physical release|virtual console|game pass|prime gaming"
+    r"|^available on|^previously on|^featured|deck verified"
+    # store furniture
+    r"|achievements?|leaderboards?|workshop|trading cards?|cloud sav|family sharing|families"
+    r"|^demo$|free demo|playtest|early access|pre-?order|season pass|battle pass"
+    r"|crowdfunding|kickstarter|nextfest|next fest"
+    # hardware and middleware — how it was built or plugged in, not what it is
+    r"|\bcontroller\b|dualsense|gamepad|remote play|vr support|cross-?platform"
+    r"|bink video|scaleform|havok|speedtree|denuvo"
+    # tags that only restate a field we already have, or are pure trivia
+    r"|single-?player only|multiplayer only"
+    r"|protagonist'?s name in the title|^sequel$|^prequel$",
+    re.I,
 )
 
 # IGDB's external_game_source enum, read off live data rather than guessed —
@@ -101,6 +129,7 @@ class IgdbClient:
         self._auth_lock = threading.Lock()
         self._limiter = RateLimiter(4)
         self._validator = MatchValidator()
+        self._age_cache = None          # (organizations, categories), fetched once
 
     @property
     def configured(self) -> bool:
@@ -432,6 +461,120 @@ class IgdbClient:
                 out[g["id"]] = self._franchises_of(g)
         return out
 
+    @staticmethod
+    def _keywords_of(c):
+        """IGDB keywords, minus the shop fittings.
+
+        Half of the most common keywords in this library describe the STOREFRONT, not the
+        game: "steam achievements" (144), "steam cloud" (120), "steam families" (120),
+        "controller support" (100), "xbox controller support for pc", "steam trading cards",
+        "previously on - prime gaming". As a facet those are noise — they cut the library by
+        which shop sold it. Underneath them the keywords are the richest vocabulary IGDB has:
+        metroidvania, soulslike, bullet hell, cozy, story rich, female protagonist,
+        multiple endings. Keep those; drop the plumbing.
+
+        This is the same lesson as the IGN genres: an unfiltered third-party vocabulary is
+        mostly the third party talking about itself."""
+        out = []
+        for k in c.get("keywords") or []:
+            nm = (k.get("name") or "").strip()
+            if not nm or _KEYWORD_JUNK.search(nm):
+                continue
+            out.append(nm)
+            if len(out) >= 14:          # a long tail of one-offs bloats every payload
+                break
+        return out
+
+    @staticmethod
+    def _engines_of(c):
+        return [e["name"] for e in (c.get("game_engines") or []) if e.get("name")][:3]
+
+    def _age_of(self, c):
+        """The game's age rating, as "ESRB M" / "PEGI 18".
+
+        IGDB hands back two enum ids (organization 1, rating_category 3) and nothing else,
+        so resolve them against the enum tables rather than hardcoding — the categories have
+        been renumbered before, and a wrong guess would silently mislabel every game."""
+        ratings = c.get("age_ratings") or []
+        if not ratings:
+            return None
+        orgs, cats = self._age_tables()
+        best = None
+        for r in ratings:
+            org = orgs.get(r.get("organization"))
+            cat = cats.get(r.get("rating_category"))
+            if not org or not cat:
+                continue
+            label = f"{org} {cat}"
+            if org == "ESRB":                     # the one I actually read; prefer it
+                return label
+            if best is None or org == "PEGI":
+                best = label
+        return best
+
+    def _age_tables(self):
+        """(organizations, categories) id -> name. Fetched once, then cached."""
+        if self._age_cache is None:
+            orgs, cats = {}, {}
+            try:
+                for r in self._post("age_rating_organizations", "fields id,name; limit 50;") or []:
+                    orgs[r["id"]] = r.get("name")
+                for r in self._post("age_rating_categories", "fields id,rating; limit 100;") or []:
+                    cats[r["id"]] = r.get("rating")
+            except Exception as exc:
+                log.warning("igdb: age-rating tables unavailable: %s", exc)
+            self._age_cache = (orgs, cats)
+        return self._age_cache
+
+    def extras_for(self, igdb_ids, on_chunk=None):
+        """{igdb_id: {keywords, engines, ageRating, perspectives}} — batched by id, to
+        backfill records matched before these fields were asked for.
+
+        Retries each chunk with backoff and never lets one failure kill the pass. The first
+        attempt at this walked the whole library in one go and IGDB answered 429 four seconds
+        in — the rate limiter is shared with five other backfill threads and the live
+        enrichment workers, so a burst of big queries tips it over. Chunks are smaller now,
+        and a chunk that keeps failing is skipped rather than taking the other 13,000 with it.
+
+        `on_chunk` is handed each batch as it lands, so the caller can write results away as
+        they arrive instead of holding the whole library in memory and losing it all on a
+        crash halfway through."""
+        out = {}
+        for i in range(0, len(igdb_ids), 200):
+            chunk = [int(x) for x in igdb_ids[i:i + 200]]
+            body = ("fields id,keywords.name,game_engines.name,player_perspectives.name,"
+                    "age_ratings.rating_category,age_ratings.organization; "
+                    f"where id = ({','.join(str(c) for c in chunk)}); limit 500;")
+            got = None
+            for attempt in range(5):
+                try:
+                    got = self._post("games", body) or []
+                    break
+                except requests.HTTPError as exc:
+                    code = exc.response.status_code if exc.response is not None else 0
+                    if code not in (429, 500, 502, 503):
+                        log.warning("igdb extras: chunk failed hard (%s), skipping", code)
+                        break
+                    time.sleep(2 ** attempt)          # 1s, 2s, 4s, 8s, 16s
+                except Exception as exc:
+                    log.warning("igdb extras: %s", exc)
+                    time.sleep(2 ** attempt)
+            if got is None:
+                continue
+            batch = {}
+            for g in got:
+                batch[g["id"]] = {
+                    "keywords": self._keywords_of(g),
+                    "engines": self._engines_of(g),
+                    "ageRating": self._age_of(g),
+                    "perspectives": [p["name"] for p in g.get("player_perspectives", []) if p.get("name")],
+                }
+            out.update(batch)
+            if on_chunk:
+                on_chunk(batch, chunk)
+            time.sleep(0.35)                          # be a good neighbour to the live workers
+        return out
+
     def enrichment_from_result(self, c):
         devs, pubs = [], []
         for ic in c.get("involved_companies", []):
@@ -469,6 +612,9 @@ class IgdbClient:
             "themes": [t["name"] for t in c.get("themes", []) if t.get("name")],
             "gameModes": [m["name"] for m in c.get("game_modes", []) if m.get("name")],
             "perspectives": [p["name"] for p in c.get("player_perspectives", []) if p.get("name")],
+            "keywords": self._keywords_of(c),
+            "engines": self._engines_of(c),
+            "ageRating": self._age_of(c),
             "developers": sorted(set(devs)),
             "publishers": sorted(set(pubs)),
             "franchises": self._franchises_of(c),

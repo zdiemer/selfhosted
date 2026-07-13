@@ -226,6 +226,8 @@ function detailHtml(d) {
   if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(uniq(d.developers.map(canonDev)), "developer")}</div></div>`);
   if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(uniq(d.publishers.map(canonPub)), "publisher")}</div></div>`);
   if (d.franchises && d.franchises.length) meta.push(`<div class="detail-row"><div class="k">Franchise</div><div class="v">${linkList(uniq(d.franchises.map(canonFran)), "franchise")}</div></div>`);
+  if (d.engines && d.engines.length) meta.push(`<div class="detail-row"><div class="k">Engine</div><div class="v">${linkList(uniq(d.engines), "__igdb_engine")}</div></div>`);
+  if (d.ageRating) meta.push(`<div class="detail-row"><div class="k">Rated</div><div class="v age-v">${ageBadgeHtml(d.ageRating)}<a class="facet-link" data-fk="__igdb_age" data-fv="${escapeHtml(d.ageRating)}">${escapeHtml(d.ageRating)}</a></div></div>`);
   const nShots = mediaOf(d).length;
   const shots = nShots
     ? `<div class="shots"><div class="shot-view"></div>` +
@@ -259,7 +261,9 @@ function detailHtml(d) {
   // chip filters "Platformer"); themes/modes stay IGDB-only facets.
   const genreChips = [...new Set((d.genres || []).map((g) => String(canonGenre(g))))];
   const tags = chips(genreChips, "genre") + chips(d.themes, "__igdb_theme")
-    + chips(d.gameModes, "__igdb_mode");
+    + chips(d.perspectives, "__igdb_persp")
+    + chips(d.gameModes, "__igdb_mode")
+    + chips(d.keywords, "__igdb_kw");
   return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (${escapeHtml(d.source || "IGDB")})</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
     (tags ? `<div class="detail-row notes tag-row"><div class="k">Tags</div><div class="v">${tags}</div></div>` : "") +
@@ -422,6 +426,53 @@ function heroHtml(row, titleText) {
     ${predictWhyHtml(row)}
     ${launchHtml(row) ? `<div class="hero-actions">${launchHtml(row)}</div>` : ""}
   </div>`;
+}
+
+/* The rating boards' badges — the real artwork, not a lookalike.
+
+   IGDB hands back a string ("ESRB M", "PEGI 18", "CERO Z") which maps straight onto an SVG
+   in static/ratings/. These are the official marks: the boards each have a specific, fussy
+   geometry (ESRB's split box, PEGI's notched shield, CERO's rounded lozenge) and a redrawn
+   approximation reads as slightly wrong in a way that's hard to place but easy to see.
+
+   Vector, so they stay crisp at any size, and they carry their own colours — a PEGI 18 that
+   went grey in dark mode would not be a PEGI 18. Boards we have no art for (USK, GRAC, ACB,
+   CLASS_IND) fall back to a plain drawn chip rather than a wrong picture. */
+const AGE_ART = {
+  "ESRB RP": "rp", "ESRB EC": "ec", "ESRB E": "e", "ESRB E10+": "e10",
+  "ESRB T": "t", "ESRB M": "m", "ESRB AO": "ao",
+};
+const ESRB_WORD = {
+  RP: "Rating Pending", EC: "Early Childhood", E: "Everyone", "E10+": "Everyone 10+",
+  T: "Teen", M: "Mature 17+", AO: "Adults Only",
+};
+
+function ageArtSrc(rating) {
+  const [board, ...rest] = String(rating || "").trim().split(/\s+/);
+  const val = rest.join(" ");
+  if (!board || !val) return null;
+  if (board === "ESRB") {
+    const slug = AGE_ART[`ESRB ${val}`];
+    return slug ? `ratings/esrb-${slug}.svg` : null;
+  }
+  if (board === "PEGI" && ["3", "7", "12", "16", "18"].includes(val)) return `ratings/pegi-${val}.svg`;
+  if (board === "CERO" && ["A", "B", "C", "D", "Z"].includes(val)) return `ratings/cero-${val.toLowerCase()}.svg`;
+  return null;
+}
+
+function ageBadgeHtml(rating) {
+  if (!rating) return "";
+  const [board, ...rest] = String(rating).trim().split(/\s+/);
+  const val = rest.join(" ");
+  if (!val) return "";
+  const src = ageArtSrc(rating);
+  const alt = board === "ESRB" ? `ESRB ${ESRB_WORD[val] || val}` : `${board} ${val}`;
+  if (src) {
+    return `<img class="age-art ${escapeHtml(board.toLowerCase())}" src="${escapeHtml(src)}"
+      alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" loading="lazy">`;
+  }
+  // A board we have no artwork for: an honest chip beats a wrong picture.
+  return `<span class="age-b gen" title="${escapeHtml(alt)}"><b>${escapeHtml(val)}</b><em>${escapeHtml(board)}</em></span>`;
 }
 
 function igdbAttr(d) {
@@ -1047,6 +1098,16 @@ const sortLabel = (c) => SORT_LABEL[c.key] || c.label;
 const IGDB_FACET_DEFS = [
   { key: "__igdb_theme", label: "Theme", source: "themes" },
   { key: "__igdb_mode", label: "Game Mode", source: "gameModes" },
+  // Perspective is NOT a genre, however often it gets filed as one — "First-Person" says
+  // where the camera is, not what kind of game it is. IGDB has always told us (Third person,
+  // Bird view / Isometric, Side view, First person, Text, VR); we were fetching it, storing
+  // it, and never sending it to the browser.
+  { key: "__igdb_persp", label: "Perspective", source: "perspectives" },
+  // Keywords are the finest vocabulary IGDB has — metroidvania, soulslike, bullet hell,
+  // cozy, story rich, multiple endings — once the storefront plumbing is filtered out
+  // server-side (see _KEYWORD_JUNK).
+  { key: "__igdb_kw", label: "Keyword", source: "keywords" },
+  { key: "__igdb_engine", label: "Engine", source: "engines" },
 ];
 
 /* ---- unifying sheet + IGDB for developer / publisher / franchise / genre ----
@@ -1580,6 +1641,9 @@ const igdbFacetCols = () =>
   ENRICH_ENABLED
     ? [
         ...IGDB_FACET_DEFS.map((d) => ({ ...d, type: "text", facet: true, virtual: true })),
+        // Scalar, not a list, so it takes the fn form the arcade facets use.
+        { key: "__igdb_age", label: "Age rating", type: "text", facet: true, virtual: true, kind: "fn",
+          getVals: (r) => { const e = ENRICH[r._k]; return e && e.ageRating ? [e.ageRating] : []; } },
         { key: "__meta_src", label: "Metadata source", type: "text", facet: true, virtual: true, kind: "fn", getVals: (r) => [metaSourceOf(r)] },
         { key: "__extra_src", label: "Enriched by", type: "text", facet: true, virtual: true, kind: "fn", getVals: extraSourcesOf },
         { key: "__missing", label: "Missing data", type: "text", facet: true, virtual: true, kind: "fn", getVals: missingOf },

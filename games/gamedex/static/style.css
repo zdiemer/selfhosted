@@ -870,6 +870,29 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ---- Age-rating badges ---------------------------------------------------
+   The official marks, as vectors. They carry their own colours in both themes (a PEGI 18
+   that went grey in dark mode wouldn't be a PEGI 18), so they get a light plate behind them
+   rather than a filter — ESRB's mark is black-on-white and would vanish into a dark page. */
+.age-v { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.age-art {
+  height: 46px; width: auto; display: block; flex: 0 0 auto;
+  border-radius: 3px;
+}
+/* ESRB is line art on transparent: without a plate it disappears on a dark background. */
+.age-art.esrb { background: #fff; padding: 2px; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
+.age-art.pegi, .age-art.cero { height: 48px; }
+
+/* A board we have no artwork for. */
+.age-b.gen {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 34px; border-radius: 4px; overflow: hidden; background: #6b7280; color: #fff;
+  border: 1px solid rgba(0, 0, 0, .35); font-family: var(--font); line-height: 1;
+}
+.age-b.gen b { font: 800 17px/1.5 var(--display); }
+.age-b.gen em { font-style: normal; display: block; width: 100%;
+  background: rgba(0, 0, 0, .82); font: 800 7px/1.9 var(--font); letter-spacing: .06em; text-align: center; }
+
 /* ---- Arcade / VNDB / sales / Thumby (drawer) ----------------------------- */
 .hltb-note { font-size: 11px; margin-top: 6px; }
 .adb-arts { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }

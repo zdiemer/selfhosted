@@ -21,6 +21,9 @@ const grRows = () => ((DATA.sheets.games || {}).rows || []).filter((r) => r.titl
    studio, publisher, franchise, and genre either source knows — a co-developer only
    IGDB lists gets its own shelf, and the umbrella genres (Platformer, RPG) become
    groups the granular sheet genres roll up into. Platform stays single. */
+// The IGDB list-valued fields, straight off the enrichment map.
+const igdbVals = (r, field) => (ENRICH[r._k] || {})[field] || [];
+
 const GROUPINGS = [
   { id: "series", label: "Series", icon: "i-timeline", vals: (r) => unifiedFranchiseVals(r),
     units: "franchises", blurb: "Franchises in release order. How far through Castlevania are you?" },
@@ -32,6 +35,15 @@ const GROUPINGS = [
     units: "genres", blurb: "What you actually play, as opposed to what you buy." },
   { id: "platform", label: "Platforms", icon: "i-dice", vals: (r) => (r.platform ? [r.platform] : []),
     units: "platforms", blurb: "A shelf per machine, with how much of it you've finished." },
+  // IGDB knows these about nearly everything and the app has never asked. A perspective is
+  // the one axis a genre can't express — plenty of games are "Action" and the only real
+  // difference is where the camera sits.
+  { id: "keyword", label: "Keywords", icon: "i-star", vals: (r) => igdbVals(r, "keywords"),
+    units: "keywords", blurb: "IGDB's finest-grained vocabulary — metroidvania, soulslike, cozy, story rich." },
+  { id: "perspective", label: "Perspective", icon: "i-target", vals: (r) => igdbVals(r, "perspectives"),
+    units: "perspectives", blurb: "Where the camera sits. First person, side view, isometric — the thing genre never says." },
+  { id: "engine", label: "Engines", icon: "i-package", vals: (r) => igdbVals(r, "engines"),
+    units: "engines", blurb: "What it was built in. Everything you own running on Unreal, or on Godot." },
 ];
 const grouping = (id) => GROUPINGS.find((g) => g.id === id);
 
