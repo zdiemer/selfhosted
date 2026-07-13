@@ -2078,7 +2078,10 @@ function sortValueHtml(row) {
 
 // Text-only card body (no <img>), so it can be re-rendered without flicker.
 function cardBodyHtml(row) {
-  const titleKey = (columns().find((c) => c.primary) || columns()[0]).key;
+  // A card can render on a tab with no sheet of its own (Pick, Home), where columns()
+  // reads DATA.sheets[activeTab] and throws. Fall back to the games schema.
+  const cols = (DATA.sheets[activeTab] || DATA.sheets.games || {}).columns || [];
+  const titleKey = (cols.find((c) => c.primary) || cols[0] || { key: "title" }).key;
   const title = escapeHtml(String(row[titleKey] ?? "Untitled"));
   const rel = row.releaseDate || row.release;                 // full date, else year
   const relDisp = rel ? fmtDate(rel) : row.releaseYear;
@@ -3556,16 +3559,41 @@ function pickGame() {
 }
 
 function pickCard(row) {
+  // The REAL grid card, not a bespoke one — so the trailer plays on hover here exactly as
+  // it does in the listings (renderPicker hands it to wirePreviewFor).
   const cs = coverSrc(ENRICH[row._k], "cover_big");
-  const cover = cs ? `<img src="${cs}" alt="">` : `<div class="pick-ph">${icon("i-library", 30)}</div>`;
-  const pt = playtimeOf(row), mc = metacriticOf(row);
-  const bits = [row.platform, row.releaseYear, row.genre].filter((x) => x != null && x !== "").map((x) => escapeHtml(String(x)));
-  if (pt != null) bits.push("⏱ " + fmtHours(pt));
-  if (mc != null) bits.push("★ " + Math.round(mc * 100));
-  return `<div class="pick-card">${cover}<div class="pick-info"><h2>${escapeHtml(String(row.title))}</h2>
-    <div class="pick-meta">${bits.join(" · ")}</div>
-    <div class="pick-actions"><button class="pick-reroll" id="pickReroll">${icon("i-dice", 15)} Re-roll</button>
-    <span class="muted">Tap the card for full details</span></div></div></div>`;
+  const pend = coverPending(row);
+  const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
+  const cover = cs
+    ? `<img class="card-cover${pixel}" src="${escapeHtml(cs)}" alt="">`
+    : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : icon("i-library", 26)}</div>`;
+  const cstat = collectionStatus(row);
+  const cls = "card" + (cstat === "partial" ? " partial"
+    : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
+  const game = `<div class="${cls}" id="pickGameCard">${cover}<div class="card-body">${cardBodyHtml(row)}</div></div>`;
+
+  const chips = [row.platform, row.releaseYear, row.genre, row.franchise]
+    .filter((x) => x != null && x !== "")
+    .map((x) => `<span class="chip">${escapeHtml(String(x))}</span>`).join("");
+  const play = typeof rommHtml === "function" ? rommHtml(row) : "";
+
+  // Only promise a trailer when there is one.
+  const hint = (ENRICH[row._k] || {}).video ? `<span class="pick-hint">Hover for the trailer</span>` : "";
+  return `<div class="pick-card">
+    <div class="pick-art">${game}${hint}</div>
+    <div class="pick-info">
+      <div class="pick-eyebrow">${icon("i-dice", 13)} Your pick</div>
+      <h2>${escapeHtml(String(row.title))}</h2>
+      <div class="pick-chips">${chips}</div>
+      ${heroStatsHtml(row)}
+      ${predictWhyHtml(row)}
+      <div class="pick-actions">
+        <button class="pick-reroll" id="pickReroll">${icon("i-dice", 15)} Re-roll</button>
+        <button class="pick-open" id="pickOpen">Full details</button>
+        ${play}
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderPicker() {
@@ -3624,10 +3652,14 @@ function renderPicker() {
   };
 
   $("#pickBtn").onclick = () => { pickGame(); nav(); };
-  const card = host.querySelector(".pick-card");
-  if (card) {
-    card.onclick = () => openDrawer(pickState.picked, "games");
+  const game = host.querySelector("#pickGameCard");
+  if (game) {
+    // Same card component as the listings, so it gets the same hover trailer.
+    wirePreviewFor(game, pickState.picked);
+    game.onclick = () => openDrawer(pickState.picked, "games");
     $("#pickReroll").onclick = (e) => { e.stopPropagation(); pickGame(); nav(); };
+    const open = $("#pickOpen");
+    if (open) open.onclick = () => openDrawer(pickState.picked, "games");
   }
 }
 
