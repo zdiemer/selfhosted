@@ -2233,17 +2233,20 @@ const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matc
 const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
 let previewTimer = null, previewCard = null, previewWatch = null, previewLoop = null;
 
-// WHICH slice of the trailer to show: a random 5-10 second clip, which then loops. Rolled
+// WHICH slice of the trailer to show: a random 30 second clip, which then loops. Rolled
 // once per video and remembered, so hovering the same card twice shows the same moment — a
 // clip that jumps somewhere new on every hover reads as a glitch, not as variety. Rolled
 // fresh each page load, so it isn't the same forever. Kept clear of both ends: trailers
 // open on publisher idents and close on an endcard.
 const PREVIEW_CLIP = new Map();
+const PREVIEW_CLIP_LEN = 30;
 function previewClip(vid, duration) {
   if (!PREVIEW_CLIP.has(vid)) {
-    const len = 5 + Math.floor(Math.random() * 6);          // 5-10s
+    const d = duration || 90;
+    // 30s, unless the trailer is too short to hold one — then take what's there.
+    const len = Math.max(8, Math.min(PREVIEW_CLIP_LEN, Math.floor(d - 15)));
     const lo = 10;
-    const hi = Math.max(lo + 1, Math.floor((duration || 90) - len - 5));
+    const hi = Math.max(lo + 1, Math.floor(d - len - 5));
     const start = lo + Math.floor(Math.random() * Math.max(1, hi - lo));
     PREVIEW_CLIP.set(vid, { start, len });
   }
