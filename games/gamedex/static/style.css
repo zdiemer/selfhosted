@@ -1874,6 +1874,31 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 .fr-index-head h1 .ico { color: var(--accent); }
 .h-eyebrow .ico { vertical-align: -.18em; margin-right: 2px; }
 
+/* Groupings never had a container rule AT ALL — no padding, no ceiling — so it ran flush to
+   both edges of the window while every one of its siblings (.stats, .health, .timeline,
+   .challenges) sets `flex: 1; overflow-y: auto; padding`. Same shape as those, and the
+   blocks inside get the same 1180px ceiling the card grid already had, so the header, the
+   axis tiles and the cards finally line up with each other instead of each doing its own
+   thing. */
+.groups { flex: 1; overflow-y: auto; padding: 26px 20px 60px; }
+.groups .fr-index-head, .groups .gr-tiles { max-width: 1180px; margin-left: auto; margin-right: auto; }
+
+/* Your best game in the group: the one you rated highest AND actually finished. */
+.fr-best {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  margin: 2px 0 1px; padding: 3px 9px 3px 4px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); max-width: 100%;
+}
+.fr-best b {
+  flex: none; font: 800 11px/1 var(--display); font-variant-numeric: tabular-nums;
+  padding: 4px 6px; border-radius: 999px; background: var(--surface-2);
+}
+.fr-best > span {
+  font: 500 12px/1.3 var(--font); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .gr-tiles { display: grid; gap: 12px; margin: 18px 0 32px; }
 .gr-tile {
   display: grid; grid-template-columns: 56px minmax(0, 1fr) 24px;

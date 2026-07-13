@@ -147,15 +147,38 @@ function groupCardStats(s) {
 
 // ---- cards ---------------------------------------------------------------
 
+// The best of a group, by your own reckoning: the highest-rated game in it that you actually
+// FINISHED. Not the highest-rated one you own — a 95 you never played says nothing about the
+// group, and half the point of a grouping is remembering why you liked it.
+function groupBest(s) {
+  let best = null;
+  for (const g of s.games) {
+    if (!g.completed || g.rating == null) continue;
+    if (!best || g.rating > best.rating) best = g;
+  }
+  return best;
+}
+
 function groupCardHtml(s) {
-  // A group has no art of its own, so it borrows from whichever member has some.
-  const art = s.games.find((g) => coverSrc(ENRICH[g._k], "cover_small")) || s.games[0];
+  const best = groupBest(s);
+  // A group has no art of its own, so it borrows from a member — and it should borrow from
+  // YOUR favourite, not from whichever one happened to sort first.
+  const art = (best && coverSrc(ENRICH[best._k], "cover_small") ? best : null)
+    || s.games.find((g) => coverSrc(ENRICH[g._k], "cover_small"))
+    || s.games[0];
   const cs = art ? coverSrc(ENRICH[art._k], "cover_big") : "";
   const complete = s.done === s.games.length;
+  const bestHtml = best
+    ? `<span class="fr-best" title="Your highest-rated game you've finished in this group">
+         <b class="${ratingClass(best.rating)}">${Math.round(best.rating * 100)}</b>
+         <span>${escapeHtml(String(best.title || best.game || ""))}</span>
+       </span>`
+    : "";
   return `<button class="fr-card${complete ? " done" : ""}" data-fr="${escapeHtml(s.name)}" data-fk="${escapeHtml(String((art && art._k) || ""))}">
     ${cs ? `<img class="fr-art" loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-art ph">${icon("i-library", 22)}</span>`}
     <span class="fr-body">
       <b>${escapeHtml(s.name)}</b>
+      ${bestHtml}
       <span class="muted">${s.done} of ${s.games.length} finished${s.owned ? ` · ${s.owned} owned` : ""}</span>
       ${groupCardStats(s)}
       <span class="ch-bar"><span style="width:${(s.pct * 100).toFixed(1)}%"></span></span>
