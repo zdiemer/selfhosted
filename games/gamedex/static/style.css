@@ -3086,12 +3086,45 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .px-cell:hover { border-color: var(--accent); }
 .px-cell.on { background: var(--text); border-color: var(--text); }
+/* The ✕ was a grey hairline on a white cell — at a glance it read as "blank", which is the
+   one thing it must never do: a cross is a DEDUCTION, and it has to look as decided as a
+   filled square. Red, thicker, on a tinted cell. */
+.px-cell.x { background: color-mix(in srgb, var(--bad) 9%, var(--surface)); border-color: color-mix(in srgb, var(--bad) 32%, var(--border)); }
 .px-cell.x::before, .px-cell.x::after {
-  content: ""; position: absolute; inset: 34% 18%; border-top: 2px solid var(--dim);
+  content: ""; position: absolute; inset: 30% 22%; border-top: 2.5px solid var(--bad);
+  border-radius: 2px;
+}
+/* The maybe-mark: a dot. Not a deduction, a note to self — so it reads quieter than both. */
+.px-cell.dot::after {
+  content: ""; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px;
+  margin: -3px 0 0 -3px; border-radius: 50%; background: var(--dim); opacity: .75;
 }
 .px-cell.x::before { transform: rotate(45deg); }
 .px-cell.x::after { transform: rotate(-45deg); }
 /* Every fifth line gets a heavier rule — you cannot count to eleven without it. */
+/* The lane under the cursor. Reading a clue eight cells away from the cell you're filling is
+   how you fill the wrong row. */
+.px-cell.hl:not(.on):not(.x):not(.dot) { background: var(--accent-soft); }
+.px-cell.hl { border-color: var(--accent-line); }
+.px-rc.hl i, .px-cc.hl i { color: var(--accent); }
+.px-rc.hl, .px-cc.hl { background: var(--accent-soft); border-radius: 4px; }
+/* A clue number that is settled — its run is pinned against marks YOU made. */
+.px-rc i.ok, .px-cc i.ok { color: var(--dim); opacity: .4; text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.px-rc i.pad, .px-cc i.pad { color: transparent; }
+
+/* The reveal: each cell becomes its own tile of the cover. */
+.px-cell.reveal {
+  background-color: transparent; border-color: transparent;
+  transition: background-image .01s, opacity .45s var(--ease), border-color .45s;
+}
+.px-cell.reveal::before, .px-cell.reveal::after { display: none; }
+/* The picture assembles out of the cells: close every seam, including the every-fifth-cell
+   rules that make the grid countable while you're solving it. */
+.px-board.revealed { gap: 0; }
+.px-board.revealed .px-cell { border-radius: 0; border-color: transparent; }
+.px-board.revealed .px-cell.vr { margin-right: 0; }
+.px-board.revealed .px-cell.hr { margin-bottom: 0; }
+
 .px-cell.vr { margin-right: 3px; }
 .px-cell.hr { margin-bottom: 3px; }
 

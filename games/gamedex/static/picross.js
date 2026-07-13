@@ -97,17 +97,62 @@ function pxRuns(line) {
   if (n) out.push(n);
   return out.length ? out : [0];
 }
-const pxRowDone = (y) => {
-  const got = pxRuns(PX.cells.slice(y * PX.w, y * PX.w + PX.w));
-  const want = PX.rows[y];
+const pxLine = (y) => PX.cells.slice(y * PX.w, y * PX.w + PX.w);
+const pxCol = (x) => {
+  const out = [];
+  for (let y = 0; y < PX.h; y++) out.push(PX.cells[y * PX.w + x]);
+  return out;
+};
+const pxLineDone = (line, want) => {
+  const got = pxRuns(line);
   return got.length === want.length && got.every((v, i) => v === want[i]);
 };
-const pxColDone = (x) => {
-  const col = [];
-  for (let y = 0; y < PX.h; y++) col.push(PX.cells[y * PX.w + x]);
-  const got = pxRuns(col), want = PX.cols[x];
-  return got.length === want.length && got.every((v, i) => v === want[i]);
-};
+const pxRowDone = (y) => pxLineDone(pxLine(y), PX.rows[y]);
+const pxColDone = (x) => pxLineDone(pxCol(x), PX.cols[x]);
+
+/* Which INDIVIDUAL clue numbers are settled — so "1 2 4" can grey the 2 and the 4 while the
+   1 is still open.
+
+   The care here is not to hand over information I haven't earned. A run only counts as
+   settled if it is pinned against a boundary I have already established: work in from each
+   END of the line, over cells I have decided (filled or crossed), and stop dead at the first
+   cell I haven't. So a run greys out only when its position is a consequence of marks I made
+   myself — never because the app peeked at the answer. Cells I have left blank, or flagged as
+   a maybe, are unknown and end the scan.
+
+   Consequence worth knowing: an interior run I've clearly identified but not yet fenced in
+   with crosses stays black. That is correct. Greying it would be telling me it's in the right
+   place, which is the deduction I'm supposed to be making. */
+function pxSettled(line, clue) {
+  const n = clue.length;
+  const out = new Array(n).fill(false);
+  if (clue[0] === 0) return out;
+  const known = (c) => c === 1 || c === 2;          // 0 = untouched, 3 = maybe → unknown
+
+  // from the left
+  let i = 0, ci = 0;
+  while (i < line.length && known(line[i]) && ci < n) {
+    if (line[i] === 2) { i++; continue; }
+    let run = 0;
+    while (i < line.length && line[i] === 1) { run++; i++; }
+    // The run has to be closed by a cell I've decided (a cross) or by the wall — otherwise
+    // it might yet grow, and I don't know that it's this clue.
+    const closed = i === line.length || line[i] === 2;
+    if (!closed || run !== clue[ci]) break;
+    out[ci++] = true;
+  }
+  // and from the right, meeting in the middle
+  let j = line.length - 1, cj = n - 1;
+  while (j >= 0 && known(line[j]) && cj >= ci) {
+    if (line[j] === 2) { j--; continue; }
+    let run = 0;
+    while (j >= 0 && line[j] === 1) { run++; j--; }
+    const closed = j < 0 || line[j] === 2;
+    if (!closed || run !== clue[cj]) break;
+    out[cj--] = true;
+  }
+  return out;
+}
 
 // ---- render ----------------------------------------------------------------
 function renderPicross() {
@@ -128,23 +173,25 @@ function renderPicross() {
   const maxRow = Math.max(...PX.rows.map((r) => r.length));
   const maxCol = Math.max(...PX.cols.map((c) => c.length));
 
+  const clueHtml = (nums, settled, pad) =>
+    Array(pad).fill(`<i class="pad"></i>`).concat(
+      nums.map((n, i) => `<i class="${settled[i] ? "ok" : ""}">${n ? n : 0}</i>`)).join("");
+
   const colClues = PX.cols.map((c, x) => {
-    const pad = Array(maxCol - c.length).fill("");
-    return `<div class="px-cc${pxColDone(x) ? " done" : ""}">${
-      pad.concat(c.map((n) => (n ? String(n) : "0"))).map((n) => `<i>${n}</i>`).join("")}</div>`;
+    const settled = pxSettled(pxCol(x), c);
+    return `<div class="px-cc${pxColDone(x) ? " done" : ""}" data-cx="${x}">${
+      clueHtml(c, settled, maxCol - c.length)}</div>`;
   }).join("");
 
   const grid = [];
   for (let y = 0; y < PX.h; y++) {
     const r = PX.rows[y];
-    const pad = Array(maxRow - r.length).fill("");
-    grid.push(`<div class="px-rc${pxRowDone(y) ? " done" : ""}">${
-      pad.concat(r.map((n) => (n ? String(n) : "0"))).map((n) => `<i>${n}</i>`).join("")}</div>`);
+    const settled = pxSettled(pxLine(y), r);
+    grid.push(`<div class="px-rc${pxRowDone(y) ? " done" : ""}" data-cy="${y}">${
+      clueHtml(r, settled, maxRow - r.length)}</div>`);
     for (let x = 0; x < PX.w; x++) {
-      const v = PX.cells[y * PX.w + x];
-      const edge = (x % 5 === 4 && x !== PX.w - 1 ? " vr" : "") + (y % 5 === 4 && y !== PX.h - 1 ? " hr" : "");
-      grid.push(`<button class="px-cell${v === 1 ? " on" : v === 2 ? " x" : ""}${edge}"
-        data-x="${x}" data-y="${y}" aria-label="${x + 1},${y + 1}"></button>`);
+      grid.push(`<button class="${pxCellClass(x, y)}" data-x="${x}" data-y="${y}"
+        aria-label="${x + 1},${y + 1}"></button>`);
     }
   }
 
@@ -180,13 +227,25 @@ function renderPicross() {
 
     <div class="px-tools">
       <button class="px-tool${pxTool === 1 ? " on" : ""}" data-tool="1">■ Fill</button>
-      <button class="px-tool${pxTool === 2 ? " on" : ""}" data-tool="2">✕ Mark empty</button>
+      <button class="px-tool${pxTool === 2 ? " on" : ""}" data-tool="2">✕ Empty</button>
+      <button class="px-tool${pxTool === 3 ? " on" : ""}" data-tool="3">• Maybe</button>
       <button class="px-tool ghost" id="pxClear">Clear</button>
-      <span class="muted px-hint">Drag to paint · right-click to mark empty</span>
+      <span class="muted px-hint">Drag to paint (locks to the row or column you set off in)
+        · right-click ✕ · middle-click •</span>
     </div>
   </div>`;
 
   wirePicross(host);
+  if (PX.solved) pxReveal(host);
+}
+
+// 0 untouched · 1 filled · 2 empty · 3 maybe
+function pxCellClass(x, y) {
+  const v = PX.cells[y * PX.w + x];
+  const state = v === 1 ? " on" : v === 2 ? " x" : v === 3 ? " dot" : "";
+  return "px-cell" + state
+    + (x % 5 === 4 && x !== PX.w - 1 ? " vr" : "")
+    + (y % 5 === 4 && y !== PX.h - 1 ? " hr" : "");
 }
 
 function pxWinHtml() {
@@ -209,28 +268,64 @@ let pxTool = 1;
 function wirePicross(host) {
   const body = host.querySelector(".px-board");
   if (body) {
-    const paint = (el) => {
-      const x = +el.dataset.x, y = +el.dataset.y, i = y * PX.w + x;
+    const cellAt = (x, y) => body.querySelector(`.px-cell[data-x="${x}"][data-y="${y}"]`);
+
+    const paint = (x, y) => {
+      const i = y * PX.w + x;
       if (PX.cells[i] === PX.drag) return;
       PX.cells[i] = PX.drag;
-      el.className = `px-cell${PX.drag === 1 ? " on" : PX.drag === 2 ? " x" : ""}`
-        + (x % 5 === 4 && x !== PX.w - 1 ? " vr" : "") + (y % 5 === 4 && y !== PX.h - 1 ? " hr" : "");
+      const el = cellAt(x, y);
+      if (el) el.className = pxCellClass(x, y);
       pxRefreshClues(host);
     };
+
+    /* Highlight the row and column under the cursor — the numbers AND the lane. On a 15x15
+       grid the clue you're reading is eight cells away from the cell you're filling, and
+       counting across with a fingertip is how you fill the wrong row. */
+    const hover = (x, y) => {
+      body.querySelectorAll(".hl").forEach((el) => el.classList.remove("hl"));
+      if (x == null) return;
+      for (let i = 0; i < PX.w; i++) cellAt(i, y)?.classList.add("hl");
+      for (let j = 0; j < PX.h; j++) cellAt(x, j)?.classList.add("hl");
+      body.querySelector(`.px-rc[data-cy="${y}"]`)?.classList.add("hl");
+      body.querySelector(`.px-cc[data-cx="${x}"]`)?.classList.add("hl");
+    };
+    body.addEventListener("pointermove", (e) => {
+      const el = e.target.closest && e.target.closest(".px-cell");
+      if (el) hover(+el.dataset.x, +el.dataset.y);
+      else if (!PX.drag) hover(null);
+    });
+    body.addEventListener("pointerleave", () => { if (!PX.drag) hover(null); });
+
     body.addEventListener("pointerdown", (e) => {
       const el = e.target.closest(".px-cell");
       if (!el || PX.solved) return;
       e.preventDefault();
-      const i = +el.dataset.y * PX.w + +el.dataset.x;
-      const want = e.button === 2 || e.ctrlKey ? 2 : pxTool;
+      const x0 = +el.dataset.x, y0 = +el.dataset.y;
+      const i = y0 * PX.w + x0;
+      // middle → maybe, right → empty, otherwise the selected tool.
+      const want = e.button === 1 ? 3 : (e.button === 2 || e.ctrlKey) ? 2 : pxTool;
       // The FIRST cell decides what the whole stroke does — otherwise dragging across a
       // mixed row toggles each cell under your finger and you paint noise.
       PX.drag = PX.cells[i] === want ? 0 : want;
-      paint(el);
+      /* And the first MOVEMENT decides which lane it runs in. Set off sideways and the stroke
+         is that row's, for as long as the button is down — your hand can wander a cell up or
+         down mid-drag (it will) and the stroke shouldn't wander with it. Undecided until you
+         actually move, so a plain click still just sets one cell. */
+      let axis = null;                       // null | "row" | "col"
+      paint(x0, y0);
       const move = (ev) => {
         const t = document.elementFromPoint(ev.clientX, ev.clientY);
         const c = t && t.closest && t.closest(".px-cell");
-        if (c) paint(c);
+        if (!c) return;
+        const cx = +c.dataset.x, cy = +c.dataset.y;
+        if (axis === null && (cx !== x0 || cy !== y0)) {
+          axis = Math.abs(cx - x0) >= Math.abs(cy - y0) ? "row" : "col";
+        }
+        if (axis === "row") paint(cx, y0);
+        else if (axis === "col") paint(x0, cy);
+        else paint(cx, cy);
+        hover(axis === "col" ? x0 : cx, axis === "row" ? y0 : cy);
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
@@ -242,7 +337,11 @@ function wirePicross(host) {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
+    // Middle-click scrolls (autoscroll) on some platforms, and the context menu fights the
+    // right-click mark. Neither is welcome on a puzzle board.
     body.addEventListener("contextmenu", (e) => e.preventDefault());
+    body.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+    body.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
   }
 
   host.querySelectorAll("[data-tool]").forEach((el) => {
@@ -267,8 +366,69 @@ function wirePicross(host) {
 
 // Repaint just the clue gutters — a full re-render on every painted cell would fight the drag.
 function pxRefreshClues(host) {
-  host.querySelectorAll(".px-rc").forEach((el, y) => el.classList.toggle("done", pxRowDone(y)));
-  host.querySelectorAll(".px-cc").forEach((el, x) => el.classList.toggle("done", pxColDone(x)));
+  host.querySelectorAll(".px-rc").forEach((el) => {
+    const y = +el.dataset.cy;
+    el.classList.toggle("done", pxRowDone(y));
+    const settled = pxSettled(pxLine(y), PX.rows[y]);
+    const nums = [...el.querySelectorAll("i:not(.pad)")];
+    nums.forEach((n, i) => n.classList.toggle("ok", !!settled[i]));
+  });
+  host.querySelectorAll(".px-cc").forEach((el) => {
+    const x = +el.dataset.cx;
+    el.classList.toggle("done", pxColDone(x));
+    const settled = pxSettled(pxCol(x), PX.cols[x]);
+    const nums = [...el.querySelectorAll("i:not(.pad)")];
+    nums.forEach((n, i) => n.classList.toggle("ok", !!settled[i]));
+  });
+}
+
+/* The payoff: the grid you drew becomes the box art it was cut from.
+
+   Each cell turns into its own tile of the cover, so the picture assembles out of the
+   squares you filled rather than replacing them — which is the whole point, and worth the
+   fiddly bit: the tiles have to line up with the SAME crop the server cut the puzzle from
+   (a square taken from the middle of the cover, biased up because box art puts the logo
+   high). Get that wrong and the reveal is a picture of the game's left ear. So we wait for
+   the real image, measure it, and reproduce the crop exactly. */
+function pxReveal(host) {
+  const g = PX.game || {};
+  if (!g.cover) return;
+  const board = host.querySelector(".px-board");
+  const cells = [...host.querySelectorAll(".px-cell")];
+  if (!board || !cells.length) return;
+  const src = IMG(g.cover, "cover_big");
+  const img = new Image();
+  img.onload = () => {
+    /* Close the grid up FIRST, then MEASURE where every cell actually landed.
+       Computing the offsets from `x * (cell + gap)` looked right and was wrong: every fifth
+       cell carries an extra 3px rule (the thing that lets you count to eleven), so the real
+       offsets drift by 3px per block and the cover reassembled in visibly stepped bands.
+       Reading each cell's true position off the layout can't drift, whatever the CSS does. */
+    board.classList.add("revealed");
+    void board.offsetWidth;                              // flush the gap/margin change
+
+    const first = cells[0].getBoundingClientRect();
+    const last = cells[cells.length - 1].getBoundingClientRect();
+    const gridW = last.right - first.left;
+
+    // Same crop the server cut the puzzle from (picross.py): a square of the cover's WIDTH,
+    // taken 40% of the way down the leftover height — box art puts the logo high.
+    const scale = gridW / img.naturalWidth;
+    const cropTop = (img.naturalHeight - img.naturalWidth) * 0.40 * scale;
+    const bw = gridW, bh = img.naturalHeight * scale;
+
+    for (const el of cells) {
+      const x = +el.dataset.x, y = +el.dataset.y;
+      const r = el.getBoundingClientRect();
+      const dx = r.left - first.left, dy = r.top - first.top;
+      el.style.backgroundImage = `url("${src}")`;
+      el.style.backgroundSize = `${bw}px ${bh}px`;
+      el.style.backgroundPosition = `${-dx}px ${-(dy + cropTop)}px`;
+      el.style.transitionDelay = `${(x + y) * 22}ms`;   // a diagonal wipe, not a flash
+      el.classList.add("reveal");
+    }
+  };
+  img.src = src;
 }
 
 // Only ask the server when the grid COULD be right: every row and column satisfied. Saves a
