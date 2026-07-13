@@ -3119,10 +3119,24 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .px-cell.reveal { border-color: transparent; }
 .px-cell.reveal::before { display: none; }
 .px-cell.reveal::after {
-  content: ""; display: block; position: absolute; inset: 0;
+  /* inset -1px, NOT 0. An absolutely-positioned child is placed against the PADDING box, so at
+     inset 0 the tile stops short of the cell's 1px border on every side — which left a white
+     grid drawn over the finished picture, and put every tile 1px out of register with the
+     offsets measured off the border box. Bleeding it out by the border width covers the frame
+     and lines the image up. */
+  content: ""; display: block; position: absolute;
   background-image: var(--img); background-size: var(--bs); background-position: var(--bp);
   opacity: 0; transition: opacity .5s var(--ease); transition-delay: var(--dly);
-  margin: 0; border-radius: 0; width: auto; height: auto; top: 0; left: 0;
+  /* Belt and braces with the class-strip in pxReveal: the ✕ is two rotated strokes drawn on
+     this same ::after, so anything it set has to be explicitly undone here or a crossed cell's
+     tile inherits `rotate(-45deg)` and renders on the diagonal. */
+  transform: none; border: 0; border-radius: 0; margin: 0;
+  /* LAST, and as longhands. `inset` was being written first and then quietly undone by the
+     `top: 0; left: 0` I'd added to neutralise the ✕ — so the tile stayed pinned inside the
+     border (29px in a 30px cell) and drew a white grid over the finished picture. Bleed it out
+     by the 1px border on every side: the tiles then meet, and they line up with the offsets
+     measured off the border box. */
+  top: -1px; right: -1px; bottom: -1px; left: -1px; width: auto; height: auto;
 }
 .px-board.lit .px-cell.reveal::after { opacity: 1; }
 .px-board.lit .px-cell.reveal { background-color: transparent; transition: background-color .5s var(--ease); transition-delay: var(--dly); }

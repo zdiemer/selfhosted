@@ -453,6 +453,11 @@ function pxReveal(host) {
       el.style.setProperty("--bs", `${bw}px ${bh}px`);
       el.style.setProperty("--bp", `${-dx}px ${-(dy + cropTop)}px`);
       el.style.setProperty("--dly", `${(x + y) * 45}ms`);   // a diagonal wipe, not a flash
+      /* Drop the MARK classes first. The ✕ is drawn as two ::before/::after strokes rotated
+         45°, and the tile is drawn on that same ::after — so every cell I'd crossed handed its
+         `transform: rotate(-45deg)` straight to the picture, and those tiles came out tilted.
+         A cell being revealed is no longer a fill or a cross or a maybe; it's a tile. */
+      el.classList.remove("x", "dot");
       el.classList.add("reveal");
     }
     // Two steps: lay the tiles down at opacity 0, let the browser see that, THEN light them.
