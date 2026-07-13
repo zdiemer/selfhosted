@@ -2145,6 +2145,9 @@ function renderGrid(pageRows) {
     wirePreview(card);
     grid.appendChild(card);
   });
+  // A fresh set of cards: forget who went last and start the idle clock over.
+  tourLast = null;
+  tourKick();
 }
 
 // ---- YouTube: know whether it actually played ----------------------------
@@ -2276,10 +2279,14 @@ function stopPreview() {
   // failure against YouTube — so two impatient hovers on a slow connection would
   // trip YT_BLOCKED and kill previews for the rest of the session.
   if (previewWatch) { previewWatch(); previewWatch = null; }
-  if (!previewCard) return;
-  const frame = previewCard.querySelector(".card-preview");
-  if (frame) frame.remove();
-  previewCard.classList.remove("previewing", "playing");
+  // Sweep EVERY player, not just the one previewCard happens to point at. One video plays
+  // on this page, full stop. Trusting a single pointer means any orphan — a card re-rendered
+  // mid-play, a race between the tour and a hover — leaves a second trailer running that
+  // nothing can now reach to kill. Cheap query, and it makes "only the hovered one plays"
+  // true by construction rather than by careful bookkeeping.
+  document.querySelectorAll("iframe.card-preview").forEach((f) => f.remove());
+  document.querySelectorAll(".card.previewing, .card.playing")
+    .forEach((c) => c.classList.remove("previewing", "playing"));
   previewCard = null;
 }
 
@@ -2342,6 +2349,10 @@ function startPreview(card) {
 function wirePreviewFor(card, row) {
   CARD_ROW.set(card, row);
   wirePreview(card);
+  // Home and Pick build their cards through here rather than renderGrid, so this is where
+  // the tour gets armed on those surfaces — without it, the landing page (Home) never
+  // started a tour at all, which is exactly what the first headless run caught.
+  tourKick();
 }
 
 function wirePreview(card) {
@@ -2351,13 +2362,124 @@ function wirePreview(card) {
   // lingers would otherwise trigger a preview you never asked for.
   card.addEventListener("pointerenter", (e) => {
     if (e.pointerType !== "mouse") return;
+    const already = previewCard === card;        // the tour is already showing this one
+    tourFreeze();                                // you're driving now; the tour yields
     clearTimeout(previewTimer);
+    // Adopt the running player rather than tearing it down and starting the clip over
+    // under your cursor — hovering what's already playing should be a no-op, not a restart.
+    if (already) return;
+    // Kill whatever else is playing NOW, not after the dwell: hovering a card should leave
+    // exactly one trailer on screen — this one — from the instant you arrive.
+    stopPreview();
     previewTimer = setTimeout(() => startPreview(card), PREVIEW_DELAY);
   });
   card.addEventListener("pointerleave", () => {
     if (previewCard === card) stopPreview();
     else clearTimeout(previewTimer);
+    tourKick();                                  // hands off the wheel → tour counts down again
   });
+  previewVis.observe(card);                      // stop playing the moment it leaves the screen
+}
+
+// ---- Autoplay tour -------------------------------------------------------
+// Left alone on a page of cards, walk down them playing each one's trailer in turn.
+// It rides on the same single-preview machinery as hover — startPreview/stopPreview keep
+// exactly one player alive — so the tour can never stack a second video on the page, and
+// a hover always wins (pointerenter stops the tour outright).
+const TOUR_IDLE = 12000;   // quiet on the page this long before the tour begins
+const TOUR_PLAY = 30000;   // each card holds the stage for one full clip loop
+const TOUR_GAP  = 5000;    // a beat of stillness between cards, so it isn't a slot machine
+let tourIdleTimer = null, tourTimer = null, tourOn = false, tourLast = null;
+
+// A card is eligible only if it HAS a trailer — a card without one is never scheduled, so
+// it costs no time at all rather than burning a turn on a black rectangle.
+const tourEligible = () => [...document.querySelectorAll(".card")]
+  .filter((c) => {
+    const row = CARD_ROW.get(c);
+    return row && (ENRICH[row._k] || {}).video;
+  });
+
+// ...and only if you can actually see it. Autoplaying a card three screens down is a
+// video nobody watches — and on scroll, the tour re-picks from what's on screen now.
+function tourVisible(el) {
+  const r = el.getBoundingClientRect();
+  return r.top < window.innerHeight - 40 && r.bottom > 40 && r.left < window.innerWidth && r.right > 0;
+}
+
+const tourAllowed = () =>
+  WANTS_MOTION && !YT_BLOCKED && !document.hidden && !anyOverlayOpen();
+
+// A video only ever plays on a card you can SEE. This is the authority on that — a scroll
+// listener only samples on a throttle and misses anything moved by a keyboard, a jump link
+// or a re-layout. It covers hover previews too, not just the tour: scroll a hovered card
+// off the top and its trailer is playing to an empty room just the same.
+const previewVis = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (e.target !== previewCard) continue;
+    if (e.isIntersecting && e.intersectionRatio >= 0.35) continue;
+    const wasTour = tourOn && e.target === tourLast;
+    stopPreview();
+    if (wasTour) {                       // it was the tour's turn — move on to one in view
+      clearTimeout(tourTimer);
+      tourTimer = setTimeout(tourNext, TOUR_GAP);
+    }
+  }
+}, { threshold: [0, 0.35, 0.7] });
+
+// Stop SCHEDULING, but leave any running player alone — for when the user takes over by
+// hovering the very card the tour is on.
+function tourFreeze() {
+  tourOn = false;
+  clearTimeout(tourIdleTimer); tourIdleTimer = null;
+  clearTimeout(tourTimer); tourTimer = null;
+}
+
+function tourStop() {
+  const owned = previewCard && previewCard === tourLast;
+  tourFreeze();
+  // Only tear down a player the TOUR started. A hover preview is the user's, not ours.
+  if (owned) stopPreview();
+}
+
+// Restart the countdown. Called whenever the user does something — the tour is what
+// happens when they stop.
+function tourKick() {
+  clearTimeout(tourIdleTimer); tourIdleTimer = null;
+  clearTimeout(tourTimer); tourTimer = null;
+  tourOn = false;
+  if (!tourAllowed()) return;
+  tourIdleTimer = setTimeout(() => { tourOn = true; tourNext(); }, TOUR_IDLE);
+}
+
+function tourNext() {
+  if (!tourOn || !tourAllowed()) return tourStop();
+  const all = tourEligible();
+  const shown = all.filter(tourVisible);
+  if (!shown.length) {                       // nothing on screen worth playing — look again later
+    tourTimer = setTimeout(tourNext, TOUR_GAP);
+    return;
+  }
+  // Carry on DOWN the list from whoever went last, and wrap when we run off the end.
+  let card = shown[0];
+  const at = tourLast ? all.indexOf(tourLast) : -1;
+  if (at >= 0) card = all.slice(at + 1).find(tourVisible) || shown[0];
+
+  tourLast = card;
+  startPreview(card);
+  tourTimer = setTimeout(() => {
+    if (previewCard === card) stopPreview();
+    tourTimer = setTimeout(tourNext, TOUR_GAP);
+  }, TOUR_PLAY);
+}
+
+if (WANTS_MOTION) {
+  // Scrolling doesn't cancel the tour — you're still watching, and pausing it every time
+  // the page moves would make it feel broken. Which card is on screen is handled by
+  // previewVis above; scrolling just changes the answer.
+  // Typing, clicking, or leaving the tab all mean "not idle" — start the clock over.
+  ["keydown", "pointerdown"].forEach((ev) =>
+    document.addEventListener(ev, () => tourKick(), { passive: true }));
+  document.addEventListener("visibilitychange", () => (document.hidden ? tourStop() : tourKick()));
 }
 
 // Enrichment arrived: update covers/badges IN PLACE. A full re-render would
@@ -2487,7 +2609,9 @@ function drawerBack() {
 const drawerTitleOf = (row) => String(row.title || row.game || "back");
 
 function openDrawer(row, sheetKey, keepStack) {
-  stopPreview();
+  tourStop();                 // not just stopPreview: leave the tour armed and it would
+  stopPreview();              // start a video behind the open drawer 12s later
+  tourLast = null;
   if (!keepStack) drawerStack = [];       // a fresh open starts a fresh history
   applyCoverAccent(row);
   drawerSheet = sheetKey || (SPECIAL_TABS.includes(activeTab) ? "games" : activeTab);
@@ -2580,7 +2704,12 @@ function openDrawer(row, sheetKey, keepStack) {
   syncScrollLock();                       // the page behind the drawer must not scroll
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
-function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; syncScrollLock(); }
+function closeDrawer() {
+  $("#overlay").hidden = true; drawerStack = []; syncScrollLock();
+  // The pointerdown that closed this fired while the overlay was still open, so the tour
+  // refused to arm itself. Now that it's shut, start the clock.
+  tourKick();
+}
 
 // Lock the page behind a full-screen overlay. Pinning the body with position:fixed (and
 // restoring the scroll offset on release) is the one approach that also holds on iOS
