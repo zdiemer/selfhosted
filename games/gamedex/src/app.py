@@ -218,12 +218,14 @@ def api_shelf_face(key: str, face: str):
 def _platform_for(key: str) -> str | None:
     """The platform of the game a box key belongs to. Key is '<matchkey>#<region>'.
 
-    Searches BOTH sheets: a game you've only got in the Completed list (an emulated
-    beat, say) has a row there but not in Games, and box art must still attach to it —
-    otherwise the upload 404s with 'unknown game'."""
+    Searches EVERY sheet, because a game can live in any of them and box art must attach
+    all the same. A game you've only beaten (an emulated one, say) has a row in Completed
+    but not in Games; a game you've only ordered has a row in On Order and nowhere else —
+    and that is exactly when you most want to give it a cover, since it has no metadata yet.
+    Miss a sheet here and the upload 404s with the useless 'unknown game'."""
     mk = key.rsplit("#", 1)[0]
     data = store.snapshot()["data"]
-    for sheet in ("games", "completed"):
+    for sheet in ("games", "completed", "onOrder"):
         for r in data.get(sheet, {}).get("rows", []):
             if r.get("_k") == mk:
                 return r.get("platform")
