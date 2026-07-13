@@ -1328,7 +1328,7 @@ async function loadUploads() {
     let changed = false;
     for (const [mk, u] of Object.entries(m)) {
       UPLOADS[mk] = u;
-      const url = `${u.url}?v=${u.v}`;
+      const url = u.url;                     // already carries &v= for cache-busting
       const e = ENRICH[mk];
       if (!e || e.uploadCover !== url) {
         ENRICH[mk] = Object.assign(e || {}, { uploadCover: url });   // stub is fine for a no-match game

@@ -381,8 +381,11 @@ class Shelf:
             mk = key.rsplit("#", 1)[0]
             if mk in out:
                 continue
-            out[mk] = {"url": f"/api/shelf/{quote(key, safe='')}/front.jpg",
-                       "v": up.get("v", 1)}
+            v = up.get("v", 1)
+            # Key in the QUERY string (see api_shelf_face) — a slash in the platform
+            # would break a path segment. quote_via keeps it encoded for the value.
+            out[mk] = {"url": f"/api/shelf/face?key={quote(key, safe='')}&face=front&v={v}",
+                       "v": v}
         return out
 
     def set_cover(self, key: str, data: bytes, kind: str, platform: str,

@@ -26,8 +26,11 @@ const SHELF_PERSP_Y = 0.42;  // fraction of the viewport; must match .sh-pull CS
 const shClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const shLerp = (a, b, t) => a + (b - a) * t;
 const shPx = (mm) => Math.round(mm * PX_MM);
+// Key goes in the QUERY string, never the path: a match key can contain '/' (Commodore
+// Plus/4, OS/2, TI-99/4A), and an encoded slash in a path is decoded by the proxy and
+// re-splits the route — a 405 on upload, a 404 on the face.
 const faceUrl = (k, f, v) =>
-  `/api/shelf/${encodeURIComponent(k)}/${f}.jpg${v ? `?v=${v}` : ""}`;
+  `/api/shelf/face?key=${encodeURIComponent(k)}&face=${f}${v ? `&v=${v}` : ""}`;
 
 /* A game with no scanned wrap doesn't get a flat coloured slab — it gets that
  * system's STANDARD spine: the console's brand band up top, the game's title set
@@ -730,7 +733,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   // Reopening a game that already has art: pull its original image back in, at the
   // rotation and guides it was saved with, so you adjust rather than start over.
   if (existing) {
-    fetch(`/api/shelf/${encodeURIComponent(key)}/original`)
+    fetch(`/api/shelf/original?key=${encodeURIComponent(key)}`)
       .then((r) => (r.ok ? r.blob() : null))
       .then((b) => { if (b) loadBlob(b, { rotate: existing.rotate || 0 }); })
       .catch(() => {});
@@ -742,7 +745,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   host.addEventListener("click", (e) => { if (e.target === host) close(); });
   if (hasUpload) $("#ceRemove").onclick = async () => {
     $("#ceRemove").disabled = true;
-    await fetch(`/api/shelf/${encodeURIComponent(key)}/cover`, { method: "DELETE" });
+    await fetch(`/api/shelf/cover?key=${encodeURIComponent(key)}`, { method: "DELETE" });
     close(); onDone && onDone();
   };
 
@@ -759,11 +762,10 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     if (!file) return;
     save.disabled = true; save.textContent = "Saving…";
     const c = caseDims();
-    const q = new URLSearchParams({ kind, rotate, w: c.w, h: c.h, d: c.d });
+    const q = new URLSearchParams({ key, kind, rotate, w: c.w, h: c.h, d: c.d });
     if (kind === "wrap") { q.set("x1", x1.toFixed(4)); q.set("x2", x2.toFixed(4)); }
     try {
-      const r = await fetch(`/api/shelf/${encodeURIComponent(key)}/cover?${q}`,
-        { method: "POST", body: file });
+      const r = await fetch(`/api/shelf/cover?${q}`, { method: "POST", body: file });
       // HTTP/2 (production behind Traefik) sends no statusText, so reading it left the
       // message blank on every failure. Read the JSON error, then the body, then status.
       if (!r.ok) {

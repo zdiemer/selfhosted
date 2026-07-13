@@ -193,9 +193,14 @@ def api_shelf():
     return {"games": rows, "wraps": sum(1 for r in rows if r["src"] == "wrap")}
 
 
-@app.get("/api/shelf/{key}/{face}.jpg")
+@app.get("/api/shelf/face")
 def api_shelf_face(key: str, face: str):
     """One face of one box, cut out of the real scan.
+
+    Key is a QUERY param, not a path segment: a match key can contain '/' (platforms
+    like 'Commodore Plus/4', 'OS/2', 'TI-99/4A'), and an encoded slash in a path is
+    decoded by the proxy and re-splits the route — turning uploads into a 405 and box
+    faces into 404s. In the query string it survives intact.
 
     Cut on first request and cached on disk from then on — we never hotlink their CDN,
     and a 6 MB scan is fetched exactly once in the lifetime of the volume."""
@@ -224,8 +229,8 @@ def _platform_for(key: str) -> str | None:
 MAX_UPLOAD = 12 * 1024 * 1024
 
 
-@app.post("/api/shelf/{key}/cover")
-async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotate: int = 0,
+@app.post("/api/shelf/cover")
+async def api_shelf_upload(request: Request, key: str, kind: str = "wrap", rotate: int = 0,
                           x1: float | None = None, x2: float | None = None,
                           w: float | None = None, h: float | None = None, d: float | None = None):
     """Store a hand-supplied cover for one game — the image bytes are the raw POST body.
@@ -258,13 +263,13 @@ def api_uploads():
     return SHELF.uploaded_covers()
 
 
-@app.delete("/api/shelf/{key}/cover")
+@app.delete("/api/shelf/cover")
 def api_shelf_upload_delete(key: str):
     """Drop a manual upload, reverting to the auto-resolved cover."""
     return {"ok": SHELF.remove_cover(key)}
 
 
-@app.get("/api/shelf/{key}/original")
+@app.get("/api/shelf/original")
 def api_shelf_original(key: str):
     """The raw image the user uploaded — so the editor can reopen and re-adjust it."""
     got = SHELF.original(key)
