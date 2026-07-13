@@ -371,6 +371,20 @@ class Shelf:
     def has_upload(self, key: str) -> bool:
         return key in self._uploads
 
+    def uploaded_covers(self) -> dict:
+        """{matchKey: {"url": front-face URL, "v": version}} for every manual upload —
+        so the grid and drawer can show hand-supplied art as the game's cover, not just
+        the shelf. Keyed by match key alone (region dropped); first region wins."""
+        from urllib.parse import quote
+        out = {}
+        for key, up in self._uploads.items():
+            mk = key.rsplit("#", 1)[0]
+            if mk in out:
+                continue
+            out[mk] = {"url": f"/api/shelf/{quote(key, safe='')}/front.jpg",
+                       "v": up.get("v", 1)}
+        return out
+
     def set_cover(self, key: str, data: bytes, kind: str, platform: str,
                   rotate: int = 0, x1: float | None = None, x2: float | None = None,
                   case: dict | None = None) -> dict:

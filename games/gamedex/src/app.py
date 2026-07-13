@@ -207,11 +207,17 @@ def api_shelf_face(key: str, face: str):
 
 
 def _platform_for(key: str) -> str | None:
-    """The platform of the game a box key belongs to. Key is '<matchkey>#<region>'."""
+    """The platform of the game a box key belongs to. Key is '<matchkey>#<region>'.
+
+    Searches BOTH sheets: a game you've only got in the Completed list (an emulated
+    beat, say) has a row there but not in Games, and box art must still attach to it —
+    otherwise the upload 404s with 'unknown game'."""
     mk = key.rsplit("#", 1)[0]
-    for r in store.snapshot()["data"].get("games", {}).get("rows", []):
-        if r.get("_k") == mk:
-            return r.get("platform")
+    data = store.snapshot()["data"]
+    for sheet in ("games", "completed"):
+        for r in data.get(sheet, {}).get("rows", []):
+            if r.get("_k") == mk:
+                return r.get("platform")
     return None
 
 
@@ -243,6 +249,13 @@ async def api_shelf_upload(key: str, request: Request, kind: str = "wrap", rotat
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "src": "upload", "case": entry["case"], "v": entry["v"]}
+
+
+@app.get("/api/uploads")
+def api_uploads():
+    """{matchKey: {url, v}} for every hand-uploaded cover, so the grid and drawer can
+    show it as the game's art — including games that never matched IGDB."""
+    return SHELF.uploaded_covers()
 
 
 @app.delete("/api/shelf/{key}/cover")

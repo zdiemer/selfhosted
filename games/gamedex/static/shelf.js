@@ -764,7 +764,13 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     try {
       const r = await fetch(`/api/shelf/${encodeURIComponent(key)}/cover?${q}`,
         { method: "POST", body: file });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      // HTTP/2 (production behind Traefik) sends no statusText, so reading it left the
+      // message blank on every failure. Read the JSON error, then the body, then status.
+      if (!r.ok) {
+        let msg = "";
+        try { msg = (await r.clone().json()).error; } catch { try { msg = await r.text(); } catch {} }
+        throw new Error(msg || `HTTP ${r.status}`);
+      }
       close(); onDone && onDone();
     } catch (err) {
       save.disabled = false; save.textContent = "Save";

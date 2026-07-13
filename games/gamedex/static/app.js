@@ -92,6 +92,7 @@ const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${s
 // gated sources bring — an arcade cabinet scan or a VN cover beats a blank box.
 const coverSrc = (e, size) => (
   !e ? "" :
+  e.uploadCover ? e.uploadCover :          // your hand-uploaded art wins everywhere
   e.coverUrl ? e.coverUrl :
   e.cover ? IMG(e.cover, size) :
   e.vnCover || e.adbCover || e.thumbyCover || "");
@@ -114,6 +115,7 @@ const SRC = {};                    // matchKey -> speedrun record
 const GDC = {};                    // matchKey -> StrategyWiki guide
 const COOPC = {};                  // matchKey -> Co-Optimus co-op details
 const ENRICH_REQUESTED = new Set();
+const UPLOADS = {};                // matchKey -> {url, v} : hand-uploaded box art
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
@@ -1315,6 +1317,47 @@ async function loadRomm() {
   } catch (_) { /* RomM being down must never break gamedex */ }
 }
 
+// Hand-uploaded box art, merged onto the enrichment map as `uploadCover` so it becomes
+// the game's cover EVERYWHERE (grid, drawer, similar-games) — not just on the shelf —
+// including games IGDB never matched, which otherwise have no cover at all.
+async function loadUploads() {
+  try {
+    const r = await fetch("api/uploads");
+    if (!r.ok) return;
+    const m = await r.json();
+    let changed = false;
+    for (const [mk, u] of Object.entries(m)) {
+      UPLOADS[mk] = u;
+      const url = `${u.url}?v=${u.v}`;
+      const e = ENRICH[mk];
+      if (!e || e.uploadCover !== url) {
+        ENRICH[mk] = Object.assign(e || {}, { uploadCover: url });   // stub is fine for a no-match game
+        changed = true;
+      }
+    }
+    // A cover removed (Remove art) — drop the override so the auto cover returns.
+    for (const mk of Object.keys(UPLOADS)) {
+      if (!(mk in m) && ENRICH[mk]) { delete ENRICH[mk].uploadCover; delete UPLOADS[mk]; changed = true; }
+    }
+    if (changed) {
+      _enrichEpoch++;
+      if (typeof patchEnrichedCells === "function") patchEnrichedCells();
+      refreshDrawerCover();
+    }
+  } catch (_) { /* uploads are a nicety; never break the app */ }
+}
+// After an upload/remove, refresh the open drawer's hero cover in place.
+function refreshDrawerCover() {
+  if ($("#overlay").hidden || !drawerRow) return;
+  const cs = coverSrc(ENRICH[drawerRow._k], "cover_big");
+  const el = $("#heroCover");
+  if (!cs || !el) return;
+  if (el.tagName === "IMG") { el.src = cs; return; }
+  const img = document.createElement("img");
+  img.className = "cover-big"; img.id = "heroCover"; img.alt = ""; img.src = cs;
+  el.replaceWith(img);
+}
+
 // The rom id for this row, or null. Requires BOTH the game and the platform to
 // agree — a PSX Doom must not offer to play the 3DO one.
 function rommRomId(row) {
@@ -2376,7 +2419,7 @@ function openDrawer(row, sheetKey, keepStack) {
       key, platform: row.platform, title: row[titleCol.key],
       hasUpload: g ? g.src === "upload" : false,
       caseDefault: g ? g.case : null, existing: g ? g.upload : null,
-      onDone: () => { if (typeof SHELF !== "undefined") SHELF.loaded = false; },
+      onDone: () => { if (typeof SHELF !== "undefined") SHELF.loaded = false; loadUploads(); },
     });
   };
   // A grouped card's members open individually — with a way back to the group.
@@ -2599,6 +2642,7 @@ async function load() {
   applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
   loadRomm();                   // which games we can actually play in the browser
+  loadUploads();                // hand-uploaded box art becomes the cover everywhere
   loadPrefs();                  // saved views + custom challenges follow you between browsers
   loadValueHistory();           // daily collection-value snapshots (for the trend chart)
   loadRecs();                   // "because you liked …"
