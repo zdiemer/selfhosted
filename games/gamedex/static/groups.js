@@ -16,20 +16,21 @@ const groupState = { kind: null, open: null, q: "", sort: "size" };
 
 const grRows = () => ((DATA.sheets.games || {}).rows || []).filter((r) => r.title);
 
-/* Developer / publisher / genre LOOK multi-valued but aren't: of 14,752 rows only
-   93 developers contain a comma and they are names ("I, Robot", "Ether, Hidden
-   Vale"), not lists. Splitting on punctuation would invent studios. One row
-   belongs to exactly one group per axis. */
+/* Developer / publisher / franchise / genre are MULTI-valued now: the sheet's one
+   value per row is joined with IGDB's many (unified*Vals), so a game files under every
+   studio, publisher, franchise, and genre either source knows — a co-developer only
+   IGDB lists gets its own shelf, and the umbrella genres (Platformer, RPG) become
+   groups the granular sheet genres roll up into. Platform stays single. */
 const GROUPINGS = [
-  { id: "series", label: "Series", icon: "i-timeline", key: (r) => r.franchise,
+  { id: "series", label: "Series", icon: "i-timeline", vals: (r) => unifiedFranchiseVals(r),
     units: "franchises", blurb: "Franchises in release order. How far through Castlevania are you?" },
-  { id: "developer", label: "Developers", icon: "i-edit", key: (r) => r.developer,
-    units: "studios", blurb: "Every studio you own something by — and what you never got round to." },
-  { id: "publisher", label: "Publishers", icon: "i-package", key: (r) => r.publisher,
+  { id: "developer", label: "Developers", icon: "i-edit", vals: (r) => unifiedDevVals(r),
+    units: "studios", blurb: "Every studio you own something by — sheet and IGDB — and what you never got round to." },
+  { id: "publisher", label: "Publishers", icon: "i-package", vals: (r) => unifiedPubVals(r),
     units: "publishers", blurb: "Who put it on the shelf, rather than who made it." },
-  { id: "genre", label: "Genres", icon: "i-target", key: (r) => r.genre,
+  { id: "genre", label: "Genres", icon: "i-target", vals: (r) => unifiedGenreVals(r),
     units: "genres", blurb: "What you actually play, as opposed to what you buy." },
-  { id: "platform", label: "Platforms", icon: "i-dice", key: (r) => r.platform,
+  { id: "platform", label: "Platforms", icon: "i-dice", vals: (r) => (r.platform ? [r.platform] : []),
     units: "platforms", blurb: "A shelf per machine, with how much of it you've finished." },
 ];
 const grouping = (id) => GROUPINGS.find((g) => g.id === id);
@@ -45,10 +46,11 @@ function groupIndex(kind) {
   if (!g) return [];
   const m = new Map();
   for (const r of grRows()) {
-    const k = g.key(r);
-    if (!k) continue;
-    if (!m.has(k)) m.set(k, []);
-    m.get(k).push(r);
+    for (const k of g.vals(r)) {              // a game can belong to several groups now
+      if (!k) continue;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
   }
   const out = [];
   for (const [name, games] of m) {

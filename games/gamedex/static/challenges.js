@@ -227,14 +227,17 @@ function chPercentileBucket(r) {
   return `99th (>=${chPctStr(P.p99)})`;
 }
 
-// The 50 developers with the most games in the collection.
+// The 50 developers with the most games in the collection — counted over the UNIFIED
+// developer values (sheet + IGDB), so a studio you only know through IGDB can make the
+// list. Cached, and reset when enrichment lands (chReset).
 let _chTopDevs = null;
 function chTopDevelopers() {
   if (_chTopDevs) return _chTopDevs;
   const counts = new Map();
-  for (const r of chRows()) if (r.developer) counts.set(r.developer, (counts.get(r.developer) || 0) + 1);
+  for (const r of chRows()) for (const d of unifiedDevVals(r)) counts.set(d, (counts.get(d) || 0) + 1);
   return (_chTopDevs = new Set([...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 50).map((e) => e[0])));
 }
+const chReset = () => { _chTopDevs = null; };
 
 const CH_FRANCHISE_CONTENDERS = new Set([
   "Final Fantasy", "Final Fantasy Tactics", "Chocobo", "Mana", "SaGa", "Dragon Quest",
@@ -270,7 +273,9 @@ const CHALLENGES = [
   {
     id: "genre", icon: "i-library", name: "One Per Genre",
     blurb: "Beat a game in every genre in the collection, from visual novels to twin-stick shooters.",
-    group: (r) => r.genre || null,
+    // Unified genres: one beat legitimately clears every genre that game carries (sheet
+    // + IGDB + the umbrellas it rolls up into).
+    groupMany: (r) => unifiedGenreVals(r),
   },
   {
     id: "year", icon: "i-calendar", name: "One Per Year",
@@ -318,14 +323,16 @@ const CHALLENGES = [
   {
     id: "developer", icon: "i-package", name: "One Per Top Developer",
     blurb: "Beat a game by each of the 50 developers best represented in the collection.",
-    domain: (r) => chTopDevelopers().has(r.developer),
-    group: (r) => r.developer || null,
+    // Unified devs: a game counts for every top studio it's credited to (sheet or IGDB);
+    // the groupMany filter keeps the buckets to top-50 studios only.
+    domain: (r) => unifiedDevVals(r).some((d) => chTopDevelopers().has(d)),
+    groupMany: (r) => unifiedDevVals(r).filter((d) => chTopDevelopers().has(d)),
   },
   {
     id: "franchise", icon: "i-trophy", name: "One Per Franchise Contender",
     blurb: "Beat a game from every franchise on the shortlist — the series worth actually playing through.",
-    domain: (r) => CH_FRANCHISE_CONTENDERS.has(r.franchise),
-    group: (r) => r.franchise || null,
+    domain: (r) => unifiedFranchiseVals(r).some((f) => CH_FRANCHISE_CONTENDERS.has(f)),
+    groupMany: (r) => unifiedFranchiseVals(r).filter((f) => CH_FRANCHISE_CONTENDERS.has(f)),
   },
   {
     id: "added", icon: "i-plus", name: "One Per Added Date",

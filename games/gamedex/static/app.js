@@ -909,12 +909,16 @@ async function loadAllEnrichment() {
       // mismatches), and its results are cached — so they must be recomputed
       // once enrichment lands, or "no metadata" reads as "all 14,747 games".
       resetHealth();
+      // Groupings and Challenges group on the UNIFIED (sheet + IGDB) values, so their
+      // membership changes as enrichment lands — drop the cached indexes.
+      resetGroups(); _completedFranchises = null;
+      if (typeof chReset === "function") chReset();
       // Patch in place rather than re-rendering (which would flicker every image).
       if (activeTab === "stats") renderStats();
       else if (activeTab === "home") patchHomeCovers();   // in place: a full re-render flickers
       else if (activeTab === "challenges") renderChallenges();
       else if (activeTab === "health") renderHealth();
-      else if (activeTab === "groups") patchGroupCovers();
+      else if (activeTab === "groups") renderGroups();     // membership shifts, not just covers
       else if (activeTab !== "pick") {
         patchEnrichedCells();
         patchTimelineCovers();          // the Completed tab's third view
@@ -2631,6 +2635,8 @@ async function load() {
   resetHealth();
   resetSearchCache();
   resetGroups();
+  _completedFranchises = null;
+  if (typeof chReset === "function") chReset();
   resetTaste();
   resetRelations();
   for (const k of Object.keys(_cmdkFacets)) delete _cmdkFacets[k];
@@ -3175,7 +3181,7 @@ function renderStats() {
 const pickState = { selector: "backlog", param: "", picked: null, minutes: 0 };
 let _completedFranchises = null;
 const completedFranchises = () => (_completedFranchises ||=
-  new Set(((DATA.sheets.completed || {}).rows || []).map((r) => r.franchise).filter(Boolean)));
+  new Set(((DATA.sheets.completed || {}).rows || []).flatMap((r) => unifiedFranchiseVals(r))));
 const pickYear = () => new Date().getFullYear();
 
 const quickF = (r) => { const p = playtimeOf(r); return p != null && p < 5; };
@@ -3323,13 +3329,19 @@ const SELECTORS = [
   { id: "recent", label: "Recent (last 3 years)", group: "Era", filter: (r) => { const y = +r.releaseYear; return y && y >= pickYear() - 3; } },
   { id: "thisyear", label: "This year's releases", group: "Era", filter: (r) => +r.releaseYear === pickYear() },
 
-  { id: "franchise", label: "Continue a franchise I've played", group: "Progress", filter: (r) => r.franchise && completedFranchises().has(r.franchise) },
+  { id: "franchise", label: "Continue a franchise I've played", group: "Progress", filter: (r) => unifiedFranchiseVals(r).some((f) => completedFranchises().has(f)) },
 
   { id: "platform", label: "By platform…", group: "By…", param: "platform", filter: (r, v) => r.platform === v },
-  { id: "genre", label: "By genre…", group: "By…", param: "genre", filter: (r, v) => r.genre === v },
-  { id: "byfranchise", label: "By franchise…", group: "By…", param: "franchise", filter: (r, v) => r.franchise === v },
-  { id: "bydev", label: "By developer…", group: "By…", param: "developer", filter: (r, v) => r.developer === v },
-  { id: "bypub", label: "By publisher…", group: "By…", param: "publisher", filter: (r, v) => r.publisher === v },
+  // Unified: the value list and the match both span sheet + IGDB, so you can pick a
+  // studio/franchise/genre the sheet never named and still get results.
+  { id: "genre", label: "By genre…", group: "By…", param: "genre", filter: (r, v) => unifiedGenreVals(r).includes(v),
+    paramVals: () => topCounts(pickEligible().flatMap(unifiedGenreVals), 200).map((x) => x.label) },
+  { id: "byfranchise", label: "By franchise…", group: "By…", param: "franchise", filter: (r, v) => unifiedFranchiseVals(r).includes(v),
+    paramVals: () => topCounts(pickEligible().flatMap(unifiedFranchiseVals), 200).map((x) => x.label) },
+  { id: "bydev", label: "By developer…", group: "By…", param: "developer", filter: (r, v) => unifiedDevVals(r).includes(v),
+    paramVals: () => topCounts(pickEligible().flatMap(unifiedDevVals), 200).map((x) => x.label) },
+  { id: "bypub", label: "By publisher…", group: "By…", param: "publisher", filter: (r, v) => unifiedPubVals(r).includes(v),
+    paramVals: () => topCounts(pickEligible().flatMap(unifiedPubVals), 200).map((x) => x.label) },
 ];
 
 const pickEligible = () => ((DATA.sheets.games || {}).rows || []).filter((r) => !r.completed && r.title);
