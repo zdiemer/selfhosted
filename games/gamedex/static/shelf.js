@@ -223,15 +223,19 @@ function shelfVisible() {
 function shSpineHtml(g, i) {
   const real = g.src === "wrap" || g.src === "upload";
   const dims = `width:${shPx(g.case.d)}px;height:${shPx(g.case.h)}px`;
-  const t = `title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}"`;
+  const t = `title="${escapeHtml(g.t)} · ${escapeHtml(g.p)}${g.done ? " · Beaten" : ""}"`;
+  // Beaten-at-a-glance: a check on the top of a finished game's spine. Absolute, so it
+  // never touches the flex row (desktop) or the scroll snap (mobile).
+  const done = g.done ? " done" : "";
+  const badge = g.done ? `<i class="sh-check" aria-hidden="true"></i>` : "";
   if (real) {
     // The hue sits UNDER the scan, so a spine whose scan hasn't arrived yet is the
     // right colour rather than a black rectangle.
     const bg = `background:${g.hue} center/100% 100% no-repeat url(${faceUrl(g.k, "spine", g.uv)})`;
-    return `<button class="sh-spine real" data-i="${i}" ${t} style="${dims};${bg}"></button>`;
+    return `<button class="sh-spine real${done}" data-i="${i}" ${t} style="${dims};${bg}">${badge}</button>`;
   }
   const s = spineStyle(g.p);
-  return `<button class="sh-spine std" data-i="${i}" ${t} style="${dims};background:${s.base}">${stdSpineHtml(g)}</button>`;
+  return `<button class="sh-spine std${done}" data-i="${i}" ${t} style="${dims};background:${s.base}">${badge}${stdSpineHtml(g)}</button>`;
 }
 
 function paintShelfRows() {

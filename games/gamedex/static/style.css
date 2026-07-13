@@ -2540,6 +2540,16 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-spine.out { opacity:0; pointer-events:none; }            /* it's in your hand now */
 .sh-spine.lean { transform:rotate(-4deg) translateY(-1px); } /* neighbour tips into the gap */
 
+/* Beaten marker: a small green check pinned inside the top of the spine. box-sizing +
+   an 11px width keeps it inside even the thinnest spine (a ~13px jewel case), so the
+   spine's overflow:hidden never clips it oddly; z-index sits it over the scanned art. */
+.sh-check { position:absolute; top:3px; left:50%; transform:translateX(-50%); z-index:3;
+  box-sizing:border-box; width:11px; height:11px; border-radius:50%; pointer-events:none;
+  border:1.5px solid rgba(255,255,255,.92); box-shadow:0 1px 3px rgba(0,0,0,.55);
+  background:var(--good) center/7px 7px no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='white' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round' d='M5 13l4 4L19 7'/%3E%3C/svg%3E"); }
+.sh-spine:hover .sh-check, .sh-spine:focus-visible .sh-check { top:2px; }   /* rides up with the spine */
+
 /* A standard system spine: brand band on top, title set automatically below. Shared
    by the flat shelf spine (.sh-spine.std) and the 3D case's left wall (.f-left.std). */
 .sh-spine.std { flex-direction:column; align-items:stretch; justify-content:flex-start; }
