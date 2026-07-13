@@ -574,6 +574,68 @@ td.cover { width: 46px; padding: 5px 8px; }
 .mine-rows .detail-row { border-bottom: 1px solid var(--border); }
 .mine-rows .detail-row:last-child { border-bottom: 0; }
 
+/* Status, at a glance, before any numbers. */
+.mine-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.mine-pill {
+  font: 600 11px/1 var(--font); letter-spacing: .02em;
+  padding: 6px 9px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--dim);
+  white-space: nowrap;
+}
+.mine-pill.done { background: color-mix(in srgb, var(--good) 16%, transparent);
+  border-color: color-mix(in srgb, var(--good) 42%, transparent); color: var(--good); }
+.mine-pill.live { background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent-line); color: var(--accent); }
+/* Reuse the hero stat tiles, minus the hero's top rule. */
+.mine-stats { margin-top: 14px; padding-top: 0; border-top: 0; }
+
+/* The play-through as a sequence, not four date rows in a table. */
+.mine-track {
+  list-style: none; display: flex; flex-wrap: wrap; gap: 0; margin: 18px 0 0; padding: 0;
+}
+.mine-track li {
+  position: relative; flex: 1 1 84px; min-width: 84px;
+  padding: 16px 10px 0 0; display: flex; flex-direction: column; gap: 2px;
+}
+/* The rail runs THROUGH the dots, and stops at the last one rather than trailing off. */
+.mine-track li::before {
+  content: ""; position: absolute; top: 4px; left: 0; right: 0; height: 2px;
+  background: var(--border);
+}
+.mine-track li:first-child::before { left: 4px; }
+.mine-track li:last-child::before { right: calc(100% - 6px); }
+.mine-track li::after {
+  content: ""; position: absolute; top: 0; left: 0; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--surface-2);
+  border: 2px solid var(--border);
+}
+.mine-track li:last-child::after { background: var(--accent); border-color: var(--accent); }
+.mine-track b {
+  font: 600 12.5px/1.2 var(--font); font-variant-numeric: tabular-nums; color: var(--fg);
+}
+.mine-track span {
+  font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em;
+}
+
+/* The review is writing. Set it as writing. */
+.mine-review {
+  margin: 18px 0 0; padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent-line);
+  font: 400 13.5px/1.65 var(--font); color: var(--fg);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mine-note {
+  margin-top: 14px; font-size: 12.5px; line-height: 1.6; color: var(--dim);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mine-note .k {
+  display: block; font: 700 10px/1 var(--font); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--dim); margin-bottom: 5px;
+}
+
+/* Full release date, under the facet pills in the drawer hero. */
+.hero-rel { margin-top: 7px; font-size: 12px; color: var(--dim); }
+
 .combinebtn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 10px; border-radius: 8px;

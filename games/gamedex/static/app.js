@@ -393,6 +393,15 @@ function heroHtml(row, titleText) {
   const bits = [row.platform, row.releaseYear || row.releaseDate || row.release, row.genre]
     .filter((x) => x != null && x !== "")
     .map((x) => `<span class="pill facet-link" data-fk="${x === row.platform ? "platform" : x === row.genre ? "genre" : "releaseYear"}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</span>`);
+  // The pills can only carry the YEAR — that's the facet you can click. The exact day was
+  // in the sheet all along and surfaced nowhere but the Raw data disclosure, so say it
+  // here, in plain text, next to the year it belongs to.
+  const relISO = row.releaseDate || row.release;
+  const region = row.releaseRegion || row.region;
+  const relLine = relISO && String(relISO).length > 4
+    ? `<div class="hero-rel">Released ${escapeHtml(fmtDate(relISO))}${
+        region ? ` <span class="muted">· ${escapeHtml(String(region))}</span>` : ""}</div>`
+    : "";
   return `<div class="hero" id="drawerHero">
     <div class="hero-bg" id="heroBg"></div>
     <div class="hero-inner">
@@ -400,6 +409,7 @@ function heroHtml(row, titleText) {
       <div class="hero-txt">
         <h2>${titleText}</h2>
         <div class="subtitle">${bits.join("")}</div>
+        ${relLine}
       </div>
     </div>
     <!-- Chips sit BELOW the cover+title row, not inside the text column: on a
@@ -2608,6 +2618,108 @@ function drawerBack() {
 }
 const drawerTitleOf = (row) => String(row.title || row.game || "back");
 
+// ---- Your history with this game ----------------------------------------
+// Which columns the history section speaks for, so they don't ALSO turn up as raw rows.
+// Per sheet, because Completed names the same facts differently (playTime, not
+// completionTime; date, not dateCompleted).
+const MINE_KEYS = {
+  games: ["owned", "completed", "rating", "priority", "playingStatus", "playingProgress",
+          "datePurchased", "purchasePrice", "condition", "format",
+          "dateStarted", "dateCompleted", "completionTime", "dateAdded", "notes"],
+  completed: ["rating", "date", "started", "playTime", "steamDeck", "emulated", "notes"],
+};
+
+// Index both sheets by match key, rebuilt when the workbook changes.
+let _byK = null, _byKHash = null;
+function rowsByK() {
+  const hash = (DATA.meta || {}).sourceHash || "";
+  if (_byK && _byKHash === hash) return _byK;
+  _byK = { games: new Map(), completed: new Map() };
+  for (const s of ["games", "completed"]) {
+    for (const r of (DATA.sheets[s] || {}).rows || []) if (r._k) _byK[s].set(r._k, r);
+  }
+  _byKHash = hash;
+  return _byK;
+}
+
+// One game, both sheets. The Completed sheet is where the REVIEW and the play time
+// actually live — All Games carries neither for most rows — so a drawer opened from All
+// Games was showing a thinner history than the app already knew. Join them on the match
+// key and let each fact come from wherever it exists.
+function historyOf(row) {
+  const idx = rowsByK();
+  const g = idx.games.get(row._k) || (row.title !== undefined ? row : null);
+  const c = idx.completed.get(row._k) || (row.game !== undefined ? row : null);
+  const pick = (...vals) => vals.find((v) => v !== undefined && v !== null && v !== "") ?? null;
+  const G = g || {}, C = c || {};
+  return {
+    rating: pick(G.rating, C.rating),
+    // Completed's playTime is the real number; All Games' completionTime is usually blank.
+    playTime: pick(G.completionTime, C.playTime),
+    started: pick(G.dateStarted, C.started),
+    finished: pick(G.dateCompleted, C.date),
+    added: pick(G.dateAdded),
+    purchased: pick(G.datePurchased),
+    price: pick(G.purchasePrice),
+    condition: pick(G.condition),
+    format: pick(G.format),
+    status: pick(G.playingStatus),
+    progress: pick(G.playingProgress),
+    priority: pick(G.priority),
+    owned: !!G.owned,
+    beaten: !!G.completed || !!c,
+    emulated: !!C.emulated,
+    steamDeck: !!C.steamDeck,
+    review: pick(C.notes),                 // the long-form write-up on the Completed sheet
+    note: pick(G.notes),                   // All Games' own shorter note, if it says something else
+  };
+}
+
+function mineSectionHtml(row) {
+  if (!row._k) return "";
+  const h = historyOf(row);
+
+  const pills = [];
+  if (h.beaten) pills.push(`<span class="mine-pill done">✓ Beaten</span>`);
+  else if (h.status) pills.push(`<span class="mine-pill live">${escapeHtml(h.status)}${
+    h.progress ? ` · ${escapeHtml(String(h.progress))}` : ""}</span>`);
+  if (h.owned) {
+    const own = ["Owned", h.format, h.condition].filter(Boolean).join(" · ");
+    pills.push(`<span class="mine-pill">${escapeHtml(own)}</span>`);
+  }
+  if (h.priority) pills.push(`<span class="mine-pill">Priority ${escapeHtml(String(h.priority))}</span>`);
+  if (h.emulated) pills.push(`<span class="mine-pill">Emulated</span>`);
+  if (h.steamDeck) pills.push(`<span class="mine-pill">Steam Deck</span>`);
+
+  const stats = [];
+  if (h.rating != null)
+    stats.push([`${Math.round(h.rating * 100)}`, "My rating", ratingClass(h.rating)]);
+  if (h.playTime != null) stats.push([fmtHours(h.playTime), "Time played", ""]);
+  if (h.price != null) stats.push([`$${Number(h.price).toFixed(2)}`, "Paid", ""]);
+
+  // The shape of the play-through, in order. Only the beats that happened.
+  const track = [["Added", h.added], ["Bought", h.purchased],
+                 ["Started", h.started], ["Finished", h.finished]]
+    .filter(([, v]) => v)
+    .map(([label, v]) => `<li><b>${escapeHtml(fmtDate(v))}</b><span>${label}</span></li>`);
+
+  const review = h.review
+    ? `<blockquote class="mine-review">${escapeHtml(String(h.review))}</blockquote>` : "";
+  // Only show the All Games note when it isn't just an echo of the review.
+  const note = h.note && String(h.note).trim() !== String(h.review || "").trim()
+    ? `<div class="mine-note"><span class="k">Note</span>${escapeHtml(String(h.note))}</div>` : "";
+
+  if (!pills.length && !stats.length && !track.length && !review && !note) return "";
+  return `<div class="mine-sect">
+    <h3>${icon("i-star", 15)} Your history with this game</h3>
+    ${pills.length ? `<div class="mine-pills">${pills.join("")}</div>` : ""}
+    ${stats.length ? `<div class="hero-stats mine-stats">${stats.map(([v, l, cls]) =>
+      `<div class="hero-stat"><b class="${cls}">${escapeHtml(String(v))}</b><span>${escapeHtml(l)}</span></div>`).join("")}</div>` : ""}
+    ${track.length ? `<ol class="mine-track">${track.join("")}</ol>` : ""}
+    ${review}${note}
+  </div>`;
+}
+
 function openDrawer(row, sheetKey, keepStack) {
   tourStop();                 // not just stopPreview: leave the tour armed and it would
   stopPreview();              // start a video behind the open drawer 12s later
@@ -2632,9 +2744,7 @@ function openDrawer(row, sheetKey, keepStack) {
      alongside File Size and MAME Romset — and it's the most personal thing on the
      card: what you paid, when you started it, whether you finished, what you
      thought. It gets its own section now; the rest stays behind the disclosure. */
-  const MINE = ["owned", "completed", "rating", "priority", "playingStatus", "playingProgress",
-                "datePurchased", "purchasePrice", "condition", "format",
-                "dateStarted", "dateCompleted", "completionTime", "notes"];
+  const MINE = MINE_KEYS[drawerSheet] || MINE_KEYS.games;
   const cell = (c, v) => {
     const isNotes = c.type === "text" && String(v).length > 140;
     return isNotes
@@ -2642,21 +2752,21 @@ function openDrawer(row, sheetKey, keepStack) {
       : `<div class="detail-row"><div class="k">${escapeHtml(c.label)}</div><div class="v">${detailValue(c, v)}</div></div>`;
   };
 
-  let raw = "", mine = "";
+  let raw = "";
   for (const c of cols) {
     if (c.key === titleCol.key || c.key === "platform") continue;
     const v = row[c.key];
     if (v === undefined || v === null || v === "") continue;
-    if (MINE.includes(c.key)) mine += cell(c, v);
-    else raw += cell(c, v);
+    if (MINE.includes(c.key)) continue;        // the history section tells these properly
+    raw += cell(c, v);
   }
-  if (mine && !row._collection) {
-    html += `<div class="mine-sect">
-      <h3>${icon("i-star", 15)} Your history with this game</h3>
-      <div class="mine-rows">${mine}</div>
-    </div>`;
-  } else if (mine) {
-    raw = mine + raw;          // a grouped card's values are aggregates, not yours
+  if (!row._collection) html += mineSectionHtml(row);
+  else {                                       // a grouped card's values are aggregates, not yours
+    for (const c of cols) {
+      const v = row[c.key];
+      if (v === undefined || v === null || v === "") continue;
+      if (MINE.includes(c.key)) raw = cell(c, v) + raw;
+    }
   }
   html += (typeof editionsHtml === "function" ? editionsHtml(row) : "");
   html += `<div id="relations"></div>`;
