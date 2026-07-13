@@ -589,14 +589,18 @@ td.cover { width: 46px; padding: 5px 8px; }
 }
 
 .card-preview {
-  position: absolute; inset: 0; width: 100%; height: 100%;
+  /* A 960x540 player scaled down, not a card-sized one: the video then FILLS the card
+     (the old card-shaped iframe letterboxed the 16:9 video, leaving black bars), and
+     YouTube's overlay renders at half size instead of dominating the tile. Scaled 0.7 so
+     the crop also cuts off the title bar it insists on drawing. It does NOT remove the
+     centred play/pause button — nothing does; see startPreview. */
+  position: absolute; top: 50%; left: 50%;
+  width: 960px; height: 540px;
+  transform: translate(-50%, -50%) scale(.7);
+  transform-origin: center;
   border: 0; pointer-events: none; z-index: 0;
-  /* Revealed by .playing, which JS sets only once the player reports state PLAYING.
-     There is no chrome to wait out: we never seek, and a plain muted autoplay draws no
-     bezel at all (any seek does, and it cannot be hidden — see startPreview). */
+  /* Revealed by .playing, which JS sets only once the player reports state PLAYING. */
   opacity: 0; transition: opacity .45s var(--ease);
-  /* A 16:9 video in a 3:4 box: fill it and crop, rather than letterbox. */
-  transform: scale(1.9);
 }
 .card.playing .card-preview { opacity: 1; }
 .card.playing .card-cover { opacity: 0; transition: opacity .45s var(--ease); }

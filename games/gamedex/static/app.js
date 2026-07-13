@@ -2231,14 +2231,30 @@ function ytWatch(frame, onFail, onPlay, onInfo) {
 // touch; and by prefers-reduced-motion.
 const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
-let previewTimer = null, previewCard = null, previewWatch = null;
+let previewTimer = null, previewCard = null, previewWatch = null, previewLoop = null;
 
-/* No clip/seek machinery here on purpose — see startPreview for why every seek costs a
-   visible pause bezel. The preview plays the trailer from the top. */
+// WHICH slice of the trailer to show: a random 5-10 second clip, which then loops. Rolled
+// once per video and remembered, so hovering the same card twice shows the same moment — a
+// clip that jumps somewhere new on every hover reads as a glitch, not as variety. Rolled
+// fresh each page load, so it isn't the same forever. Kept clear of both ends: trailers
+// open on publisher idents and close on an endcard.
+const PREVIEW_CLIP = new Map();
+function previewClip(vid, duration) {
+  if (!PREVIEW_CLIP.has(vid)) {
+    const len = 5 + Math.floor(Math.random() * 6);          // 5-10s
+    const lo = 10;
+    const hi = Math.max(lo + 1, Math.floor((duration || 90) - len - 5));
+    const start = lo + Math.floor(Math.random() * Math.max(1, hi - lo));
+    PREVIEW_CLIP.set(vid, { start, len });
+  }
+  return PREVIEW_CLIP.get(vid);
+}
 
 function stopPreview() {
   clearTimeout(previewTimer);
   previewTimer = null;
+  clearInterval(previewLoop);          // stop re-seeking a player we're about to remove
+  previewLoop = null;
   // Cancel the bot-wall watchdog FIRST. Without this, hovering off a card before
   // the video has started still lets the watchdog fire 4.5s later and record a
   // failure against YouTube — so two impatient hovers on a slow connection would
@@ -2276,22 +2292,32 @@ function startPreview(card) {
   card.appendChild(frame);
   card.classList.add("previewing");
 
-  // We do NOT seek, and that is a deliberate, hard-won decision. Measured: a plain muted
-  // autoplay draws no chrome at all, but ANY seek — `start=` in the URL, `seekTo` over the
-  // API, even seeking before playback on a non-autoplay embed — makes YouTube redraw its
-  // centred pause bezel for ~3s. It can't be styled (cross-origin), can't be cropped (it
-  // is centred), and can't be waited out behind the box art: Chrome occlusion-throttles a
-  // covered cross-origin iframe, so the auto-hide timer doesn't run and the bezel is still
-  // sitting there when you reveal it. Seeking therefore ALWAYS costs a visible pause
-  // button, which is what we set out to remove. So: play from the top, clean.
-  // (It also rules out looping a short clip — a loop is just a seek on a timer.)
+  // Seek to a random 5-10s slice and loop it, over the IFrame API rather than via `start=`
+  // and `loop=` in the URL — those make YouTube draw its FULL chrome (title bar, channel
+  // avatar, watermark) on top of everything else, whereas API commands only ever cost the
+  // centred play/pause overlay.
+  //
+  // That overlay we could not get rid of, and it wasn't for want of trying: controls=0
+  // does not reliably suppress it, and it survives every player size (182px to 960px),
+  // every aspect, seek and no-seek alike, with and without the jsapi handshake. It can't
+  // be styled (cross-origin) or cropped away (it is centred), and it can't be waited out
+  // behind the box art because Chrome occlusion-throttles a covered cross-origin iframe,
+  // so its auto-hide timer never runs. It is simply YouTube's embed, and since it shows up
+  // either way, we may as well show the good part of the trailer.
+  let duration = 0, clip = null;
   previewWatch = ytWatch(frame,
     () => { if (previewCard === card) stopPreview(); },
     () => setTimeout(() => { if (previewCard === card) card.classList.add("playing"); }, 150),
     (info) => {
-      // Ran out during a long hover. Don't loop it (that would mean seeking): just put the
-      // box art back, rather than let YouTube draw its endscreen over the card.
-      if (info.playerState === 0 && previewCard === card) stopPreview();
+      if (previewCard !== card) return;
+      if (info.duration) duration = info.duration;
+      if (!clip && duration) {
+        clip = previewClip(vid, duration);
+        ytCmd(frame, "seekTo", [clip.start, true]);
+        previewLoop = setInterval(() => {
+          if (previewCard === card) ytCmd(frame, "seekTo", [clip.start, true]);
+        }, clip.len * 1000);
+      }
     });
 }
 
