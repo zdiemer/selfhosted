@@ -3267,11 +3267,13 @@ function predictionPanel() {
       <div class="stat-panel wide">
         <h3>How good is the guess?</h3>
         <p class="yr-note">
-          Trained on your <b>${m.n.toLocaleString()}</b> rated games and tested on
-          <b>${e.tested.toLocaleString()}</b> it never saw. It is off by
+          Trained on your <b>${m.n.toLocaleString()}</b> rated games and scored by
+          <b>${e.folds}-fold cross-validation</b> — every game gets predicted by a model
+          that never saw it, and the group averages are rebuilt from the training games
+          alone, so it can't mark its own homework. It is off by
           <b>${pts(e.mae)} points</b> on average — against <b>${pts(e.maeMean)}</b> if we
           just guessed your average every time, and <b>${pts(e.maeCritic)}</b> if we simply
-          quoted Metacritic. So it is <b>${(e.liftVsMean * 100).toFixed(0)}%</b> better than
+          quoted the critics. So it is <b>${(e.liftVsMean * 100).toFixed(0)}%</b> better than
           guessing${beatsCritics
             ? ` and <b>${(e.liftVsCritic * 100).toFixed(0)}%</b> better than the critics`
             : `, but <b>not</b> better than just quoting the critics — treat it with suspicion`}.

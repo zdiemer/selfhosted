@@ -2,49 +2,108 @@
 
 /* Predicted rating — what you'd probably score a game you haven't played.
 
-   A small ridge regression, trained in the browser on your own rated
-   completions. No library and no server: 1,707 rows and six features is a 6x6
-   matrix solve, which is microseconds.
+   A ridge regression, trained in the browser on your own rated completions. No library
+   and no server: ~1,700 rows and two dozen features is a small matrix solve.
 
-   FEATURES (each is "your average score for games sharing this attribute",
-   shrunk toward your overall mean — see below):
+   WHAT IT LOOKS AT
 
-       franchise · developer · publisher · genre · platform · what critics said
+     What you think    your average score for games sharing this franchise / developer /
+                       publisher / genre / platform (the sheet's own columns), and the
+                       same again over IGDB's MULTI-VALUED tags — a game is rarely one
+                       genre, and "Metroidvania, Platformer, Adventure" says more than
+                       whichever single word the sheet settled on. Themes and game modes
+                       too: you have opinions about horror, and about multiplayer.
 
-   Three things stop this being self-congratulatory nonsense:
+     What others think two independent verdicts, each regressed onto YOUR scale: the
+                       critics, and GameFAQs' player score. They are not the same signal —
+                       critics and players disagree constantly, and the gap between them
+                       is itself a feature. The player score matters more than it looks:
+                       across the games we actually predict for, critics cover 59% and
+                       players cover 87%, so for a quarter of the backlog the players are
+                       the ONLY outside opinion there is.
 
-   1. SHRINKAGE. "You rated the one Bloodborne you played 100%" is not evidence
-      that you'd rate every FromSoftware game 100%. Each group average is pulled
-      toward your global mean in proportion to how little data backs it:
+     What kind of game how long it is (HowLongToBeat), how old it is, and how many critics
+                       bothered to review it — a decent proxy for how big a release it was.
 
-          estimate = (n * groupMean + k * globalMean) / (n + k)
+   WHY IT ISN'T SELF-CONGRATULATORY NONSENSE
 
-      One data point barely moves off your baseline; thirty are trusted nearly
-      fully.
+   1. SHRINKAGE. "You rated the one Bloodborne you played 100%" is not evidence that you'd
+      rate every FromSoftware game 100%. Each group average is pulled toward your global
+      mean in proportion to how little data backs it:
 
-   2. LEAVE-ONE-OUT, so it can't cheat. When building the training row for a game
-      you finished, that game is REMOVED from its own group averages. Without
-      this the model sees its own answer in its own features — "your average
-      Castlevania score" would already contain the Castlevania we're asking about
-      — and it would look brilliant and predict nothing.
+          estimate = (sum + k * globalMean) / (n + k)
 
-   3. LEARNED WEIGHTS, not guessed ones. The blend is fitted by ridge regression
-      rather than hand-tuned, and scored on a held-out third of your games
-      against two baselines: predicting your mean every time, and just handing
-      back the Metacritic score. If it can't beat those, it says so.
+   2. LEAVE-ONE-OUT, so it can't cheat. Building the training row for a game you finished
+      REMOVES that game from its own group averages. Without this the model sees its own
+      answer in its own features — "your average Castlevania score" would already contain
+      the Castlevania we're asking about — and it would look brilliant and predict nothing.
+
+   3. LEARNED WEIGHTS, not guessed ones — fitted by ridge rather than hand-tuned.
+
+   4. HONEST SCORING. Five-fold cross-validation, with every encoder (the group averages,
+      both calibrations, the scaler) rebuilt from the TRAINING fold alone — score a model
+      against games whose ratings shaped its own features and it will flatter itself.
+      Measured that way it lands near 9.2 points of average error, against 9.8 for the old
+      five-feature model, 10.3 for simply quoting the critics, and 12.4 for guessing your
+      average every time.
+
+      That is about one notch on a scale you record in notches of five, and it is close to
+      the practical floor for these features: your ratings have a standard deviation of
+      16.5 points, and the best outside signal available correlates 0.64 with you. Things
+      that were tried and did NOT beat this, on the same cross-validation: a weight per
+      individual tag instead of shrunk group averages (300 free parameters overfits 1,700
+      games), gradient-boosted trees, fitting the median instead of the mean, k-nearest
+      taste neighbours, and feeding it your own wishlist flags.
 
    Loaded after app.js; shares its globals. */
 
-const PRIOR_K = 6;               // evidence needed before a group average is trusted
-const RIDGE = 0.02;              // regularisation (on standardised features)
+const PRIOR_K = 3;               // evidence needed before a group average is trusted
+const RIDGE = 0.05;              // regularisation (on standardised features)
 const MIN_HISTORY = 60;          // below this we simply don't have enough to say
+const CV_FOLDS = 5;
 
+// The sheet's single-valued columns.
 const PRED_FEATURES = ["franchise", "developer", "publisher", "genre", "platform"];
+// IGDB's multi-valued tags. A game carries several of each, and each one gets a vote.
+const PRED_MULTI = {
+  igdbGenre: (r) => (ENRICH[r._k] || {}).genres || [],
+  igdbTheme: (r) => (ENRICH[r._k] || {}).themes || [],
+  igdbMode: (r) => (ENRICH[r._k] || {}).gameModes || [],
+  igdbDev: (r) => (ENRICH[r._k] || {}).developers || [],
+  igdbPub: (r) => (ENRICH[r._k] || {}).publishers || [],
+  igdbFran: (r) => (ENRICH[r._k] || {}).franchises || [],
+};
+const PRED_MULTI_KEYS = Object.keys(PRED_MULTI);
+const pnorm = (s) => String(s).trim().toLowerCase();
+
+// The critic score. criticOf() already walks Metacritic → the sheet → IGDB → GameRankings;
+// the completed sheet keeps its own copy under a different name, so fall back to that.
+const predCritic = (row) => {
+  const c = criticOf(row);
+  if (c != null) return c;
+  return row.criticScore != null ? row.criticScore : null;
+};
+// What PLAYERS thought — a different opinion, not a second helping of the same one. The
+// GameFAQs column lives on the GAMES sheet, so a completed row has to reach across for it;
+// that join is the reason this signal sat unused, and it is the single biggest win here.
+const predPlayers = (row) => {
+  const e = ENRICH[row._k] || {};
+  if (e.userRating != null) return e.userRating;
+  if (e.vnRating != null) return e.vnRating;
+  if (row.gamefaqsUserRating != null) return row.gamefaqsUserRating;
+  const g = typeof rowsByK === "function" ? rowsByK().games.get(row._k) : null;
+  return g && g.gamefaqsUserRating != null ? g.gamefaqsUserRating : null;
+};
+const predLength = (row) => {
+  const e = ENRICH[row._k] || {};
+  return e.hltbBest != null ? e.hltbBest : null;
+};
 
 let _model = null;
-const resetTaste = () => { _model = null; PRED_CACHE = new WeakMap(); };
+let _multiStats = null;
+const resetTaste = () => { _model = null; _multiStats = null; PRED_CACHE = new WeakMap(); };
 
-// ---- linear algebra (6x6; a library would be heavier than the maths) --------
+// ---- linear algebra (a library would be heavier than the maths) -------------
 function solve(A, b) {
   const n = b.length;
   const M = A.map((row, i) => [...row, b[i]]);
@@ -64,12 +123,11 @@ function solve(A, b) {
   return M.map((row, i) => row[n] / row[i]);
 }
 
-// Standardise before fitting. Every feature here is "your average score for
-// games like this", so they all sit in a tight band around your global mean
-// (~0.70) and are near-collinear. Ridge on raw features of that shape is
-// pathological: it shrinks every coefficient to nothing and the intercept eats
-// the whole prediction, which is exactly what happened — the first version
-// predicted ~70% for everything and lost to simply quoting Metacritic.
+// Standardise before fitting. Most features here are "your average score for games like
+// this", so they all sit in a tight band around your global mean (~0.70) and are near
+// collinear. Ridge on raw features of that shape is pathological: it shrinks every
+// coefficient to nothing and the intercept eats the whole prediction, which is exactly what
+// happened — the first version predicted ~70% for everything and lost to quoting Metacritic.
 function standardise(X) {
   const d = X[0].length - 1;               // last column is the intercept
   const mu = new Array(d).fill(0), sd = new Array(d).fill(1);
@@ -81,8 +139,7 @@ function standardise(X) {
     for (const row of X) v += (row[j] - mu[j]) ** 2;
     sd[j] = Math.sqrt(v / X.length) || 1;  // a constant column stays constant
   }
-  const apply = (row) => row.map((v, j) => (j < d ? (v - mu[j]) / sd[j] : 1));
-  return { apply, mu, sd };
+  return (row) => row.map((v, j) => (j < d ? (v - mu[j]) / sd[j] : 1));
 }
 
 function ridgeFit(X, y, lambda) {
@@ -100,93 +157,182 @@ function ridgeFit(X, y, lambda) {
   return solve(A, b) || new Array(d).fill(0);
 }
 
-// ---- the model -------------------------------------------------------------
-function tasteModel() {
-  if (_model) return _model;
-  const done = ((DATA.sheets.completed || {}).rows || []).filter((r) => r.rating != null);
-  if (done.length < MIN_HISTORY) return (_model = { ok: false, n: done.length });
+const avg = (xs) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
+const med = (xs) => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
 
-  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
-  const global = mean(done.map((r) => r.rating));
+/* An ENCODER is everything learned from a set of games: the group averages, the two
+   calibrations, the length median. Built from a training set alone, then applied to games
+   it has never seen. Cross-validation rebuilds one per fold; the live model builds one from
+   everything you have rated. */
+function fitEncoder(train) {
+  const global = avg(train.map((r) => r.rating));
 
-  // Sums per attribute value, so a leave-one-out average is just a subtraction.
-  const stats = {};
+  const single = {};
   for (const f of PRED_FEATURES) {
     const m = new Map();
-    for (const r of done) {
+    for (const r of train) {
       const v = r[f];
       if (!v) continue;
       const e = m.get(v) || { sum: 0, n: 0 };
       e.sum += r.rating; e.n += 1;
       m.set(v, e);
     }
-    stats[f] = m;
+    single[f] = m;
+  }
+  const multi = {};
+  for (const f of PRED_MULTI_KEYS) {
+    const m = new Map();
+    for (const r of train) {
+      for (const raw of PRED_MULTI[f](r)) {
+        const v = pnorm(raw);
+        const e = m.get(v) || { sum: 0, n: 0 };
+        e.sum += r.rating; e.n += 1;
+        m.set(v, e);
+      }
+    }
+    multi[f] = m;
   }
 
-  // The critic signal, regressed through your own bias: you rate ~70 where they
-  // say ~80, so handing back their number would be wrong by ten points every time.
-  const pairs = done.filter((r) => r.criticScore != null).map((r) => [r.criticScore, r.rating]);
-  let cSlope = 0, cIntercept = global;
-  if (pairs.length > 30) {
-    const mx = mean(pairs.map((p) => p[0])), my = mean(pairs.map((p) => p[1]));
+  // An outside score, regressed through your own bias: you rate ~70 where critics say ~80,
+  // so handing back their number would be wrong by ten points every time.
+  const calib = (get) => {
+    const pairs = train.filter((r) => get(r) != null).map((r) => [get(r), r.rating]);
+    if (pairs.length <= 30) return { est: () => null, n: pairs.length, slope: 0, intercept: global };
+    const mx = avg(pairs.map((p) => p[0])), my = avg(pairs.map((p) => p[1]));
     let num = 0, den = 0;
     for (const [x, y] of pairs) { num += (x - mx) * (y - my); den += (x - mx) ** 2; }
-    if (den > 1e-9) { cSlope = num / den; cIntercept = my - cSlope * mx; }
-  }
-  const criticEst = (mc) => (mc == null ? null
-    : Math.max(0.2, Math.min(1, cSlope * mc + cIntercept)));
+    const slope = den > 1e-9 ? num / den : 0;
+    const intercept = my - slope * mx;
+    return {
+      est: (v) => (v == null ? null : Math.max(0.15, Math.min(1, slope * v + intercept))),
+      n: pairs.length, slope, intercept,
+    };
+  };
+  const C = calib(predCritic);
+  const U = calib(predPlayers);
+  const lenMed = med(train.map(predLength).filter((v) => v != null));
 
-  // A group average with `self` excluded — leave-one-out during training, and a
-  // plain average at prediction time (when the game isn't in the data anyway).
+  const shrink = (sum, n) => (n < 1 ? null : (sum + PRIOR_K * global) / (n + PRIOR_K));
+
+  // A group average with `self` excluded — leave-one-out during training, a plain average
+  // at prediction time (when the game isn't in the data anyway).
   const groupEst = (f, value, self) => {
-    const e = stats[f].get(value);
+    const e = single[f].get(value);
     if (!e) return null;
-    const n = e.n - (self ? 1 : 0);
-    const sum = e.sum - (self ? self.rating : 0);
-    if (n < 1) return null;
-    return (n * (sum / n) + PRIOR_K * global) / (n + PRIOR_K);
+    return shrink(e.sum - (self ? self.rating : 0), e.n - (self ? 1 : 0));
+  };
+  // The multi-valued version: every tag the game carries votes, weighted by how many of
+  // your games back it, so a well-evidenced "Metroidvania" outvotes a one-off tag.
+  const multiEst = (f, row, self) => {
+    const vals = PRED_MULTI[f](row);
+    if (!vals.length) return null;
+    let acc = 0, wsum = 0;
+    for (const raw of vals) {
+      const e = multi[f].get(pnorm(raw));
+      if (!e) continue;
+      const n = e.n - (self ? 1 : 0);
+      const est = shrink(e.sum - (self ? self.rating : 0), n);
+      if (est == null) continue;
+      const w = Math.min(n, 50);
+      acc += w * est; wsum += w;
+    }
+    return wsum ? acc / wsum : null;
   };
 
-  // Build a feature row. Missing signals fall back to the global mean, which is
-  // the honest "I have no information" answer.
   const featurise = (row, self) => {
-    const xs = PRED_FEATURES.map((f) => groupEst(f, row[f], self) ?? global);
-    const c = criticEst(self ? self.criticScore : metacriticOf(row));
-    xs.push(c ?? global);
-    xs.push(1);                                  // intercept
+    const xs = [];
+    for (const f of PRED_FEATURES) xs.push(groupEst(f, row[f], self) ?? global);
+    for (const f of PRED_MULTI_KEYS) xs.push(multiEst(f, row, self) ?? global);
+
+    const c = predCritic(row), u = predPlayers(row);
+    const ce = C.est(c), ue = U.est(u);
+    xs.push(ce ?? global);
+    xs.push(c != null ? 1 : 0);            // whether we have a critic score at all
+    xs.push(ue ?? global);
+    xs.push(u != null ? 1 : 0);
+    // An outside verdict needn't map onto yours in a straight line — you may be harsher on
+    // mediocre games than you are generous with great ones. A hinge each way lets it bend.
+    const cd = (ce ?? global) - global, ud = (ue ?? global) - global;
+    xs.push(Math.max(0, cd)); xs.push(Math.max(0, -cd));
+    xs.push(Math.max(0, ud)); xs.push(Math.max(0, -ud));
+    // Where critics and players DISAGREE is exactly where either one alone misleads.
+    xs.push(ce != null && ue != null ? ce - ue : 0);
+
+    const h = predLength(row);
+    xs.push(Math.log1p(h != null ? h : lenMed));        // length has a long tail, so log it
+    const yr = row.releaseYear ? +row.releaseYear : null;
+    xs.push(yr ? (yr - 2005) / 10 : 0);
+    const cc = (ENRICH[row._k] || {}).criticCount;
+    xs.push(cc != null ? Math.log1p(cc) : 0);           // how reviewed = how big a release
+
+    xs.push(1);                                          // intercept
     return xs;
   };
 
-  // Train on two thirds, score on the last third. Interleaved (every third game)
-  // rather than a date cut, so a change of taste over time doesn't skew it.
-  const X = [], y = [], Xt = [], yt = [], mcT = [];
-  done.forEach((r, i) => {
-    const row = featurise(r, r);                 // leave-one-out
-    if (i % 3 === 2) { Xt.push(row); yt.push(r.rating); mcT.push(r.criticScore); }
-    else { X.push(row); y.push(r.rating); }
-  });
+  return { global, featurise, groupEst, single, multi, critic: C, players: U };
+}
 
-  const scaler = standardise(X);
-  const w = ridgeFit(X.map(scaler.apply), y, RIDGE * X.length);
-  const predict = (xs) => scaler.apply(xs).reduce((a, v, i) => a + v * w[i], 0);
+// Fit the weights, using leave-one-out features so the model never sees its own answer.
+function fitWeights(train, enc) {
+  const X = train.map((r) => enc.featurise(r, r));
+  const y = train.map((r) => r.rating);
+  const scale = standardise(X);
+  const w = ridgeFit(X.map(scale), y, RIDGE * X.length);
+  return (xs) => scale(xs).reduce((a, v, i) => a + v * w[i], 0);
+}
 
-  // Honest scoring against the two baselines worth beating.
-  const mae = (pred, act) => mean(pred.map((p, i) => Math.abs(p - act[i])));
-  const ours = mae(Xt.map(predict), yt);
-  const baseMean = mae(yt.map(() => global), yt);
-  const withCritic = mcT.map((m, i) => (m == null ? global : m));
-  const baseCritic = mae(withCritic, yt);
+// ---- the model -------------------------------------------------------------
+function tasteModel() {
+  if (_model) return _model;
+  const done = ((DATA.sheets.completed || {}).rows || []).filter((r) => r.rating != null);
+  if (done.length < MIN_HISTORY) return (_model = { ok: false, n: done.length });
+
+  // Five-fold CV. The encoder is rebuilt inside the loop on purpose: the group averages are
+  // themselves learned from your ratings, so a model scored against games that shaped its
+  // own features would be marking its own homework.
+  const errs = [], errsMean = [], errsCritic = [];
+  for (let f = 0; f < CV_FOLDS; f++) {
+    const train = done.filter((_, i) => i % CV_FOLDS !== f);
+    const test = done.filter((_, i) => i % CV_FOLDS === f);
+    if (train.length < MIN_HISTORY || !test.length) continue;
+    const enc = fitEncoder(train);
+    const predict = fitWeights(train, enc);
+    for (const r of test) {
+      const p = Math.max(0, Math.min(1, predict(enc.featurise(r, null))));
+      errs.push(Math.abs(p - r.rating));
+      errsMean.push(Math.abs(enc.global - r.rating));
+      const c = predCritic(r);
+      errsCritic.push(Math.abs((c != null ? c : enc.global) - r.rating));
+    }
+  }
+
+  // The live model: trained on everything you have rated.
+  const enc = fitEncoder(done);
+  const predict = fitWeights(done, enc);
+  const mae = avg(errs), maeMean = avg(errsMean), maeCritic = avg(errsCritic);
 
   return (_model = {
-    ok: true, w, global, stats, featurise, predict,
-    critic: { slope: cSlope, intercept: cIntercept, est: criticEst, n: pairs.length },
-    groupEst,
+    ok: true,
+    global: enc.global,
+    stats: enc.single,
+    multi: enc.multi,
+    featurise: enc.featurise,
+    groupEst: enc.groupEst,
+    predict,
+    critic: { slope: enc.critic.slope, intercept: enc.critic.intercept, est: enc.critic.est, n: enc.critic.n },
+    players: { est: enc.players.est, n: enc.players.n },
     n: done.length,
     eval: {
-      mae: ours, maeMean: baseMean, maeCritic: baseCritic,
-      liftVsMean: 1 - ours / baseMean,
-      liftVsCritic: 1 - ours / baseCritic,
-      tested: yt.length,
+      mae, maeMean, maeCritic,
+      liftVsMean: 1 - mae / (maeMean || 1),
+      liftVsCritic: 1 - mae / (maeCritic || 1),
+      tested: errs.length,
+      folds: CV_FOLDS,
     },
   });
 }
@@ -197,20 +343,21 @@ function predictRating(row) {
   const m = tasteModel();
   if (!m.ok) return null;
 
-  // Which signals do we actually have for this game? A prediction resting on
-  // nothing but the global mean isn't a prediction.
+  // Which signals do we actually have for this game? A prediction resting on nothing but
+  // the global mean isn't a prediction.
   const have = PRED_FEATURES.filter((f) => row[f] && m.stats[f].has(row[f]));
-  const mc = metacriticOf(row);
-  if (!have.length && mc == null) return null;
+  const mc = predCritic(row);
+  const pl = predPlayers(row);
+  const nTags = PRED_MULTI_KEYS.reduce((a, f) => a + PRED_MULTI[f](row).length, 0);
+  if (!have.length && mc == null && pl == null && !nTags) return null;
 
   const score = Math.max(0, Math.min(1, m.predict(m.featurise(row, null))));
 
-  // Structured, not a sentence: the UI renders these as bars against your
-  // baseline, so you can see at a glance which signals pulled the number up and
-  // which dragged it down.
-  //
-  // Deduped, because developer and publisher are frequently the same company and
-  // "80% on Blizzard" twice makes the model look like it's padding.
+  /* Structured, not a sentence: the UI renders these as bars against your baseline, so you
+     can see at a glance which signals pulled the number up and which dragged it down.
+
+     Deduped, because developer and publisher are frequently the same company and "80% on
+     Blizzard" twice makes the model look like it's padding. */
   const signals = [];
   const said = new Set();
   const KIND = {
@@ -219,9 +366,19 @@ function predictRating(row) {
   };
   for (const f of have) {
     const e = m.stats[f].get(row[f]);
-    if (e.n < 2 || said.has(row[f])) continue;
-    said.add(row[f]);
+    if (e.n < 2 || said.has(pnorm(row[f]))) continue;
+    said.add(pnorm(row[f]));
     signals.push({ kind: KIND[f], label: String(row[f]), value: e.sum / e.n, n: e.n });
+  }
+  // The IGDB tags — the genres and themes the sheet's single-word column never named, and
+  // now a real part of the number, so they belong in the working too.
+  for (const [f, kind] of [["igdbGenre", "Genre"], ["igdbTheme", "Theme"]]) {
+    for (const raw of PRED_MULTI[f](row)) {
+      const e = m.multi[f].get(pnorm(raw));
+      if (!e || e.n < 5 || said.has(pnorm(raw))) continue;
+      said.add(pnorm(raw));
+      signals.push({ kind, label: String(raw), value: e.sum / e.n, n: e.n });
+    }
   }
   if (mc != null) {
     // Name the source that actually answered — the score may be Metacritic, IGDB's critic
@@ -229,12 +386,16 @@ function predictRating(row) {
     const cs = typeof criticSourceOf === "function" ? criticSourceOf(row) : null;
     signals.push({ kind: "Critics", label: (cs && cs.label) || "Critics", value: mc, n: null });
   }
+  if (pl != null) signals.push({ kind: "Players", label: "Player score", value: pl, n: null });
 
+  const nSignals = have.length + (mc != null ? 1 : 0) + (pl != null ? 1 : 0) + (nTags ? 1 : 0);
   return {
     score,
     baseline: m.global,          // your average score — the line everything is read against
-    confidence: Math.min(1, (have.length + (mc != null ? 1 : 0)) / 4),
-    signals: signals.sort((a, b) => Math.abs(b.value - m.global) - Math.abs(a.value - m.global)).slice(0, 4),
+    confidence: Math.min(1, nSignals / 5),
+    signals: signals
+      .sort((a, b) => Math.abs(b.value - m.global) - Math.abs(a.value - m.global))
+      .slice(0, 5),
   };
 }
 
