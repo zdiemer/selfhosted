@@ -578,6 +578,14 @@ addEventListener("keydown", (e) => {
 function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existing, onDone }) {
   const NOMINAL_H = (caseDefault && caseDefault.h) || 175;   // case height in mm, for size
   let kind = (existing && existing.kind) || "wrap", rotate = 0, file = null, img = null;
+  // SNES/N64 art is a landscape strip with the panels lying on their side — the same
+  // shape the Cover Project scans come in. Default those platforms to the per-face turn
+  // (front rot90 / back rot270 / spine 0); everything else to none. Toggleable, in case
+  // a given scan is already upright.
+  const SIDEWAYS_PLATS = new Set(["snes", "n64"]);
+  let faceRot = (existing && existing.faceRot != null)
+    ? existing.faceRot
+    : (SIDEWAYS_PLATS.has(PLAT_KEY[(platform || "").trim().toLowerCase()]) ? 90 : 0);
   let x1 = (existing && existing.x1) ?? 130 / 273;           // spine guides (fractions of width)
   let x2 = (existing && existing.x2) ?? 144 / 273;
   let depth = (existing && existing.d) || (caseDefault && caseDefault.d) || 14;
@@ -612,6 +620,8 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
 
       <div class="ce-tools" hidden id="ceTools">
         <button class="sh-btn" id="ceRot" type="button">↻ Rotate</button>
+        <button class="sh-btn ce-side" id="ceSide" type="button"
+                title="SNES/N64 scans: the panels lie on their side, so each face is turned upright">⤾ Sideways panels</button>
         <button class="sh-btn" id="ceChange" type="button">Change image</button>
         <label class="ce-depth" id="ceDepthWrap">Spine
           <input type="range" id="ceDepth" min="4" max="40" step="1">
@@ -634,6 +644,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   const hint = $("#ceHint"), drop = $("#ceDrop"), input = drop.querySelector("input");
   const stage = $(".ce-stage"), imgwrap = $(".ce-imgwrap"), imgEl = imgwrap.querySelector("img");
   const empty = $(".ce-empty"), tools = $("#ceTools"), save = $("#ceSave"), dim = $("#ceDim");
+  const sideBtn = $("#ceSide");
   const gEls = [...host.querySelectorAll(".ce-guide")];
   const regBack = $(".ce-region.back"), regFront = $(".ce-region.front");
   const depthWrap = $("#ceDepthWrap"), depthEl = $("#ceDepth"), depthVal = $("#ceDepthVal");
@@ -665,32 +676,18 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     layout();
   }
 
-  // A wrap runs back|spine|front along its LONG axis, so a TALL wrap (N64/SNES, whose
-  // front and back panels are rotated 90°) has a horizontal spine — cut in rows, with
-  // horizontal guides — while a wide wrap keeps the usual vertical columns.
-  const isVertWrap = () => kind === "wrap" && img && rotDims().h > rotDims().w;
-
   function layout() {
-    const wrap = kind === "wrap", vert = isVertWrap();
-    imgwrap.classList.toggle("strip-v", vert);
-    gEls.forEach((g, k) => {
-      g.hidden = !wrap;
-      g.style.top = g.style.left = "";
-      const pct = (k ? x2 : x1) * 100 + "%";
-      if (vert) g.style.top = pct; else g.style.left = pct;
-    });
+    const wrap = kind === "wrap";
+    gEls.forEach((g, k) => { g.hidden = !wrap; g.style.left = (k ? x2 : x1) * 100 + "%"; });
     regBack.hidden = regFront.hidden = !wrap;
     if (wrap) {
-      for (const r of [regBack, regFront]) r.style.top = r.style.left = r.style.width = r.style.height = "";
-      if (vert) {
-        regBack.style.height = x1 * 100 + "%";
-        regFront.style.top = x2 * 100 + "%";
-      } else {
-        regBack.style.width = x1 * 100 + "%";
-        regFront.style.left = x2 * 100 + "%";
-        regFront.style.width = (1 - x2) * 100 + "%";
-      }
+      regBack.style.width = x1 * 100 + "%";
+      regFront.style.left = x2 * 100 + "%";
+      regFront.style.width = (1 - x2) * 100 + "%";
     }
+    imgwrap.classList.toggle("sideways", wrap && faceRot % 360 !== 0);
+    sideBtn.classList.toggle("on", faceRot % 360 !== 0);
+    sideBtn.hidden = !wrap;
     depthWrap.style.display = wrap ? "none" : "";             // wrap depth comes from the guides
     depthVal.textContent = depth + " mm";
   }
@@ -719,11 +716,10 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   }
   const loadFile = (f) => loadBlob(f, { rotate: 0 });
 
-  // Drag a spine guide. Positions are fractions along the wrap's long axis — width for a
-  // wide wrap, height for a tall one.
-  function dragGuide(which, clientX, clientY) {
+  // Drag a spine guide. Positions are fractions of the displayed image width.
+  function dragGuide(which, clientX) {
     const r = imgwrap.getBoundingClientRect();
-    let f = isVertWrap() ? (clientY - r.top) / r.height : (clientX - r.left) / r.width;
+    let f = (clientX - r.left) / r.width;
     f = Math.max(0, Math.min(1, f));
     if (which === 0) x1 = Math.min(f, x2 - 0.01);
     else x2 = Math.max(f, x1 + 0.01);
@@ -732,7 +728,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   gEls.forEach((g, k) => {
     g.addEventListener("pointerdown", (e) => {
       e.preventDefault(); e.stopPropagation(); g.setPointerCapture(e.pointerId);
-      const move = (ev) => dragGuide(k, ev.clientX, ev.clientY);
+      const move = (ev) => dragGuide(k, ev.clientX);
       const up = (ev) => { g.releasePointerCapture(e.pointerId);
         g.removeEventListener("pointermove", move); g.removeEventListener("pointerup", up); };
       g.addEventListener("pointermove", move); g.addEventListener("pointerup", up);
@@ -749,6 +745,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); loadFile(e.dataTransfer.files[0]); });
   $("#ceRot").onclick = () => { rotate = (rotate + 90) % 360; paintImage(); };
+  sideBtn.onclick = () => { faceRot = faceRot % 360 ? 0 : 90; layout(); };
   depthEl.oninput = () => { depth = +depthEl.value; depthVal.textContent = depth + " mm"; };
   setKind(kind);
 
@@ -776,11 +773,14 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     const { w, h } = rotDims();
     const H = NOMINAL_H;
     if (kind === "front") return { w: Math.round(H * (w / h)), h: H, d: depth };
-    if (h > w) {                                             // tall wrap: rows, spine is horizontal
-      const frontH = (1 - x2) * h, spineH = (x2 - x1) * h;   // front face is w × frontH (landscape)
-      return { w: Math.round(H * (w / frontH)), h: H, d: Math.max(3, Math.round(H * (spineH / frontH))) };
+    const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // panel widths, in image pixels
+    if (faceRot % 360) {
+      // Sideways panels (SNES/N64): the front panel is frontW × h in the strip, but it
+      // gets turned upright, so the real face is h × frontW — a LANDSCAPE box. The box
+      // height is therefore the panel's WIDTH, and everything scales off that.
+      return { w: Math.round(H * (h / frontW)), h: H,
+               d: Math.max(3, Math.round(H * (spineW / frontW))) };
     }
-    const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // wide wrap: columns, spine is vertical
     return { w: Math.round(H * (frontW / h)), h: H, d: Math.max(3, Math.round(H * (spineW / h))) };
   }
 
@@ -789,7 +789,10 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     save.disabled = true; save.textContent = "Saving…";
     const c = caseDims();
     const q = new URLSearchParams({ key, kind, rotate, w: c.w, h: c.h, d: c.d });
-    if (kind === "wrap") { q.set("x1", x1.toFixed(4)); q.set("x2", x2.toFixed(4)); }
+    if (kind === "wrap") {
+      q.set("x1", x1.toFixed(4)); q.set("x2", x2.toFixed(4));
+      q.set("face_rot", String(faceRot % 360));
+    }
     try {
       const r = await fetch(`/api/shelf/cover?${q}`, { method: "POST", body: file });
       // HTTP/2 (production behind Traefik) sends no statusText, so reading it left the

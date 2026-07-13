@@ -214,7 +214,8 @@ class Shelf:
             try:
                 self.set_cover(key, orig.read_bytes(), kind=meta.get("kind", "wrap"),
                                platform="", rotate=meta.get("rotate", 0),
-                               x1=meta.get("x1"), x2=meta.get("x2"), case=meta.get("case"))
+                               x1=meta.get("x1"), x2=meta.get("x2"), case=meta.get("case"),
+                               face_rot=meta.get("faceRot", 0))
                 n += 1
             except Exception as e:
                 log.warning("re-cut upload %s: %s", key, e)
@@ -293,6 +294,7 @@ class Shelf:
                 "backReal": (up or w or {}).get("back_is_real", bool(w)),
                 # the upload's own settings, so "Change art" can reopen and re-adjust it
                 "upload": up and {"kind": up.get("kind"), "rotate": up.get("rotate", 0),
+                                  "faceRot": up.get("faceRot", 0),
                                   "x1": up.get("x1"), "x2": up.get("x2"),
                                   "d": up.get("case", {}).get("d")},
             })
@@ -390,7 +392,7 @@ class Shelf:
 
     def set_cover(self, key: str, data: bytes, kind: str, platform: str,
                   rotate: int = 0, x1: float | None = None, x2: float | None = None,
-                  case: dict | None = None) -> dict:
+                  case: dict | None = None, face_rot: int = 0) -> dict:
         """Store a user-supplied cover for one game, as three cached faces.
 
         The shape of the box comes from the IMAGE and the user, not a per-platform table
@@ -433,24 +435,25 @@ class Shelf:
             if x1 is None or x2 is None:              # fall back to a DVD-ish split
                 x1, x2 = 130 / 273, 144 / 273
             c1, c2 = sorted((max(0.0, min(1.0, x1)), max(0.0, min(1.0, x2))))
-            # back|spine|front runs along the LONG axis, so the spine is cut perpendicular
-            # to it: vertical columns for a wide wrap, horizontal rows for a tall one (a
-            # scan whose front/back panels are rotated 90° — e.g. an N64/SNES box). x1/x2
-            # are fractions along that long axis, so the same numbers work either way.
-            if im.width >= im.height:
-                p1, p2 = round(im.width * c1), round(im.width * c2)
-                faces = {
-                    "back": im.crop((0, 0, p1, im.height)),
-                    "spine": im.crop((p1, 0, p2, im.height)),
-                    "front": im.crop((p2, 0, im.width, im.height)),
-                }
-            else:
-                p1, p2 = round(im.height * c1), round(im.height * c2)
-                faces = {
-                    "back": im.crop((0, 0, im.width, p1)),
-                    "spine": im.crop((0, p1, im.width, p2)),
-                    "front": im.crop((0, p2, im.width, im.height)),
-                }
+            p1, p2 = round(im.width * c1), round(im.width * c2)
+            faces = {
+                "back": im.crop((0, 0, p1, im.height)),
+                "spine": im.crop((p1, 0, p2, im.height)),
+                "front": im.crop((p2, 0, im.width, im.height)),
+            }
+            # SNES/N64 art is a LANDSCAPE strip whose panels are lying on their side, so
+            # the faces need the same per-face turn the Cover Project cut does (_cut):
+            #   front — rot90, to stand it up.
+            #   back  — rot270. The 3D back face is mirrored (rotateY(180)), and a 90°
+            #           turn lands on a mirror differently than a 0° one, so the same
+            #           rot90 that fixes the front leaves the back upside-down.
+            #   spine — 0. It is already thin-and-tall, the shape the spine face wants;
+            #           turning it makes a wide sliver that gets stretched across it.
+            if face_rot % 360:
+                fr = face_rot % 360
+                turn = {"front": fr, "back": (fr + 180) % 360, "spine": 0}
+                faces = {n: (p.rotate(turn[n], expand=True) if turn[n] else p)
+                         for n, p in faces.items()}
         else:
             hue = dominant_hue(im)
             spine = Image.new("RGB", (max(8, round(im.height * cd / ch)), im.height),
@@ -479,7 +482,7 @@ class Shelf:
         prev = self._uploads.get(key, {}).get("v", 0)
         entry = {"kind": kind, "region": "user",
                  "back_is_real": kind == "wrap", "v": prev + 1,
-                 "rotate": rotate % 360,
+                 "rotate": rotate % 360, "faceRot": face_rot % 360,
                  "x1": round(float(x1), 4) if x1 is not None else None,
                  "x2": round(float(x2), 4) if x2 is not None else None,
                  "case": {"w": round(cw, 1), "h": round(ch, 1), "d": round(cd, 1)}}
