@@ -591,8 +591,9 @@ td.cover { width: 46px; padding: 5px 8px; }
 .card-preview {
   position: absolute; inset: 0; width: 100%; height: 100%;
   border: 0; pointer-events: none; z-index: 0;
-  /* Revealed by .playing, which JS sets only once the player reports it really
-     started. Fading in on a timer instead would show YouTube's boot chrome. */
+  /* Revealed by .playing, which JS sets only once the player reports state PLAYING.
+     There is no chrome to wait out: we never seek, and a plain muted autoplay draws no
+     bezel at all (any seek does, and it cannot be hidden — see startPreview). */
   opacity: 0; transition: opacity .45s var(--ease);
   /* A 16:9 video in a 3:4 box: fill it and crop, rather than letterbox. */
   transform: scale(1.9);

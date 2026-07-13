@@ -2156,30 +2156,40 @@ const ytSrc = (id, opts = {}) => {
 
 // Watch a player: onPlay() the moment it truly starts, onFail() if it never does
 // within YT_TIMEOUT.
-function ytWatch(frame, onFail, onPlay) {
+// Drive a player from out here. The widget API takes commands over postMessage, which is
+// how we seek and loop WITHOUT asking for it in the URL — see startPreview for why that
+// matters.
+function ytCmd(frame, func, args) {
+  try {
+    frame.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func, args: args || [], id: 1, channel: "widget" }), "*");
+  } catch (_) { /* not loaded yet */ }
+}
+
+// onPlay fires once, when the player is genuinely PLAYING. onInfo gets every payload
+// (playerState, currentTime, duration) and keeps firing, so a caller can drive a loop.
+function ytWatch(frame, onFail, onPlay, onInfo) {
   let alive = false, played = false;
   const onMsg = (e) => {
     if (!/youtube(-nocookie)?\.com$/.test(new URL(e.origin).hostname.replace(/^www\./, ""))) return;
     if (e.source !== frame.contentWindow) return;
     let d;
     try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (_) { return; }
-    const state = d && d.info && d.info.playerState;   // 1 playing, 2 paused, 3 buffering
+    const info = d && d.info;
+    if (!info) return;
+    const state = info.playerState;        // 1 playing, 2 paused, 3 buffering, 0 ended
     if (state === 1 || state === 3) {      // playing OR buffering: it's alive, not a wall
       alive = true;
       ytFailures = 0;
       clearTimeout(timer);                 // real player: call off the bot-wall watchdog
     }
-    // Reveal ONLY on state 1. BUFFERING is not "started": while the player boots it
-    // draws its own chrome — the big centred pause/play bezel — and a cross-origin
-    // iframe can't be styled, and scaling can't crop something that stays centred. So
-    // revealing on 3 (as we used to) is precisely what flashed the pause button for a
-    // second or two. Keep the box art up until there are real frames on screen.
+    // Reveal ONLY on state 1. BUFFERING is not "started" — the player is still booting.
     if (state === 1 && !played) {
       played = true;
-      window.removeEventListener("message", onMsg);
       clearInterval(poke);
       if (onPlay) onPlay();
     }
+    if (onInfo) onInfo(info);              // keeps streaming: currentTime / duration
   };
   const cleanup = () => {
     window.removeEventListener("message", onMsg);
@@ -2223,19 +2233,8 @@ const WANTS_MOTION = !window.matchMedia("(prefers-reduced-motion: reduce)").matc
 const PREVIEW_DELAY = 550;                 // dwell before we commit to loading
 let previewTimer = null, previewCard = null, previewWatch = null;
 
-// Where in the trailer to start. Rolled once per video and then remembered, so
-// hovering the same card twice shows you the same moment — a clip that jumps
-// somewhere new on every hover reads as a glitch, not as variety. Still rolled
-// fresh on each page load, so it isn't the same forever.
-const PREVIEW_START = new Map();
-const previewStart = (vid) => {
-  if (!PREVIEW_START.has(vid)) {
-    // Somewhere in the middle: trailers open on publisher logos, so 0 would show
-    // an ident every time.
-    PREVIEW_START.set(vid, 15 + Math.floor(Math.random() * 45));
-  }
-  return PREVIEW_START.get(vid);
-};
+/* No clip/seek machinery here on purpose — see startPreview for why every seek costs a
+   visible pause bezel. The preview plays the trailer from the top. */
 
 function stopPreview() {
   clearTimeout(previewTimer);
@@ -2261,29 +2260,39 @@ function startPreview(card) {
   previewCard = card;
   const frame = document.createElement("iframe");
   frame.className = "card-preview";
+  // MINIMAL params, and this matters more than it looks. `start`, `loop` and `playlist`
+  // each make YouTube draw its full chrome — title bar, channel avatar, watermark, and
+  // the big centred pause bezel — EVEN WITH controls=0, and it sits over the video for
+  // ~2.5s before auto-hiding. A cross-origin iframe can't be styled and the bezel is
+  // centred, so no crop can hide it. Measured: with any of those params the bezel shows;
+  // with none of them the player is completely clean. So we ask for none of them and do
+  // the seeking and the looping ourselves over the IFrame API (see below).
   frame.src = ytSrc(vid, {
-    autoplay: "1", mute: "1", controls: "0", disablekb: "1",
-    iv_load_policy: "3", fs: "0", start: String(previewStart(vid)),
-    // Loop it. Left to run out, the player draws a big endscreen replay button
-    // over the card — and a preview that stops isn't a preview.
-    loop: "1", playlist: vid,
+    autoplay: "1", mute: "1", controls: "0", disablekb: "1", iv_load_policy: "3", fs: "0",
   });
   frame.allow = "autoplay; encrypted-media";
   frame.tabIndex = -1;
   frame.setAttribute("aria-hidden", "true");
   card.appendChild(frame);
   card.classList.add("previewing");
-  // If YouTube shows a bot wall instead of playing, a dead iframe over the box
-  // art is worse than no preview at all. Put the art back.
-  // Hold the box art up until the video is genuinely PLAYING, then cross-fade.
-  // YouTube flashes its own chrome (a big pause bezel) for the ~1.5s it spends
-  // booting the player, and we cannot style that away through a cross-origin
-  // iframe — so simply don't show it. If the embed never plays, the art stays.
+
+  // We do NOT seek, and that is a deliberate, hard-won decision. Measured: a plain muted
+  // autoplay draws no chrome at all, but ANY seek — `start=` in the URL, `seekTo` over the
+  // API, even seeking before playback on a non-autoplay embed — makes YouTube redraw its
+  // centred pause bezel for ~3s. It can't be styled (cross-origin), can't be cropped (it
+  // is centred), and can't be waited out behind the box art: Chrome occlusion-throttles a
+  // covered cross-origin iframe, so the auto-hide timer doesn't run and the bezel is still
+  // sitting there when you reveal it. Seeking therefore ALWAYS costs a visible pause
+  // button, which is what we set out to remove. So: play from the top, clean.
+  // (It also rules out looping a short clip — a loop is just a seek on a timer.)
   previewWatch = ytWatch(frame,
     () => { if (previewCard === card) stopPreview(); },
-    // PLAYING has fired, but YouTube's bezel animation is still fading out over its
-    // first frames. Let it finish before we cross-fade, or the tail of it rides in.
-    () => setTimeout(() => { if (previewCard === card) card.classList.add("playing"); }, 300));
+    () => setTimeout(() => { if (previewCard === card) card.classList.add("playing"); }, 150),
+    (info) => {
+      // Ran out during a long hover. Don't loop it (that would mean seeking): just put the
+      // box art back, rather than let YouTube draw its endscreen over the card.
+      if (info.playerState === 0 && previewCard === card) stopPreview();
+    });
 }
 
 // Any surface that renders a .card can opt in: it just has to tell us which row
