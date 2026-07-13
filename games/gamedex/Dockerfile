@@ -23,6 +23,8 @@ COPY static/ /app/static/
 # Which Cover Project scan belongs to each game, and which way up. Decided
 # offline by tools/resolve_covers.py; the scans themselves are fetched lazily.
 COPY data/covers-resolved.json /app/data/covers-resolved.json
+# GameRankings closed in 2019, so this is a frozen archive — baked in, never fetched.
+COPY data/gamerankings.json /app/data/gamerankings.json
 
 USER app
 ENV PYTHONUNBUFFERED=1 \

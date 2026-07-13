@@ -116,6 +116,7 @@ const GDC = {};                    // matchKey -> StrategyWiki guide
 const COOPC = {};                  // matchKey -> Co-Optimus co-op details
 const ENRICH_REQUESTED = new Set();
 const UPLOADS = {};                // matchKey -> {url, v} : hand-uploaded box art
+const GR = {};                     // matchKey -> {score, n, url} : GameRankings archive
 let enrichTimer = null;
 let drawerRow = null;              // row currently shown in the drawer (for sheet fallback)
 
@@ -573,16 +574,20 @@ function closeLightbox() { $("#lightbox").hidden = true; syncScrollLock(); }
 const lightboxOpen = () => !$("#lightbox").hidden;
 
 function metacriticHtml(key) {
-  const mc = MCC[key];
-  const sheet = drawerRow ? drawerRow.metacriticRating : null;
-  const scraped = mc && mc.metascore != null;
-  const score = scraped ? mc.metascore : (sheet != null ? Math.round(sheet * 100) : null);
-  if (score == null) return "";
-  const src = scraped
-    ? (mc.url ? `<a href="${escapeHtml(mc.url)}" target="_blank" rel="noopener">Metacritic ↗</a>` : "Metacritic")
-    : "from sheet";
-  return `<div class="hltb"><div class="hltb-row"><span>Metacritic</span>` +
-    `<b class="${ratingClass(score / 100)}">${score} <small class="muted">· ${src}</small></b></div></div>`;
+  // The critic score, whichever source answered — Metacritic, your sheet, IGDB's critic
+  // aggregate, or the GameRankings archive. Always say which, so a number is never
+  // mistaken for a Metacritic one it isn't.
+  if (!drawerRow) return "";
+  const v = criticOf(drawerRow);
+  if (v == null) return "";
+  const s = criticSourceOf(drawerRow) || { label: "Critics" };
+  const score = Math.round(v * 100);
+  const name = s.url
+    ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.label)} ↗</a>`
+    : escapeHtml(s.label);
+  const extra = s.sheet ? " · from sheet" : (s.n ? ` · ${s.n} reviews` : "");
+  return `<div class="hltb"><div class="hltb-row"><span>Critics</span>` +
+    `<b class="${ratingClass(v)}">${score} <small class="muted">· ${name}${extra}</small></b></div></div>`;
 }
 
 function gameyeHtml(key) {
@@ -1212,7 +1217,34 @@ const playtimeOf = (row) => {
   return row.estimatedTime;
 };
 // Metacritic (0–1): scraped score where enriched, else the sheet's Metacritic Rating.
-const metacriticOf = (row) => { const e = ENRICH[row._k]; return e && e.metascore != null ? e.metascore / 100 : row.metacriticRating; };
+/* The critic score, best source first. Everything that shows or filters on "what the
+   critics thought" — the facet, stats, the prediction model, challenges, the drawer —
+   reads this ONE function, so a new fallback lights up the whole app at once.
+     1. Metacritic scrape        — what we look up live.
+     2. your sheet's column      — for older games this IS GameRankings data, imported.
+     3. IGDB's aggregated_rating — its external critic aggregate (we already fetched it).
+     4. GameRankings archive     — frozen since 2019, and the only critic score a lot of
+                                   90s/2000s games ever got. */
+function criticOf(row) {
+  const e = ENRICH[row._k] || {};
+  if (e.metascore != null) return e.metascore / 100;
+  if (row.metacriticRating != null) return row.metacriticRating;
+  if (e.criticRating != null) return e.criticRating;
+  const g = GR[row._k];
+  if (g && g.score != null) return g.score / 100;
+  return undefined;
+}
+// Which of those actually answered, so a score can say where it came from.
+function criticSourceOf(row) {
+  const e = ENRICH[row._k] || {};
+  if (e.metascore != null) return { label: "Metacritic", url: e.metaUrl || null };
+  if (row.metacriticRating != null) return { label: "Metacritic", url: null, sheet: true };
+  if (e.criticRating != null) return { label: "IGDB critics", url: e.url || null, n: e.criticCount };
+  const g = GR[row._k];
+  if (g) return { label: "GameRankings", url: g.url, n: g.n };
+  return null;
+}
+const metacriticOf = criticOf;      // the old name, still used all over
 // User rating (0–1): IGDB community rating where enriched, else VNDB's (visual
 // novels are the one place VNDB's vote count dwarfs everyone's), else GameFAQs.
 const userRatingOf = (row) => {
@@ -1342,6 +1374,23 @@ async function loadRomm() {
     ROMM = await r.json();
     if (ROMM.enabled) patchPlayButtons();
   } catch (_) { /* RomM being down must never break gamedex */ }
+}
+
+// The GameRankings archive — a frozen fallback critic score, joined server-side on
+// (title, platform). Feeds criticOf(), so it lights up the facet, stats, predictions and
+// challenges as soon as it lands.
+async function loadGameRankings() {
+  try {
+    const r = await fetch("api/gamerankings");
+    if (!r.ok) return;
+    const m = await r.json();
+    const n = Object.keys(m).length;
+    if (!n) return;
+    Object.assign(GR, m);
+    resetHealth();                       // "no critic score" checks just changed
+    if (!SPECIAL_TABS.includes(activeTab)) renderFacets();
+    else if (activeTab === "stats") renderStats();
+  } catch (_) { /* a missing archive must never break the app */ }
 }
 
 // Hand-uploaded box art, merged onto the enrichment map as `uploadCover` so it becomes
@@ -1518,7 +1567,7 @@ function extraFacetCols(tab = activeTab) {
   if (tab !== "games") return [];
   return [
     { key: "__playtime", label: "Playtime", type: "text", facet: true, virtual: true, kind: "bucket", buckets: PLAYTIME_BUCKETS, getVal: playtimeOf },
-    { key: "__metacritic", label: "Metacritic", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
+    { key: "__metacritic", label: "Critic score", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
     { key: "__userrating", label: "User Rating", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: userRatingOf },
     { key: "__sales", label: "Sales (VGChartz)", type: "text", facet: true, virtual: true, kind: "bucket", buckets: SALES_BUCKETS, getVal: salesOf },
     // Arcade-only, from the MAME romset lookup — blank for everything else.
@@ -2672,6 +2721,7 @@ async function load() {
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
   loadRomm();                   // which games we can actually play in the browser
   loadUploads();                // hand-uploaded box art becomes the cover everywhere
+  loadGameRankings();           // frozen fallback critic score for pre-Metacritic games
   loadPrefs();                  // saved views + custom challenges follow you between browsers
   loadValueHistory();           // daily collection-value snapshots (for the trend chart)
   loadRecs();                   // "because you liked …"

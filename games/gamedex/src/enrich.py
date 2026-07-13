@@ -24,7 +24,7 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes",
-               "developers", "publishers", "franchises",
+               "developers", "publishers", "franchises", "criticRating", "criticCount",
                "name", "stores", "url", "confidence")
 # `confidence` is MatchValidator.match_score, 0-15: title matched 5, title EXACT
 # a further 5, then +1 each for platform, release date, publisher, developer and
@@ -35,7 +35,7 @@ _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genre
 # `name` is what we matched you TO. Without it a low-confidence warning is just a
 # number; with it, "Backbone -> Backbone: Prologue" tells you at a glance.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
-                "developers", "publishers", "franchises",
+                "developers", "publishers", "franchises", "criticRating", "criticCount",
                 "igdbId", "source", "stores", "url", "confidence", "name")
 
 
@@ -125,6 +125,7 @@ VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
 STORES_VERSION = "4"
 RELATIONS_VERSION = "3"
 FRANCHISE_VERSION = "1"    # bump to re-fetch franchises onto already-matched records
+CRITIC_VERSION = "1"       # bump to re-fetch IGDB's critic aggregate onto matched records
 
 
 class Enricher:
@@ -842,6 +843,54 @@ class Enricher:
         self._kv_set("franchise_version", FRANCHISE_VERSION)
         log.info("franchise backfill: %d records updated", found)
 
+    def backfill_critic(self):
+        """IGDB's aggregated_rating — the EXTERNAL CRITIC score. We always asked for it and
+        never stored it, so every existing record is missing it. It is the best fallback
+        critic score for a game Metacritic never covered."""
+        if not self._igdb.configured:
+            return
+        stale = self._kv_get("critic_version") != CRITIC_VERSION
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key, igdb_id, data FROM enrichment"
+                " WHERE status='matched' AND igdb_id IS NOT NULL AND data IS NOT NULL"
+            ).fetchall()
+        need = {}
+        for key, igdb_id, raw in rows:
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            if "criticRating" in rec and not stale:
+                continue
+            need.setdefault(int(igdb_id), []).append(key)
+        if not need:
+            self._kv_set("critic_version", CRITIC_VERSION)
+            return
+        log.info("critic backfill: fetching IGDB critic scores for %d games", len(need))
+        try:
+            got = self._igdb.critic_for(list(need))
+        except Exception as exc:
+            log.warning("critic backfill failed: %s", exc)
+            return
+        found = 0
+        with self._db_lock:
+            for gid, keys in need.items():
+                score, count = got.get(gid, (None, None))
+                for key in keys:
+                    row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                    if not row or not row[0]:
+                        continue
+                    rec = json.loads(row[0])
+                    rec["criticRating"] = score       # None is a valid answer: "no critics"
+                    rec["criticCount"] = count
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+                    if score is not None:
+                        found += 1
+            self._db.commit()
+        self._kv_set("critic_version", CRITIC_VERSION)
+        log.info("critic backfill: %d games got a critic score", found)
+
     def start(self):
         for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
@@ -850,6 +899,7 @@ class Enricher:
         threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
         threading.Thread(target=self.backfill_relations, name="relations-backfill", daemon=True).start()
         threading.Thread(target=self.backfill_franchises, name="franchise-backfill", daemon=True).start()
+        threading.Thread(target=self.backfill_critic, name="critic-backfill", daemon=True).start()
         if "gameye" in self._secondary:
             threading.Thread(target=self._value_loop, name="value-history", daemon=True).start()
 

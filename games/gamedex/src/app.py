@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 import prefs as prefs_mod
 import romm
+import gamerankings as gr_mod
 import shelf as shelf_mod
 
 from arcadedb import ArcadeDbClient
@@ -180,6 +181,9 @@ if _rp.exists():
         len(_resolved.get("wraps", {})), len(_resolved.get("hues", {})))
 SHELF = shelf_mod.Shelf(_resolved, Path(os.environ.get("COVERS_CACHE", "/data/covers")))
 
+# GameRankings: a frozen archive baked into the image, joined on (title, platform).
+GR = gr_mod.GameRankings()
+
 
 @app.get("/api/shelf")
 def api_shelf():
@@ -255,6 +259,17 @@ async def api_shelf_upload(request: Request, key: str, kind: str = "wrap", rotat
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "src": "upload", "case": entry["case"], "v": entry["v"]}
+
+
+@app.get("/api/gamerankings")
+def api_gamerankings():
+    """{matchKey: {score, n, url}} — the frozen GameRankings archive, joined to the sheet
+    on (title, platform). A fallback critic score for games Metacritic never rated."""
+    if not GR.enabled:
+        return {}
+    data = store.snapshot()["data"]
+    rows = list(data.get("games", {}).get("rows", [])) + list(data.get("completed", {}).get("rows", []))
+    return GR.for_rows(rows)
 
 
 @app.get("/api/uploads")

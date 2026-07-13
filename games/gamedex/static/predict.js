@@ -224,7 +224,10 @@ function predictRating(row) {
     signals.push({ kind: KIND[f], label: String(row[f]), value: e.sum / e.n, n: e.n });
   }
   if (mc != null) {
-    signals.push({ kind: "Critics", label: "Metacritic", value: mc, n: null });
+    // Name the source that actually answered — the score may be Metacritic, IGDB's critic
+    // aggregate, or the GameRankings archive, and calling all three "Metacritic" lies.
+    const cs = typeof criticSourceOf === "function" ? criticSourceOf(row) : null;
+    signals.push({ kind: "Critics", label: (cs && cs.label) || "Critics", value: mc, n: null });
   }
 
   return {

@@ -32,7 +32,8 @@ _IGDB = "https://api.igdb.com/v4"
 # One request pulls all candidates with everything we display, nested inline.
 _FIELDS = (
     "fields name,slug,url,category,summary,storyline,"
-    "first_release_date,total_rating,total_rating_count,rating,rating_count,aggregated_rating,"
+    "first_release_date,total_rating,total_rating_count,rating,rating_count,"
+    "aggregated_rating,aggregated_rating_count,"
     "alternative_names.name,platforms.name,release_dates.y,"
     "genres.name,themes.name,game_modes.name,player_perspectives.name,"
     "cover.image_id,screenshots.image_id,artworks.image_id,"
@@ -405,6 +406,20 @@ class IgdbClient:
                 out.append(nm)
         return out
 
+    def critic_for(self, igdb_ids):
+        """{igdb_id: (criticRating, criticCount)} — the external critic aggregate, fetched
+        by id to backfill records matched before we stored it."""
+        out = {}
+        for i in range(0, len(igdb_ids), 500):
+            chunk = [int(x) for x in igdb_ids[i:i + 500]]
+            body = ("fields id,aggregated_rating,aggregated_rating_count; "
+                    f"where id = ({','.join(str(c) for c in chunk)}); limit 500;")
+            for g in self._post("games", body) or []:
+                a = g.get("aggregated_rating")
+                out[g["id"]] = (round(a / 100, 4) if a is not None else None,
+                                g.get("aggregated_rating_count"))
+        return out
+
     def franchises_for(self, igdb_ids):
         """{igdb_id: [franchise names]} — fetched by id in batches, to backfill records
         matched before franchises were stored. Mirrors relations_for."""
@@ -432,6 +447,10 @@ class IgdbClient:
             year = datetime.fromtimestamp(c["first_release_date"], tz=timezone.utc).year
         rating = c.get("total_rating")
         user_rating = c.get("rating")            # IGDB community/user rating
+        # aggregated_rating is the EXTERNAL CRITIC aggregate — the one thing here that is
+        # a critic score rather than a player score. We already asked for it and threw it
+        # away; it is the best fallback for a game Metacritic never covered.
+        critic = c.get("aggregated_rating")
         return {
             "igdbId": c.get("id"),
             "name": c.get("name"),
@@ -443,6 +462,8 @@ class IgdbClient:
             "ratingCount": c.get("total_rating_count"),
             "userRating": round(user_rating / 100, 4) if user_rating is not None else None,
             "userRatingCount": c.get("rating_count"),
+            "criticRating": round(critic / 100, 4) if critic is not None else None,
+            "criticCount": c.get("aggregated_rating_count"),
             "year": year,
             "genres": [g["name"] for g in c.get("genres", []) if g.get("name")],
             "themes": [t["name"] for t in c.get("themes", []) if t.get("name")],
