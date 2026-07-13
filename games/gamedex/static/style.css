@@ -1464,7 +1464,16 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
     linear-gradient(0deg, var(--bg) 2%, transparent 60%);
 }
 :root[data-theme="light"] .h-hero-bg.on { opacity: .35; }
-.h-hero-inner { display: flex; gap: 26px; align-items: center; max-width: 1180px; margin: 0 auto; position: relative; }
+/* A fixed box for a rotating one. The slides are not the same height — a two-line title, or
+   a game you've started (which adds the progress bar and its caption), or a Play button that
+   only appears once the RomM map lands — so the hero grew and shrank under the page every
+   nine seconds and shoved everything below it around. Measured across the ten slides it was
+   283–290px on desktop and 223–311px at 390px wide, which is a 88px lurch on a phone.
+   Reserve the tallest and let the content centre inside it: nothing below the hero moves. */
+.h-hero-inner {
+  display: flex; gap: 26px; align-items: center; max-width: 1180px; margin: 0 auto;
+  position: relative; min-height: 216px;
+}
 .h-hero-cover {
   width: 156px; flex: none; aspect-ratio: 3 / 4; object-fit: cover;
   border-radius: var(--r); border: 1px solid var(--border);
@@ -1573,7 +1582,9 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
   .h-hero { padding: 22px 16px 24px; }
   /* Wrap, so the dots drop to their own line instead of flowing into the row
      beside the title and squeezing the text column to nothing. */
-  .h-hero-inner { gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  /* The tallest slide here is taller than the desktop one — the text column is narrow, so
+     titles wrap far more often. This is where the 88px lurch was. */
+  .h-hero-inner { gap: 14px; align-items: flex-start; flex-wrap: wrap; min-height: 268px; }
   .h-hero-cover { width: 92px; }
   .h-hero-txt { flex: 1 1 190px; }
   .h-hero-txt h1 { font-size: 20px; }
