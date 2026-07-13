@@ -392,7 +392,8 @@ class Shelf:
 
     def set_cover(self, key: str, data: bytes, kind: str, platform: str,
                   rotate: int = 0, x1: float | None = None, x2: float | None = None,
-                  case: dict | None = None, face_rot: int = 0) -> dict:
+                  case: dict | None = None, face_rot: int = 0,
+                  crop: dict | None = None) -> dict:
         """Store a user-supplied cover for one game, as three cached faces.
 
         The shape of the box comes from the IMAGE and the user, not a per-platform table
@@ -422,6 +423,22 @@ class Shelf:
             im = im.resize((round(im.width * s), round(im.height * s)), Image.LANCZOS)
         if rotate % 360:
             im = im.rotate(-(rotate % 360), expand=True)   # clockwise, to match the UI
+
+        # Front-only crop, in fractions of the ROTATED image — the editor drags it against
+        # what it is showing, which is the post-rotation picture. Cropping here (before the
+        # faces are built) means the spine colour is sampled from the art you kept, not from
+        # the scanner margin you threw away.
+        if kind == "front" and crop:
+            cx1 = max(0.0, min(1.0, float(crop.get("x1", 0.0))))
+            cy1 = max(0.0, min(1.0, float(crop.get("y1", 0.0))))
+            cx2 = max(0.0, min(1.0, float(crop.get("x2", 1.0))))
+            cy2 = max(0.0, min(1.0, float(crop.get("y2", 1.0))))
+            l, r = sorted((cx1, cx2))
+            t, b = sorted((cy1, cy2))
+            box = (round(im.width * l), round(im.height * t),
+                   round(im.width * r), round(im.height * b))
+            if box[2] - box[0] >= 8 and box[3] - box[1] >= 8:   # ignore a degenerate drag
+                im = im.crop(box)
 
         # The case dims: the editor's numbers if given, else a platform fallback so the
         # older callers and the API without a case still work.
@@ -485,6 +502,10 @@ class Shelf:
                  "rotate": rotate % 360, "faceRot": face_rot % 360,
                  "x1": round(float(x1), 4) if x1 is not None else None,
                  "x2": round(float(x2), 4) if x2 is not None else None,
+                 # Keep the crop so reopening re-draws the rectangle over the untouched
+                 # original, which is what makes it adjustable rather than destructive.
+                 "crop": ({k: round(float(crop[k]), 4) for k in ("x1", "y1", "x2", "y2")}
+                          if kind == "front" and crop else None),
                  "case": {"w": round(cw, 1), "h": round(ch, 1), "d": round(cd, 1)}}
         with self._guard:
             self._uploads[key] = entry

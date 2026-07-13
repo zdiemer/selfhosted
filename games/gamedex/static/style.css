@@ -2783,6 +2783,29 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .ce-guide::after { content:""; position:absolute; top:50%; width:12px; height:22px;
   margin-top:-11px; background:var(--accent); border-radius:3px;
   box-shadow:0 2px 6px rgba(0,0,0,.5); }
+/* Front-only crop. The huge spread shadow dims everything OUTSIDE the rectangle without
+   needing four separate shade panels, so what you keep is what stays lit. */
+.ce-crop { position:absolute; z-index:4; cursor:move; touch-action:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.55), 0 0 0 9999px rgba(0,0,0,.58);
+  outline:2px solid var(--accent); outline-offset:-1px; }
+/* Rule-of-thirds guides, so you can line the art up rather than eyeball it. */
+.ce-crop::before, .ce-crop::after { content:""; position:absolute; inset:0; pointer-events:none; }
+.ce-crop::before { background:
+  linear-gradient(to right, #0000 33.33%, rgba(255,255,255,.22) 0 calc(33.33% + 1px), #0000 0) ,
+  linear-gradient(to right, #0000 66.66%, rgba(255,255,255,.22) 0 calc(66.66% + 1px), #0000 0); }
+.ce-crop::after { background:
+  linear-gradient(to bottom, #0000 33.33%, rgba(255,255,255,.22) 0 calc(33.33% + 1px), #0000 0) ,
+  linear-gradient(to bottom, #0000 66.66%, rgba(255,255,255,.22) 0 calc(66.66% + 1px), #0000 0); }
+.ce-ch { position:absolute; width:16px; height:16px; background:var(--accent);
+  border:2px solid #fff; border-radius:3px; box-shadow:0 2px 6px rgba(0,0,0,.5);
+  touch-action:none; z-index:5; }
+.ce-ch[data-h="nw"] { left:-8px;  top:-8px;    cursor:nwse-resize; }
+.ce-ch[data-h="ne"] { right:-8px; top:-8px;    cursor:nesw-resize; }
+.ce-ch[data-h="sw"] { left:-8px;  bottom:-8px; cursor:nesw-resize; }
+.ce-ch[data-h="se"] { right:-8px; bottom:-8px; cursor:nwse-resize; }
+/* Cropping wants a bigger canvas than a 200px strip to be precise on. */
+.ce-imgwrap.cropping img { max-height:300px; }
+
 /* SNES/N64: the panels lie on their side and each face gets turned upright on slice.
    Mark the front/back regions so the preview says so, and light the toggle when it's on. */
 .ce-side.on { background:var(--accent); border-color:var(--accent); color:#fff; }

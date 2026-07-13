@@ -237,7 +237,9 @@ MAX_UPLOAD = 12 * 1024 * 1024
 async def api_shelf_upload(request: Request, key: str, kind: str = "wrap", rotate: int = 0,
                           x1: float | None = None, x2: float | None = None,
                           w: float | None = None, h: float | None = None, d: float | None = None,
-                          face_rot: int = 0):
+                          face_rot: int = 0,
+                          cx1: float | None = None, cy1: float | None = None,
+                          cx2: float | None = None, cy2: float | None = None):
     """Store a hand-supplied cover for one game — the image bytes are the raw POST body.
 
     The editor derives the box's proportions from the image (front aspect) and the user's
@@ -253,9 +255,13 @@ async def api_shelf_upload(request: Request, key: str, kind: str = "wrap", rotat
     if len(body) > MAX_UPLOAD:
         return JSONResponse({"error": "image too large (max 12 MB)"}, status_code=413)
     case = {"w": w, "h": h, "d": d} if None not in (w, h, d) else None
+    # Front-only crop, as fractions of the rotated image. Absent → the whole image, which
+    # is what every upload before this did.
+    crop = ({"x1": cx1, "y1": cy1, "x2": cx2, "y2": cy2}
+            if None not in (cx1, cy1, cx2, cy2) else None)
     try:
         entry = SHELF.set_cover(key, body, kind=kind, platform=plat, rotate=int(rotate),
-                                x1=x1, x2=x2, case=case, face_rot=int(face_rot))
+                                x1=x1, x2=x2, case=case, face_rot=int(face_rot), crop=crop)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "src": "upload", "case": entry["case"], "v": entry["v"]}

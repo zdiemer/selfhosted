@@ -589,6 +589,13 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   let x1 = (existing && existing.x1) ?? 130 / 273;           // spine guides (fractions of width)
   let x2 = (existing && existing.x2) ?? 144 / 273;
   let depth = (existing && existing.d) || (caseDefault && caseDefault.d) || 14;
+  // Front-only crop, as fractions of the rotated image. Front art in the wild comes with
+  // a scanner bed's white margin, a shelf photo's background, or the rest of a wrap around
+  // it — so the front face is whatever rectangle you drag, not the whole file. Full frame
+  // by default, which is exactly the old behaviour.
+  const FULL_CROP = { x1: 0, y1: 0, x2: 1, y2: 1 };
+  const isFullCrop = (c) => c.x1 <= 0.001 && c.y1 <= 0.001 && c.x2 >= 0.999 && c.y2 >= 0.999;
+  let crop = (existing && existing.crop) ? { ...existing.crop } : { ...FULL_CROP };
 
   const host = document.createElement("div");
   host.className = "ce-scrim";
@@ -614,6 +621,10 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
             <div class="ce-region front"><span>front</span></div>
             <div class="ce-guide" data-g="1"></div>
             <div class="ce-guide" data-g="2"></div>
+            <div class="ce-crop" hidden>
+              <i class="ce-ch" data-h="nw"></i><i class="ce-ch" data-h="ne"></i>
+              <i class="ce-ch" data-h="sw"></i><i class="ce-ch" data-h="se"></i>
+            </div>
           </div>
         </div>
       </div>
@@ -623,6 +634,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
         <button class="sh-btn ce-side" id="ceSide" type="button"
                 title="SNES/N64 scans: the panels lie on their side, so each face is turned upright">⤾ Sideways panels</button>
         <button class="sh-btn" id="ceChange" type="button">Change image</button>
+        <button class="sh-btn" id="ceUncrop" type="button" hidden>⤢ Reset crop</button>
         <label class="ce-depth" id="ceDepthWrap">Spine
           <input type="range" id="ceDepth" min="4" max="40" step="1">
           <span id="ceDepthVal"></span></label>
@@ -648,11 +660,12 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   const gEls = [...host.querySelectorAll(".ce-guide")];
   const regBack = $(".ce-region.back"), regFront = $(".ce-region.front");
   const depthWrap = $("#ceDepthWrap"), depthEl = $("#ceDepth"), depthVal = $("#ceDepthVal");
+  const cropEl = $(".ce-crop"), uncropBtn = $("#ceUncrop");
   depthEl.value = depth;
 
   const HINTS = {
     wrap: "A full wrap — back, spine, front in one image. Drag the two lines onto the spine; we slice there and the front takes its own shape.",
-    front: "Just the front cover. The case takes your image's exact shape, and we colour a spine and make a stand-in back.",
+    front: "Just the front cover. Drag the box to crop away any margin or background — the case takes the shape of what you keep, and we colour a spine and make a stand-in back.",
   };
 
   // The rotated image's on-screen dimensions (what the guides and slicing act on).
@@ -672,8 +685,14 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     ctx.rotate(rotate * Math.PI / 180);                       // clockwise, matches the server
     ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     imgEl.src = c.toDataURL("image/jpeg", 0.92);
-    dim.textContent = `${w}×${h}`;
     layout();
+  }
+
+  // What the front face will actually be, in image pixels — the crop, not the file.
+  function cropPx() {
+    const { w, h } = rotDims();
+    return { w: Math.max(1, Math.round((crop.x2 - crop.x1) * w)),
+             h: Math.max(1, Math.round((crop.y2 - crop.y1) * h)) };
   }
 
   function layout() {
@@ -685,11 +704,29 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
       regFront.style.left = x2 * 100 + "%";
       regFront.style.width = (1 - x2) * 100 + "%";
     }
+    // Crop is a front-only affair: in wrap mode the spine guides already say where the
+    // front begins, and two overlapping rectangles would just fight each other.
+    cropEl.hidden = wrap;
+    uncropBtn.hidden = wrap || isFullCrop(crop);
+    imgwrap.classList.toggle("cropping", !wrap);
+    if (!wrap) {
+      cropEl.style.left = crop.x1 * 100 + "%";
+      cropEl.style.top = crop.y1 * 100 + "%";
+      cropEl.style.width = (crop.x2 - crop.x1) * 100 + "%";
+      cropEl.style.height = (crop.y2 - crop.y1) * 100 + "%";
+    }
     imgwrap.classList.toggle("sideways", wrap && faceRot % 360 !== 0);
     sideBtn.classList.toggle("on", faceRot % 360 !== 0);
     sideBtn.hidden = !wrap;
     depthWrap.style.display = wrap ? "none" : "";             // wrap depth comes from the guides
     depthVal.textContent = depth + " mm";
+    if (img) {
+      const { w, h } = rotDims();
+      const c = cropPx();
+      dim.textContent = (!wrap && !isFullCrop(crop))
+        ? `${c.w}×${c.h} · cropped from ${w}×${h}`
+        : `${w}×${h}`;
+    }
   }
 
   function setKind(k) {
@@ -705,6 +742,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   function loadBlob(blob, opts = {}) {
     if (!blob || !(blob.type || "").startsWith("image/")) return;
     file = blob; rotate = opts.rotate || 0;
+    crop = opts.crop ? { ...opts.crop } : { ...FULL_CROP };   // a new file starts uncropped
     const url = URL.createObjectURL(blob);
     img = new Image();
     img.onload = () => {
@@ -735,6 +773,43 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     });
   });
 
+  // Drag the crop box: a corner resizes, anywhere else moves the whole rectangle.
+  // Capture is set inside a try/catch AFTER the drag state exists — a touch pointer that
+  // refuses capture must not leave the drag half-started (the iOS 3D-box bug).
+  const MIN_CROP = 0.05;
+  cropEl.addEventListener("pointerdown", (e) => {
+    if (kind !== "front" || !img) return;
+    e.preventDefault(); e.stopPropagation();
+    const h = e.target.dataset.h || "";                    // "" → move, else nw/ne/sw/se
+    const box = imgwrap.getBoundingClientRect();
+    const from = { x: e.clientX, y: e.clientY, ...crop };
+    const el = e.target;
+    const move = (ev) => {
+      const dx = (ev.clientX - from.x) / box.width, dy = (ev.clientY - from.y) / box.height;
+      let { x1: a, y1: b, x2: c, y2: d } = from;
+      if (!h) {                                            // translate, clamped to the image
+        const w = c - a, ht = d - b;
+        a = Math.max(0, Math.min(1 - w, a + dx)); c = a + w;
+        b = Math.max(0, Math.min(1 - ht, b + dy)); d = b + ht;
+      } else {
+        if (h.includes("w")) a = Math.max(0, Math.min(c - MIN_CROP, a + dx));
+        if (h.includes("e")) c = Math.min(1, Math.max(a + MIN_CROP, c + dx));
+        if (h.includes("n")) b = Math.max(0, Math.min(d - MIN_CROP, b + dy));
+        if (h.includes("s")) d = Math.min(1, Math.max(b + MIN_CROP, d + dy));
+      }
+      crop = { x1: a, y1: b, x2: c, y2: d };
+      layout();
+    };
+    const up = () => {
+      try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+
   host.querySelectorAll(".ce-opt").forEach((b) => b.onclick = () => setKind(b.dataset.kind));
   input.onchange = () => loadFile(input.files[0]);
   // Opening the file dialog is now an explicit button — the preview is no longer a
@@ -744,7 +819,9 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); loadFile(e.dataTransfer.files[0]); });
-  $("#ceRot").onclick = () => { rotate = (rotate + 90) % 360; paintImage(); };
+  // Rotating swaps the axes, so a crop drawn against the old orientation is meaningless.
+  $("#ceRot").onclick = () => { rotate = (rotate + 90) % 360; crop = { ...FULL_CROP }; paintImage(); };
+  uncropBtn.onclick = () => { crop = { ...FULL_CROP }; layout(); };
   sideBtn.onclick = () => { faceRot = faceRot % 360 ? 0 : 90; layout(); };
   depthEl.oninput = () => { depth = +depthEl.value; depthVal.textContent = depth + " mm"; };
   setKind(kind);
@@ -754,7 +831,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   if (existing) {
     fetch(`/api/shelf/original?key=${encodeURIComponent(key)}`)
       .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => { if (b) loadBlob(b, { rotate: existing.rotate || 0 }); })
+      .then((b) => { if (b) loadBlob(b, { rotate: existing.rotate || 0, crop: existing.crop }); })
       .catch(() => {});
   }
 
@@ -772,7 +849,9 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   function caseDims() {
     const { w, h } = rotDims();
     const H = NOMINAL_H;
-    if (kind === "front") return { w: Math.round(H * (w / h)), h: H, d: depth };
+    // The box takes the shape of the KEPT rectangle — crop away a scanner margin and the
+    // case narrows to the art, instead of the box keeping the paper's proportions.
+    if (kind === "front") { const c = cropPx(); return { w: Math.round(H * (c.w / c.h)), h: H, d: depth }; }
     const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // panel widths, in image pixels
     if (faceRot % 360) {
       // Sideways panels (SNES/N64): the front panel is frontW × h in the strip, but it
@@ -792,6 +871,9 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     if (kind === "wrap") {
       q.set("x1", x1.toFixed(4)); q.set("x2", x2.toFixed(4));
       q.set("face_rot", String(faceRot % 360));
+    } else if (!isFullCrop(crop)) {
+      q.set("cx1", crop.x1.toFixed(4)); q.set("cy1", crop.y1.toFixed(4));
+      q.set("cx2", crop.x2.toFixed(4)); q.set("cy2", crop.y2.toFixed(4));
     }
     try {
       const r = await fetch(`/api/shelf/cover?${q}`, { method: "POST", body: file });
