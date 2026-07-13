@@ -460,6 +460,7 @@ function shTick() {
       s?.nextElementSibling?.classList.remove("lean");
       document.getElementById("shPull")?.classList.remove("open");
       shCur = -1;
+      syncScrollLock?.();
       if (shPending >= 0) { const n = shPending; shPending = -1; shelfOpen(n); }
       return;
     }
@@ -481,6 +482,7 @@ function shelfOpen(i) {
   s.classList.add("out");
   s.nextElementSibling?.classList.add("lean");  // its neighbour tips into the gap
   document.getElementById("shPull").classList.add("open");
+  syncScrollLock?.();                            // freeze the shelf behind the 3D box
   shTarget = 1;
   if (shReduced()) { shState.p = 1; shPaint(); return; }
   shKick();
@@ -499,6 +501,7 @@ function shelfClose() {
     s?.nextElementSibling?.classList.remove("lean");
     document.getElementById("shPull")?.classList.remove("open");
     shCur = -1;
+    syncScrollLock?.();
     if (shPending >= 0) { const n = shPending; shPending = -1; shelfOpen(n); }
     return;
   }
@@ -510,11 +513,14 @@ function shelfClose() {
 function shBindCase(el) {
   el.addEventListener("pointerdown", (e) => {
     if (shState.p < 0.25) return;               // still coming out; let it arrive
-    el.setPointerCapture(e.pointerId);
+    // Set the drag state BEFORE capturing. On iOS setPointerCapture can throw for a
+    // touch pointer on a thin, edge-on element; if it did (and it wasn't guarded), the
+    // drag never started and the box wouldn't turn at all on iPhone.
     shDrag = { px: e.clientX, py: e.clientY, t: e.timeStamp };
     shState.vx = shState.vy = 0;
+    try { el.setPointerCapture(e.pointerId); } catch {}
     e.preventDefault();                         // no text selection, no native image drag
-  });
+  }, { passive: false });
   el.addEventListener("pointermove", (e) => {
     if (!shDrag) return;
     const dt = Math.max(8, e.timeStamp - shDrag.t);
@@ -615,6 +621,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
       </div>
     </div>`;
   document.body.appendChild(host);
+  syncScrollLock?.();
 
   const $ = (s) => host.querySelector(s);
   const hint = $("#ceHint"), drop = $("#ceDrop"), input = drop.querySelector("input");
@@ -729,7 +736,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
       .catch(() => {});
   }
 
-  const close = () => host.remove();
+  const close = () => { host.remove(); syncScrollLock?.(); };
   $("#ceCancel").onclick = close;
   $(".ce-x").onclick = close;
   host.addEventListener("click", (e) => { if (e.target === host) close(); });

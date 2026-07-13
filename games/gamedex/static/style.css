@@ -2562,8 +2562,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   perspective:1600px; perspective-origin:50% 42%; }
 .sh-veil { position:absolute; inset:0; background:rgba(0,0,0,.55); opacity:0;
   pointer-events:none; transition:opacity .4s ease; backdrop-filter:blur(2px); }
-.sh-pull.open .sh-veil { opacity:1; pointer-events:auto; }
+.sh-pull.open .sh-veil { opacity:1; pointer-events:auto; touch-action:none; }
 .sh-pull.open .sh-case, .sh-pull.open .sh-info { pointer-events:auto; }
+/* Turning the box is a drag, never a page gesture — iOS honours touch-action, not the
+   pointerdown preventDefault, so state it on everything the finger can land on. */
+.sh-pull.open { touch-action:none; }
 
 /* ---- the ONE case ---- */
 .sh-case { position:absolute; left:0; top:0; z-index:2; display:none;

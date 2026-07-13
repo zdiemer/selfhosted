@@ -557,8 +557,8 @@ function lbShow(delta) {
   $("#lbPrev").hidden = !multi;
   $("#lbNext").hidden = !multi;
 }
-function openLightbox(i) { lbIdx = i; $("#lightbox").hidden = false; lbShow(0); }
-function closeLightbox() { $("#lightbox").hidden = true; }
+function openLightbox(i) { lbIdx = i; $("#lightbox").hidden = false; lbShow(0); syncScrollLock(); }
+function closeLightbox() { $("#lightbox").hidden = true; syncScrollLock(); }
 const lightboxOpen = () => !$("#lightbox").hidden;
 
 function metacriticHtml(key) {
@@ -1416,6 +1416,7 @@ function filterRows(skipKey) {
 function setFacets(open) {
   $("#facets").classList.toggle("open", open);
   $("#facetBackdrop").hidden = !open;
+  syncScrollLock();
 }
 
 function renderFacets() {
@@ -2228,27 +2229,39 @@ function openDrawer(row, sheetKey, keepStack) {
     };
   });
   $("#overlay").hidden = false;
-  lockBodyScroll();                       // the page behind the drawer must not scroll
   drawerRow = row;
+  syncScrollLock();                       // the page behind the drawer must not scroll
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
-function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; unlockBodyScroll(); }
+function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; syncScrollLock(); }
 
 // Lock the page behind a full-screen overlay. Pinning the body with position:fixed (and
 // restoring the scroll offset on release) is the one approach that also holds on iOS
 // Safari, where `overflow:hidden` on the body alone doesn't stop touch scrolling.
+// syncScrollLock() is called by every overlay on open AND close, and locks iff any
+// overlay is still up — so a cover editor closing over an open drawer keeps the lock,
+// and the re-entrant openDrawer (navigation within the drawer) never double-locks.
 let _scrollLockY = 0;
-function lockBodyScroll() {
-  if (document.documentElement.classList.contains("modal-open")) return;   // don't double-lock
-  _scrollLockY = window.scrollY || document.documentElement.scrollTop || 0;
-  document.body.style.top = `-${_scrollLockY}px`;
-  document.documentElement.classList.add("modal-open");
+function anyOverlayOpen() {
+  return !$("#overlay").hidden
+    || !$("#lightbox").hidden
+    || (typeof cmdk !== "undefined" && cmdk.open)
+    || $("#facets").classList.contains("open")
+    || !!document.querySelector(".ce-scrim")                        // cover editor
+    || (typeof shCur !== "undefined" && shCur >= 0);               // shelf 3D pull
 }
-function unlockBodyScroll() {
-  if (!document.documentElement.classList.contains("modal-open")) return;
-  document.documentElement.classList.remove("modal-open");
-  document.body.style.top = "";
-  window.scrollTo(0, _scrollLockY);
+function syncScrollLock() {
+  const on = anyOverlayOpen();
+  const locked = document.documentElement.classList.contains("modal-open");
+  if (on && !locked) {
+    _scrollLockY = window.scrollY || document.documentElement.scrollTop || 0;
+    document.body.style.top = `-${_scrollLockY}px`;
+    document.documentElement.classList.add("modal-open");
+  } else if (!on && locked) {
+    document.documentElement.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, _scrollLockY);
+  }
 }
 
 // Clicking a facet-link (in the drawer) filters that field on its sheet's tab.
@@ -3463,6 +3476,7 @@ function setCmdk(open) {
     cmdkSearch();
     $("#cmdkInput").focus();
   }
+  syncScrollLock();
 }
 $("#cmdk").addEventListener("click", () => setCmdk(true));
 $("#cmdkOverlay").addEventListener("click", (e) => { if (e.target === $("#cmdkOverlay")) setCmdk(false); });
