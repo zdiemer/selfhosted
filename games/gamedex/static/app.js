@@ -310,15 +310,16 @@ function heroStatsHtml(row) {
 function predictWhyHtml(row) {
   const p = typeof predictedCached === "function" ? predictedCached(row) : null;
   if (!p || !p.signals || !p.signals.length) return "";
-  const base = p.baseline;
+  const base = p.baseline;                       // what you'd give an ordinary game TODAY
+  const barBase = p.baselineAllTime ?? base;     // the bars are all-time group averages
   const conf = p.confidence >= 0.75 ? "high" : p.confidence >= 0.5 ? "fair" : "low";
   const pts = (v) => Math.round(v * 100);
-  const delta = (v) => pts(v) - pts(base);
+  const delta = (v) => pts(v) - pts(barBase);
 
   // What the number MEANS, in a sentence. The signals already say which way each
   // one pulls; the verdict is just the sum of them, said out loud.
-  const up = p.signals.filter((sg) => sg.value >= base);
-  const down = p.signals.filter((sg) => sg.value < base);
+  const up = p.signals.filter((sg) => sg.value >= barBase);
+  const down = p.signals.filter((sg) => sg.value < barBase);
   // The named factors MUST agree with the verdict. The verdict is the sign of the
   // overall gap (below), so lead by the same sign — not by which group is larger.
   // Picking the bigger group let a below-average prediction cite your ABOVE-average
@@ -3283,6 +3284,14 @@ function predictionPanel() {
           { label: "Just use Metacritic", value: +pts(e.maeCritic) },
           { label: "Guess your average", value: +pts(e.maeMean) },
         ], { fmt: (v) => v + " pts off" })}
+        <p class="yr-note">
+          It also knows <b>when</b> you rated something, because your standard has moved:
+          you averaged <b>${pts(m.baselineNow)}%</b> over the last few years against
+          <b>${pts(m.global)}%</b> across all ${m.n.toLocaleString()}. A game you haven't
+          played is scored on <b>today's</b> scale — what you'd make of it now, not what
+          you'd have said a decade ago. Ignoring that, the model came out
+          <b>four points too generous</b> on everything you finished since 2024.
+        </p>
       </div>
     </div>`;
 }

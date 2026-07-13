@@ -99,6 +99,22 @@ const predLength = (row) => {
   return e.hltbBest != null ? e.hltbBest : null;
 };
 
+/* WHEN you rated it, which turns out to matter more than almost anything else about the
+   game. Your standard has tightened relentlessly: you averaged 82 in 2009 and 59 in 2025.
+   A model blind to that is fitting a 17-year average of a moving target — and, worse, it
+   quietly predicts on the OLD scale. Trained on games finished before 2024 and asked about
+   the ones since, the previous model came out 4.2 points too generous, every time.
+
+   So the year is a feature. For a game you HAVE rated it's the year you rated it; for one
+   you haven't, it is now — because the question is what you'd make of it today, not what
+   2013-you would have said. */
+const NOW_YEAR = new Date().getFullYear();
+const ratedYear = (row) => {
+  const d = row.date || row.dateCompleted;
+  const y = d ? +String(d).slice(0, 4) : NaN;
+  return Number.isFinite(y) ? y : null;
+};
+
 let _model = null;
 let _multiStats = null;
 const resetTaste = () => { _model = null; _multiStats = null; PRED_CACHE = new WeakMap(); };
@@ -216,6 +232,7 @@ function fitEncoder(train) {
   const C = calib(predCritic);
   const U = calib(predPlayers);
   const lenMed = med(train.map(predLength).filter((v) => v != null));
+  const midYear = med(train.map(ratedYear).filter((v) => v != null)) || NOW_YEAR;
 
   const shrink = (sum, n) => (n < 1 ? null : (sum + PRIOR_K * global) / (n + PRIOR_K));
 
@@ -270,11 +287,25 @@ function fitEncoder(train) {
     const cc = (ENRICH[row._k] || {}).criticCount;
     xs.push(cc != null ? Math.log1p(cc) : 0);           // how reviewed = how big a release
 
+    // Your drifting standard. Three cases, and getting the middle one wrong quietly ruins
+    // the feature: a rated game with a date sits in the year you rated it; a rated game
+    // with NO date (451 of them) sits in the middle of your history, because dumping it on
+    // "today" tells the model you handed out 85s this year when you didn't; and an unplayed
+    // game sits TODAY, because the question is what you'd make of it now.
+    const ry = ratedYear(row) ?? (row.rating != null ? midYear : NOW_YEAR);
+    xs.push((ry - 2015) / 10);
+
     xs.push(1);                                          // intercept
     return xs;
   };
 
-  return { global, featurise, groupEst, single, multi, critic: C, players: U };
+  // "Your usual" is not your seventeen-year average — it is what you'd give an ordinary
+  // game NOW. The verdict ("better than your usual") is read against this, or every
+  // prediction would look like a disappointment purely because you've grown harsher.
+  const recent = train.filter((r) => (ratedYear(r) ?? 0) >= NOW_YEAR - 3).map((r) => r.rating);
+  const baselineNow = recent.length >= 30 ? avg(recent) : global;
+
+  return { global, baselineNow, featurise, groupEst, single, multi, critic: C, players: U };
 }
 
 // Fit the weights, using leave-one-out features so the model never sees its own answer.
@@ -319,6 +350,7 @@ function tasteModel() {
   return (_model = {
     ok: true,
     global: enc.global,
+    baselineNow: enc.baselineNow,
     stats: enc.single,
     multi: enc.multi,
     featurise: enc.featurise,
@@ -391,7 +423,11 @@ function predictRating(row) {
   const nSignals = have.length + (mc != null ? 1 : 0) + (pl != null ? 1 : 0) + (nTags ? 1 : 0);
   return {
     score,
-    baseline: m.global,          // your average score — the line everything is read against
+    // Two different lines, and they are not interchangeable. The VERDICT is read against
+    // what you'd give an ordinary game today; the per-signal bars are all-time group
+    // averages, so they're read against your all-time average.
+    baseline: m.baselineNow,
+    baselineAllTime: m.global,
     confidence: Math.min(1, nSignals / 5),
     signals: signals
       .sort((a, b) => Math.abs(b.value - m.global) - Math.abs(a.value - m.global))
