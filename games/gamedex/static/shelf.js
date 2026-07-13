@@ -665,14 +665,31 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     layout();
   }
 
+  // A wrap runs back|spine|front along its LONG axis, so a TALL wrap (N64/SNES, whose
+  // front and back panels are rotated 90°) has a horizontal spine — cut in rows, with
+  // horizontal guides — while a wide wrap keeps the usual vertical columns.
+  const isVertWrap = () => kind === "wrap" && img && rotDims().h > rotDims().w;
+
   function layout() {
-    const wrap = kind === "wrap";
-    gEls.forEach((g, k) => { g.hidden = !wrap; g.style.left = (k ? x2 : x1) * 100 + "%"; });
+    const wrap = kind === "wrap", vert = isVertWrap();
+    imgwrap.classList.toggle("strip-v", vert);
+    gEls.forEach((g, k) => {
+      g.hidden = !wrap;
+      g.style.top = g.style.left = "";
+      const pct = (k ? x2 : x1) * 100 + "%";
+      if (vert) g.style.top = pct; else g.style.left = pct;
+    });
     regBack.hidden = regFront.hidden = !wrap;
     if (wrap) {
-      regBack.style.width = x1 * 100 + "%";
-      regFront.style.left = x2 * 100 + "%";
-      regFront.style.width = (1 - x2) * 100 + "%";
+      for (const r of [regBack, regFront]) r.style.top = r.style.left = r.style.width = r.style.height = "";
+      if (vert) {
+        regBack.style.height = x1 * 100 + "%";
+        regFront.style.top = x2 * 100 + "%";
+      } else {
+        regBack.style.width = x1 * 100 + "%";
+        regFront.style.left = x2 * 100 + "%";
+        regFront.style.width = (1 - x2) * 100 + "%";
+      }
     }
     depthWrap.style.display = wrap ? "none" : "";             // wrap depth comes from the guides
     depthVal.textContent = depth + " mm";
@@ -702,10 +719,11 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   }
   const loadFile = (f) => loadBlob(f, { rotate: 0 });
 
-  // Drag a spine guide. Positions are fractions of the displayed image width.
-  function dragGuide(which, clientX) {
+  // Drag a spine guide. Positions are fractions along the wrap's long axis — width for a
+  // wide wrap, height for a tall one.
+  function dragGuide(which, clientX, clientY) {
     const r = imgwrap.getBoundingClientRect();
-    let f = (clientX - r.left) / r.width;
+    let f = isVertWrap() ? (clientY - r.top) / r.height : (clientX - r.left) / r.width;
     f = Math.max(0, Math.min(1, f));
     if (which === 0) x1 = Math.min(f, x2 - 0.01);
     else x2 = Math.max(f, x1 + 0.01);
@@ -714,7 +732,7 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
   gEls.forEach((g, k) => {
     g.addEventListener("pointerdown", (e) => {
       e.preventDefault(); e.stopPropagation(); g.setPointerCapture(e.pointerId);
-      const move = (ev) => dragGuide(k, ev.clientX);
+      const move = (ev) => dragGuide(k, ev.clientX, ev.clientY);
       const up = (ev) => { g.releasePointerCapture(e.pointerId);
         g.removeEventListener("pointermove", move); g.removeEventListener("pointerup", up); };
       g.addEventListener("pointermove", move); g.addEventListener("pointerup", up);
@@ -758,7 +776,11 @@ function openCoverEditor({ key, platform, title, hasUpload, caseDefault, existin
     const { w, h } = rotDims();
     const H = NOMINAL_H;
     if (kind === "front") return { w: Math.round(H * (w / h)), h: H, d: depth };
-    const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // in image pixels
+    if (h > w) {                                             // tall wrap: rows, spine is horizontal
+      const frontH = (1 - x2) * h, spineH = (x2 - x1) * h;   // front face is w × frontH (landscape)
+      return { w: Math.round(H * (w / frontH)), h: H, d: Math.max(3, Math.round(H * (spineH / frontH))) };
+    }
+    const frontW = (1 - x2) * w, spineW = (x2 - x1) * w;     // wide wrap: columns, spine is vertical
     return { w: Math.round(H * (frontW / h)), h: H, d: Math.max(3, Math.round(H * (spineW / h))) };
   }
 

@@ -432,14 +432,25 @@ class Shelf:
         if kind == "wrap":
             if x1 is None or x2 is None:              # fall back to a DVD-ish split
                 x1, x2 = 130 / 273, 144 / 273
-            px1 = round(im.width * max(0.0, min(1.0, x1)))
-            px2 = round(im.width * max(0.0, min(1.0, x2)))
-            px1, px2 = sorted((px1, px2))
-            faces = {
-                "back": im.crop((0, 0, px1, im.height)),
-                "spine": im.crop((px1, 0, px2, im.height)),
-                "front": im.crop((px2, 0, im.width, im.height)),
-            }
+            c1, c2 = sorted((max(0.0, min(1.0, x1)), max(0.0, min(1.0, x2))))
+            # back|spine|front runs along the LONG axis, so the spine is cut perpendicular
+            # to it: vertical columns for a wide wrap, horizontal rows for a tall one (a
+            # scan whose front/back panels are rotated 90° — e.g. an N64/SNES box). x1/x2
+            # are fractions along that long axis, so the same numbers work either way.
+            if im.width >= im.height:
+                p1, p2 = round(im.width * c1), round(im.width * c2)
+                faces = {
+                    "back": im.crop((0, 0, p1, im.height)),
+                    "spine": im.crop((p1, 0, p2, im.height)),
+                    "front": im.crop((p2, 0, im.width, im.height)),
+                }
+            else:
+                p1, p2 = round(im.height * c1), round(im.height * c2)
+                faces = {
+                    "back": im.crop((0, 0, im.width, p1)),
+                    "spine": im.crop((0, p1, im.width, p2)),
+                    "front": im.crop((0, p2, im.width, im.height)),
+                }
         else:
             hue = dominant_hue(im)
             spine = Image.new("RGB", (max(8, round(im.height * cd / ch)), im.height),
