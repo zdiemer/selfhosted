@@ -3474,8 +3474,13 @@ let searchTimer = null;
 $("#search").addEventListener("input", (e) => {
   const st = tabState[activeTab];
   if (!st) return;             // a special tab (Home, Stats…) has no results list to filter
+  // Beginning a search is a FRESH query — it shouldn't inherit facets you'd selected
+  // before (and then paged away from). Clear them as the search STARTS (empty → typed),
+  // not on every keystroke, so you can still add facets to narrow an active search.
+  const starting = !st.search && e.target.value;
   st.search = e.target.value;
   st.page = 1;
+  if (starting) st.facets = {};
   // Coalesce keystrokes. Filtering 14.7k rows and rebuilding every facet is
   // fast now, but not fast enough to do it between two quick keypresses.
   clearTimeout(searchTimer);
@@ -3491,9 +3496,11 @@ $("#search").addEventListener("keydown", (e) => {
   e.preventDefault();
   if (["games", "completed", "onOrder"].includes(activeTab)) { e.target.blur(); return; }
   const q = e.target.value;
+  // A fresh search from the header — start All Games clean rather than carrying whatever
+  // facets were left selected there.
+  tabState.games = { ...freshState(), view: tabState.games.view, combine: tabState.games.combine };
   tabState.games.search = q;
-  tabState.games.page = 1;
-  switchTab("games");      // no reset — keep the query we just set
+  switchTab("games");
   nav();
 });
 // closest(), not e.target: a tab now contains an <svg> and a <span>, so the click
