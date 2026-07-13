@@ -18,6 +18,7 @@ Only the mapping reaches the browser — never the credentials. The frontend get
 from __future__ import annotations
 
 import logging
+import pathlib
 import threading
 import time
 import urllib.parse
@@ -31,7 +32,8 @@ REFRESH = 900       # re-pull every 15 min: a scan adds games while we run
 
 
 class RommClient:
-    def __init__(self, base_url: str, public_url: str, username: str, password: str):
+    def __init__(self, base_url: str, public_url: str, username: str, password: str,
+                 cache_path: str = "/data/romm-map.json"):
         self.base = (base_url or "").rstrip("/")
         self.public = (public_url or "").rstrip("/")
         self.user = username
@@ -41,6 +43,38 @@ class RommClient:
         self._map: dict[str, int] = {}
         self._lock = threading.Lock()
         self._stamp = 0.0
+        self._cache = pathlib.Path(cache_path)
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        """Start from the last known map instead of from nothing.
+
+        The map lived only in memory, and a full scan of the library takes a quarter of an
+        hour — so EVERY restart left the whole library unplayable until it finished. Deploy
+        the app and the Play buttons are simply gone for fifteen minutes, which is exactly
+        what it looked like when RomM "broke". A rom id doesn't go stale in any way that
+        matters (a dead id 404s on click, and the next scan corrects it), so serving a slightly
+        old map beats serving none."""
+        try:
+            data = json.loads(self._cache.read_text())
+            roms = data.get("roms") or {}
+            if isinstance(roms, dict) and roms:
+                self._map = {k: int(v) for k, v in roms.items()}
+                self._stamp = float(data.get("updated") or 0)
+                log.info("romm: %d playable games restored from cache", len(self._map))
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log.warning("romm: cache unreadable (%s); starting empty", exc)
+
+    def _save_cache(self) -> None:
+        try:
+            self._cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"roms": self._map, "updated": self._stamp}))
+            tmp.replace(self._cache)                 # atomic: never a half-written map
+        except Exception as exc:
+            log.warning("romm: could not write cache (%s)", exc)
 
     @property
     def enabled(self) -> bool:
@@ -77,14 +111,23 @@ class RommClient:
     def refresh(self) -> int:
         """(igdb_id, platform folder) -> rom id, for every matched ROM.
 
-        The library is tens of thousands of ROMs, most of them unidentified junk
-        (loose .jpg/.json files), and RomM is often mid-scan and slow. So publish the
-        map after EVERY page rather than only at the end — a slow or hung RomM then
-        lights up whatever we've already fetched instead of nothing — and never let one
-        bad page throw away the whole result.
+        GROW, then SWAP. The library is tens of thousands of ROMs and takes many pages, and
+        this runs every 15 minutes — so the published map must never be a PARTIAL one.
+
+        It used to be. Each page did `self._map = dict(out)`, replacing the live map with
+        "everything scanned so far", which at offset 0 means a few hundred entries. So every
+        quarter of an hour the map collapsed from thousands to almost nothing and climbed
+        back, and the Play buttons vanished from the whole library while it did. If you
+        happened to load the page during a rescan, RomM looked broken.
+
+        Now each page is MERGED into the live map (which therefore only ever grows), and the
+        freshly-scanned set replaces it wholesale only once the scan has actually finished —
+        which is also what lets a deleted ROM eventually disappear. A failed page leaves the
+        old entries in place rather than dropping them.
         """
         out: dict[str, int] = {}
         offset = 0
+        complete = False
         while True:
             try:
                 page = self._get(f"/api/roms?limit={PAGE}&offset={offset}")
@@ -101,15 +144,28 @@ class RommClient:
                 # First one wins. A game can have several ROMs on one platform
                 # (regions, revisions); any of them plays.
                 out.setdefault(f"{igdb}|{plat}", rom["id"])
-            # Publish progress so the browser can light up Play buttons mid-refresh.
+            # Merge, never shrink: a slow or half-scanned RomM lights up what we have
+            # WITHOUT taking away what we already had.
             with self._lock:
-                self._map = dict(out)
+                merged = dict(self._map)
+                merged.update(out)
+                self._map = merged
                 self._stamp = time.time()
             total = page.get("total") or 0
             offset += len(items)
             if not items or offset >= total:
+                complete = True
                 break
-        log.info("romm: %d playable games mapped", len(out))
+
+        if complete:
+            # The scan finished, so this set is authoritative — swap it in, which also drops
+            # roms that have gone away. A partial scan never gets to do this.
+            with self._lock:
+                self._map = out
+                self._stamp = time.time()
+            self._save_cache()          # survive the next restart
+        log.info("romm: %d playable games mapped%s", len(out),
+                 "" if complete else " (partial scan — kept previous entries)")
         return len(out)
 
     def snapshot(self) -> dict:

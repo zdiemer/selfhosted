@@ -1586,19 +1586,30 @@ function rommHtml(row) {
      title="Play in the browser via RomM">${icon("i-play", 15)} Play now</a>`;
 }
 
-// The map arrives after the drawer may already be open; fill it in rather than
-// re-render (the same trap the enrichment map set five times over).
+// The map arrives after the drawer (or the pick) may already be on screen; fill the buttons
+// in rather than re-render (the same trap the enrichment map set five times over).
 function patchPlayButtons() {
   const body = $("#drawerBody");
-  if (!body || !drawerRow) return;
-  if (body.querySelector(".btn.play")) return;          // already there
-  const html = rommHtml(drawerRow);
-  if (!html) return;
-  let host = body.querySelector(".hero-actions");
-  if (host) { host.insertAdjacentHTML("afterbegin", html); return; }
-  // A game with no storefront at all has no actions row yet — give it one.
-  const hero = body.querySelector(".hero") || body.firstElementChild;
-  if (hero) hero.insertAdjacentHTML("beforeend", `<div class="hero-actions">${html}</div>`);
+  if (body && drawerRow && !body.querySelector(".btn.play")) {
+    const html = rommHtml(drawerRow);
+    if (html) {
+      const host = body.querySelector(".hero-actions");
+      if (host) host.insertAdjacentHTML("afterbegin", html);
+      else {
+        // A game with no storefront at all has no actions row yet — give it one.
+        const hero = body.querySelector(".hero") || body.firstElementChild;
+        if (hero) hero.insertAdjacentHTML("beforeend", `<div class="hero-actions">${html}</div>`);
+      }
+    }
+  }
+  // The Pick card is drawn before /api/romm has answered, so without this the pick you're
+  // staring at is the one game that never gets a Play button.
+  const picked = typeof pickState !== "undefined" && pickState ? pickState.picked : null;
+  const acts = document.querySelector(".pick-actions");     // lives in #picker, not #pick
+  if (picked && acts && !acts.querySelector(".btn.play")) {
+    const html = rommHtml(picked);
+    if (html) acts.insertAdjacentHTML("beforeend", html);
+  }
 }
 
 function launchHtml(row) {
@@ -3985,7 +3996,10 @@ function pickCard(row) {
   const chips = [row.platform, row.releaseYear, row.genre, row.franchise]
     .filter((x) => x != null && x !== "")
     .map((x) => `<span class="chip">${escapeHtml(String(x))}</span>`).join("");
-  const play = typeof rommHtml === "function" ? rommHtml(row) : "";
+  // launchHtml, not rommHtml: it composes BOTH — "Play now" via RomM and the storefront the
+  // copy you own actually came from. The pick is a game you're deciding whether to play right
+  // now, so the way to start playing it belongs on the card, not one click away in the drawer.
+  const play = typeof launchHtml === "function" ? launchHtml(row) : "";
 
   // Only promise a trailer when there is one.
   const hint = (ENRICH[row._k] || {}).video ? `<span class="pick-hint">Hover for the trailer</span>` : "";
