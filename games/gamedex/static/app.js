@@ -326,11 +326,13 @@ function predictWhyHtml(row) {
   // factors and claim you "rate them lower", which is exactly backwards.
   const gap = pts(p.score) - pts(base);
   const lead = gap >= 0 ? up : down;
-  /* Only things YOU rate can go in "you rate X higher". The model also feeds on
-     the critic score — kind "Critics", label "Metacritic" — and naming that here
-     produced "You rate Metacritic higher than most of what you own", which is
-     nonsense: you don't rate Metacritic, Metacritic rates the game. */
-  const taste = lead.filter((sg) => sg.kind !== "Critics");
+  /* Only things YOU rate can go in "you rate X higher" — the model also feeds on outside
+     opinions, and naming one here produced "You rate Metacritic higher than most of what
+     you own", then later "You rate User score higher". You don't rate Metacritic;
+     Metacritic rates the game. The signal itself now says whether it's your taste
+     (`taste: true`) rather than the UI guessing from its name, so the next outside source
+     can't reintroduce this a third time. */
+  const taste = lead.filter((sg) => sg.taste);
   const names = taste.slice(0, 2).map((sg) => sg.label).filter(Boolean);
   const critic = p.signals.find((sg) => sg.kind === "Critics");
 
@@ -354,12 +356,11 @@ function predictWhyHtml(row) {
 
   const rows = p.signals.map((sg) => {
     const d = delta(sg.value);
-    // The critic score isn't a thing you've rated, so it doesn't get "N rated" and
-    // it says who's doing the rating.
-    const isCritic = sg.kind === "Critics";
-    const label = isCritic
-      ? `Critics <span>· ${escapeHtml(sg.label)} gave it ${pts(sg.value)}</span>`
-      : `${escapeHtml(sg.label)}${sg.n ? ` <span>· ${sg.n} rated</span>` : ""}`;
+    // An outside opinion isn't a thing you've rated, so it doesn't get "N rated" — it
+    // says who was doing the rating instead.
+    const label = sg.taste
+      ? `${escapeHtml(sg.label)}${sg.n ? ` <span>· ${sg.n} rated</span>` : ""}`
+      : `${escapeHtml(sg.kind)} <span>· ${escapeHtml(sg.label)} gave it ${pts(sg.value)}</span>`;
     return `<div class="vd-r">
       <span class="vd-t">${label}</span>
       <span class="vd-d ${d >= 0 ? "up" : "dn"}">${d >= 0 ? "+" : "−"}${Math.abs(d)} vs your average</span>

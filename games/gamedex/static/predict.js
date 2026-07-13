@@ -396,11 +396,19 @@ function predictRating(row) {
     franchise: "Series", developer: "Developer", publisher: "Publisher",
     genre: "Genre", platform: "Platform",
   };
+  /* `taste` marks the signals that are things YOU have scored — the only ones that can
+     honestly appear in "you rate X higher than most of what you own".
+
+     This is a flag rather than the UI excluding kinds by name, because excluding by name
+     has now broken twice: the sentence claimed "you rate Metacritic higher", and when the
+     player score arrived it went straight back to claiming "you rate User score higher".
+     You don't rate Metacritic; Metacritic rates the game. A blacklist has to be updated
+     every time a new outside opinion is added, and it won't be. */
   for (const f of have) {
     const e = m.stats[f].get(row[f]);
     if (e.n < 2 || said.has(pnorm(row[f]))) continue;
     said.add(pnorm(row[f]));
-    signals.push({ kind: KIND[f], label: String(row[f]), value: e.sum / e.n, n: e.n });
+    signals.push({ kind: KIND[f], label: String(row[f]), value: e.sum / e.n, n: e.n, taste: true });
   }
   // The IGDB tags — the genres and themes the sheet's single-word column never named, and
   // now a real part of the number, so they belong in the working too.
@@ -409,16 +417,21 @@ function predictRating(row) {
       const e = m.multi[f].get(pnorm(raw));
       if (!e || e.n < 5 || said.has(pnorm(raw))) continue;
       said.add(pnorm(raw));
-      signals.push({ kind, label: String(raw), value: e.sum / e.n, n: e.n });
+      signals.push({ kind, label: String(raw), value: e.sum / e.n, n: e.n, taste: true });
     }
   }
   if (mc != null) {
     // Name the source that actually answered — the score may be Metacritic, IGDB's critic
     // aggregate, or the GameRankings archive, and calling all three "Metacritic" lies.
     const cs = typeof criticSourceOf === "function" ? criticSourceOf(row) : null;
-    signals.push({ kind: "Critics", label: (cs && cs.label) || "Critics", value: mc, n: null });
+    signals.push({ kind: "Critics", label: (cs && cs.label) || "Critics", value: mc, n: null, taste: false });
   }
-  if (pl != null) signals.push({ kind: "Players", label: "Player score", value: pl, n: null });
+  if (pl != null) {
+    // Same courtesy: say who the players actually are.
+    const e = ENRICH[row._k] || {};
+    const src = e.userRating != null ? "IGDB players" : e.vnRating != null ? "VNDB" : "GameFAQs";
+    signals.push({ kind: "Players", label: src, value: pl, n: null, taste: false });
+  }
 
   const nSignals = have.length + (mc != null ? 1 : 0) + (pl != null ? 1 : 0) + (nTags ? 1 : 0);
   return {

@@ -2539,7 +2539,29 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .lb-nav { width: 42px; height: 56px; font-size: 24px; }
   .lb-prev { left: 6px; }
   .lb-next { right: 6px; }
-  .pick-card { flex-direction: column; align-items: center; text-align: center; }
+  /* Stacked, but STRETCHED. `align-items: center` on a column flex sizes children to their
+     content on the cross axis instead of to the container — so the info column grew as wide
+     as its widest line and pushed out of the card, and everything inside it (the stats, the
+     prediction panel) was laid out against a width nobody asked for. */
+  .pick-card { flex-direction: column; align-items: stretch; text-align: center; }
+  .pick-art { align-self: center; width: min(218px, 58vw); }
+  .pick-info { width: 100%; min-width: 0; }
+  .pick-chips, .pick-actions { justify-content: center; }
+
+  /* The verdict was three things across a 390px screen — the score, the sentence, and the
+     confidence chip — which left the sentence about 100px wide and eight lines tall. Score
+     and chip share the top line; the sentence gets the full width underneath, where it can
+     be read. */
+  .vd { text-align: left; padding: 16px; }
+  .vd-top { flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+  .vd-num { flex: 0 0 auto; }
+  .vd-conf { margin-left: auto; }
+  .vd-side { flex: 1 1 100%; order: 3; padding-top: 0; }
+  /* At this width the single-line ellipsis ate the labels themselves — "Players · GameFAQs
+     g…", "Role-playing (RPG) · 3…". Let them wrap; a two-line label beats a truncated one. */
+  .vd-r { align-items: center; gap: 10px; }
+  .vd-t { white-space: normal; overflow: visible; text-overflow: clip; }
+
   .stats, .picker { padding: 16px 12px; }
 }
 
