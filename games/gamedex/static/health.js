@@ -12,7 +12,8 @@
 
    Loaded after app.js; shares its globals (DATA, ENRICH, openDrawer, …). */
 
-const healthState = { open: null };
+// `page` is per check, so opening a different one doesn't drop you on page 4 of it.
+const healthState = { open: null, page: {} };
 
 const hzGames = () => ((DATA.sheets.games || {}).rows || []).filter((r) => r.title);
 const hzDone = () => ((DATA.sheets.completed || {}).rows || []);
@@ -359,7 +360,24 @@ function healthRowHtml(check, r, i) {
   </button>`;
 }
 
-const HZ_SHOWN = 40;
+const HZ_SHOWN = 40;      // rows per page
+
+/* The list used to stop dead at 40 with "Showing the first 40 of 153" and no way to reach
+   the other 113 — which is useless precisely when a check finds a lot, i.e. when you sit
+   down to work through them. Paged now, and the page is remembered per check: fix a mapping,
+   come back, and you're still on the page you were on rather than back at the top. */
+function healthPager(id, total, page) {
+  const pages = Math.ceil(total / HZ_SHOWN);
+  if (pages <= 1) return "";
+  const from = page * HZ_SHOWN + 1;
+  const to = Math.min(total, (page + 1) * HZ_SHOWN);
+  return `<div class="hz-pager">
+    <button class="hz-pg" data-hp="${id}" data-hpn="${page - 1}" ${page === 0 ? "disabled" : ""}>‹ Prev</button>
+    <span class="hz-pg-n">${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}
+      <span class="muted">· page ${page + 1} of ${pages}</span></span>
+    <button class="hz-pg" data-hp="${id}" data-hpn="${page + 1}" ${page >= pages - 1 ? "disabled" : ""}>Next ›</button>
+  </div>`;
+}
 
 function renderHealth() {
   const host = $("#health");
@@ -391,18 +409,43 @@ function renderHealth() {
           <span class="hz-count">${rows.length ? rows.length.toLocaleString() : "✓ clean"}</span>
           <span class="hz-caret">${open ? "▾" : "▸"}</span>
         </button>
-        ${open ? `<div class="hz-body">
-          <p class="hz-why">${escapeHtml(c.why)}</p>
-          <div class="hz-rows">${rows.slice(0, HZ_SHOWN).map((r, i) => healthRowHtml(c, r, i)).join("")}</div>
-          ${rows.length > HZ_SHOWN ? `<p class="hz-more">Showing the first ${HZ_SHOWN} of ${rows.length.toLocaleString()}.</p>` : ""}
-        </div>` : ""}
+        ${open ? (() => {
+          // Clamp: the row count shrinks as you fix things, and page 4 of a check that now
+          // has two pages must not render an empty list.
+          const pages = Math.max(1, Math.ceil(rows.length / HZ_SHOWN));
+          const page = Math.min(healthState.page[c.id] || 0, pages - 1);
+          healthState.page[c.id] = page;
+          const start = page * HZ_SHOWN;
+          return `<div class="hz-body">
+            <p class="hz-why">${escapeHtml(c.why)}</p>
+            <div class="hz-rows">${rows.slice(start, start + HZ_SHOWN)
+              // The index must be ABSOLUTE — the click handler looks the row up in the full
+              // list, so a page-relative one would open the wrong game from page two on.
+              .map((r, i) => healthRowHtml(c, r, start + i)).join("")}</div>
+            ${healthPager(c.id, rows.length, page)}
+          </div>`;
+        })() : ""}
       </section>`;
     }).join("") + `</div>`;
 
   host.querySelectorAll("[data-toggle]").forEach((el) => {
     el.onclick = () => {
-      healthState.open = healthState.open === el.dataset.toggle ? null : el.dataset.toggle;
+      const id = el.dataset.toggle;
+      const wasOpen = healthState.open === id;
+      healthState.open = wasOpen ? null : id;
+      if (!wasOpen) healthState.page[id] = 0;      // a fresh open starts at the top
       renderHealth();
+    };
+  });
+  host.querySelectorAll("[data-hp]").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      healthState.page[el.dataset.hp] = Math.max(0, +el.dataset.hpn);
+      renderHealth();
+      // Keep the check you're paging through under the cursor, rather than leaving you
+      // halfway down a list that just changed under you.
+      const sec = host.querySelector(".hz-check.open");
+      if (sec) sec.scrollIntoView({ block: "nearest" });
     };
   });
   host.querySelectorAll("[data-hc]").forEach((el) => {
