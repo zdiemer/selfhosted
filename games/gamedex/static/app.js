@@ -1081,7 +1081,25 @@ const GENRE_ALIAS = {
   "indie": "Indie", "moba": "MOBA", "tactical": "Tactical",
   "action": "Action", "compilation": "Compilation",
 };
-const canonGenre = (raw) => GENRE_ALIAS[String(raw).toLowerCase().trim()] || raw;
+// Normalise for comparison: case, curly vs straight apostrophes, whitespace. Collapses
+// "Beat 'Em Up"/"Beat 'em Up" and matches the (lowercase) alias keys.
+const _ngCache = new Map();
+function normGenre(s) {
+  s = String(s || "");
+  let v = _ngCache.get(s);
+  if (v !== undefined) return v;
+  v = s.toLowerCase().replace(/[’‘`]/g, "'").replace(/\s+/g, " ").trim();
+  _ngCache.set(s, v);
+  return v;
+}
+// raw -> canonical label: alias to the umbrella/sheet term, then collapse to your
+// sheet's exact spelling for that genre (the sheet is internally consistent, so it is
+// the single source of truth for casing).
+function canonGenre(raw) {
+  const key = normGenre(raw);
+  const base = GENRE_ALIAS[key] || String(raw);
+  return unifyVocab().gen[normGenre(base)] || base;
+}
 // Broad umbrellas a genre belongs to, so IGDB "Platform" and sheet "3D Platformer"
 // both file under "Platformer". Only the four families you flagged.
 function genreUmbrellas(v) {
@@ -1097,16 +1115,17 @@ function genreUmbrellas(v) {
 let _vocab = null, _vocabFor = null;
 function unifyVocab() {
   if (_vocabFor === DATA && _vocab) return _vocab;
-  const dev = {}, pub = {}, fran = {};
+  const dev = {}, pub = {}, fran = {}, gen = {};
   const put = (map, val, norm) => { const k = norm(val); if (k && !(k in map)) map[k] = String(val); };
   for (const key of ["games", "completed"]) {
     for (const r of ((DATA.sheets[key] || {}).rows || [])) {
       if (r.developer) put(dev, r.developer, normCompany);
       if (r.publisher) put(pub, r.publisher, normCompany);
       if (r.franchise) put(fran, r.franchise, normFranchise);
+      if (r.genre) put(gen, r.genre, normGenre);
     }
   }
-  _vocab = { dev, pub, fran }; _vocabFor = DATA;
+  _vocab = { dev, pub, fran, gen }; _vocabFor = DATA;
   return _vocab;
 }
 
@@ -1121,7 +1140,11 @@ function unifiedGenreVals(row) {
   };
   if (row.genre) add(row.genre);
   const e = ENRICH[row._k];
-  if (e && e.genres) for (const g of e.genres) add(g);
+  // Only IGDB's clean genre vocabulary. A fallback match (IGN/Steam/LaunchBox) fills
+  // `genres` with free text — perspectives ("First-Person"), format tags ("Remaster"),
+  // inconsistent casing ("Beat 'Em Up") — that pollutes the facet and only ever tags the
+  // few games IGDB couldn't match. The sheet genre still covers those.
+  if (e && e.igdbId && e.genres) for (const g of e.genres) add(g);
   return [...out];
 }
 function unifiedCompanyVals(sheetVal, igdbArr, map) {
