@@ -1774,6 +1774,9 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
   background: var(--surface-2); border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center; font-size: 17px;
 }
+/* A group's aggregates: the stat strip in its header, and a one-line version on the card. */
+.fr-stats { margin: 18px 0 4px; }
+.fr-mini { font-size: 11px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .fr-body b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fr-body .muted { font-size: 11.5px; }

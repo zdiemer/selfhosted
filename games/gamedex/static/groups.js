@@ -53,6 +53,7 @@ function groupIndex(kind) {
     }
   }
   const out = [];
+  const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
   for (const [name, games] of m) {
     // Release order is how any of these is meant to be read.
     games.sort((a, b) => String(a.releaseDate || a.releaseYear || "").localeCompare(
@@ -62,7 +63,31 @@ function groupIndex(kind) {
     // What to play next: the earliest unfinished game you can actually play.
     const next = games.find((x) => !x.completed && (typeof isCandidate === "function" ? isCandidate(x) : x.owned))
       || games.find((x) => !x.completed);
-    out.push({ name, games, done, owned, next, pct: games.length ? done / games.length : 0 });
+
+    /* What a group is actually WORTH knowing, aggregated over its members: how you rate
+       it against the critics, the hours it has already taken and the hours still in it,
+       what you spent, and the span it covers. All null-safe — a group where nothing is
+       rated simply doesn't show a rating. */
+    const rated = games.map((x) => x.rating).filter((v) => v != null);
+    const crits = games.map((x) => (typeof criticOf === "function" ? criticOf(x) : null))
+      .filter((v) => v != null);
+    const played = games.reduce(
+      (s, x) => s + (x.completed && x.completionTime ? +x.completionTime : 0), 0);
+    const left = games.filter((x) => !x.completed).reduce((s, x) => {
+      const t = typeof playtimeOf === "function" ? playtimeOf(x) : null;
+      return s + (t != null ? t : 0);
+    }, 0);
+    const spent = games.reduce((s, x) => s + (x.purchasePrice ? +x.purchasePrice : 0), 0);
+    const yrs = games.map((x) => +x.releaseYear).filter((y) => y > 1900);
+
+    out.push({
+      name, games, done, owned, next, pct: games.length ? done / games.length : 0,
+      avgRating: mean(rated), nRated: rated.length,
+      avgCritic: mean(crits),
+      played, left, spent,
+      y0: yrs.length ? Math.min(...yrs) : null,
+      y1: yrs.length ? Math.max(...yrs) : null,
+    });
   }
   return (_grIndex[kind] = out);
 }
@@ -75,7 +100,38 @@ const GROUP_SORTS = {
   done: { label: "Most finished", cmp: (a, b) => b.done - a.done },
   name: { label: "A–Z", cmp: (a, b) => a.name.localeCompare(b.name) },
   untouched: { label: "Never started", cmp: (a, b) => (a.pct - b.pct) || (b.games.length - a.games.length) },
+  // Now that a group carries its own numbers, they're worth sorting on: which studio do
+  // I actually rate highest, which series has eaten the most of my life.
+  rating: { label: "Best rated", cmp: (a, b) => (b.avgRating ?? -1) - (a.avgRating ?? -1) },
+  played: { label: "Most played", cmp: (a, b) => (b.played || 0) - (a.played || 0) },
 };
+
+// ---- aggregates ----------------------------------------------------------
+
+// The group's numbers, as the same stat strip the game drawer uses.
+function groupStatsHtml(s) {
+  const pct = (v) => String(Math.round(v * 100));
+  const cells = [];
+  if (s.avgRating != null) cells.push([pct(s.avgRating), `Your rating · ${s.nRated} rated`, ratingClass(s.avgRating)]);
+  if (s.avgCritic != null) cells.push([pct(s.avgCritic), "Critics", ratingClass(s.avgCritic)]);
+  if (s.played > 0) cells.push([fmtHours(s.played), "You've played", ""]);
+  if (s.left > 0) cells.push([fmtHours(s.left), "Left to beat", ""]);
+  if (s.spent > 0) cells.push(["$" + Math.round(s.spent), "Spent", ""]);
+  if (s.y0) cells.push([s.y0 === s.y1 ? String(s.y0) : `${s.y0}–${s.y1}`, "Span", ""]);
+  if (!cells.length) return "";
+  return `<div class="hero-stats fr-stats">` + cells.map(([v, l, cls]) =>
+    `<div class="hero-stat"><b class="${cls}">${escapeHtml(String(v))}</b><span>${escapeHtml(l)}</span></div>`
+  ).join("") + `</div>`;
+}
+
+// One line of it for the index card — the two that tell you most at a glance.
+function groupCardStats(s) {
+  const bits = [];
+  if (s.avgRating != null) bits.push(`<span class="${ratingClass(s.avgRating)}">${Math.round(s.avgRating * 100)}%</span> avg`);
+  if (s.played > 0) bits.push(`${fmtHours(s.played)} played`);
+  else if (s.left > 0) bits.push(`${fmtHours(s.left)} left`);
+  return bits.length ? `<span class="muted fr-mini">${bits.join(" · ")}</span>` : "";
+}
 
 // ---- cards ---------------------------------------------------------------
 
@@ -89,6 +145,7 @@ function groupCardHtml(s) {
     <span class="fr-body">
       <b>${escapeHtml(s.name)}</b>
       <span class="muted">${s.done} of ${s.games.length} finished${s.owned ? ` · ${s.owned} owned` : ""}</span>
+      ${groupCardStats(s)}
       <span class="ch-bar"><span style="width:${(s.pct * 100).toFixed(1)}%"></span></span>
     </span>
     ${complete ? `<span class="fr-done">✓</span>` : ""}
@@ -140,6 +197,7 @@ function renderGroups() {
           </div>
           ${typeof chRing === "function" ? chRing(s.pct, 84) : ""}
         </div>
+        ${groupStatsHtml(s)}
         ${s.next ? `<div class="fr-next">
           <span class="h-eyebrow">Play next</span>
           ${groupGameRow(s.next, s.games.indexOf(s.next))}
