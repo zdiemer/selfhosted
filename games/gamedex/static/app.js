@@ -2157,17 +2157,27 @@ const ytSrc = (id, opts = {}) => {
 // Watch a player: onPlay() the moment it truly starts, onFail() if it never does
 // within YT_TIMEOUT.
 function ytWatch(frame, onFail, onPlay) {
-  let done = false;
+  let alive = false, played = false;
   const onMsg = (e) => {
     if (!/youtube(-nocookie)?\.com$/.test(new URL(e.origin).hostname.replace(/^www\./, ""))) return;
     if (e.source !== frame.contentWindow) return;
     let d;
     try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (_) { return; }
-    const state = d && d.info && d.info.playerState;
-    if (state === 1 || state === 3) {      // playing / buffering: it's alive
-      done = true;
+    const state = d && d.info && d.info.playerState;   // 1 playing, 2 paused, 3 buffering
+    if (state === 1 || state === 3) {      // playing OR buffering: it's alive, not a wall
+      alive = true;
       ytFailures = 0;
-      cleanup();
+      clearTimeout(timer);                 // real player: call off the bot-wall watchdog
+    }
+    // Reveal ONLY on state 1. BUFFERING is not "started": while the player boots it
+    // draws its own chrome — the big centred pause/play bezel — and a cross-origin
+    // iframe can't be styled, and scaling can't crop something that stays centred. So
+    // revealing on 3 (as we used to) is precisely what flashed the pause button for a
+    // second or two. Keep the box art up until there are real frames on screen.
+    if (state === 1 && !played) {
+      played = true;
+      window.removeEventListener("message", onMsg);
+      clearInterval(poke);
       if (onPlay) onPlay();
     }
   };
@@ -2186,8 +2196,10 @@ function ytWatch(frame, onFail, onPlay) {
   }, 400);
 
   const timer = setTimeout(() => {
+    // A player that reached buffering is real — it may just be slow. Keep listening for
+    // PLAYING (hover-out tears this down anyway) rather than counting a failure.
+    if (alive) { clearInterval(poke); return; }
     cleanup();
-    if (done) return;
     // Enough consecutive strikes and we stop asking: if YouTube is walling this
     // client, every further embed is just another wall. But a single dead embed
     // is NOT that — IGDB's video ids go stale (deleted trailers, embedding turned
@@ -2269,7 +2281,9 @@ function startPreview(card) {
   // iframe — so simply don't show it. If the embed never plays, the art stays.
   previewWatch = ytWatch(frame,
     () => { if (previewCard === card) stopPreview(); },
-    () => { if (previewCard === card) card.classList.add("playing"); });
+    // PLAYING has fired, but YouTube's bezel animation is still fading out over its
+    // first frames. Let it finish before we cross-fade, or the tail of it rides in.
+    () => setTimeout(() => { if (previewCard === card) card.classList.add("playing"); }, 300));
 }
 
 // Any surface that renders a .card can opt in: it just has to tell us which row
