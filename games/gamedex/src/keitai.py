@@ -14,6 +14,7 @@ is looked up exactly once (the enrichment cache never re-asks).
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import urllib.parse
@@ -38,16 +39,16 @@ PLATFORMS = {
 }
 
 
-def _fields(wikitext: str) -> dict:
-    """Pull the {{Game|...}} infobox out of a page as a dict.
+def _infobox_span(wikitext: str) -> tuple[int, int]:
+    """(start, end) of the whole {{Game}} template, brace-balanced.
 
-    Fields are NOT one-per-line — the wiki writes `|Caption=© SEGA|Developer = SEGA` on a
-    single line — so split on the pipes that sit at depth 0, outside any nested template
-    ({{...}}) or link ([[...]]).
+    Balancing matters: the infobox nests templates ({{I-mode}}) and links, so scanning for
+    the first '}}' stops INSIDE it — which is how the lead-paragraph reader ended up
+    quoting '|Release Dates=...|Website=...' back at you as the summary.
     """
     i = wikitext.find("{{Game")
     if i < 0:
-        return {}
+        return -1, -1
     depth, j = 0, i
     while j < len(wikitext):
         if wikitext.startswith("{{", j) or wikitext.startswith("[[", j):
@@ -58,9 +59,22 @@ def _fields(wikitext: str) -> dict:
             depth -= 1
             j += 2
             if depth == 0:
-                break
+                return i, j
             continue
         j += 1
+    return i, len(wikitext)
+
+
+def _fields(wikitext: str) -> dict:
+    """Pull the {{Game|...}} infobox out of a page as a dict.
+
+    Fields are NOT one-per-line — the wiki writes `|Caption=© SEGA|Developer = SEGA` on a
+    single line — so split on the pipes that sit at depth 0, outside any nested template
+    ({{...}}) or link ([[...]]).
+    """
+    i, j = _infobox_span(wikitext)
+    if i < 0:
+        return {}
     body = wikitext[i + len("{{Game"):j - 2]
 
     parts, buf, depth = [], [], 0
@@ -85,16 +99,40 @@ def _fields(wikitext: str) -> dict:
     return out
 
 
+def _nihongo(m: re.Match) -> str:
+    """{{nihongo|English|日本語|romaji}} -> 'English (日本語)'. Positional args only; the
+    template also takes named extras (|lead=yes) that aren't part of the name."""
+    args = [a.strip() for a in m.group(1).split("|") if "=" not in a]
+    args = [a.replace("'''", "").replace("''", "").strip() for a in args]
+    args = [a for a in args if a]
+    if not args:
+        return " "
+    return f"{args[0]} ({args[1]})" if len(args) > 1 else args[0]
+
+
 def _clean(v: str) -> str:
-    """Wikitext → plain text: strip links, refs, templates, markup."""
+    """Wikitext → plain prose. Nothing wiki-shaped should reach the reader."""
     if not v:
         return ""
-    v = re.sub(r"\[\[[^\]|]*\|([^\]]*)\]\]", r"\1", v)   # [[target|label]] -> label
-    v = re.sub(r"\[\[([^\]]*)\]\]", r"\1", v)            # [[page]] -> page
-    v = re.sub(r"\[https?://\S+\s+([^\]]*)\]", r"\1", v)  # [url label] -> label
-    v = re.sub(r"\{\{[^}]*\}\}", " ", v)                 # {{template}}
-    v = re.sub(r"<[^>]+>", " ", v)                       # <br>, <ref>
-    v = v.replace("'''", "").replace("''", "")
+    v = re.sub(r"<!--.*?-->", " ", v, flags=re.S)               # comments
+    v = re.sub(r"<ref[^>]*>.*?</ref>", " ", v, flags=re.S)      # footnotes, content and all
+    v = re.sub(r"<ref[^>]*/>", " ", v)
+    v = re.sub(r"<gallery.*?</gallery>", " ", v, flags=re.S)    # image galleries
+    v = re.sub(r"\[\[(?:File|Image):[^\]]*\]\]", " ", v, flags=re.I)   # embedded images
+    v = re.sub(r"\[\[[^\]|]*\|([^\]]*)\]\]", r"\1", v)          # [[target|label]] -> label
+    v = re.sub(r"\[\[([^\]]*)\]\]", r"\1", v)                   # [[page]] -> page
+    v = re.sub(r"\[https?://\S+\s+([^\]]*)\]", r"\1", v)        # [url label] -> label
+    v = re.sub(r"\[https?://\S+\]", " ", v)                     # bare [url]
+    # {{nihongo|Contra|魂斗羅|Kontora}} carries the TITLE of the game. Dropping it with the
+    # other templates decapitates the lead sentence ("is a port of the original game...").
+    v = re.sub(r"\{\{\s*nihongo\s*\|([^{}]*)\}\}", _nihongo, v, flags=re.I)
+    v = re.sub(r"\{\{\s*lang\s*\|[^|{}]*\|([^{}|]*)\}\}", r"\1", v, flags=re.I)
+    v = re.sub(r"\{\{[^{}]*\}\}", " ", v)                       # any other {{template}}
+    v = re.sub(r"^[*#:;]+", "", v, flags=re.M)                  # list/indent markers
+    v = re.sub(r"<[^>]+>", " ", v)                              # <br>, <i>, stray html
+    v = v.replace("'''", "").replace("''", "")                  # bold / italic
+    v = html.unescape(v)                                        # &amp; &nbsp; &#160;
+    v = v.replace(" ", " ")
     return re.sub(r"\s+", " ", v).strip()
 
 
@@ -135,10 +173,15 @@ class KeitaiClient:
         res = self._api(action="query", list="search", srsearch=title, srlimit=5)
         return [h["title"] for h in res.get("query", {}).get("search", [])]
 
-    def _wikitext(self, page: str) -> str:
+    def _page(self, page: str) -> tuple[str, str]:
+        """(real title, wikitext), FOLLOWING redirects — a lot of the titles we search for
+        are redirect stubs ('GUNDAM U.C.0079' -> 'MOBILE SUIT GUNDAM U.C.0079', 'Devil May
+        Cry: Dante x Vergil' -> the same with a × sign). Fetch the stub and you get no
+        infobox and skip a game the wiki actually has."""
+        res = self._api(action="parse", page=page, prop="wikitext", redirects=1).get("parse", {})
+        wt = res.get("wikitext")
         # formatversion=2 hands back a plain string; the legacy format wraps it in {"*":…}.
-        wt = self._api(action="parse", page=page, prop="wikitext").get("parse", {}).get("wikitext")
-        return (wt.get("*") if isinstance(wt, dict) else wt) or ""
+        return res.get("title") or page, ((wt.get("*") if isinstance(wt, dict) else wt) or "")
 
     def _image_url(self, filename: str) -> str | None:
         """The title screen. The infobox gives a bare filename; ask for its real URL."""
@@ -156,17 +199,24 @@ class KeitaiClient:
         return None
 
     def _summary(self, wikitext: str) -> str | None:
-        """The lead paragraph — the prose after the infobox, before the first heading."""
-        body = wikitext
-        i = body.find("}}")
-        if i >= 0:
-            body = body[i + 2:]
-        body = re.split(r"\n==", body)[0]
-        for para in body.split("\n"):
+        """The lead section as plain prose: everything after the infobox, up to the first
+        heading. Skip the infobox by its balanced end, not by the first '}}' — a nested
+        {{I-mode}} closes first and the remaining infobox fields read as sentences."""
+        _, end = _infobox_span(wikitext)
+        body = wikitext[end:] if end > 0 else wikitext
+        body = re.split(r"\n\s*={2,}", body)[0]          # stop at the first == Heading ==
+
+        paras = []
+        for para in re.split(r"\n\s*\n", body):
             txt = _clean(para)
-            if len(txt) > 40:
-                return txt[:600]
-        return None
+            if len(txt) < 40 or txt.startswith("Category:"):
+                continue
+            paras.append(txt)
+            if sum(len(p) for p in paras) > 400:
+                break
+        if not paras:
+            return None
+        return " ".join(paras)[:800].strip()
 
     def _record(self, page: str, f: dict, wikitext: str, score: int) -> dict:
         years = re.findall(r"\b(19\d{2}|20\d{2})\b", _clean(f.get("release dates", "")))
@@ -186,15 +236,31 @@ class KeitaiClient:
             "confidence": score,
         }
 
+    def override_from_url(self, title: str, url: str):
+        """Manual mapping: take the page straight from a pasted Keitai Wiki URL.
+
+        No validation — you chose this page, so the score is a full manual 15. This is how
+        the titles the search can't reach get mapped: the wiki files them under a name the
+        sheet doesn't use ('Sonic no Daifūgō' is 'Sonic Daifugo', 'Gundam U.C.0079' is
+        'MOBILE SUIT GUNDAM U.C.0079')."""
+        m = re.search(r"keitaiwiki\.com/wiki/([^?#]+)", url.strip())
+        if not m:
+            return None
+        page = urllib.parse.unquote(m.group(1)).replace("_", " ")
+        page, wt = self._page(page)                       # follows redirects
+        if not wt:
+            return None
+        return self._record(page, _fields(wt), wt, 15)
+
     def match(self, game: ExcelGame):
         """First candidate the validator accepts. Platform is never compared — the wiki
         talks about 'i-mode' where the sheet says 'DoJa' — so the score rests on the
         title, the year, and the publisher/developer, exactly as the IGN source does."""
-        for page in self._search(game.title):
+        for hit in self._search(game.title):
             try:
-                wt = self._wikitext(page)
+                page, wt = self._page(hit)                 # follows redirects
             except Exception as exc:
-                log.warning("keitai: %r page fetch failed: %s", page, exc)
+                log.warning("keitai: %r page fetch failed: %s", hit, exc)
                 continue
             if "[[Category:Games]]" not in wt and "{{Game" not in wt:
                 continue                                   # a company/console page, not a game

@@ -386,7 +386,7 @@ class Override(BaseModel):
 
 # IGN/GameSpot/Steam supply the *primary* metadata record, so mapping them
 # writes to the same slot as IGDB.
-_PRIMARY_FALLBACKS = ("ign", "steam", "gamespot", "launchbox")
+_PRIMARY_FALLBACKS = ("ign", "steam", "gamespot", "launchbox", "keitai")
 
 
 @app.post("/api/enrichment/override")

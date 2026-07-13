@@ -261,7 +261,7 @@ function detailHtml(d) {
   const tags = chips(genreChips, "genre") + chips(d.themes, "__igdb_theme")
     + chips(d.gameModes, "__igdb_mode");
   return (badge ? `<div class="badges">${badge}</div>` : "") +
-    (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
+    (text ? `<div class="detail-row notes"><div class="k">Summary (${escapeHtml(d.source || "IGDB")})</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
     (tags ? `<div class="detail-row notes tag-row"><div class="k">Tags</div><div class="v">${tags}</div></div>` : "") +
     meta.join("") + shots + simHtml +
     igdbAttr(d);
@@ -430,6 +430,7 @@ function mapControlHtml(key) {
     steam: primary === "steam" ? d.url || "" : "",
     ign: primary === "ign" ? d.url || "" : "",
     launchbox: primary === "launchbox" ? d.url || "" : "",
+    keitai: primary === "keitai wiki" ? d.url || "" : "",
     hltb: (HLTBC[key] || {}).url || "",
     metacritic: (MCC[key] || {}).url || "",
     gameye: (GEC[key] || {}).url || "",
@@ -446,6 +447,9 @@ function mapControlHtml(key) {
     { id: "steam", label: "Metadata — Steam", ph: "Steam store URL (…/app/<id>/)" },
     { id: "ign", label: "Metadata — IGN", ph: "IGN game URL" },
     { id: "launchbox", label: "Metadata — LaunchBox", ph: "LaunchBox game URL" },
+    // The only source that knows the Japanese feature phones, so it's the one you reach
+    // for when a DoJa game's title on the wiki isn't the title in the sheet.
+    { id: "keitai", label: "Metadata — Keitai Wiki", ph: "keitaiwiki.com/wiki/<page>" },
   ];
   if (ENRICH_SOURCES.includes("hltb")) rows.push({ id: "hltb", label: "HowLongToBeat", ph: "HLTB game URL" });
   if (ENRICH_SOURCES.includes("metacritic")) rows.push({ id: "metacritic", label: "Metacritic", ph: "Metacritic game URL" });
