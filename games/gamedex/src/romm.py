@@ -75,28 +75,40 @@ class RommClient:
 
     # -- the mapping --------------------------------------------------------
     def refresh(self) -> int:
-        """(igdb_id, platform folder) -> rom id, for every matched ROM."""
+        """(igdb_id, platform folder) -> rom id, for every matched ROM.
+
+        The library is tens of thousands of ROMs, most of them unidentified junk
+        (loose .jpg/.json files), and RomM is often mid-scan and slow. So publish the
+        map after EVERY page rather than only at the end — a slow or hung RomM then
+        lights up whatever we've already fetched instead of nothing — and never let one
+        bad page throw away the whole result.
+        """
         out: dict[str, int] = {}
         offset = 0
         while True:
-            page = self._get(f"/api/roms?limit={PAGE}&offset={offset}")
+            try:
+                page = self._get(f"/api/roms?limit={PAGE}&offset={offset}")
+            except Exception as e:
+                log.warning("romm: page at offset %d failed (%s); keeping %d so far",
+                            offset, e, len(out))
+                break
             items = page.get("items") or []
             for rom in items:
                 igdb = rom.get("igdb_id")
                 plat = rom.get("platform_fs_slug")
                 if not igdb or not plat:
                     continue          # unmatched ROM: nothing to join on
-                key = f"{igdb}|{plat}"
                 # First one wins. A game can have several ROMs on one platform
                 # (regions, revisions); any of them plays.
-                out.setdefault(key, rom["id"])
+                out.setdefault(f"{igdb}|{plat}", rom["id"])
+            # Publish progress so the browser can light up Play buttons mid-refresh.
+            with self._lock:
+                self._map = dict(out)
+                self._stamp = time.time()
             total = page.get("total") or 0
             offset += len(items)
             if not items or offset >= total:
                 break
-        with self._lock:
-            self._map = out
-            self._stamp = time.time()
         log.info("romm: %d playable games mapped", len(out))
         return len(out)
 

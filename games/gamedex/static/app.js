@@ -154,7 +154,7 @@ async function postEnrich(keys) {
     let changed = false;
     for (const [k, v] of Object.entries(j.items || {})) { ENRICH[k] = v; changed = true; }
     updateEnrichStatus(j.stats);
-    if (changed) patchEnrichedCells();                      // in-place: no flicker
+    if (changed) { _enrichEpoch++; resetSearchCache(); patchEnrichedCells(); }   // in-place: no flicker
     if (j.pending && j.pending.length) {                    // still resolving — poll
       clearTimeout(enrichTimer);
       enrichTimer = setTimeout(() => postEnrich(j.pending), 2500);
@@ -316,14 +316,18 @@ function predictWhyHtml(row) {
   // one pulls; the verdict is just the sum of them, said out loud.
   const up = p.signals.filter((sg) => sg.value >= base);
   const down = p.signals.filter((sg) => sg.value < base);
-  const lead = down.length > up.length ? down : up;
+  // The named factors MUST agree with the verdict. The verdict is the sign of the
+  // overall gap (below), so lead by the same sign — not by which group is larger.
+  // Picking the bigger group let a below-average prediction cite your ABOVE-average
+  // factors and claim you "rate them lower", which is exactly backwards.
+  const gap = pts(p.score) - pts(base);
+  const lead = gap >= 0 ? up : down;
   /* Only things YOU rate can go in "you rate X higher". The model also feeds on
      the critic score — kind "Critics", label "Metacritic" — and naming that here
      produced "You rate Metacritic higher than most of what you own", which is
      nonsense: you don't rate Metacritic, Metacritic rates the game. */
   const taste = lead.filter((sg) => sg.kind !== "Critics");
   const names = taste.slice(0, 2).map((sg) => sg.label).filter(Boolean);
-  const gap = pts(p.score) - pts(base);
   const critic = p.signals.find((sg) => sg.kind === "Critics");
 
   // Landing ON your average is not "better than your usual" — it's your usual.
@@ -898,6 +902,7 @@ async function loadAllEnrichment() {
     }
     if (j.stats) updateEnrichStatus(j.stats);
     if (changed) {
+      _enrichEpoch++; resetSearchCache();     // IGDB genres just became searchable
       // Several health checks read the enrichment map (missing metadata, HLTB
       // mismatches), and its results are cached — so they must be recomputed
       // once enrichment lands, or "no metadata" reads as "all 14,747 games".
@@ -1505,10 +1510,24 @@ function rowHaystack(row, cols) {
   }
   return hay;
 }
+// IGDB genres are searchable too — so "Platformer" finds games IGDB tagged Platform,
+// not only the ones your sheet spells that way. Kept separate from rowHaystack (which is
+// sheet-only and immutable) and re-derived when enrichment lands, since ENRICH fills in
+// after the first paint. Cheap: unmatched rows return "" without touching the vocab.
+let _enrichEpoch = 0;
+const _genreHay = new WeakMap();
+function searchGenreHay(row) {
+  if (!ENRICH_ENABLED || !ENRICH[row._k]) return "";
+  const c = _genreHay.get(row);
+  if (c && c.e === _enrichEpoch) return c.h;
+  const h = unifiedGenreVals(row).join(" ").toLowerCase();
+  _genreHay.set(row, { e: _enrichEpoch, h });
+  return h;
+}
 function matchesSearch(row, terms, cols) {
   if (!terms.length) return true;
   const hay = rowHaystack(row, cols);
-  return terms.every((t) => hay.includes(t));
+  return terms.every((t) => hay.includes(t) || searchGenreHay(row).includes(t));
 }
 // Row matches a facet selection (Set of value keys). OR within a facet; for
 // IGDB array facets a row matches if ANY of its values is selected.
@@ -2295,10 +2314,10 @@ function openDrawer(row, sheetKey, keepStack) {
   if (ENRICH_ENABLED && row._k) html += `<div id="igdbDetail" class="igdb-detail"></div>`;
 
   // Box art override — same manual upload as the shelf, so a game's cover can be fixed
-  // from any detail card. Only for physical owned games, which is what the shelf holds.
-  const _physical = row._k && row.owned &&
-    ["physical", "both"].includes(String(row.format || "").trim().toLowerCase());
-  if (_physical) html += `<button class="sh-btn drawer-art" id="drawerArt">Manage box art</button>`;
+  // (or supplied outright) from any detail card. Offered for every real sheet row, not
+  // just owned physical ones: a game IGDB never matched has no cover at all, and this is
+  // the only way to give it one. Grouped collection cards have no single row to attach to.
+  if (row._k && !row._collection) html += `<button class="sh-btn drawer-art" id="drawerArt">Manage box art</button>`;
 
   /* Your own history with the game was buried in the "Raw data" disclosure,
      alongside File Size and MAME Romset — and it's the most personal thing on the
@@ -2338,7 +2357,6 @@ function openDrawer(row, sheetKey, keepStack) {
   // aggregates over the members, so don't dress them up as raw data.
   if (raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
-  $("#drawer").scrollTop = 0;             // land at the top of the game you opened
   const back = $("#drawerBack");
   const prev = drawerStack[drawerStack.length - 1];
   back.hidden = !prev;
@@ -2369,6 +2387,10 @@ function openDrawer(row, sheetKey, keepStack) {
     };
   });
   $("#overlay").hidden = false;
+  // Reset scroll AFTER the overlay is shown. Set while it's still display:none it never
+  // takes — and the browser then restores the PREVIOUS game's scroll when it appears,
+  // which is why one game's scroll position leaked into the next.
+  $("#drawer").scrollTop = 0;
   drawerRow = row;
   syncScrollLock();                       // the page behind the drawer must not scroll
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
