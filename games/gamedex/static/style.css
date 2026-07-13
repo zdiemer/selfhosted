@@ -3112,12 +3112,24 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .px-rc i.ok, .px-cc i.ok { color: var(--dim); opacity: .4; text-decoration: line-through; text-decoration-thickness: 1.5px; }
 .px-rc i.pad, .px-cc i.pad { color: transparent; }
 
-/* The reveal: each cell becomes its own tile of the cover. */
-.px-cell.reveal {
-  background-color: transparent; border-color: transparent;
-  transition: background-image .01s, opacity .45s var(--ease), border-color .45s;
+/* The reveal. The picture rides on ::after rather than on the cell's own background, because
+   `background-image` CANNOT be transitioned — assigning it just swaps, which is why the cover
+   used to snap in whole instead of wiping across. An overlay can fade, so each cell's tile
+   fades up on its own delay and the picture sweeps in diagonally. */
+.px-cell.reveal { border-color: transparent; }
+.px-cell.reveal::before { display: none; }
+.px-cell.reveal::after {
+  content: ""; display: block; position: absolute; inset: 0;
+  background-image: var(--img); background-size: var(--bs); background-position: var(--bp);
+  opacity: 0; transition: opacity .5s var(--ease); transition-delay: var(--dly);
+  margin: 0; border-radius: 0; width: auto; height: auto; top: 0; left: 0;
 }
-.px-cell.reveal::before, .px-cell.reveal::after { display: none; }
+.px-board.lit .px-cell.reveal::after { opacity: 1; }
+.px-board.lit .px-cell.reveal { background-color: transparent; transition: background-color .5s var(--ease); transition-delay: var(--dly); }
+
+/* Solved: there is no clue gutter any more, so the grid is cells and nothing else. */
+.px-board.solved { grid-template-columns: repeat(var(--w), var(--cell, 30px)); }
+.px-board.solved .px-cell { cursor: default; }
 /* The picture assembles out of the cells: close every seam, including the every-fifth-cell
    rules that make the grid countable while you're solving it. */
 .px-board.revealed { gap: 0; }
@@ -3128,14 +3140,17 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .px-cell.vr { margin-right: 3px; }
 .px-cell.hr { margin-bottom: 3px; }
 
-.px-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+/* Stacked, not strung out in a line: a sentence of instructions wedged onto the end of a row
+   of buttons reads as a fourth, very wide, broken button. */
+.px-tools { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.px-tool-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .px-tool {
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
   border-radius: 999px; padding: 7px 14px; font: 600 12.5px var(--font); cursor: pointer;
 }
 .px-tool.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .px-tool.ghost { color: var(--dim); }
-.px-hint { font-size: 12px; margin-left: 6px; }
+.px-hint { font-size: 12.5px; color: var(--dim); text-align: center; max-width: 52ch; margin: 0; }
 
 .px-guess { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .px-guess input {

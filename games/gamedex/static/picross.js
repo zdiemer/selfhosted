@@ -185,10 +185,12 @@ function renderPicross() {
 
   const grid = [];
   for (let y = 0; y < PX.h; y++) {
-    const r = PX.rows[y];
-    const settled = pxSettled(pxLine(y), r);
-    grid.push(`<div class="px-rc${pxRowDone(y) ? " done" : ""}" data-cy="${y}">${
-      clueHtml(r, settled, maxRow - r.length)}</div>`);
+    if (!PX.solved) {
+      const r = PX.rows[y];
+      const settled = pxSettled(pxLine(y), r);
+      grid.push(`<div class="px-rc${pxRowDone(y) ? " done" : ""}" data-cy="${y}">${
+        clueHtml(r, settled, maxRow - r.length)}</div>`);
+    }
     for (let x = 0; x < PX.w; x++) {
       grid.push(`<button class="${pxCellClass(x, y)}" data-x="${x}" data-y="${y}"
         aria-label="${x + 1},${y + 1}"></button>`);
@@ -218,20 +220,30 @@ function renderPicross() {
     <!-- ONE grid: the corner, the column clues, then a row-clue gutter and its cells per row.
          The clue strips were separate grids and drifted out of alignment with the cells they
          label — the column numbers sat over the row-clue gutter. Same grid, same track sizes,
-         alignment can't drift. -->
-    <div class="px-board" style="--w:${PX.w};--h:${PX.h}">
-      <div class="px-corner"></div>
-      ${colClues}
+         alignment can't drift.
+         Once it's solved the clues aren't rendered AT ALL: it isn't a puzzle any more, it's a
+         picture, and leaving the numbers behind meant hovering the finished cover still lit up
+         a row and a column of a grid that no longer exists. -->
+    <div class="px-board${PX.solved ? " solved" : ""}" style="--w:${PX.w};--h:${PX.h}">
+      ${PX.solved ? "" : `<div class="px-corner"></div>${colClues}`}
       ${grid.join("")}
     </div>
 
     <div class="px-tools">
-      <button class="px-tool${pxTool === 1 ? " on" : ""}" data-tool="1">■ Fill</button>
-      <button class="px-tool${pxTool === 2 ? " on" : ""}" data-tool="2">✕ Empty</button>
-      <button class="px-tool${pxTool === 3 ? " on" : ""}" data-tool="3">• Maybe</button>
-      <button class="px-tool ghost" id="pxClear">Clear</button>
-      <span class="muted px-hint">Drag to paint (locks to the row or column you set off in)
-        · right-click ✕ · middle-click •</span>
+      ${PX.solved ? "" : `
+        <div class="px-tool-row">
+          <button class="px-tool${pxTool === 1 ? " on" : ""}" data-tool="1">■ Fill</button>
+          <button class="px-tool${pxTool === 2 ? " on" : ""}" data-tool="2">✕ Empty</button>
+          <button class="px-tool${pxTool === 3 ? " on" : ""}" data-tool="3">• Maybe</button>
+          <button class="px-tool ghost" id="pxClear">Clear</button>
+        </div>
+        <!-- Under the buttons, not beside them: a sentence of instructions wedged into the end
+             of a row of controls reads as a fourth, very wide, broken button. -->
+        <p class="px-hint">Drag to paint — the stroke locks to the row or column you set off in.
+          Right-click for ✕, middle-click for •.</p>`}
+      <div class="px-tool-row">
+        <button class="px-tool ghost" id="pxReset">↺ Reset puzzle</button>
+      </div>
     </div>
   </div>`;
 
@@ -283,6 +295,7 @@ function wirePicross(host) {
        grid the clue you're reading is eight cells away from the cell you're filling, and
        counting across with a fingertip is how you fill the wrong row. */
     const hover = (x, y) => {
+      if (PX.solved) return;               // it's a picture now, not a puzzle
       body.querySelectorAll(".hl").forEach((el) => el.classList.remove("hl"));
       if (x == null) return;
       for (let i = 0; i < PX.w; i++) cellAt(i, y)?.classList.add("hl");
@@ -353,6 +366,17 @@ function wirePicross(host) {
     PX.cells = new Array(PX.w * PX.h).fill(0);
     pxSave(); renderPicross();
   };
+  /* Reset goes further than Clear: it puts the day back to untouched, INCLUDING the solve,
+     so you can play it again from scratch. It leaves the streak alone — you did solve it, and
+     un-solving it in the UI shouldn't rewrite history. */
+  const reset = host.querySelector("#pxReset");
+  if (reset) reset.onclick = () => {
+    if (PX.solved && !confirm("Reset today's puzzle? The board goes back to blank. Your streak is kept.")) return;
+    PX.cells = new Array(PX.w * PX.h).fill(0);
+    PX.solved = false; PX.game = null; PX.guessedEarly = false;
+    try { localStorage.removeItem(pxKey()); } catch (_) {}
+    renderPicross();
+  };
   const go = host.querySelector("#pxGuessGo");
   if (go) go.onclick = pxGuess;
   const gi = host.querySelector("#pxGuess");
@@ -417,16 +441,23 @@ function pxReveal(host) {
     const cropTop = (img.naturalHeight - img.naturalWidth) * 0.40 * scale;
     const bw = gridW, bh = img.naturalHeight * scale;
 
+    /* The picture rides on ::after, not on the cell's own background, BECAUSE
+       `background-image` cannot be transitioned — setting it just swaps, which is why the
+       reveal snapped in whole instead of wiping across. An overlay CAN fade, so each cell
+       gets a tile that fades up on its own delay. */
     for (const el of cells) {
       const x = +el.dataset.x, y = +el.dataset.y;
       const r = el.getBoundingClientRect();
       const dx = r.left - first.left, dy = r.top - first.top;
-      el.style.backgroundImage = `url("${src}")`;
-      el.style.backgroundSize = `${bw}px ${bh}px`;
-      el.style.backgroundPosition = `${-dx}px ${-(dy + cropTop)}px`;
-      el.style.transitionDelay = `${(x + y) * 22}ms`;   // a diagonal wipe, not a flash
+      el.style.setProperty("--img", `url("${src}")`);
+      el.style.setProperty("--bs", `${bw}px ${bh}px`);
+      el.style.setProperty("--bp", `${-dx}px ${-(dy + cropTop)}px`);
+      el.style.setProperty("--dly", `${(x + y) * 45}ms`);   // a diagonal wipe, not a flash
       el.classList.add("reveal");
     }
+    // Two steps: lay the tiles down at opacity 0, let the browser see that, THEN light them.
+    // Set both in one frame and there is no start state to transition FROM.
+    requestAnimationFrame(() => requestAnimationFrame(() => board.classList.add("lit")));
   };
   img.src = src;
 }
