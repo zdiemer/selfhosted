@@ -2697,11 +2697,22 @@ function mineSectionHtml(row) {
   if (h.playTime != null) stats.push([fmtHours(h.playTime), "Time played", ""]);
   if (h.price != null) stats.push([`$${Number(h.price).toFixed(2)}`, "Paid", ""]);
 
-  // The shape of the play-through, in order. Only the beats that happened.
-  const track = [["Added", h.added], ["Bought", h.purchased],
-                 ["Started", h.started], ["Finished", h.finished]]
-    .filter(([, v]) => v)
-    .map(([label, v]) => `<li><b>${escapeHtml(fmtDate(v))}</b><span>${label}</span></li>`);
+  // The shape of the play-through. Only the beats that happened, in the order they
+  // actually happened — NOT the order I listed them in: a game bought years before it was
+  // logged puts Bought before Added, and hardcoding the sequence drew that backwards.
+  // Events landing on the same day share one point rather than stacking two dots on top
+  // of each other ("Added & Bought" when you logged it the day you bought it).
+  const byDay = new Map();
+  for (const [label, v] of [["Added", h.added], ["Bought", h.purchased],
+                            ["Started", h.started], ["Finished", h.finished]]) {
+    if (!v) continue;
+    const day = String(v).slice(0, 10);              // ISO day — sorts chronologically as text
+    if (!byDay.has(day)) byDay.set(day, { v, labels: [] });
+    byDay.get(day).labels.push(label);               // within a day, keep the natural order
+  }
+  const track = [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, e]) => `<li><b>${escapeHtml(fmtDate(e.v))}</b><span>${e.labels.join(" & ")}</span></li>`);
 
   const review = h.review
     ? `<blockquote class="mine-review">${escapeHtml(String(h.review))}</blockquote>` : "";
