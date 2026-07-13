@@ -1520,7 +1520,10 @@ const metaOf = (row) => {
     fallback: e && e.source ? e.source : null,      // IGN / Steam / LaunchBox
     hltb: !!(e && e.hltbBest != null),
     mc: !!(e && e.metascore != null),
-    art: !!(e && (e.coverUrl || e.cover || e.vnCover || e.adbCover)),
+    // Ask coverSrc rather than re-listing the cover fields: the two drifted apart, and
+    // "No cover / art" was flagging games that visibly HAVE art — hand-uploaded box art
+    // and Thumby icons, both of which coverSrc renders but this list never learned about.
+    art: !!coverSrc(e),
   };
 };
 // Which of the extra sources have data for this row (multi-valued).
