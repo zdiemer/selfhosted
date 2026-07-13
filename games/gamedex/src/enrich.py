@@ -24,6 +24,7 @@ from match_validator import MatchValidator
 log = logging.getLogger("gamedex.enrich")
 
 _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genres", "themes", "gameModes",
+               "developers", "publishers", "franchises",
                "name", "stores", "url", "confidence")
 # `confidence` is MatchValidator.match_score, 0-15: title matched 5, title EXACT
 # a further 5, then +1 each for platform, release date, publisher, developer and
@@ -34,6 +35,7 @@ _IGDB_LIGHT = ("igdbId", "cover", "coverUrl", "source", "rating", "year", "genre
 # `name` is what we matched you TO. Without it a low-confidence warning is just a
 # number; with it, "Backbone -> Backbone: Prologue" tells you at a glance.
 _FACET_LIGHT = ("cover", "coverUrl", "genres", "themes", "gameModes", "userRating",
+                "developers", "publishers", "franchises",
                 "igdbId", "source", "stores", "url", "confidence", "name")
 
 
@@ -122,6 +124,7 @@ VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
 # rebuilds every record instead of skipping the ones that already have a value.
 STORES_VERSION = "4"
 RELATIONS_VERSION = "3"
+FRANCHISE_VERSION = "1"    # bump to re-fetch franchises onto already-matched records
 
 
 class Enricher:
@@ -784,6 +787,61 @@ class Enricher:
         self._kv_set("relations_version", RELATIONS_VERSION)
         log.info("relations backfill: %d games linked", found)
 
+    def backfill_franchises(self):
+        """Franchises are fetched at match time but weren't always stored. Backfill them
+        onto matched records by id, 500 per request — a few calls for the whole library."""
+        if not self._igdb.configured:
+            return
+        stale = self._kv_get("franchise_version") != FRANCHISE_VERSION
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key, igdb_id, data FROM enrichment"
+                " WHERE status='matched' AND igdb_id IS NOT NULL AND data IS NOT NULL"
+            ).fetchall()
+        need = {}
+        for key, igdb_id, raw in rows:
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            if rec.get("franchises") is not None and not stale:
+                continue
+            need.setdefault(int(igdb_id), []).append(key)
+        if not need:
+            self._kv_set("franchise_version", FRANCHISE_VERSION)
+            return
+        log.info("franchise backfill: fetching franchises for %d games", len(need))
+        try:
+            frans = self._igdb.franchises_for(list(need))
+        except Exception as exc:
+            log.warning("franchise backfill failed: %s", exc)
+            return
+        found = 0
+        with self._db_lock:
+            for gid, names in frans.items():
+                for key in need.get(gid, []):
+                    row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                    if not row or not row[0]:
+                        continue
+                    rec = json.loads(row[0])
+                    rec["franchises"] = names          # [] is a valid answer: "none"
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+                    found += 1
+            # ids IGDB returned nothing for still get an explicit [] so we don't re-ask.
+            for gid, keys in need.items():
+                if gid in frans:
+                    continue
+                for key in keys:
+                    row = self._db.execute("SELECT data FROM enrichment WHERE match_key=?", (key,)).fetchone()
+                    if not row or not row[0]:
+                        continue
+                    rec = json.loads(row[0])
+                    rec.setdefault("franchises", [])
+                    self._db.execute("UPDATE enrichment SET data=? WHERE match_key=?", (json.dumps(rec), key))
+            self._db.commit()
+        self._kv_set("franchise_version", FRANCHISE_VERSION)
+        log.info("franchise backfill: %d records updated", found)
+
     def start(self):
         for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
@@ -791,6 +849,7 @@ class Enricher:
             t.start()
         threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
         threading.Thread(target=self.backfill_relations, name="relations-backfill", daemon=True).start()
+        threading.Thread(target=self.backfill_franchises, name="franchise-backfill", daemon=True).start()
         if "gameye" in self._secondary:
             threading.Thread(target=self._value_loop, name="value-history", daemon=True).start()
 

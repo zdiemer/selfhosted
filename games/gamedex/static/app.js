@@ -219,8 +219,10 @@ function detailHtml(d) {
   const linkList = (arr, fk) => arr.map((x) =>
     `<a class="facet-link" data-fk="${fk}" data-fv="${escapeHtml(String(x))}">${escapeHtml(String(x))}</a>`).join(", ");
   const meta = [];
-  if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(d.developers, "developer")}</div></div>`);
-  if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(d.publishers, "publisher")}</div></div>`);
+  const uniq = (a) => [...new Set(a)];
+  if (d.developers && d.developers.length) meta.push(`<div class="detail-row"><div class="k">Developer</div><div class="v">${linkList(uniq(d.developers.map(canonDev)), "developer")}</div></div>`);
+  if (d.publishers && d.publishers.length) meta.push(`<div class="detail-row"><div class="k">Publisher</div><div class="v">${linkList(uniq(d.publishers.map(canonPub)), "publisher")}</div></div>`);
+  if (d.franchises && d.franchises.length) meta.push(`<div class="detail-row"><div class="k">Franchise</div><div class="v">${linkList(uniq(d.franchises.map(canonFran)), "franchise")}</div></div>`);
   const nShots = mediaOf(d).length;
   const shots = nShots
     ? `<div class="shots"><div class="shot-view"></div>` +
@@ -250,7 +252,10 @@ function detailHtml(d) {
   // Genre / theme / mode, under the summary. They're a way INTO the collection
   // (every chip is a filter), so they belong next to the prose that made you
   // curious, not stacked above the cover.
-  const tags = chips(d.genres, "__igdb_genre") + chips(d.themes, "__igdb_theme")
+  // Genre chips filter the UNIFIED genre facet (canonicalised so an IGDB "Platform"
+  // chip filters "Platformer"); themes/modes stay IGDB-only facets.
+  const genreChips = [...new Set((d.genres || []).map((g) => String(canonGenre(g))))];
+  const tags = chips(genreChips, "genre") + chips(d.themes, "__igdb_theme")
     + chips(d.gameModes, "__igdb_mode");
   return (badge ? `<div class="badges">${badge}</div>` : "") +
     (text ? `<div class="detail-row notes"><div class="k">Summary (IGDB)</div><div class="v">${escapeHtml(text)}</div></div>` : "") +
@@ -1002,11 +1007,146 @@ const SORT_LABEL = {
 const sortLabel = (c) => SORT_LABEL[c.key] || c.label;
 
 // Virtual facets sourced from IGDB enrichment (array-valued, joined via row._k).
+// Genre is NOT here — it's unified with the sheet's Genre facet (see unifiedFacetCol).
 const IGDB_FACET_DEFS = [
-  { key: "__igdb_genre", label: "IGDB Genre", source: "genres" },
   { key: "__igdb_theme", label: "Theme", source: "themes" },
   { key: "__igdb_mode", label: "Game Mode", source: "gameModes" },
 ];
+
+/* ---- unifying sheet + IGDB for developer / publisher / franchise / genre ----
+ * The sheet holds ONE value per field; IGDB holds many. We join them into one
+ * multi-valued facet so a game is filed under every developer/publisher/franchise/
+ * genre either source knows — and a value that only IGDB knows (a co-developer not
+ * in your sheet) is a real, clickable facet value that filters all the same.
+ *
+ * External names are mapped onto your sheet's spelling wherever they match; genres,
+ * where the sheet is finer-grained than IGDB, roll up into shared umbrellas. */
+
+// Company names: fold to a comparable key (case, punctuation, Inc/Ltd/Co, "the").
+// Memoised — called once per row per facet-count pass, but only a few thousand
+// distinct strings exist across the whole library.
+const _ncCache = new Map();
+function normCompany(s) {
+  s = String(s || "");
+  let v = _ncCache.get(s);
+  if (v !== undefined) return v;
+  v = s.toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[.,'’]/g, "")
+    .replace(/\b(inc|incorporated|ltd|limited|llc|co|corp|corporation|company|gmbh|kk|sa|srl|pty|the)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  _ncCache.set(s, v);
+  return v;
+}
+// Franchise/series titles: lighter touch — drop punctuation, "the", trailing "series".
+const _nfCache = new Map();
+function normFranchise(s) {
+  s = String(s || "");
+  let v = _nfCache.get(s);
+  if (v !== undefined) return v;
+  v = s.toLowerCase()
+    .replace(/[.,:'’!?]/g, "")
+    .replace(/\bthe\b/g, " ").replace(/\bseries\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  _nfCache.set(s, v);
+  return v;
+}
+
+// IGDB genre label -> your sheet's spelling, where one clean value exists. Where the
+// sheet is only granular (no plain "Platformer"/"RPG"), the alias IS the umbrella that
+// the granular sheet genres roll up into (see genreUmbrellas).
+const GENRE_ALIAS = {
+  "role-playing (rpg)": "RPG", "rpg": "RPG",
+  "platform": "Platformer",
+  "shooter": "Shooter", "strategy": "Strategy", "adventure": "Adventure",
+  "real time strategy (rts)": "Real-Time Strategy",
+  "turn-based strategy (tbs)": "Turn-Based Strategy",
+  "hack and slash/beat 'em up": "Beat 'em Up",
+  "simulator": "Simulation", "sport": "Sports", "music": "Rhythm",
+  "quiz/trivia": "Trivia", "card & board game": "Board Game",
+  "point-and-click": "Point-and-Click",
+  "puzzle": "Puzzle", "fighting": "Fighting", "racing": "Racing",
+  "visual novel": "Visual Novel", "arcade": "Arcade", "pinball": "Pinball",
+  "indie": "Indie", "moba": "MOBA", "tactical": "Tactical",
+  "action": "Action", "compilation": "Compilation",
+};
+const canonGenre = (raw) => GENRE_ALIAS[String(raw).toLowerCase().trim()] || raw;
+// Broad umbrellas a genre belongs to, so IGDB "Platform" and sheet "3D Platformer"
+// both file under "Platformer". Only the four families you flagged.
+function genreUmbrellas(v) {
+  const s = String(v).toLowerCase(), out = [];
+  if (/platform/.test(s)) out.push("Platformer");
+  if (/\brpg\b|role-playing|mmorpg/.test(s)) out.push("RPG");
+  if (/shooter/.test(s)) out.push("Shooter");
+  if (/\bstrateg/.test(s)) out.push("Strategy");
+  return out;
+}
+
+// Sheet spelling wins as the canonical label. Built once per dataset from BOTH sheets.
+let _vocab = null, _vocabFor = null;
+function unifyVocab() {
+  if (_vocabFor === DATA && _vocab) return _vocab;
+  const dev = {}, pub = {}, fran = {};
+  const put = (map, val, norm) => { const k = norm(val); if (k && !(k in map)) map[k] = String(val); };
+  for (const key of ["games", "completed"]) {
+    for (const r of ((DATA.sheets[key] || {}).rows || [])) {
+      if (r.developer) put(dev, r.developer, normCompany);
+      if (r.publisher) put(pub, r.publisher, normCompany);
+      if (r.franchise) put(fran, r.franchise, normFranchise);
+    }
+  }
+  _vocab = { dev, pub, fran }; _vocabFor = DATA;
+  return _vocab;
+}
+
+function unifiedGenreVals(row) {
+  const out = new Set();
+  const add = (raw) => {
+    if (raw == null || raw === "") return;
+    const c = canonGenre(raw);
+    out.add(String(c));
+    genreUmbrellas(c).forEach((u) => out.add(u));
+    genreUmbrellas(raw).forEach((u) => out.add(u));
+  };
+  if (row.genre) add(row.genre);
+  const e = ENRICH[row._k];
+  if (e && e.genres) for (const g of e.genres) add(g);
+  return [...out];
+}
+function unifiedCompanyVals(sheetVal, igdbArr, map) {
+  const out = new Set();
+  const add = (n) => { if (n) out.add(map[normCompany(n)] || String(n)); };
+  add(sheetVal);
+  (igdbArr || []).forEach(add);
+  return [...out];
+}
+function unifiedDevVals(row) {
+  return unifiedCompanyVals(row.developer, (ENRICH[row._k] || {}).developers, unifyVocab().dev);
+}
+function unifiedPubVals(row) {
+  return unifiedCompanyVals(row.publisher, (ENRICH[row._k] || {}).publishers, unifyVocab().pub);
+}
+function unifiedFranchiseVals(row) {
+  const out = new Set(), map = unifyVocab().fran;
+  const add = (n) => { if (n) out.add(map[normFranchise(n)] || String(n)); };
+  add(row.franchise);
+  const e = ENRICH[row._k];
+  if (e && e.franchises) for (const f of e.franchises) add(f);
+  return [...out];
+}
+const UNIFIED_GETVALS = {
+  genre: unifiedGenreVals, developer: unifiedDevVals,
+  publisher: unifiedPubVals, franchise: unifiedFranchiseVals,
+};
+// The canonical (sheet-spelling) form of an external value — so a drawer link filters
+// the value that's actually IN the facet, not the raw IGDB string.
+const canonDev = (n) => unifyVocab().dev[normCompany(n)] || String(n);
+const canonPub = (n) => unifyVocab().pub[normCompany(n)] || String(n);
+const canonFran = (n) => unifyVocab().fran[normFranchise(n)] || String(n);
+// Turn a scalar sheet facet column into the joined multi-valued one, keeping its key
+// and label (so drawer facet-links and URL state keep working unchanged).
+const unifiedFacetCol = (c) =>
+  (ENRICH_ENABLED && UNIFIED_GETVALS[c.key]) ? { ...c, kind: "fn", getVals: UNIFIED_GETVALS[c.key] } : c;
 const PLAYTIME_BUCKETS = [
   { label: "< 2h", test: (h) => h < 2 },
   { label: "2–5h", test: (h) => h >= 2 && h < 5 },
@@ -1325,7 +1465,7 @@ function extraFacetCols(tab = activeTab) {
       buckets: METACRITIC_BUCKETS, getVal: predictedOf },
   ];
 }
-const facetCols = () => [...columns().filter((c) => c.facet), ...igdbFacetCols(), ...extraFacetCols()];
+const facetCols = () => [...columns().filter((c) => c.facet).map(unifiedFacetCol), ...igdbFacetCols(), ...extraFacetCols()];
 const facetColByKey = (key) => facetCols().find((c) => c.key === key);
 
 // A row's facet values as [{key, raw}] — scalar → one, arrays → many, bucket → one label.

@@ -390,6 +390,33 @@ class IgdbClient:
         e["confidence"] = info.match_score
         return e
 
+    @staticmethod
+    def _franchises_of(c):
+        """A game's franchises, as names. IGDB splits these across `franchise` (the
+        primary one) and `franchises` (all of them), and either can be absent — merge
+        both and de-dup while preserving order (primary first)."""
+        out = []
+        main = (c.get("franchise") or {}).get("name")
+        if main:
+            out.append(main)
+        for f in c.get("franchises") or []:
+            nm = f.get("name")
+            if nm and nm not in out:
+                out.append(nm)
+        return out
+
+    def franchises_for(self, igdb_ids):
+        """{igdb_id: [franchise names]} — fetched by id in batches, to backfill records
+        matched before franchises were stored. Mirrors relations_for."""
+        out = {}
+        for i in range(0, len(igdb_ids), 500):
+            chunk = [int(x) for x in igdb_ids[i:i + 500]]
+            body = ("fields id,franchise.name,franchises.name; "
+                    f"where id = ({','.join(str(c) for c in chunk)}); limit 500;")
+            for g in self._post("games", body) or []:
+                out[g["id"]] = self._franchises_of(g)
+        return out
+
     def enrichment_from_result(self, c):
         devs, pubs = [], []
         for ic in c.get("involved_companies", []):
@@ -423,6 +450,7 @@ class IgdbClient:
             "perspectives": [p["name"] for p in c.get("player_perspectives", []) if p.get("name")],
             "developers": sorted(set(devs)),
             "publishers": sorted(set(pubs)),
+            "franchises": self._franchises_of(c),
             "screenshots": [s["image_id"] for s in c.get("screenshots", []) if s.get("image_id")][:12],
             "artworks": [a["image_id"] for a in c.get("artworks", []) if a.get("image_id")][:6],
             "videos": [{"id": v["video_id"], "name": v.get("name")} for v in c.get("videos", []) if v.get("video_id")][:4],
