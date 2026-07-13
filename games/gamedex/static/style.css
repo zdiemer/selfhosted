@@ -665,7 +665,12 @@ td.cover { width: 46px; padding: 5px 8px; }
   opacity: 0; transition: opacity .45s var(--ease);
 }
 .card.playing .card-preview { opacity: 1; }
-.card.playing .card-cover { opacity: 0; transition: opacity .45s var(--ease); }
+/* The transition lives on the COVER, not inside .playing — declared only in the .playing
+   rule it applies on the way in and vanishes on the way out, so the cover snapped back the
+   instant the class came off. On the base rule it cross-fades both directions, which is
+   what makes the tour's hand-off between cards a dissolve rather than a cut. */
+.card-cover { transition: opacity .45s var(--ease); }
+.card.playing .card-cover { opacity: 0; }
 
 /* Placeholders hold an ICON now, not a character — so they need to centre a box,
    and the icon should sit back rather than shout. */
@@ -1488,7 +1493,20 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
   width: 7px; height: 7px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
   background: var(--surface-3); transition: all .16s;
 }
-.h-dot.on { background: var(--accent); width: 20px; border-radius: 999px; }
+/* The active dot IS the countdown. It was a 3px accent gradient sweeping the full width of
+   the hero — a progress bar for something nobody asked to be told about, moving in the
+   corner of your eye the whole time you're reading. The dot already says which slide you're
+   on, so let it fill as that slide runs out: same information, no new furniture, and it
+   only reads if you happen to look at it. */
+.h-dot.on {
+  width: 20px; border-radius: 999px; position: relative; overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.h-dot.on::after {
+  content: ""; position: absolute; inset: 0; background: var(--accent);
+  transform-origin: left; transform: scaleX(0);
+  animation: heroCountdown 9s linear forwards;
+}
 
 /* Sections + shelves */
 .h-sect { max-width: 1180px; margin: 0 auto; padding: 22px 20px 4px; }
@@ -2932,14 +2950,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 .drawer-art { display:block; width:100%; margin:14px 0 4px; text-align:center; padding:11px; }
 
-/* ---- home: hero auto-rotate countdown ---- */
-.h-countdown { position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
-  background: rgba(255,255,255,.08); z-index: 3; overflow: hidden; }
-.h-countdown span { display: block; height: 100%; transform-origin: left; transform: scaleX(0);
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  animation: heroCountdown 9s linear forwards; }
+/* ---- home: hero auto-rotate countdown (see .h-dot.on) ---- */
 @keyframes heroCountdown { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@media (prefers-reduced-motion: reduce) { .h-countdown { display: none; } }
+/* No creeping fill if you've asked for less motion — the dot just reads as the active one. */
+@media (prefers-reduced-motion: reduce) {
+  .h-dot.on { background: var(--accent); }
+  .h-dot.on::after { animation: none; transform: scaleX(0); }
+}
 
 /* ---- home: closest challenges (three across) ---- */
 .h-chals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

@@ -235,7 +235,6 @@ function heroSection(playing) {
       </div>
       ${dots}
     </div>
-    ${playing.length > 1 ? `<div class="h-countdown"><span></span></div>` : ""}
   </section>`;
 }
 

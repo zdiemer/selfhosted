@@ -2479,7 +2479,7 @@ function wirePreviewFor(card, row) {
   // Home and Pick build their cards through here rather than renderGrid, so this is where
   // the tour gets armed on those surfaces — without it, the landing page (Home) never
   // started a tour at all, which is exactly what the first headless run caught.
-  tourKick();
+  tourArm();
 }
 
 function wirePreview(card) {
@@ -2513,9 +2513,10 @@ function wirePreview(card) {
 // It rides on the same single-preview machinery as hover — startPreview/stopPreview keep
 // exactly one player alive — so the tour can never stack a second video on the page, and
 // a hover always wins (pointerenter stops the tour outright).
-const TOUR_IDLE = 12000;   // quiet on the page this long before the tour begins
+const TOUR_IDLE = 5000;    // quiet on the page this long before the tour begins
 const TOUR_PLAY = 30000;   // each card holds the stage for one full clip loop
-const TOUR_GAP  = 5000;    // a beat of stillness between cards, so it isn't a slot machine
+const TOUR_GAP  = 1200;    // a beat between cards — long enough to read as a hand-off
+const TOUR_FADE = 450;     // must match the .card-preview / .card-cover transition in CSS
 let tourIdleTimer = null, tourTimer = null, tourOn = false, tourLast = null;
 
 // A card is eligible only if it HAS a trailer — a card without one is never scheduled, so
@@ -2568,13 +2569,22 @@ function tourStop() {
   if (owned) stopPreview();
 }
 
-// Restart the countdown. Called whenever the user does something — the tour is what
-// happens when they stop.
+// Restart the countdown. Called whenever the USER does something — the tour is what happens
+// when they stop.
 function tourKick() {
   clearTimeout(tourIdleTimer); tourIdleTimer = null;
   clearTimeout(tourTimer); tourTimer = null;
   tourOn = false;
   if (!tourAllowed()) return;
+  tourIdleTimer = setTimeout(() => { tourOn = true; tourNext(); }, TOUR_IDLE);
+}
+
+// Start the clock if it isn't already running, WITHOUT restarting it. Cards get wired as
+// enrichment lands, a few at a time over several seconds — and a full kick per card kept
+// shoving the countdown forward, so a "5 second" tour didn't start for eleven. Wiring a card
+// is not the user doing something; it just means there is now something worth touring.
+function tourArm() {
+  if (tourIdleTimer || tourOn || !tourAllowed()) return;
   tourIdleTimer = setTimeout(() => { tourOn = true; tourNext(); }, TOUR_IDLE);
 }
 
@@ -2594,9 +2604,22 @@ function tourNext() {
   tourLast = card;
   startPreview(card);
   tourTimer = setTimeout(() => {
-    if (previewCard === card) stopPreview();
-    tourTimer = setTimeout(tourNext, TOUR_GAP);
+    // Dissolve, don't cut. Dropping .playing fades the trailer out and the box art back in
+    // together; only once that has run do we actually tear the player down. Ripping the
+    // iframe out first would snap the cover back mid-fade and there'd be nothing to see.
+    fadeOutPreview(card, () => { tourTimer = setTimeout(tourNext, TOUR_GAP); });
   }, TOUR_PLAY);
+}
+
+// Fade a tour card back to its cover, then stop it. Anything that has already moved on
+// (a hover, a scroll, the next card) short-circuits — stopPreview sweeps regardless.
+function fadeOutPreview(card, done) {
+  if (previewCard !== card) return void (done && done());
+  card.classList.remove("playing");
+  setTimeout(() => {
+    if (previewCard === card) stopPreview();
+    done && done();
+  }, TOUR_FADE);
 }
 
 if (WANTS_MOTION) {
