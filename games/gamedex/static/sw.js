@@ -11,7 +11,7 @@
    The cache name carries the build version, so a deploy evicts the old shell
    rather than serving stale JS forever. */
 
-const VERSION = "v1.15.4";
+const VERSION = "v1.15.5";
 const SHELL = `gamedex-shell-${VERSION}`;
 const DATA = `gamedex-data-${VERSION}`;
 

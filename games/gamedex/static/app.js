@@ -451,19 +451,22 @@ function mapControlHtml(key) {
     // for when a DoJa game's title on the wiki isn't the title in the sheet.
     { id: "keitai", label: "Metadata — Keitai Wiki", ph: "keitaiwiki.com/wiki/<page>" },
   ];
+  // Every configured source gets a box. The auto-enrichment gates (VNDB only asks about
+  // sheet-genre "Visual Novel"/"Adventure", Arcade Database only about MAME romsets, and
+  // so on) decide who we ASK — they must not decide who you can MAP. Gating the fix-it
+  // panel behind the same heuristic that made the mistake is what hid VNDB on Tōshin Toshi
+  // II, a VN the sheet happens to file as a Dungeon Crawler. The panel is collapsed behind
+  // "Fix mapping" anyway, so the cost of an extra row is nothing next to an unfixable game.
   if (ENRICH_SOURCES.includes("hltb")) rows.push({ id: "hltb", label: "HowLongToBeat", ph: "HLTB game URL" });
   if (ENRICH_SOURCES.includes("metacritic")) rows.push({ id: "metacritic", label: "Metacritic", ph: "Metacritic game URL" });
-  const ownedPhys = drawerRow && drawerRow.owned && (drawerRow.format || "").toLowerCase() === "physical";
-  if (ENRICH_SOURCES.includes("gameye") && ownedPhys) rows.push({ id: "gameye", label: "GameEye value", ph: "GameEye encyclopedia URL" });
-  // Gated sources: only offer the mapping box where the source could apply.
-  if (ENRICH_SOURCES.includes("arcadedb") && (drawerRow || {}).mameRomset) rows.push({ id: "arcadedb", label: "Arcade Database", ph: "adb.arcadeitalia.net/?mame=<romset>" });
-  if (ENRICH_SOURCES.includes("vndb") && ["Visual Novel", "Adventure"].includes((drawerRow || {}).genre)) rows.push({ id: "vndb", label: "VNDB", ph: "vndb.org/v<id>" });
+  if (ENRICH_SOURCES.includes("gameye")) rows.push({ id: "gameye", label: "GameEye value", ph: "GameEye encyclopedia URL" });
+  if (ENRICH_SOURCES.includes("arcadedb")) rows.push({ id: "arcadedb", label: "Arcade Database", ph: "adb.arcadeitalia.net/?mame=<romset>" });
+  if (ENRICH_SOURCES.includes("vndb")) rows.push({ id: "vndb", label: "VNDB", ph: "vndb.org/v<id>" });
   if (ENRICH_SOURCES.includes("vgchartz")) rows.push({ id: "vgchartz", label: "VGChartz sales", ph: "vgchartz.com/games/game.php?id=<id>" });
   // Steam extras are keyed on the appid, so mapping means pointing at the store page.
   if (ENRICH_SOURCES.includes("steamx")) rows.push({ id: "steamx", label: "Steam Deck / ProtonDB", ph: "store.steampowered.com/app/<appid>/" });
   if (ENRICH_SOURCES.includes("speedrun")) rows.push({ id: "speedrun", label: "speedrun.com", ph: "speedrun.com/<game>" });
-  if (ENRICH_SOURCES.includes("cooptimus") && COOP_PLATFORMS.has((drawerRow || {}).platform))
-    rows.push({ id: "cooptimus", label: "Co-Optimus", ph: "co-optimus.com/game/<id>/..." });
+  if (ENRICH_SOURCES.includes("cooptimus")) rows.push({ id: "cooptimus", label: "Co-Optimus", ph: "co-optimus.com/game/<id>/..." });
   if (ENRICH_SOURCES.includes("guides")) rows.push({ id: "guides", label: "StrategyWiki guide", ph: "strategywiki.org/wiki/<Page>" });
   return `<details class="map-menu"><summary>${icon("i-edit", 13)} Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
