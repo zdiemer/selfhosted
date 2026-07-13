@@ -882,6 +882,7 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 /* ESRB is line art on transparent: without a plate it disappears on a dark background. */
 .age-art.esrb { background: #fff; padding: 2px; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
 .age-art.pegi, .age-art.cero { height: 48px; }
+.age-art.usk { height: 44px; }
 
 /* A board we have no artwork for. */
 .age-b.gen {

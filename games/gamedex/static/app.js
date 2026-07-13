@@ -259,7 +259,10 @@ function detailHtml(d) {
   // curious, not stacked above the cover.
   // Genre chips filter the UNIFIED genre facet (canonicalised so an IGDB "Platform"
   // chip filters "Platformer"); themes/modes stay IGDB-only facets.
-  const genreChips = [...new Set((d.genres || []).map((g) => String(canonGenre(g))))];
+  // Curated genres lead — "Nonogram" is the thing I actually went looking for, and IGDB's
+  // own list would only ever say "Puzzle".
+  const curated = drawerRow ? curatedGenres(drawerRow) : [];
+  const genreChips = [...new Set([...curated, ...(d.genres || []).map((g) => String(canonGenre(g)))])];
   const tags = chips(genreChips, "genre") + chips(d.themes, "__igdb_theme")
     + chips(d.perspectives, "__igdb_persp")
     + chips(d.gameModes, "__igdb_mode")
@@ -457,6 +460,7 @@ function ageArtSrc(rating) {
   }
   if (board === "PEGI" && ["3", "7", "12", "16", "18"].includes(val)) return `ratings/pegi-${val}.svg`;
   if (board === "CERO" && ["A", "B", "C", "D", "Z"].includes(val)) return `ratings/cero-${val.toLowerCase()}.svg`;
+  if (board === "USK" && ["0", "6", "12", "16", "18"].includes(val)) return `ratings/usk-${val}.svg`;
   return null;
 }
 
@@ -1215,6 +1219,51 @@ function unifyVocab() {
   return _vocab;
 }
 
+/* ---- Curated genres -------------------------------------------------------
+ * Some things I care about are not a genre anyone else keeps. Nonograms are the case in
+ * point: nobody sells them as a category, and the two sources that DO know about them each
+ * get it wrong in a different direction —
+ *
+ *   IGDB's keywords are precise but incomplete. "nonogram" / "picross" tag Pictopix, Piczle
+ *   Cross, Murder by Numbers, Nono Pixie — 20 games no title rule would ever find. But IGDB
+ *   has never tagged a single Nintendo Picross: not Mario's Picross, not Picross 3D, not
+ *   Picross S8. (Its "logic puzzle" keyword is NOT this — it's general puzzle, and would
+ *   drag in Baba Is You and Creaks. It is deliberately not listed.)
+ *
+ *   The title is complete where IGDB is blind — anything called "Picross" IS one — but it's
+ *   blind where IGDB sees: Pictopix and Voxelgram give nothing away.
+ *
+ * So take the union, and keep a hand-written list for the ones neither catches. Each tag
+ * becomes a real genre value, which means it filters, groups, feeds challenges, and is
+ * searchable everywhere a genre is, for free.
+ *
+ * Add a tag by adding a row. That's the whole extension mechanism. */
+const CURATED_GENRES = [
+  {
+    name: "Nonogram",
+    // IGDB keywords, exactly. NOT "logic puzzle" — see above.
+    kw: ["nonogram", "nonograms", "picross"],
+    // Anything named for the form. Matched against the sheet title AND the IGDB name.
+    re: /\bpicross\b|\bnonogram|illust\s*logic|oekaki\s*logic|logic\s*paint|picture\s*cross|paint it back|\bcrossme\b|\bzacross\b|griddler|\bpixross\b|\bvoxelgram\b/i,
+    // Neither the keyword nor the name gives these away. Match keys, so they're exact.
+    keys: [],
+  },
+];
+
+function curatedGenres(row) {
+  const e = ENRICH[row._k] || {};
+  const kws = (e.keywords || []).map((k) => String(k).toLowerCase());
+  const name = `${row.title || row.game || ""} ${e.name || ""}`;
+  const out = [];
+  for (const t of CURATED_GENRES) {
+    const hit = (t.kw && kws.some((k) => t.kw.includes(k)))
+      || (t.re && t.re.test(name))
+      || (t.keys && t.keys.includes(row._k));
+    if (hit) out.push(t.name);
+  }
+  return out;
+}
+
 function unifiedGenreVals(row) {
   const out = new Set();
   const add = (raw) => {
@@ -1231,6 +1280,8 @@ function unifiedGenreVals(row) {
   // inconsistent casing ("Beat 'Em Up") — that pollutes the facet and only ever tags the
   // few games IGDB couldn't match. The sheet genre still covers those.
   if (e && e.igdbId && e.genres) for (const g of e.genres) add(g);
+  // Curated on top: a genre I keep that nobody else does.
+  for (const g of curatedGenres(row)) out.add(g);
   return [...out];
 }
 function unifiedCompanyVals(sheetVal, igdbArr, map) {
