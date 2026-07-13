@@ -2228,10 +2228,28 @@ function openDrawer(row, sheetKey, keepStack) {
     };
   });
   $("#overlay").hidden = false;
+  lockBodyScroll();                       // the page behind the drawer must not scroll
   drawerRow = row;
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
-function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; }
+function closeDrawer() { $("#overlay").hidden = true; drawerStack = []; unlockBodyScroll(); }
+
+// Lock the page behind a full-screen overlay. Pinning the body with position:fixed (and
+// restoring the scroll offset on release) is the one approach that also holds on iOS
+// Safari, where `overflow:hidden` on the body alone doesn't stop touch scrolling.
+let _scrollLockY = 0;
+function lockBodyScroll() {
+  if (document.documentElement.classList.contains("modal-open")) return;   // don't double-lock
+  _scrollLockY = window.scrollY || document.documentElement.scrollTop || 0;
+  document.body.style.top = `-${_scrollLockY}px`;
+  document.documentElement.classList.add("modal-open");
+}
+function unlockBodyScroll() {
+  if (!document.documentElement.classList.contains("modal-open")) return;
+  document.documentElement.classList.remove("modal-open");
+  document.body.style.top = "";
+  window.scrollTo(0, _scrollLockY);
+}
 
 // Clicking a facet-link (in the drawer) filters that field on its sheet's tab.
 function applyDrawerFacet(key, val) {
@@ -3490,6 +3508,7 @@ $("#gridsortdir").addEventListener("click", () => {
   }
 });
 $("#drawerBack").addEventListener("click", drawerBack);
+$("#drawerClose").addEventListener("click", closeDrawer);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeDrawer(); });
 $("#drawerBody").addEventListener("click", (e) => {
   const a = e.target.closest(".facet-link");

@@ -869,6 +869,9 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   display: flex; align-items: center; justify-content: center; z-index: 40; padding: 24px;
 }
 .drawer-overlay[hidden] { display: none; }   /* display:flex above would defeat [hidden] */
+/* While an overlay owns the screen, freeze the page behind it (see lockBodyScroll). */
+html.modal-open, html.modal-open body { overflow: hidden; }
+html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 .drawer {
   width: min(800px, 100%); max-height: 88vh;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
