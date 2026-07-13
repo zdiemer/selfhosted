@@ -3125,6 +3125,53 @@ function renderStats() {
     if (cur > peak) { peak = cur; peakOn = d; }
   }
 
+  /* ---- what the purchase / start / finish dates say about how you work ----------
+     Three rankings and a distribution. The gap charts need datePurchased, which only
+     the GAMES sheet carries; the playthrough ones use the completed sheet, like the
+     binge and peak numbers above, so they all agree with each other. */
+  const fmtSpan = (d) => (d < 60 ? `${Math.round(d)}d`
+    : d < 730 ? `${Math.round(d / 30.4)} mo`
+    : `${(d / 365.25).toFixed(1)} yrs`);
+  const isoD = (v) => /^\d{4}-\d{2}-\d{2}/.test(String(v || ""));
+  const dayDiff = (a, b) => (new Date(b) - new Date(a)) / 864e5;
+  const shortD = (v) => String(v).slice(0, 10);
+
+  // Bought, then left to sit — the backlog made personal.
+  const buyBeat = games
+    .filter((r) => r.completed && isoD(r.datePurchased) && isoD(r.dateCompleted))
+    .map((r) => ({ r, d: dayDiff(r.datePurchased, r.dateCompleted) }))
+    .filter((x) => x.d >= 0).sort((a, b) => b.d - a.d).slice(0, 12)
+    .map(({ r, d }) => ({ label: r.title, value: d, link: gameLink(r, "games"),
+      tip: `${r.title}\nBought ${shortD(r.datePurchased)}\nBeaten ${shortD(r.dateCompleted)}\n${fmtSpan(d)} on the shelf` }));
+
+  // Bought -> started, as a DISTRIBUTION. A mean over a tail this long tells you nothing
+  // on its own, so the shape leads and the median rides along in the note.
+  const bsDays = games.filter((r) => isoD(r.datePurchased) && isoD(r.dateStarted))
+    .map((r) => dayDiff(r.datePurchased, r.dateStarted)).filter((d) => d >= 0)
+    .sort((a, b) => a - b);
+  const BS = [["Same week", 7], ["< 1 mo", 30], ["1–3 mo", 91], ["3–6 mo", 183],
+              ["6–12 mo", 365], ["1–2 yr", 730], ["2 yr+", Infinity]];
+  const bsData = BS.map(([label]) => ({ label, value: 0 }));
+  for (const d of bsDays) bsData[BS.findIndex(([, lim]) => d < lim)].value++;
+  const bsMed = bsDays.length ? bsDays[bsDays.length >> 1] : null;
+  const bsAvg = bsDays.length ? bsDays.reduce((a, b) => a + b, 0) / bsDays.length : null;
+
+  // The slow burns: longest from first session to the credits, in CALENDAR time.
+  const slowBurn = paced.slice().sort((a, b) => b.days - a.days).slice(0, 12)
+    .map((x) => ({ label: x.r.game, value: x.days, link: gameLink(x.r, "completed"),
+      tip: `${x.r.game}\nStarted ${shortD(x.r.started)}\nFinished ${shortD(x.r.date)}\n${fmtSpan(x.days)} start to credits` }));
+
+  // Every playthrough open around your busiest stretch, drawn as spans on one timeline.
+  const PK = peakOn ? +new Date(peakOn) : 0, WIN = 150 * 864e5;
+  const ivl = !peakOn ? [] : rows
+    .filter((r) => r.started && r.date && r.date >= r.started)
+    .map((r) => ({ r, s: +new Date(r.started), e: +new Date(r.date) }))
+    .filter((x) => x.e >= PK - WIN && x.s <= PK + WIN)
+    .sort((a, b) => (b.e - b.s) - (a.e - a.s)).slice(0, 40)
+    .map((x) => ({ label: x.r.game, start: new Date(x.s), end: new Date(x.e),
+      link: gameLink(x.r, "completed"),
+      tip: `${x.r.game}\n${shortD(x.r.started)} → ${shortD(x.r.date)}\n${fmtSpan((x.e - x.s) / 864e5)}` }));
+
   // Buy it, then actually play it — how long does that take?
   const gapMonths = games
     .filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
@@ -3201,15 +3248,26 @@ function renderStats() {
       statPanel("Rating distribution", barsH(ratingData)),
       statPanel("By region", barsH(countBars(rows, "region", 8, "completed"))),
       statPanel("How I played", barsH(flags)),
-      statPanel("Longest playthroughs", barsH(longest, { fmt: (v) => v + "h" })),
+      statPanel("Most hours played", barsH(longest, { fmt: (v) => v + "h" }), "",
+        "Hours at the pad. For the games that took the longest in CALENDAR time, see the slow burns below."),
+      statPanel("Longest playthroughs (start → finish)", barsH(slowBurn, { fmt: fmtSpan }), "",
+        "Calendar time from your first session to the credits — a slow burn, not necessarily a long game."),
       statPanel("Biggest me-vs-critic gaps", barsH(gaps, { fmt: (v) => (v > 0 ? "+" : "") + v, diverging: true }), "",
         "Green: you rated it higher than the critics did. Red: lower."),
       statPanel("Hardest you've binged", barsH(bingeRows, { fmt: (v) => v + "h/day" }), "",
         "Hours played divided by the days it took. The top of this list is a lost weekend."),
-      statPanel("Games on the go at once", `<div class="s-big">
-          <b>${peak}</b><span>at once, peaking ${peakOn ? escapeHtml(fmtDate(peakOn)) : "—"}</span>
-        </div>`, "",
-        "Counted from start and finish dates: how many playthroughs were open at the same time."),
+      statPanel("Most overlapping playthroughs",
+        intervals(ivl, peakOn ? { from: PK - WIN, to: PK + WIN } : {}), "wide",
+        peak ? `Your busiest stretch: ${peak} games on the go at once, around ${peakOn ? fmtDate(peakOn) : "—"}. Each bar is one playthrough and stacks when it overlaps another — the height of the pile is how many you were juggling. A bar that runs off an edge was already under way. Click one to open it.`
+             : "Counted from start and finish dates."),
+    ]) +
+    sect("Buying vs playing", [
+      statPanel("Longest waits: bought → beaten", barsH(buyBeat, { fmt: fmtSpan }), "wide",
+        "How long a game sat between paying for it and finishing it. Click a bar to open the game."),
+      statPanel("Bought → started", barsV(bsData), "wide",
+        bsMed != null
+          ? `Half the games you start, you start within ${fmtSpan(bsMed)} of buying them — but the average is ${fmtSpan(bsAvg)}, dragged out by the tail on the right. The shape is what matters: you either play it almost at once, or it sits for years. That right-hand spike is the backlog.`
+          : "Needs both a purchase date and a start date."),
     ]) +
     sect("Backlog", [
       statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),

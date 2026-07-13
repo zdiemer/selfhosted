@@ -405,6 +405,77 @@ function heatmap(counts, year, opts = {}) {
 
 /* Scatter — every finished game as a dot: critics across, you up. The diagonal
    is agreement; distance from it is how contrarian you were. */
+/* An INTERVAL (Gantt) chart: every item is a span on one shared timeline, packed into
+   lanes so spans that overlap in time stack on top of each other. The height of the
+   stack IS the answer — that is what "how many games did I have on the go at once"
+   looks like.
+
+   HTML, not SVG, for the same reason every bar here is: the labels are game titles and
+   need text-overflow, which SVG text cannot do.
+
+   Colour is the MAGNITUDE ramp keyed to DURATION — a longer playthrough is brighter, the
+   same reading as a ranked bar. Identity comes from the label printed ON the bar, never
+   from the hue, so nothing depends on telling two purples apart. */
+function intervals(items, opts = {}) {
+  if (!items.length) return `<div class="s-empty">No data</div>`;
+  const LANE = 22;
+  /* The domain is given, not derived. Left to itself the axis is set by the extremes,
+     and one game you took three years over stretches it across those three years —
+     squashing the busy stretch this chart exists to show into a sliver at the edge.
+     A span that runs past the window simply gets clipped at it, which reads exactly
+     right: that one was already under way. */
+  const t0 = opts.from != null ? +opts.from : Math.min(...items.map((i) => +i.start));
+  const t1 = opts.to != null ? +opts.to : Math.max(...items.map((i) => +i.end));
+  const span = Math.max(864e5, t1 - t0);
+  const pos = (t) => Math.max(0, Math.min(100, ((+t - t0) / span) * 100));
+
+  // Greedy lane packing: drop each span into the first lane that is already free.
+  const laneEnd = [];
+  const placed = items.slice().sort((a, b) => +a.start - +b.start).map((it) => {
+    let lane = laneEnd.findIndex((e) => e <= +it.start);
+    if (lane < 0) { laneEnd.push(+it.end); lane = laneEnd.length - 1; }
+    else laneEnd[lane] = +it.end;
+    return { it, lane };
+  });
+
+  const maxD = Math.max(1, ...items.map((i) => +i.end - +i.start));
+  const bars = placed.map(({ it, lane }) => {
+    const d = +it.end - +it.start;
+    const c = RAMP[Math.min(RAMP.length - 1, Math.round((1 - d / maxD) * (RAMP.length - 1)))];
+    const left = pos(it.start), w = Math.max(0.7, pos(it.end) - left);
+    const tag = it.link ? "button" : "div";
+    return `<${tag} class="ivl-bar${it.link ? " linked" : ""}"
+      style="left:${left.toFixed(2)}%;width:${w.toFixed(2)}%;top:${lane * LANE}px;background:${c}"
+      ${chartLink(it.link)}${tipAttr(it.tip)}><span>${escapeHtml(String(it.label))}</span></${tag}>`;
+  }).join("");
+
+  // Gridlines at the grain the window actually needs: months for a short span, years
+  // for a long one. Enough to read, not enough to shout.
+  const ticks = [];
+  const years = span / 3.156e10;
+  if (years <= 2.5) {
+    const step = years <= 1 ? 1 : 2;                     // every month, or every other
+    const d = new Date(t0); d.setDate(1);
+    if (+d < t0) d.setMonth(d.getMonth() + 1);
+    for (; +d <= t1; d.setMonth(d.getMonth() + step)) {
+      const lbl = d.getMonth() === 0
+        ? String(d.getFullYear())
+        : d.toLocaleDateString(undefined, { month: "short" });
+      ticks.push(`<div class="ivl-tick" style="left:${pos(+d).toFixed(2)}%"><span>${lbl}</span></div>`);
+    }
+  } else {
+    for (let y = new Date(t0).getFullYear() + 1; y <= new Date(t1).getFullYear(); y++) {
+      const t = +new Date(y, 0, 1);
+      if (t >= t0 && t <= t1) ticks.push(`<div class="ivl-tick" style="left:${pos(t).toFixed(2)}%"><span>${y}</span></div>`);
+    }
+  }
+
+  return `<div class="ivl" style="--lanes:${laneEnd.length}">
+    <div class="ivl-grid">${ticks.join("")}</div>
+    <div class="ivl-bars" style="height:${laneEnd.length * LANE}px">${bars}</div>
+  </div>`;
+}
+
 function scatter(points, opts = {}) {
   const { xLabel = "Critics", yLabel = "You", size = 300 } = opts;
   if (!points.length) return `<div class="s-empty">No data</div>`;
