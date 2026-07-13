@@ -354,11 +354,17 @@ class Enricher:
                     }
         with self._lock:
             self._key_meta = key_meta
-        # Give previously-unmatched games a shot at the fallback sources by
-        # clearing their no_match rows so the backfill reprocesses them.
+        # Give previously-unmatched games a shot at the fallback sources by clearing their
+        # no_match rows so the backfill reprocesses them — but NEVER the manual ones. A
+        # "Remove" pins a game as no_match with manual=1 precisely to say "stop matching
+        # this"; sweeping it up here deleted that decision on every restart and rescan, and
+        # auto-matching cheerfully put the wrong game back (Playdate's "Platformer" kept
+        # re-matching a PC game called "The Platformer").
         if self._fallback:
             with self._db_lock:
-                self._db.execute("DELETE FROM enrichment WHERE status='no_match'")
+                self._db.execute(
+                    "DELETE FROM enrichment WHERE status='no_match'"
+                    " AND (manual IS NULL OR manual = 0)")
                 self._db.commit()
         if self._backfill:
             self.request(list(key_meta.keys()), front=False)
