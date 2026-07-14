@@ -12,7 +12,8 @@ and the sheet has its own name for the same machine ("PlayStation"). PLATFORMS
 below reconciles the two; anything not in it must match by name.
 
 Only the mapping reaches the browser — never the credentials. The frontend gets
-{"<igdb_id>|<folder>": rom_id} and builds <publicUrl>/rom/<id>/ejs.
+{"<igdb_id>|<folder>": rom_id} and builds a Console Mode link on desktop, or
+the <publicUrl>/rom/<id> page on mobile.
 """
 
 from __future__ import annotations

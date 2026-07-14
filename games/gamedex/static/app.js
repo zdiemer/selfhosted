@@ -1808,11 +1808,16 @@ function rommRomId(row) {
   return id != null ? id : null;
 }
 
-// The standard EmulatorJS player, NOT Console Mode (/console/rom/<id>/play).
-// Both get RomM's cross-origin-isolation headers, but Console Mode's UI white-
-// screens on iOS Safari (the controller-style shell never boots the core),
-// whereas /rom/<id>/ejs plays fine on iPhone. So link the plain player.
-const rommPlayUrl = (id) => `${ROMM.baseUrl}/rom/${id}/ejs`;
+// Console Mode (/console/rom/<id>/play) is the desktop player and works well
+// there, but its controller-style shell white-screens on iOS Safari (the core
+// never boots) and the /ejs deep-link is unreliable on mobile too. So on phones
+// and tablets, link the ROM's detail page and let RomM's own mobile UI drive
+// Play. iPadOS reports a desktop UA, so also treat a touch-capable "Mac" as
+// mobile.
+const ROMM_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const rommPlayUrl = (id) =>
+  ROMM_MOBILE ? `${ROMM.baseUrl}/rom/${id}` : `${ROMM.baseUrl}/console/rom/${id}/play`;
 
 function rommHtml(row) {
   const id = rommRomId(row);
