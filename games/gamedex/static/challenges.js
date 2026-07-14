@@ -503,28 +503,88 @@ function chGameChip(row, note) {
     ${art}<span class="ch-chip-txt"><b>${escapeHtml(String(row.title))}</b><span class="muted">${sub}</span></span>${meta}</button>`;
 }
 
+/* The cleared buckets, as a wrapping horizontal timeline.
+
+   A challenge is a race against yourself, and the interesting thing about a cleared bucket
+   isn't WHICH bucket it was — it's WHEN it fell, and next to what. As a list of cards that
+   ordering was invisible: you got the challenge's own bucket order (A, B, C… / 1994, 1995…)
+   and a date printed on each card, which is a table pretending to be history.
+
+   So: oldest first, one cover per bucket, on a rail. The line is drawn per NODE rather than
+   across the container, because a line drawn across the container cannot wrap — each node's
+   rail segment reaches half the gap either side, so the segments meet and read as one
+   continuous line within a row, and every row starts its own. */
+const CH_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "2024-10-20" -> "Oct 24". Parsed off the string, not through Date: these are plain
+// calendar days out of the sheet and constructing a Date would drag a timezone into it
+// (and can hand you the previous evening).
+function chShortDate(iso) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso || ""));
+  if (!m) return "";
+  return `${CH_MONTHS[+m[2] - 1] || ""} ${m[1].slice(2)}`;
+}
+
+function chClearedTimeline(res) {
+  const nodes = [...res.cleared.entries()]
+    // cleared lists are already earliest-first, so [0] is the game that actually cleared it
+    .map(([key, rows]) => ({ key, row: rows[0], also: rows.length - 1 }))
+    .filter((n) => n.row && n.row.dateCompleted)
+    .sort((a, b) => (a.row.dateCompleted < b.row.dateCompleted ? -1
+                   : a.row.dateCompleted > b.row.dateCompleted ? 1 : 0));
+  if (!nodes.length) return `<div class="ch-empty">Nothing cleared yet.</div>`;
+
+  const html = nodes.map(({ key, row, also }) => {
+    const cs = coverSrc(ENRICH[row._k], "cover_small");
+    const art = cs
+      ? `<img src="${cs}" alt="" loading="lazy">`
+      : `<span class="chtl-ph">${icon("i-library", 18)}</span>`;
+    // The bucket is the headline (it's what was cleared); the game is the story, so it goes
+    // in the tooltip and the drawer rather than competing for the two lines we have.
+    const also_ = also ? ` (+${also} more since)` : "";
+    const tip = `${row.title}${row.platform ? ` · ${row.platform}` : ""} — cleared ${key}${also_}`;
+    return `<button class="chtl-node" title="${escapeHtml(tip)}"
+      data-gk="${escapeHtml(String(row._k || ""))}"
+      data-gt="${escapeHtml(String(row.title))}"
+      data-gp="${escapeHtml(String(row.platform || ""))}">
+      <span class="chtl-dot"></span>
+      <span class="chtl-art">${art}</span>
+      <b class="chtl-key">${escapeHtml(String(key))}</b>
+      <span class="chtl-date">${escapeHtml(chShortDate(row.dateCompleted))}</span>
+    </button>`;
+  }).join("");
+
+  const first = chShortDate(nodes[0].row.dateCompleted);
+  const last = chShortDate(nodes[nodes.length - 1].row.dateCompleted);
+  return `<p class="ch-hint">Oldest first — ${escapeHtml(first)} to ${escapeHtml(last)}. Tap a cover for the game that cleared it.</p>
+    <div class="chtl">${html}</div>`;
+}
+
 const CH_BUCKETS_SHOWN = 40;   // buckets rendered before "show all"
 
-function chBucketList(res, map, kind) {
+// The buckets still to clear. Only ever "todo" now — cleared ones are a timeline, because
+// they have a date and these don't, which is the whole reason the two can't share a shape.
+const CH_CANDIDATES_SHOWN = 5;
+
+function chBucketList(res, map) {
   const entries = chSortBuckets(res, map);
   if (!entries.length) {
-    return `<div class="ch-empty">${kind === "todo" ? "Nothing left — challenge complete!" : "Nothing cleared yet."}</div>`;
+    return `<div class="ch-empty">Nothing left — challenge complete!</div>`;
   }
-  const show = chState.showAll === kind ? entries : entries.slice(0, CH_BUCKETS_SHOWN);
+  const show = chState.showAll === "todo" ? entries : entries.slice(0, CH_BUCKETS_SHOWN);
   const html = show.map(([key, rows]) => {
-    const games = kind === "todo"
-      ? rows.slice(0, 5).map((r) => chGameChip(r)).join("")
-      : rows.slice(0, 1).map((r) => chGameChip(r, fmtDate(r.dateCompleted))).join("");
-    const extra = kind === "todo" && rows.length > 5
-      ? `<span class="ch-more">+${rows.length - 5} more</span>` : "";
-    return `<div class="ch-bucket${kind === "done" ? " ch-bucket-done" : ""}">
+    const games = rows.slice(0, CH_CANDIDATES_SHOWN).map((r) => chGameChip(r)).join("");
+    const extra = rows.length > CH_CANDIDATES_SHOWN
+      ? `<span class="ch-more">+${rows.length - CH_CANDIDATES_SHOWN} more</span>` : "";
+    return `<div class="ch-bucket">
       <div class="ch-bucket-head"><h4>${escapeHtml(String(key))}</h4>
-        <span class="muted">${kind === "todo" ? `${rows.length} candidate${rows.length !== 1 ? "s" : ""}` : "✓ cleared"}</span></div>
+        <span class="muted">${rows.length} candidate${rows.length !== 1 ? "s" : ""}</span></div>
       <div class="ch-chips">${games}${extra}</div></div>`;
   }).join("");
   const rest = entries.length - show.length;
   const more = rest > 0
-    ? `<button class="ch-showall" data-showall="${kind}">Show all ${entries.length}</button>` : "";
+    ? `<button class="ch-showall" data-showall="todo">Show all ${entries.length}</button>` : "";
   return html + more;
 }
 
@@ -597,9 +657,9 @@ function renderChallenges() {
        </div>
        <h2 class="ch-sec">Still to do <span class="muted">${res.remaining.size}</span></h2>
        <p class="ch-hint">Top-rated candidates for each, five shown. Tap any game for details.</p>
-       <div class="ch-buckets">${chBucketList(res, res.remaining, "todo")}</div>
+       <div class="ch-buckets">${chBucketList(res, res.remaining)}</div>
        <h2 class="ch-sec">Cleared <span class="muted">${res.cleared.size}</span></h2>
-       <div class="ch-buckets">${chBucketList(res, res.cleared, "done")}</div>
+       ${chClearedTimeline(res)}
      </div>`;
 
   $("#chBack").onclick = () => { chState.open = null; chState.showAll = null; renderChallenges(); nav(); };
@@ -608,7 +668,7 @@ function renderChallenges() {
   for (const el of host.querySelectorAll(".ch-showall")) {
     el.onclick = () => { chState.showAll = el.dataset.showall; renderChallenges(); };
   }
-  for (const el of host.querySelectorAll(".ch-chip")) {
+  for (const el of host.querySelectorAll(".ch-chip, .chtl-node")) {
     el.onclick = () => {
       const row = chRows().find((r) =>
         String(r._k || "") === el.dataset.gk &&
