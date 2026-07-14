@@ -3497,11 +3497,15 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 
 /* The inside of the case: dark plastic, and the media sitting in it. */
+/* THE INTERIOR IS THE BACK WALL, and it has to be, because the media has DEPTH of its own.
+   Seated 3px behind the front cover, a 20px-thick cartridge puts its own front face 7px THROUGH
+   the closed lid — which is why the games were visible through their shut boxes. Sit the media on
+   the back wall and its thickness grows forward INTO the case, where there's room for it. */
 .sh-inside {
   position: absolute; left: 50%; top: 50%;
   width: var(--w); height: var(--h);
   margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
-  transform: translateZ(calc(var(--d) / 2 - 3px));
+  transform: translateZ(calc(var(--d) / -2 + 2px));
   transform-style: preserve-3d;
   display: grid; place-items: center;
   background: #16161b; border-radius: 2px;
@@ -3516,9 +3520,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .sh-inside .md-disc { transform: rotateX(0deg) scale(.8); }
 /* …and when the box opens, it comes OUT of it, toward you. */
-.sh-case.open .sh-inside .md-cart { transform: translateZ(58px) translateY(-6px) scale(.92) rotateY(-6deg); }
-.sh-case.open .sh-inside .md-disc { transform: translateZ(58px) rotateX(0deg) scale(.9); }
-.sh-case.open .sh-inside .md-umd  { transform: translateZ(58px) scale(.9); }
+.sh-case.open .sh-inside .md-cart { transform: translateZ(84px) translateY(-6px) scale(.92) rotateY(-6deg); }
+.sh-case.open .sh-inside .md-disc { transform: translateZ(84px) rotateX(0deg) scale(.9); }
+.sh-case.open .sh-inside .md-umd  { transform: translateZ(84px) scale(.9); }
 
 @media (prefers-reduced-motion: reduce) {
   .sh-case .f-front, .sh-inside .md-cart, .sh-inside .md-disc { transition: none; }
