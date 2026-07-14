@@ -39,10 +39,6 @@ META = "https://archive.org/metadata/{}"
 EMBED = "https://archive.org/embed/{}"
 DETAILS = "https://archive.org/details/{}"
 DOWNLOAD = "https://archive.org/download/{}/{}"
-
-# A scan's page images. The Archive stores one file per page, so counting them IS the page
-# count when the item doesn't declare `imagecount` itself.
-_PAGE_EXT = (".jp2", ".jpg", ".jpeg", ".png", ".tif", ".tiff")
 _UA = "gamedex/1.0 (personal game collection; +https://github.com/zdiemer)"
 
 # Manuals are a physical-media thing. A game bought on Steam in 2021 never had one, and asking
@@ -153,17 +149,9 @@ class ManualClient:
         pdf = next((f["name"] for f in files
                     if str(f.get("name", "")).lower().endswith(".pdf")), None)
         meta = j.get("metadata") or {}
-        # The item usually declares its own page count; when it doesn't, count the page
-        # images. (This loop used to have `continue` as its entire body, so `pages` was
-        # unconditionally None and the count was never recovered either way.)
-        pages = None
         declared = meta.get("imagecount")
-        if declared and str(declared).isdigit():
-            pages = int(declared)
-        else:
-            n = sum(1 for f in files
-                    if str(f.get("name", "")).lower().endswith(_PAGE_EXT))
-            pages = n or None
+        pages = (int(declared) if declared and str(declared).isdigit()
+                 else self._pages_from_scandata(identifier, files))
         return {
             "pdf": pdf,
             "pages": pages,
@@ -171,6 +159,30 @@ class ManualClient:
             "year": meta.get("year") or meta.get("date"),
             "collections": meta.get("collection") or [],
         }
+
+    def _pages_from_scandata(self, identifier: str, files: list) -> int | None:
+        """How many pages the booklet actually has, per the Archive's own page record.
+
+        NOT by counting image files, which is the obvious thing and is wrong: a scanned
+        item seals its page images inside `<id>_jp2.zip`, so the only loose image left in
+        the file list is `__ia_thumb.jpg` — the Archive's thumbnail of the item. Counting
+        those reported "1 page" for a 48-page Persona 3 manual.
+
+        `imagecount` would be authoritative but is absent on most game-manual items, so we
+        fall back to scandata.xml, which carries one <page> element per scanned page. It's
+        a second request, but only for a manual we are actually keeping, and only once.
+        """
+        name = next((f.get("name") for f in files if f.get("format") == "Scandata"), None)
+        if not name:
+            return None                       # no page record: say nothing rather than guess
+        self._rl.wait()
+        try:
+            r = self._s.get(DOWNLOAD.format(identifier, urllib.parse.quote(name)), timeout=25)
+            r.raise_for_status()
+        except Exception as exc:
+            log.debug("manuals: scandata failed for %s: %s", identifier, exc)
+            return None
+        return r.text.count("<page ") or None
 
     def _record(self, doc: dict, score: int, info: dict | None = None) -> dict:
         ident = doc["identifier"]

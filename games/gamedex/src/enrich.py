@@ -159,8 +159,10 @@ EXTRAS_VERSION = "2"       # keywords / engines / age rating / perspectives
 # new record shape (this bump adds the box front, `cover`).
 GAMETDB_VERSION = "2"
 # One metadata call per already-matched manual, to recover the page count and the PDF that
-# _files() computed and threw away.
-MANUALS_FILES_VERSION = "1"
+# _files() computed and threw away. v2: v1 counted loose image files and so reported "1
+# page" for any scanned booklet (its pages live in a _jp2.zip; the one loose image is the
+# Archive's thumbnail). The count now comes from scandata.xml, and v2 re-does every row.
+MANUALS_FILES_VERSION = "2"
 
 
 class Enricher:
@@ -1038,14 +1040,41 @@ class Enricher:
             rows = self._db.execute(
                 "SELECT match_key, data FROM manuals WHERE status='matched' AND data IS NOT NULL"
             ).fetchall()
-        need = []
-        for key, raw in rows:
-            try:
-                rec = json.loads(raw)
-            except Exception:
-                continue
-            if rec.get("pages") is None and rec.get("identifier"):
-                need.append((key, rec))
+
+        # An earlier pass counted the Archive's own __ia_thumb.jpg and so wrote "1 page"
+        # onto real booklets. Re-deriving all of them takes hours (this top-up shares a
+        # rate limiter with the matcher), and until then the drawer would keep showing a
+        # number we KNOW is false — so strip the bad ones first, in one local pass that
+        # touches no network.
+        #
+        # Keyed on pages==1, the bug's own signature, and NOT on the version marker: that
+        # marker is only written when the whole pass completes, so a run interrupted by a
+        # deploy leaves it unset. Keying on the version would also mean re-stripping the
+        # good counts on every restart, and a pass this slow would then never converge.
+        # A genuinely 1-page manual is not a thing; if one exists we simply recount it.
+        # One pass: strip the bad counts and build the work-list from the SAME decoded
+        # record, so the two can never disagree about what still needs doing. Anything left
+        # with no page count is, by definition, what this backfill has to go and fetch —
+        # which also makes it resumable: the pass takes hours and a deploy in the middle of
+        # it must not start again from zero.
+        cleared, need = 0, []
+        with self._db_lock:
+            for key, raw in rows:
+                try:
+                    rec = json.loads(raw)
+                except Exception:
+                    continue
+                if rec.get("pages") == 1:
+                    rec.pop("pages", None)
+                    self._db.execute(
+                        "UPDATE manuals SET data=? WHERE match_key=? AND COALESCE(manual,0)=0",
+                        (json.dumps(rec), key))
+                    cleared += 1
+                if rec.get("identifier") and rec.get("pages") is None:
+                    need.append((key, rec))
+            self._db.commit()
+        if cleared:
+            log.info("manuals: cleared %d bogus 1-page counts; recounting properly", cleared)
         if not need:
             self._kv_set("manuals_files_version", MANUALS_FILES_VERSION)
             return
