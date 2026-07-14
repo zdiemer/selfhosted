@@ -894,9 +894,14 @@ function pcgwHtml(key) {
     ["64-bit", p.win64],
   ].filter(([, v]) => v)
     .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(titleCase(String(v)))}</b></div>`).join("");
-  if (!(display || tech)) return "";
+  if (!(display || tech || p.url)) return "";
+  // A page can exist with none of its infobox filled in (15 of the first 238 matched). The
+  // link is still the point of the section — that page is where the fixes and tweaks live —
+  // so surface it rather than hiding the whole thing over a set of empty fields.
+  const blank = !display && !tech
+    ? `<div class="hltb-note muted">No compatibility details filled in yet.</div>` : "";
   return `<div class="hltb"><div class="hltb-head">${icon("i-play", 15)} On PC (PCGamingWiki)</div>` +
-    display + tech +
+    display + tech + blank +
     (p.url ? `<a class="hltb-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Fixes and details on PCGamingWiki ↗</a>` : "") +
     `</div>`;
 }
