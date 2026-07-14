@@ -66,7 +66,27 @@ data:
         bios = os.path.join(src, "{{ .Values.config.firmwareFolder }}")
         if os.path.isdir(bios):
             link = os.path.join(FW, plat)
-            if not os.path.lexists(link):
+            bfiles = sorted(f for f in os.listdir(bios)
+                            if os.path.isfile(os.path.join(bios, f)))
+            # RomM bug #1835: a platform with EXACTLY ONE firmware file shows no
+            # dropdown AND won't auto-load it — even when verified — so the BIOS
+            # never reaches EmulatorJS and cores that require it (Lynx/handy,
+            # ColecoVision, Atari 5200, PC-FX, FDS) just fail to boot. The share
+            # has one file each for those. The documented workaround is to give
+            # RomM a second firmware entry so the dropdown appears. We can't write
+            # into the read-only NAS, so instead of symlinking the whole _bios dir
+            # we build a real dir here: the true file under its own name (stays
+            # hash-verified and correctly named for EJS) plus a duplicate under a
+            # marked name to trip the dropdown. Pick the real one in the player.
+            if len(bfiles) == 1 and not os.path.lexists(link):
+                os.makedirs(link, exist_ok=True)
+                real = bfiles[0]
+                os.symlink(os.path.join(bios, real), os.path.join(link, real))
+                stem, ext = os.path.splitext(real)
+                os.symlink(os.path.join(bios, real),
+                           os.path.join(link, f"{stem} (copy){ext}"))
+                fw += 1
+            elif not os.path.lexists(link):
                 os.symlink(bios, link); fw += 1
 
         for e in os.scandir(src):
