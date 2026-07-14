@@ -206,7 +206,13 @@ async function renderShelf() {
 let shResizeT = 0;
 function shOnResize() {
   clearTimeout(shResizeT);
-  shResizeT = setTimeout(() => { if (document.getElementById("shRows")) paintShelfRows(); }, 160);
+  shResizeT = setTimeout(() => {
+    if (!document.getElementById("shRows")) return;
+    paintShelfRows();
+    // A box in your hand when the phone turns: the room above the sheet is a different
+    // shape now, so work out where the case belongs and put it there.
+    if (shCur >= 0) { shPlaceTarget(); shPaint(); }
+  }, 160);
 }
 
 /* ---------- the rows of spines ---------- */
@@ -375,8 +381,8 @@ function shBuild(i) {
   const inside = document.createElement("div");
   inside.className = "sh-inside";
   inside.innerHTML =
-    `<span class="sh-wall w-r"></span><span class="sh-wall w-t"></span>
-     <span class="sh-wall w-b"></span>`
+    `<span class="sh-wall w-l"></span><span class="sh-wall w-r"></span>
+     <span class="sh-wall w-t"></span><span class="sh-wall w-b"></span>`
     + ((typeof mediaModelHtml === "function" && mediaFor(g.p)) ? mediaModelHtml(g) : "");
   el.appendChild(inside);
   if (typeof mountShells === "function") mountShells(inside);
@@ -401,18 +407,6 @@ function shBuild(i) {
   // its width — and then its projection IS the spine's rectangle, to the pixel.
   shFrom = shSpineAt(i);
 
-  // Coming toward you through a lens MAGNIFIES the case, and the magnification pushes
-  // away from the perspective origin, not from the case's own centre. Solve for the
-  // centre that leaves a fixed margin above the SCALED top edge, or tall boxes clip.
-  // Coming toward you through a lens MAGNIFIES the case, and the magnification pushes
-  // away from the perspective origin — not from the case's own centre. Solve for the
-  // centre that lands the case squarely in the middle of the view.
-  const s = SHELF_PERSP / (SHELF_PERSP - SHELF_PULL_Z);
-  const po = innerHeight * SHELF_PERSP_Y;       // must match .sh-pull perspective-origin
-  const wantY = innerHeight * 0.46;
-  shTo = { x: innerWidth / 2 - (innerWidth > 900 ? 130 : 0),   // leave room for the card
-           y: po + (wantY - po) / s };
-
   const src =
     g.src === "upload"
       ? `<span class="sh-badge mine">Your upload</span>`
@@ -423,7 +417,8 @@ function shBuild(i) {
           : `<span class="sh-badge none">No art anywhere</span>`;
 
   document.getElementById("shInfo").innerHTML = `
-    <button class="sh-grip" id="shGrip" aria-label="Collapse this card">▾</button>
+    <button class="sh-handle" id="shGrip" aria-expanded="false" aria-controls="shInfo"
+      aria-label="Expand game details"><span></span></button>
     <h3>${escapeHtml(g.t)}</h3>
     <div class="sh-plat">${escapeHtml(g.p)}${g.done ? ' · <span class="sh-done">Beaten</span>' : ""}</div>
     ${src}
@@ -440,16 +435,17 @@ function shBuild(i) {
       <button class="sh-btn" id="shBack">← Put it back</button>
     </div>
     <div id="shMedia"></div>`;
-  /* On a phone the detail card is a bottom sheet, and it sat on top of the very box it describes —
-     open the box and the cartridge you opened it for was behind the sheet. Fold it down to its
-     title and the case is visible again. */
-  const grip = document.getElementById("shGrip");
+
+  /* On a phone the card is a bottom sheet, and it used to open on top of the very box it
+     describes. It now RESTS at its handle, its title and its buttons — everything you need to
+     turn the box, open it or put it back — and the case is placed in the room left above it.
+     Drag it up for the rest. The card element is reused between games, so the sheet has to be
+     put back down here or the next box you pull comes out behind an already-raised sheet. */
   const card = document.getElementById("shInfo");
-  if (grip) grip.onclick = () => {
-    const min = card.classList.toggle("min");
-    grip.textContent = min ? "▴" : "▾";
-    grip.setAttribute("aria-label", min ? "Expand this card" : "Collapse this card");
-  };
+  card.classList.remove("up", "drag");
+  card.style.transform = "";
+  shPlaceTarget();                              // needs the card's real height: measure, then place
+  shBindSheet(card);
 
   // Open the box: the media comes out, and the booklet with it.
   const openBtn = document.getElementById("shOpen");
@@ -477,6 +473,122 @@ function shBuild(i) {
   document.getElementById("shArt").onclick = () =>
     openCoverEditor({ key: g.k, platform: g.p, title: g.t, hasUpload: g.src === "upload",
       caseDefault: g.case, existing: g.upload, onDone: () => reloadShelfBox(g.k) });
+}
+
+/* ---------- the bottom sheet (phones only) ---------- */
+
+const SH_MOBILE = () => matchMedia("(max-width: 860px)").matches;
+
+/* How much of the sheet stays on screen when it's down. MEASURED, not guessed: a title that
+   wraps to two lines, or a game with no "Open the box" button, changes the height of the block
+   we want to leave showing — and a guessed number either clips the buttons or leaves a gap.
+   Zero on desktop, where the card sits beside the box and none of this applies. */
+function shPeek() {
+  const card = document.getElementById("shInfo");
+  const acts = card?.querySelector(".sh-acts");
+  if (!card || !acts || !SH_MOBILE()) return 0;
+  const pad = parseFloat(getComputedStyle(card).paddingBottom) || 0;
+  const peek = Math.round(acts.offsetTop + acts.offsetHeight + pad);
+  card.style.setProperty("--sh-peek", peek + "px");
+  return peek;
+}
+
+/* Where the case comes to rest. Coming toward you through a lens MAGNIFIES the case, and the
+   magnification pushes away from the perspective origin — not from the case's own centre — so
+   solve for the centre that LANDS where we want it. On a phone "where we want it" is the middle
+   of the room left above the resting sheet; on desktop, the middle of the view. */
+function shPlaceTarget() {
+  const s = SHELF_PERSP / (SHELF_PERSP - SHELF_PULL_Z);
+  const po = innerHeight * SHELF_PERSP_Y;       // must match .sh-pull perspective-origin
+  const free = innerHeight - shPeek();          // the whole viewport on desktop
+  const half = (shH * s) / 2;                   // half the case, as it will be SEEN
+  // A tall case on a short phone can't both clear the top and clear the sheet. Clearing the top
+  // wins: the box tucks a little behind the sheet, which you can drag away, rather than losing
+  // its head off the top of the screen, which you can't.
+  const wantY = SH_MOBILE()
+    ? Math.max(SHELF_TOP_GAP + half, Math.min(free / 2, free - half - 8))
+    : innerHeight * 0.46;
+  shTo = { x: innerWidth / 2 - (innerWidth > 900 ? 130 : 0),   // leave room for the card
+           y: po + (wantY - po) / s };
+}
+
+/* Drag the sheet by its handle (or its title): it follows your finger and snaps to whichever
+   end you left it nearest — or, if you flicked, to the way you threw it. A tap on the handle
+   toggles. Buttons and the media panel are deliberately not drag surfaces: "Open the box" has
+   to stay a tap, and the cartridge in the media panel has its own drag-to-turn.
+   Same pointer-capture shape as shBindCase, try/catch and all — iOS throws on a touch pointer. */
+const SH_FLING = 0.4;    // px/ms — past this it's a throw, not a drag
+const SH_TAP = 4;        // px — under this it never moved, so it was a tap
+
+function shBindSheet(card) {
+  // ONCE. The card is a fixture of the overlay — only its contents are rewritten per game — so
+  // binding it per build stacked a second set of listeners on the second pull, a third on the
+  // third. Two listeners both settle a tap, and the second one reads the class the first just
+  // wrote and toggles it straight back: the sheet stopped answering taps entirely.
+  if (card.dataset.sheetBound) return;
+  card.dataset.sheetBound = "1";
+
+  let d = null;
+  const H = () => card.offsetHeight;
+  const down = () => H() - shPeek();            // resting offset, in px
+  const at = (y) => { card.style.transform = `translateY(${y.toFixed(1)}px)`; };
+  const grip = () => card.querySelector(".sh-handle");   // rebuilt with every game
+
+  const settle = (up) => {
+    card.classList.remove("drag");
+    card.style.transform = "";                  // hand it back to CSS, which animates the snap
+    card.classList.toggle("up", up);
+    const handle = grip();
+    handle?.setAttribute("aria-expanded", up ? "true" : "false");
+    handle?.setAttribute("aria-label", up ? "Collapse game details" : "Expand game details");
+  };
+
+  card.addEventListener("pointerdown", (e) => {
+    if (!SH_MOBILE()) return;
+    if (!e.target.closest(".sh-handle, h3, .sh-plat")) return;   // never steal a button's tap
+    d = { y: e.clientY, t: e.timeStamp, from: card.classList.contains("up") ? 0 : down(),
+          moved: 0, v: 0 };
+    handled = false;
+    card.classList.add("drag");
+    try { card.setPointerCapture(e.pointerId); } catch {}
+  }, { passive: false });
+
+  card.addEventListener("pointermove", (e) => {
+    if (!d) return;
+    const dy = e.clientY - d.y;
+    d.moved = Math.max(d.moved, Math.abs(dy));
+    const dt = Math.max(8, e.timeStamp - d.t);
+    d.v = dy / dt;                              // px/ms, signed: + is downward
+    at(shClamp(d.from + dy, 0, down()));
+    e.preventDefault();                         // it's a drag, not a scroll
+  }, { passive: false });
+
+  // Every finger release settles the sheet itself, so the click that follows it — whose target
+  // isn't even reliable once the pointer has been captured — must be swallowed. Settle in both
+  // and the sheet toggles twice, which reads as nothing happening at all. A click that arrives
+  // with no release behind it is a keyboard or a screen reader pressing the button, and that
+  // has to keep working.
+  let handled = false;
+  const release = (e) => {
+    if (!d) return;
+    const drag = d; d = null;
+    handled = true;
+    try { card.releasePointerCapture(e.pointerId); } catch {}
+    if (drag.moved < SH_TAP) return settle(!card.classList.contains("up"));      // a tap: toggle
+    if (Math.abs(drag.v) > SH_FLING) return settle(drag.v < 0);                  // a throw: obey it
+    const y = shClamp(drag.from + (e.clientY - drag.y), 0, down());
+    settle(y < down() / 2);                     // otherwise: whichever end it's nearer
+  };
+  card.addEventListener("pointerup", release);
+  card.addEventListener("pointercancel", () => { if (d) { d = null; settle(card.classList.contains("up")); } });
+
+  // Delegated, because the handle itself is a new element with every game.
+  card.addEventListener("click", (e) => {
+    if (!e.target.closest(".sh-handle")) return;
+    e.preventDefault();
+    if (handled) { handled = false; return; }   // a finger already settled it; this is its echo
+    if (SH_MOBILE()) settle(!card.classList.contains("up"));
+  });
 }
 
 // After an upload changes, refresh just this game's data + the pulled case, without a
