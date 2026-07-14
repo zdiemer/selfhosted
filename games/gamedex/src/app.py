@@ -36,7 +36,9 @@ from arcadedb import ArcadeDbClient
 from enrich import Enricher
 from fallback import FallbackClient
 from gameye import GameEyeClient
+from gametdb import GameTdb
 from hltb import HltbClient
+from manuals import ManualClient
 from igdb import IgdbClient
 from metacritic import MetacriticClient
 from poller import DataStore
@@ -94,6 +96,13 @@ if _on("GUIDES_ENABLED"):
 if _on("COOPTIMUS_ENABLED"):
     # IGDB says "co-operative"; Co-Optimus says how many, on one sofa or online.
     _secondary["cooptimus"] = CooptimusClient()
+if _on("MANUALS_ENABLED"):
+    # The instruction booklet. The one thing that was in the box that nobody keeps and no
+    # games API carries — the Internet Archive has ~7,500 of them scanned.
+    _secondary["manuals"] = ManualClient()
+if _on("GAMETDB_ENABLED"):
+    # The printed face of the disc, which is its own artwork and nothing else has it.
+    _secondary["gametdb"] = GameTdb(os.environ.get("GAMETDB_DIR", "/data/gametdb"))
 # Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
 # off by default — its API is Cloudflare-blocked (see fallback.py).
 _fallback = (

@@ -359,6 +359,19 @@ function shBuild(i) {
       <div class="sh-face f-left std" style="background:${spineStyle(g.p).base}">${stdSpineHtml(g)}</div>
       <div class="sh-face f-right"></div><div class="sh-face f-top"></div><div class="sh-face f-bottom"></div>`;
 
+  /* THE INSIDE OF THE BOX. Built into the 3D case itself, sitting just behind the front cover,
+     so when the cover swings open on its hinge the media is genuinely in there — not a picture
+     that appears next to the box. It only exists when there is something real to put in it. */
+  if (typeof hasBoxContents === "function" && hasBoxContents(g.mk) && typeof mediaFor === "function") {
+    const m = mediaFor(g.p);
+    if (m) {
+      const inside = document.createElement("div");
+      inside.className = "sh-inside";
+      inside.innerHTML = mediaModelHtml(g);
+      el.appendChild(inside);
+    }
+  }
+
   // Where the case has to START: exactly on top of the spine it came from. At
   // rotateY(90) the left wall lands at world z = 0 IF the case is pushed back by half
   // its width — and then its projection IS the spine's rectangle, to the pixel.
@@ -396,9 +409,25 @@ function shBuild(i) {
     </dl>
     <div class="sh-acts">
       <button class="sh-btn primary" id="shDetails">Full details</button>
+      ${typeof mediaFor === "function" && (mediaFor(g.p) || (ENRICH[g.mk] || {}).manualEmbed)
+        ? `<button class="sh-btn" id="shOpen">Open the box</button>` : ""}
       <button class="sh-btn" id="shArt">${g.src === "upload" ? "Change art" : "Add / fix art"}</button>
       <button class="sh-btn" id="shBack">← Put it back</button>
-    </div>`;
+    </div>
+    <div id="shMedia"></div>`;
+  // Open the box: the media comes out, and the booklet with it.
+  const openBtn = document.getElementById("shOpen");
+  if (openBtn) openBtn.onclick = () => {
+    const host = document.getElementById("shMedia");
+    const kase = shEl;
+    const opening = !kase.classList.contains("open");
+    kase.classList.toggle("open", opening);
+    openBtn.textContent = opening ? "Close the box" : "Open the box";
+    host.innerHTML = opening ? mediaPanelHtml(g) : "";
+    if (!opening) return;
+    const man = document.getElementById("mdManual");
+    if (man) man.onclick = () => openManual(g);
+  };
   document.getElementById("shBack").onclick = shelfClose;
   document.getElementById("shDetails").onclick = () => {
     // The app already has a detail card. Reuse it rather than inventing a second one.

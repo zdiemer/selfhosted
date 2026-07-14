@@ -94,6 +94,12 @@ _SECONDARY_LIGHT = {
                          "steamReview": d.get("reviewScore"), "owners": d.get("owners")},
     "speedrun": lambda d: {"wrTime": d.get("wrTime"), "wrSeconds": d.get("wrSeconds")},
     "guides": lambda d: {"guideUrl": d.get("url")},
+    # The booklet, and the disc's printed face. Both are for the Shelf: you open the box and
+    # what was actually inside it is there.
+    "manuals": lambda d: {"manualEmbed": d.get("embed"), "manualUrl": d.get("url"),
+                          "manualName": d.get("name")},
+    "gametdb": lambda d: {"discArt": d.get("disc"), "gtdbId": d.get("gameId"),
+                          "gtdbUrl": d.get("url")},
 }
 
 # Not every source applies to every game. These gates keep the queues honest:
@@ -118,7 +124,17 @@ _SOURCE_GATE = {
     # Co-Optimus only covers modern consoles and PC — searching an SNES game there
     # is a request that can only ever come back empty.
     "cooptimus": lambda m: m.get("platform") in _COOP_PLATFORMS,
+    # A manual is a physical-media thing. A game bought on Steam in 2021 never had one, and
+    # asking the Internet Archive about 14,000 of them would be 14,000 requests for nothing.
+    "manuals": lambda m: m.get("platform") in _MANUAL_PLATFORMS,
+    # GameTDB only scans discs, and only Nintendo's.
+    "gametdb": lambda m: m.get("platform") in _GAMETDB_PLATFORMS,
 }
+# Imported rather than restated, so the gate and the client can never disagree about which
+# platforms a source speaks for.
+from manuals import PLATFORMS as _MANUAL_PLATFORMS          # noqa: E402
+from gametdb import PLATFORMS as _GAMETDB_PLATFORMS         # noqa: E402
+
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 VALUE_RESCRAPE_DAYS = int(os.environ.get("VALUE_RESCRAPE_DAYS", "7"))
