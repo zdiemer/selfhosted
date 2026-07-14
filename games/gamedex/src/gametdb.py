@@ -107,7 +107,7 @@ class GameTdb:
         try:
             root = ET.fromstring(xml)
         except Exception as exc:
-            log.warning("gametdb: %s dump unparseable (%s)", console, exc)
+            log.warning("gametdb: %s dump unparseable (%s)", dump, exc)
             return 0
         n = 0
         for g in root.iter("game"):
@@ -196,8 +196,11 @@ class GameTdb:
             "console": want,
             "name": best["title"],
             "year": best.get("year"),
-            # The printed face of the disc, and the full wrap, straight off their CDN.
+            # The printed face of the disc, the box front, and the full wrap — all straight
+            # off their CDN. The front is region-correct art for a disc IGDB may never have
+            # matched, so it earns its place in the cover chain, not just on the shelf.
             "disc": ART.format(path=path, kind="disc", region=region, gid=gid),
+            "cover": ART.format(path=path, kind="cover", region=region, gid=gid),
             "coverFull": ART.format(path=path, kind="coverfullHQ", region=region, gid=gid),
             "url": f"https://www.gametdb.com/{'Wii' if want != 'wiiu' else 'WiiU'}/{gid}",
             "confidence": 10 if (year and best.get("year") == year) else 7,

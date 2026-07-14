@@ -90,12 +90,16 @@ const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${s
 // Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
 // Cover: IGDB image id, else a fallback source's full URL, else the art the
 // gated sources bring — an arcade cabinet scan or a VN cover beats a blank box.
+// gtdbCover is a real, region-correct box front from GameTDB's CDN, and vgcCover a box
+// scan from VGChartz. Both were being fetched and stored already; neither was ever shown.
+// They sit at the end of the chain — after IGDB and after the art a gated source brings —
+// so they only ever fill a box that would otherwise have been blank.
 const coverSrc = (e, size) => (
   !e ? "" :
   e.uploadCover ? e.uploadCover :          // your hand-uploaded art wins everywhere
   e.coverUrl ? e.coverUrl :
   e.cover ? IMG(e.cover, size) :
-  e.vnCover || e.adbCover || e.thumbyCover || "");
+  e.vnCover || e.adbCover || e.thumbyCover || e.gtdbCover || e.vgcCover || "");
 // Thumby art is a 64x64 icon — scale it up with hard edges, not a blur.
 const coverIsPixelArt = (e, src) => !!(e && e.thumbyCover && src === e.thumbyCover);
 let ENRICH_ENABLED = false;
@@ -114,6 +118,8 @@ const SXC = {};                    // matchKey -> Steam extras (Deck/Proton/Stea
 const SRC = {};                    // matchKey -> speedrun record
 const GDC = {};                    // matchKey -> StrategyWiki guide
 const COOPC = {};                  // matchKey -> Co-Optimus co-op details
+const MANC = {};                   // matchKey -> Internet Archive manual (pages, PDF)
+const GTDBC = {};                  // matchKey -> GameTDB disc face + box wrap
 const ENRICH_REQUESTED = new Set();
 const UPLOADS = {};                // matchKey -> {url, v} : hand-uploaded box art
 const GR = {};                     // matchKey -> {score, n, url} : GameRankings archive
@@ -667,11 +673,19 @@ function metacriticHtml(key) {
 function gameyeHtml(key) {
   const ge = GEC[key];
   if (!ge) return "";
-  const rows = [["Loose", ge.priceLoose], ["CIB", ge.priceCib], ["New", ge.priceNew]].filter(([, v]) => v != null);
+  // Manual and Box were scraped and stored from the start and never shown — which is odd,
+  // because for a collector they are the interesting half: they are what the difference
+  // between a loose cart and a complete-in-box copy is actually MADE of.
+  const rows = [["Loose", ge.priceLoose], ["CIB", ge.priceCib], ["New", ge.priceNew],
+                ["Manual only", ge.priceManual], ["Box only", ge.priceBox]]
+    .filter(([, v]) => v != null);
   if (!rows.length) return "";
   const cond = (drawerRow && drawerRow.condition) || "";
   const key2 = { complete: "priceCib", cib: "priceCib", loose: "priceLoose", new: "priceNew" }[cond.toLowerCase()] || "priceLoose";
-  const qty = quantityFromNotes(drawerRow && drawerRow.notes);
+  // notes.py already parsed the copy count out of "Gray and gold copies"; quantityFromNotes
+  // catches the other phrasing ("Two copies owned"). Prefer the parsed field, fall back to
+  // the text — between them they cover both ways the sheet says it.
+  const qty = (drawerRow && drawerRow.copiesOwned) || quantityFromNotes(drawerRow && drawerRow.notes);
   let mine = "";
   if (ge[key2] != null) {
     const total = ge[key2] * qty;
@@ -688,7 +702,8 @@ function gameyeHtml(key) {
 function arcadeHtml(key) {
   const a = ADBC[key];
   if (!a) return "";
-  const shots = [["Cabinet", a.cabinet], ["Marquee", a.marquee], ["Flyer", a.flyer], ["Title", a.titleScreen]]
+  const shots = [["Cabinet", a.cabinet], ["Marquee", a.marquee], ["Flyer", a.flyer],
+                 ["Title", a.titleScreen], ["In game", a.ingame]]
     .filter(([, u]) => u)
     .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
     .join("");
@@ -699,8 +714,20 @@ function arcadeHtml(key) {
     ["Manufacturer", a.manufacturer], ["Year", a.year],
   ].filter(([, v]) => v)
     .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
+  // ArcadeDB ships a shortplay video of the real cabinet running, for every machine — and
+  // we have been storing the URL and never playing it. Not autoplayed: a drawer that starts
+  // making noise at you is a drawer you close. Click it.
+  const vid = a.video
+    ? `<video class="adb-vid" src="${escapeHtml(a.video)}" controls preload="none"
+              ${a.titleScreen ? `poster="${escapeHtml(a.titleScreen)}"` : ""}></video>
+       <div class="hltb-note muted">Shortplay footage of the cabinet</div>` : "";
+  const extra = [
+    ["Genre", a.genre], ["Series", a.series],
+    ["MAME rating", a.rating != null ? `${a.rating}/100` : null],
+  ].filter(([, v]) => v)
+    .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
   return `<div class="hltb"><div class="hltb-head">${icon("i-dice", 15)} Arcade cabinet${a.romset ? ` <span class="muted">${escapeHtml(a.romset)}</span>` : ""}</div>` +
-    (shots ? `<div class="adb-arts">${shots}</div>` : "") + spec +
+    (shots ? `<div class="adb-arts">${shots}</div>` : "") + vid + spec + extra +
     (a.history ? `<details class="adb-history"><summary>MAME history</summary><p>${escapeHtml(a.history)}</p></details>` : "") +
     (a.url ? `<a class="hltb-link" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">View on Arcade Database ↗</a>` : "") +
     `</div>`;
@@ -715,8 +742,12 @@ function vndbHtml(key) {
     ["Released", v.released || null],
   ].filter(([, x]) => x)
     .map(([l, x]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(x))}</b></div>`).join("");
-  if (!rows) return "";
-  return `<div class="hltb"><div class="hltb-head">${icon("i-review", 15)} Visual novel (VNDB)</div>${rows}` +
+  // VNDB writes a real synopsis, and we store it. For a visual novel IGDB never matched it
+  // is the ONLY description the game has — so it must not depend on `rows` being non-empty.
+  const desc = v.description
+    ? `<p class="vndb-desc">${escapeHtml(v.description)}</p>` : "";
+  if (!rows && !desc) return "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-review", 15)} Visual novel (VNDB)</div>${desc}${rows}` +
     (v.url ? `<a class="hltb-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">View on VNDB ↗</a>` : "") +
     `</div>`;
 }
@@ -765,10 +796,17 @@ function coopHtml(key) {
   if (c.lanPlayers > 1) rows.push(`<div class="hltb-row"><span>LAN</span><b>${c.lanPlayers} players</b></div>`);
   if (c.campaignCoop) rows.push(`<div class="hltb-row"><span>Campaign</span><b class="good">Playable co-op</b></div>`);
   if (c.dropIn) rows.push(`<div class="hltb-row"><span>Drop-in</span><b>Join mid-game</b></div>`);
-  if (!rows.length) return "";
+  // The numbers say co-op is possible; coopExperience says what it's actually LIKE — which
+  // is the bit you want before committing someone else's evening. Stored, never shown.
+  const feats = (c.features || []).slice(0, 8)
+    .map((f) => `<span class="chip">${escapeHtml(String(f))}</span>`).join("");
+  const prose = c.coopExperience
+    ? `<p class="coop-desc">${escapeHtml(c.coopExperience)}</p>` : "";
+  if (!rows.length && !prose && !feats) return "";
   const link = c.url
     ? `<a class="hltb-link" href="${escapeHtml(c.url)}" target="_blank" rel="noopener">View on Co-Optimus ↗</a>` : "";
-  return `<div class="hltb"><div class="hltb-head">${icon("i-star", 15)} Co-op (Co-Optimus)</div>${rows.join("")}${link}</div>`;
+  return `<div class="hltb"><div class="hltb-head">${icon("i-star", 15)} Co-op (Co-Optimus)</div>` +
+    `${rows.join("")}${feats ? `<div class="chips">${feats}</div>` : ""}${prose}${link}</div>`;
 }
 
 function steamxHtml(key) {
@@ -777,7 +815,7 @@ function steamxHtml(key) {
   const deck = x.deck
     ? `<div class="hltb-row"><span>Steam Deck</span><b class="deck deck-${escapeHtml(String(x.deck).toLowerCase())}">${escapeHtml(x.deck)}</b></div>` : "";
   const proton = x.protonTier
-    ? `<div class="hltb-row"><span>ProtonDB</span><b class="proton proton-${escapeHtml(String(x.protonTier))}">${escapeHtml(x.protonTier)}${x.protonReports ? ` <span class="muted">(${x.protonReports} reports)</span>` : ""}</b></div>` : "";
+    ? `<div class="hltb-row"><span>ProtonDB</span><b class="proton proton-${escapeHtml(String(x.protonTier))}">${escapeHtml(x.protonTier)}${x.protonScore != null ? ` <span class="muted">${Math.round(x.protonScore * 100)}%</span>` : ""}${x.protonReports ? ` <span class="muted">(${x.protonReports} reports)</span>` : ""}</b></div>` : "";
   const rev = x.reviewScore != null
     ? `<div class="hltb-row"><span>Steam reviews</span><b class="${ratingClass(x.reviewScore)}">${Math.round(x.reviewScore * 100)}% positive <span class="muted">of ${(x.positive + x.negative).toLocaleString()}</span></b></div>` : "";
   const own = x.owners
@@ -785,8 +823,13 @@ function steamxHtml(key) {
   const ccu = x.concurrent
     ? `<div class="hltb-row"><span>Playing now</span><b>${x.concurrent.toLocaleString()}</b></div>` : "";
   const a = x.achievements;
+  // We store the rarest achievement's NAME and only ever printed its percentage — so the
+  // drawer said "rarest 0.4%" without saying rarest WHAT.
   const ach = a
-    ? `<div class="hltb-row"><span>Achievements</span><b>${a.count} <span class="muted">· median ${a.medianPercent}% · rarest ${a.rarestPercent}%</span></b></div>` : "";
+    ? `<div class="hltb-row"><span>Achievements</span><b>${a.count} <span class="muted">· median ${a.medianPercent}%</span></b></div>` +
+      (a.rarest
+        ? `<div class="hltb-row"><span>Rarest</span><b>${escapeHtml(String(a.rarest))} <span class="muted">· ${a.rarestPercent}% of players</span></b></div>`
+        : `<div class="hltb-row"><span>Rarest</span><b>${a.rarestPercent}% of players</b></div>`) : "";
   if (!(deck || proton || rev || own || ccu || ach)) return "";
   return `<div class="hltb"><div class="hltb-head">${icon("i-play", 15)} Steam</div>${deck}${proton}${rev}${own}${ccu}${ach}` +
     (x.protonUrl ? `<a class="hltb-link" href="${escapeHtml(x.protonUrl)}" target="_blank" rel="noopener">View on ProtonDB ↗</a>` : "") +
@@ -799,7 +842,12 @@ function speedrunHtml(key) {
   if (!r || !r.wrTime) return "";
   const rows = (r.categories || []).slice(0, 3).map((c) =>
     `<div class="hltb-row"><span>${escapeHtml(c.category)}</span><b>${escapeHtml(c.time)}</b></div>`).join("");
-  return `<div class="hltb"><div class="hltb-head">${icon("i-trophy", 15)} World records</div>${rows}` +
+  // We store wrUrl — the link to the record RUN — and only ever linked the leaderboard.
+  // The run is the thing worth watching; the leaderboard is a table of times.
+  const wr = r.wrUrl
+    ? `<a class="hltb-link" href="${escapeHtml(r.wrUrl)}" target="_blank" rel="noopener">` +
+      `Watch the world record${r.wrCategory ? ` — ${escapeHtml(r.wrCategory)}` : ""}${r.wrTime ? ` (${escapeHtml(r.wrTime)})` : ""} ↗</a>` : "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-trophy", 15)} World records</div>${rows}${wr}` +
     (r.url ? `<a class="hltb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Leaderboards on speedrun.com ↗</a>` : "") +
     `</div>`;
 }
@@ -812,6 +860,47 @@ function guidesHtml(key) {
   return `<div class="hltb"><div class="hltb-head">${icon("i-review", 15)} Guide (StrategyWiki)</div>` +
     (secs ? `<div class="chips">${secs}</div>` : "") +
     `<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">${g.hasWalkthrough ? "Read the walkthrough" : "Open the guide"} ↗</a></div>`;
+}
+
+/* The physical object: the booklet, the printed disc, the box wrap — and the facts about
+   YOUR copy that the Notes column already told us and nobody ever read back.
+
+   Every field here was being scraped or parsed and then dropped: the manuals and gametdb
+   tables were never even returned by /api/enrichment/detail, and notes.py's copiesOwned /
+   physicalMedia / requiredAccessory / multiDiscCollection / damaged were attached to every
+   row in the payload with not one reader in the UI. */
+function physicalHtml(key) {
+  const m = MANC[key], g = GTDBC[key], row = drawerRow || {};
+  const art = [["Disc face", g && g.disc], ["Box wrap", g && g.coverFull]]
+    .filter(([, u]) => u)
+    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .join("");
+
+  const rows = [];
+  if (m && m.pages) rows.push(["Manual", `${m.pages} pages`]);
+  if (g && g.gameId) rows.push(["Disc ID", g.gameId + (g.region ? ` · ${g.region}` : "")]);
+  // Your copy, per the sheet's Notes.
+  if (row.copiesOwned > 1) rows.push(["Copies owned", String(row.copiesOwned)]);
+  if (row.edition) rows.push(["Edition", row.edition]);
+  if (row.physicalMedia) rows.push(["Media", row.physicalMedia]);
+  if (row.requiredAccessory) rows.push(["Requires", row.requiredAccessory]);
+  if (row.multiDiscCollection) rows.push(["Collection", row.multiDiscCollection]);
+  const body = rows
+    .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
+  const dmg = row.damaged
+    ? `<div class="hltb-row"><span>Condition</span><b class="bad">Damaged</b></div>` : "";
+
+  const links = [];
+  if (m && m.embed) {
+    links.push(`<a class="hltb-link" href="#" data-read-manual>Read the manual${m.pages ? ` (${m.pages} pages)` : ""}</a>`);
+  }
+  if (m && m.pdf) links.push(`<a class="hltb-link" href="${escapeHtml(m.pdf)}" target="_blank" rel="noopener">Download the PDF ↗</a>`);
+  if (g && g.url) links.push(`<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">View on GameTDB ↗</a>`);
+
+  if (!(art || body || dmg || links.length)) return "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-package", 15)} In the box</div>` +
+    (art ? `<div class="adb-arts">${art}</div>` : "") + body + dmg + links.join("") +
+    `</div>`;
 }
 
 // Compose the drawer's enrichment section: IGDB + HLTB + Metacritic + GameEye + map.
@@ -875,7 +964,17 @@ function renderIgdbSection(key, el, status, detail) {
   }
   el.innerHTML = content + hltbHtml(HLTBC[key]) + speedrunHtml(key) + metacriticHtml(key)
     + coopHtml(key) + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
-    + salesHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+    + salesHtml(key) + physicalHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+
+  // The Shelf's manual reader, reached from the drawer too — you shouldn't have to go and
+  // find the box on the shelf to read the booklet that came in it.
+  const readBtn = el.querySelector("[data-read-manual]");
+  if (readBtn) {
+    readBtn.onclick = (ev) => {
+      ev.preventDefault();
+      openManual({ mk: key, t: (drawerRow && (drawerRow.title || drawerRow.game)) || "" });
+    };
+  }
 
   el.querySelectorAll(".map-src").forEach((rowEl) => {
     const src = rowEl.dataset.src;
@@ -951,6 +1050,8 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     if ("speedrun" in j) SRC[key] = j.speedrun;
     if ("guides" in j) GDC[key] = j.guides;
     if ("cooptimus" in j) COOPC[key] = j.cooptimus;
+    if ("manuals" in j) MANC[key] = j.manuals;
+    if ("gametdb" in j) GTDBC[key] = j.gametdb;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {

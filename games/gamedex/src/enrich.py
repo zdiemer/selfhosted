@@ -16,6 +16,7 @@ import logging
 import sqlite3
 import threading
 import time
+import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
 
@@ -81,7 +82,11 @@ _SECONDARY_LIGHT = {
                            "adbUrl": d.get("url")},
     "vndb": lambda d: {"vnRating": d.get("rating"), "vnHours": d.get("hours"),
                        "vnCover": d.get("cover"), "vnUrl": d.get("url")},
-    "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url")},
+    # `boxart` has been scraped and stored for every matched game and never once used —
+    # not even as a cover. It is a real box front, so it belongs in the cover chain for
+    # the games IGDB has no art for.
+    "vgchartz": lambda d: {"units": d.get("units"), "vgcUrl": d.get("url"),
+                           "vgcCover": d.get("boxart")},
     # Enough to filter and sort on. "Can we play this together, and how" is a
     # question about numbers, not prose.
     "cooptimus": lambda d: {
@@ -97,9 +102,14 @@ _SECONDARY_LIGHT = {
     # The booklet, and the disc's printed face. Both are for the Shelf: you open the box and
     # what was actually inside it is there.
     "manuals": lambda d: {"manualEmbed": d.get("embed"), "manualUrl": d.get("url"),
-                          "manualName": d.get("name")},
+                          "manualName": d.get("name"), "manualPages": d.get("pages")},
+    # `cover` is the region-correct box front straight off GameTDB's CDN — for a Wii or
+    # GameCube disc that IGDB never matched, it is the only real art we have, so it goes in
+    # the light map that feeds the grid and the Shelf. The full printed wrap (`coverFull`)
+    # is drawer-only: it rides on the detail record, because nothing on a grid needs it and
+    # a light field with no reader is precisely the bug this release exists to fix.
     "gametdb": lambda d: {"discArt": d.get("disc"), "gtdbId": d.get("gameId"),
-                          "gtdbUrl": d.get("url")},
+                          "gtdbUrl": d.get("url"), "gtdbCover": d.get("cover")},
 }
 
 # Not every source applies to every game. These gates keep the queues honest:
@@ -145,6 +155,12 @@ RELATIONS_VERSION = "3"
 FRANCHISE_VERSION = "1"    # bump to re-fetch franchises onto already-matched records
 CRITIC_VERSION = "1"       # bump to re-fetch IGDB's critic aggregate onto matched records
 EXTRAS_VERSION = "2"       # keywords / engines / age rating / perspectives
+# GameTDB is dump-backed, so a re-match is free — bump this and every disc picks up the
+# new record shape (this bump adds the box front, `cover`).
+GAMETDB_VERSION = "2"
+# One metadata call per already-matched manual, to recover the page count and the PDF that
+# _files() computed and threw away.
+MANUALS_FILES_VERSION = "1"
 
 
 class Enricher:
@@ -979,11 +995,93 @@ class Enricher:
         self._kv_set("critic_version", CRITIC_VERSION)
         log.info("critic backfill: %d games got a critic score", found)
 
+    def _await_reindex(self) -> bool:
+        """True once the first spreadsheet poll has landed. start() runs before it, so a
+        backfill that reads _key_meta has nothing to work with at boot."""
+        while not self._stop.is_set():
+            with self._lock:
+                if self._key_meta:
+                    return True
+            if self._stop.wait(20):
+                return False
+        return False
+
+    def backfill_gametdb(self):
+        """Re-match GameTDB when the record shape changes.
+
+        This is the one source where a full re-match is free: it is served from a cached
+        dump on the PVC, so a "scrape" is a dict lookup and there is no rate limit to
+        respect. Bumping GAMETDB_VERSION is therefore the whole migration — which is how
+        the box front reaches records that were matched before it existed.
+        """
+        if "gametdb" not in self._secondary:
+            return
+        if self._kv_get("gametdb_version") == GAMETDB_VERSION:
+            return
+        if not self._await_reindex():
+            return
+        n = self.refresh_source("gametdb")
+        self._kv_set("gametdb_version", GAMETDB_VERSION)
+        log.info("gametdb: re-queued %d discs for the new record shape", n)
+
+    def backfill_manual_files(self):
+        """Fill in the page count and the PDF for manuals matched before we recorded them.
+
+        Deliberately NOT a refresh_source(): that would re-run the Archive.org *search* for
+        every retro game, and we already know each item's identifier. One metadata call per
+        manual we already hold is the cheap half of the same job.
+        """
+        client = self._secondary.get("manuals")
+        if not client or self._kv_get("manuals_files_version") == MANUALS_FILES_VERSION:
+            return
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT match_key, data FROM manuals WHERE status='matched' AND data IS NOT NULL"
+            ).fetchall()
+        need = []
+        for key, raw in rows:
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            if rec.get("pages") is None and rec.get("identifier"):
+                need.append((key, rec))
+        if not need:
+            self._kv_set("manuals_files_version", MANUALS_FILES_VERSION)
+            return
+        log.info("manuals: topping up page counts for %d booklets", len(need))
+        done = 0
+        for key, rec in need:
+            if self._stop.is_set():
+                return                      # resumable: the version is only set on success
+            try:
+                info = client._files(rec["identifier"])
+            except Exception as exc:
+                log.debug("manuals: top-up failed for %s: %s", rec["identifier"], exc)
+                continue
+            pdf = info.get("pdf")
+            rec["pages"] = info.get("pages")
+            rec["pdf"] = (f"https://archive.org/download/{rec['identifier']}/"
+                          f"{urllib.parse.quote(pdf)}") if pdf else None
+            with self._db_lock:
+                # manual=1 is a hand-pinned mapping; never overwrite one from a backfill.
+                self._db.execute(
+                    "UPDATE manuals SET data=? WHERE match_key=? AND COALESCE(manual,0)=0",
+                    (json.dumps(rec), key))
+                self._db.commit()
+            done += 1
+            if done % 100 == 0:
+                log.info("manuals: %d/%d topped up", done, len(need))
+        self._kv_set("manuals_files_version", MANUALS_FILES_VERSION)
+        log.info("manuals: %d booklets now carry a page count", done)
+
     def start(self):
         for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
             self._workers[src] = t
             t.start()
+        threading.Thread(target=self.backfill_gametdb, name="gametdb-backfill", daemon=True).start()
+        threading.Thread(target=self.backfill_manual_files, name="manuals-files", daemon=True).start()
         threading.Thread(target=self.backfill_stores, name="stores-backfill", daemon=True).start()
         threading.Thread(target=self.backfill_relations, name="relations-backfill", daemon=True).start()
         threading.Thread(target=self.backfill_franchises, name="franchise-backfill", daemon=True).start()

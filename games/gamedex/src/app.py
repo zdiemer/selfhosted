@@ -508,7 +508,12 @@ def enrichment_detail(key: str):
             "steamx": enricher.get_secondary("steamx", key),
             "speedrun": enricher.get_secondary("speedrun", key),
             "guides": enricher.get_secondary("guides", key),
-            "cooptimus": enricher.get_secondary("cooptimus", key)}
+            "cooptimus": enricher.get_secondary("cooptimus", key),
+            # Both of these were being scraped, stored and then never sent anywhere: the
+            # drawer simply never asked for them. Everything past the three light fields
+            # each (the booklet's page count, the PDF, the HQ box wrap) was unreachable.
+            "manuals": enricher.get_secondary("manuals", key),
+            "gametdb": enricher.get_secondary("gametdb", key)}
 
 
 @app.get("/api/enrichment/stats")

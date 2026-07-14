@@ -130,6 +130,9 @@ function mediaArt(mk) {
     cover: coverSrc(e, "cover_big") || null,
     manual: e.manualEmbed || null,
     manualUrl: e.manualUrl || null,
+    // How thick the booklet is — a 4-page leaflet and a 64-page JRPG tome are different
+    // propositions, and you want to know which before you open it.
+    manualPages: e.manualPages || null,
   };
 }
 
@@ -304,7 +307,7 @@ function mediaPanelHtml(g) {
       ${m ? `<div class="md-what">${escapeHtml(mediaName(m, g.p))}</div>${provenance}` : ""}
       ${art.manual
         ? `<button class="sh-btn primary" id="mdManual">${icon("i-review", 14)} Read the manual</button>
-           <span class="md-src">Internet Archive</span>`
+           <span class="md-src">Internet Archive${art.manualPages ? ` · ${art.manualPages} pages` : ""}</span>`
         : `<span class="md-src none">No manual found</span>`}
     </div>
   </div>`;

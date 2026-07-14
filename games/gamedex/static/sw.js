@@ -11,20 +11,30 @@
    The cache name carries the build version, so a deploy evicts the old shell
    rather than serving stale JS forever. */
 
-const VERSION = "v1.27.1";
+const VERSION = "v1.28.0";
 const SHELL = `gamedex-shell-${VERSION}`;
 const DATA = `gamedex-data-${VERSION}`;
 
 const SHELL_URLS = [
-  "./", "./index.html", "./style.css", "./app.js", "./charts.js", "./home.js",
-  "./media.js", "./picross.js", "./konami.js", "./reviews.js", "./health.js", "./collections.js", "./challenges.js",
-  "./groups.js", "./icon.svg",
-  "./fonts/archivo-800.woff2", "./fonts/plex-sans.woff2", "./timeline.js", "./extras.js", "./predict.js", "./relations.js",
-  "./manifest.webmanifest", "./icon.svg",
+  "./", "./index.html", "./style.css", "./manifest.webmanifest", "./icon.svg",
+  "./app.js", "./challenges.js", "./charts.js", "./collections.js", "./extras.js",
+  "./groups.js", "./health.js", "./home.js", "./konami.js", "./media.js",
+  "./picross.js", "./predict.js", "./relations.js", "./shelf.js", "./timeline.js",
+  "./fonts/archivo-800.woff2", "./fonts/plex-sans.woff2",
 ];
 
+// Cache each URL on its own. addAll() is atomic — one 404 rejects the whole
+// batch, the install fails, and the app silently has NO offline cache at all.
+// That is exactly what happened when reviews.js was deleted in 1.11.4 and this
+// list kept asking for it: sixteen releases with a dead service worker and no
+// symptom, because online everything still works.
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_URLS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(SHELL)
+      .then((c) => Promise.all(SHELL_URLS.map((u) =>
+        c.add(u).catch((err) => console.warn("sw: skipped", u, err)))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {

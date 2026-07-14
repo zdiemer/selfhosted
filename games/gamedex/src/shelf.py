@@ -181,6 +181,34 @@ UPLOAD_TEMPLATE = {
 DEFAULT_UPLOAD_TEMPLATE = "bluray"
 
 
+# Where a fallback front came from, in the order we'd rather have it. GameTDB first: for a
+# Nintendo disc it is the actual printed box, region and all.
+_FRONT_SOURCES = (
+    ("gtdbCover", "GameTDB"), ("coverUrl", None), ("vnCover", "VNDB"),
+    ("adbCover", "Arcade DB"), ("vgcCover", "VGChartz"),
+)
+
+
+def _front(e: dict) -> tuple[str, str]:
+    """(url, source name) for a real box front when IGDB has no cover for the game.
+
+    Mirrors coverSrc() in app.js, minus the IGDB image id (which the shelf already handles
+    separately as `cover`). Every one of these URLs was being fetched and stored already —
+    the shelf just never knew how to read anything but an IGDB id, so it drew a grey slab.
+    """
+    for field, label in _FRONT_SOURCES:
+        url = e.get(field)
+        if url:
+            # coverUrl is whatever primary fallback matched (IGN/Steam/LaunchBox/…); the
+            # record's own `source` is the honest name for it.
+            return url, (label or e.get("source") or "fallback")
+    return "", ""
+
+
+def _front_url(e: dict) -> str:
+    return _front(e)[0]
+
+
 class Shelf:
     def __init__(self, resolved: dict, cache_dir: pathlib.Path):
         self._wraps = resolved.get("wraps", {})
@@ -276,7 +304,7 @@ class Shelf:
             else:
                 mm = FALLBACK_CASE.get(g.get("platform"), DEFAULT_CASE)
                 case = {"w": mm[0], "h": mm[1], "d": mm[2]}
-                src = "cover" if e.get("cover") else "blank"
+                src = "cover" if (e.get("cover") or _front_url(e)) else "blank"
             out.append({
                 "k": key,                     # the box (per region)
                 "mk": mk,                     # the game, for the detail card
@@ -289,6 +317,12 @@ class Shelf:
                 "src": src,
                 "region": (up or w or {}).get("region") or "",
                 "cover": e.get("cover"),      # IGDB image id, for the fallback front
+                # …and a whole URL when IGDB has no art but another source does. A Wii disc
+                # IGDB never matched still has a real, region-correct box front on GameTDB's
+                # CDN — showing a grey slab instead of it was a choice we were making by
+                # accident, because the shelf only ever understood an IGDB image id.
+                "coverUrl": _front(e)[0],
+                "coverFrom": "IGDB" if e.get("cover") else _front(e)[1],
                 "hue": self._hues.get(key, "#6E6E78"),   # the spine when we have no scan
                 "uv": (up or {}).get("v"),    # upload version, for cache-busting the faces
                 "backReal": (up or w or {}).get("back_is_real", bool(w)),

@@ -339,7 +339,9 @@ function shBuild(i) {
   el.style.width = shW + "px"; el.style.height = shH + "px";
   el.setAttribute("aria-label", `${g.t} — drag to turn`);
 
-  const cover = g.cover ? IMG(g.cover, "cover_big") : "";
+  // An IGDB image id when we have one, otherwise a whole URL from whichever source did
+  // have art (GameTDB's box front, most often). Either way it beats a blank slab.
+  const cover = g.cover ? IMG(g.cover, "cover_big") : (g.coverUrl || "");
   el.innerHTML =
     (g.src === "wrap" || g.src === "upload") ? `
       <div class="sh-face f-front"><img src="${faceUrl(g.k, "front", g.uv)}" alt="" draggable="false"></div>
@@ -417,7 +419,7 @@ function shBuild(i) {
       : g.src === "wrap"
         ? `<span class="sh-badge real">Real box${g.region && g.region !== "user" ? " · " + escapeHtml(g.region) : ""}</span>`
         : g.src === "cover"
-          ? `<span class="sh-badge fake">Front only · IGDB</span>`
+          ? `<span class="sh-badge fake">Front only · ${escapeHtml(g.coverFrom || "IGDB")}</span>`
           : `<span class="sh-badge none">No art anywhere</span>`;
 
   document.getElementById("shInfo").innerHTML = `

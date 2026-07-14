@@ -38,6 +38,11 @@ SEARCH = "https://archive.org/advancedsearch.php"
 META = "https://archive.org/metadata/{}"
 EMBED = "https://archive.org/embed/{}"
 DETAILS = "https://archive.org/details/{}"
+DOWNLOAD = "https://archive.org/download/{}/{}"
+
+# A scan's page images. The Archive stores one file per page, so counting them IS the page
+# count when the item doesn't declare `imagecount` itself.
+_PAGE_EXT = (".jp2", ".jpg", ".jpeg", ".png", ".tif", ".tiff")
 _UA = "gamedex/1.0 (personal game collection; +https://github.com/zdiemer)"
 
 # Manuals are a physical-media thing. A game bought on Steam in 2021 never had one, and asking
@@ -147,11 +152,18 @@ class ManualClient:
         files = j.get("files") or []
         pdf = next((f["name"] for f in files
                     if str(f.get("name", "")).lower().endswith(".pdf")), None)
-        pages = None
-        for f in files:
-            if f.get("name", "").endswith("_meta.xml"):
-                continue
         meta = j.get("metadata") or {}
+        # The item usually declares its own page count; when it doesn't, count the page
+        # images. (This loop used to have `continue` as its entire body, so `pages` was
+        # unconditionally None and the count was never recovered either way.)
+        pages = None
+        declared = meta.get("imagecount")
+        if declared and str(declared).isdigit():
+            pages = int(declared)
+        else:
+            n = sum(1 for f in files
+                    if str(f.get("name", "")).lower().endswith(_PAGE_EXT))
+            pages = n or None
         return {
             "pdf": pdf,
             "pages": pages,
@@ -160,8 +172,10 @@ class ManualClient:
             "collections": meta.get("collection") or [],
         }
 
-    def _record(self, doc: dict, score: int) -> dict:
+    def _record(self, doc: dict, score: int, info: dict | None = None) -> dict:
         ident = doc["identifier"]
+        info = info or {}
+        pdf = info.get("pdf")
         return {
             "source": "Internet Archive",
             "identifier": ident,
@@ -171,6 +185,11 @@ class ManualClient:
             # viewer to show a scan the Archive already renders would be daft.
             "embed": EMBED.format(ident),
             "url": DETAILS.format(ident),
+            # How thick the booklet is, and the scan itself to keep. Both were computed and
+            # thrown away before; a page count is what tells you a 4-page leaflet from a
+            # 64-page JRPG tome before you open it.
+            "pages": info.get("pages"),
+            "pdf": DOWNLOAD.format(ident, urllib.parse.quote(pdf)) if pdf else None,
             "confidence": score,
         }
 
@@ -186,7 +205,7 @@ class ManualClient:
         except Exception:
             return None
         return self._record({"identifier": ident, "title": info.get("title"),
-                             "year": info.get("year")}, 15)
+                             "year": info.get("year")}, 15, info)
 
     def match_meta(self, meta: dict):
         if not self.serves(meta.get("platform")):
@@ -242,4 +261,12 @@ class ManualClient:
             log.debug("manuals: best for %r only scored %d (%r) — rejected",
                       title, score, doc.get("title"))
             return None
-        return self._record(doc, min(score, 15))
+        # One metadata call, for the WINNER only — never for the candidates we rejected.
+        # That buys the page count and the PDF for the price of a single extra request per
+        # manual we actually keep.
+        try:
+            info = self._files(doc["identifier"])
+        except Exception as exc:
+            log.debug("manuals: file list failed for %r: %s", doc.get("identifier"), exc)
+            info = None
+        return self._record(doc, min(score, 15), info)
