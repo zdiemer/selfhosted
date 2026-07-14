@@ -3610,6 +3610,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .sh-edge.e-r { top: 0; right: 0; width: var(--t); height: 100%;
   transform-origin: right center; transform: rotateY(90deg) translateZ(calc(var(--t) / 2)); }
+/* The hinge edge. Closed, it's buried against the spine and nobody sees it; OPEN, it's the edge
+   the cover turns on and it faces you — and it was the one edge the lid didn't have, so the
+   cover ended in nothing at exactly the place you were looking. */
+.sh-edge.e-l { top: 0; left: 0; width: var(--t); height: 100%;
+  transform-origin: left center; transform: rotateY(-90deg) translateZ(calc(var(--t) / 2)); }
 .sh-edge.e-t { top: 0; left: 0; width: 100%; height: var(--t);
   transform-origin: center top; transform: rotateX(-90deg) translateZ(calc(var(--t) / 2)); }
 .sh-edge.e-b { bottom: 0; left: 0; width: 100%; height: var(--t);
@@ -3627,6 +3632,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
               inset 0 0 0 3px rgba(0, 0, 0, .30),
               inset 0 1px 2px rgba(255, 255, 255, .10);
 }
+/* THE LID HINGES ON ITS SPINE EDGE, not on its middle. With the default transform-origin the
+   cover swung about its own centre, which slid it sideways off the box and left a gap between
+   the lid and the case — you looked straight through the hinge at the shelf behind. A real case
+   is joined along the spine: pin the axis to the lid's left edge and the cover stays attached to
+   the box it belongs to, which is also the only way the hinge can read as a hinge. */
+.sh-case .f-front { transform-origin: left center; }
 .sh-case.open .f-front {
   transform: translateZ(calc(var(--d) / 2)) rotateY(-128deg);
   /* Past 90° you're looking at the BACK of the cover — which is the inside of the lid. It has to

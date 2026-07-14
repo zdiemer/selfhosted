@@ -396,7 +396,7 @@ function shBuild(i) {
      top, bottom, and the free side. The BACK cover gets its thickness from a moulded rim in CSS
      instead; it must not hold 3D children (see .f-back::after in style.css for why). */
   const lid = el.querySelector(".f-front");
-  for (const e of lid ? ["e-t", "e-r", "e-b"] : []) {
+  for (const e of lid ? ["e-t", "e-r", "e-b", "e-l"] : []) {
     const edge = document.createElement("span");
     edge.className = `sh-edge ${e}`;
     lid.appendChild(edge);
