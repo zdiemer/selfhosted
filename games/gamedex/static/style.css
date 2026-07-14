@@ -3090,9 +3090,15 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    one thing it must never do: a cross is a DEDUCTION, and it has to look as decided as a
    filled square. Red, thicker, on a tinted cell. */
 .px-cell.x { background: color-mix(in srgb, var(--bad) 9%, var(--surface)); border-color: color-mix(in srgb, var(--bad) 32%, var(--border)); }
+/* Two BARS through the middle of the cell, each rotated about itself.
+   It used to be a `border-top` on an inset box, which puts the stroke along that box's TOP
+   EDGE and then rotates it about the box's CENTRE — so both strokes swung up above the middle
+   and the ✕ sat high in the cell, clipping at the top. Pin each bar at 50% and rotate it in
+   place: the two cross exactly at the centre, whatever the cell size. */
 .px-cell.x::before, .px-cell.x::after {
-  content: ""; position: absolute; inset: 30% 22%; border-top: 2.5px solid var(--bad);
-  border-radius: 2px;
+  content: ""; position: absolute; top: 50%; left: 24%; right: 24%;
+  height: 2.5px; margin-top: -1.25px;
+  background: var(--bad); border-radius: 2px; border: 0;
 }
 /* The maybe-mark: a dot. Not a deduction, a note to self — so it reads quieter than both. */
 .px-cell.dot::after {
