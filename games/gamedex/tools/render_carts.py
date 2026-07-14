@@ -122,6 +122,9 @@ def extrude(outline, z0, z1, col_face, col_side, bevel=0.0, bevel_z=0.0):
     return faces
 
 
+FEATURE = 1        # layer: moulded into the front face, so it draws after it
+
+
 def well(x0, y0, x1, y1, z_face, depth, col):
     """A recessed rectangle in the front face — the label sits at the bottom of it."""
     zb = z_face - depth
@@ -129,8 +132,8 @@ def well(x0, y0, x1, y1, z_face, depth, col):
     ring = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
     for i in range(4):
         a, b = ring[i], ring[(i + 1) % 4]
-        f.append(([(a[0], a[1], z_face), (b[0], b[1], z_face), (b[0], b[1], zb), (a[0], a[1], zb)], col))
-    f.append(([(x0, y0, zb), (x1, y0, zb), (x1, y1, zb), (x0, y1, zb)], col))
+        f.append(([(a[0], a[1], z_face), (b[0], b[1], z_face), (b[0], b[1], zb), (a[0], a[1], zb)], col, FEATURE))
+    f.append(([(x0, y0, zb), (x1, y0, zb), (x1, y1, zb), (x0, y1, zb)], col, FEATURE))
     return f
 
 
@@ -142,13 +145,13 @@ def ribs(x0, y0, x1, y1, z, count, col, vertical=True, h=0.9):
         for i in range(count):
             a = x0 + i * step
             b = a + step * 0.5
-            f.append(([(a, y0, z + h), (b, y0, z + h), (b, y1, z + h), (a, y1, z + h)], col))
+            f.append(([(a, y0, z + h), (b, y0, z + h), (b, y1, z + h), (a, y1, z + h)], col, FEATURE))
     else:
         step = (y1 - y0) / count
         for i in range(count):
             a = y0 + i * step
             b = a + step * 0.5
-            f.append(([(x0, a, z + h), (x1, a, z + h), (x1, b, z + h), (x0, b, z + h)], col))
+            f.append(([(x0, a, z + h), (x1, a, z + h), (x1, b, z + h), (x0, b, z + h)], col, FEATURE))
     return f
 
 
@@ -272,7 +275,88 @@ def genesis():
     return dict(faces=f, label=lab, label_z=D / 2 - 1.4, size=(W, H, D))
 
 
-CARTS = {"nes": nes, "snes": snes, "n64": n64, "gb": gameboy, "gba": gba, "genesis": genesis}
+# ---------- the modern cards ----------
+def card_outline(w, h, r, tab=0.0, steps=4):
+    """A DS-family card, CCW.
+
+    `tab` is the 3DS's anti-insert flange, which juts out of the TOP-RIGHT so the card physically
+    cannot go into a DS. It's the one thing that tells a 3DS card from a DS card at a glance, so it
+    belongs in the silhouette.
+
+    The bottom-corner notches do NOT: cutting them out of the outline leaves the middle of the
+    bottom edge standing proud, and the card renders as if it's on a little foot. They're shallow
+    slots in the face, so they're moulded in as wells below.
+    """
+    hw, hh = w / 2, h / 2
+    body = hw - tab
+    pts = []
+
+    def arc(cx, cy, rr, a0, a1):
+        for i in range(steps + 1):
+            a = math.radians(a0 + (a1 - a0) * i / steps)
+            pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
+
+    if tab:                              # up the body's edge, out over the flange, then round
+        pts.append((body, hh - 12))
+        pts.append((hw, hh - 10.5))
+        arc(hw - r, hh - r, r, 0, 90)
+    else:
+        arc(body - r, hh - r, r, 0, 90)
+    arc(-hw + r, hh - r, r, 90, 180)
+    arc(-hw + r, -hh + r, r, 180, 270)
+    arc(body - r, -hh + r, r, 270, 360)
+    return pts
+
+
+def _card_notches(w, h, zf, col, inset=2.4):
+    """The two slots at the bottom corners. Every card in the reference has them."""
+    hw, hh = w / 2, h / 2
+    f = []
+    for x0, x1 in ((-hw + 1.4, -hw + 1.4 + inset), (hw - 1.4 - inset, hw - 1.4)):
+        f += well(x0, -hh + 1.2, x1, -hh + 1.2 + inset, zf, 0.5, col)
+    return f
+
+
+def dscard():
+    W, H, D = 35, 33, 3.8                # real millimetres — the card is WIDER than it is tall
+    body = card_outline(W, H, 2.4)
+    shell, side = (62, 64, 70), (44, 46, 51)
+    f = extrude(body, -D / 2, D / 2, shell, side, bevel=0.7, bevel_z=0.7)
+    lab = (-13, -10, 13, 13)
+    f += well(lab[0] - 1.2, lab[1] - 1.2, lab[2] + 1.2, lab[3] + 1.2, D / 2, 0.35, (52, 54, 60))
+    f += _card_notches(W, H, D / 2 - 0.7, (46, 48, 53))
+    return dict(faces=f, label=lab, label_z=D / 2 - 0.35, size=(W, H, D))
+
+
+def n3dscard():
+    W, H, D = 38, 33, 3.8                # 3mm wider than a DS card, and that extra IS the tab
+    body = card_outline(W, H, 2.4, tab=3.0)
+    shell, side = (228, 229, 233), (196, 198, 203)   # 3DS cards are white; DS cards are charcoal
+    f = extrude(body, -D / 2, D / 2, shell, side, bevel=0.7, bevel_z=0.7)
+    lab = (-14.5, -10, 11.5, 13)         # sits left of the tab
+    f += well(lab[0] - 1.2, lab[1] - 1.2, lab[2] + 1.2, lab[3] + 1.2, D / 2, 0.35, (208, 210, 215))
+    f += _card_notches(W - 3, H, D / 2 - 0.7, (204, 206, 211))
+    return dict(faces=f, label=lab, label_z=D / 2 - 0.35, size=(W, H, D))
+
+
+def switchcard():
+    W, H, D = 21, 31, 3.4                # tiny, and TALLER than wide
+    body = card_outline(W, H, 2.2)
+    shell, side = (34, 34, 38), (24, 24, 27)
+    f = extrude(body, -D / 2, D / 2, shell, side, bevel=0.6, bevel_z=0.6)
+    lab = (-8, -11, 8, 7.5)
+    f += well(lab[0] - 1, lab[1] - 1, lab[2] + 1, lab[3] + 1, D / 2, 0.3, (26, 26, 30))
+    f += _card_notches(W, H, D / 2 - 0.6, (28, 28, 32), inset=1.8)
+    # THE RED BAND. On a real card it's printed across the top of the sticker, above the art, and it
+    # is the one thing that says "Switch" from across a room. Our label is box art, so the band lives
+    # on the shell instead — raised a hair so the painter's sort puts it over the face, not under it.
+    f += [([(-8.6, 9.0, D / 2 + 0.4), (8.6, 9.0, D / 2 + 0.4),
+            (8.6, 13.0, D / 2 + 0.4), (-8.6, 13.0, D / 2 + 0.4)], (206, 46, 36), FEATURE)]
+    return dict(faces=f, label=lab, label_z=D / 2 - 0.3, size=(W, H, D))
+
+
+CARTS = {"nes": nes, "snes": snes, "n64": n64, "gb": gameboy, "gba": gba, "genesis": genesis,
+         "ds": dscard, "n3ds": n3dscard, "switch": switchcard}
 
 
 # ---------- render ----------
@@ -311,7 +395,7 @@ def render(cart, name):
             return p
 
         drawn = []
-        for poly, col in faces:
+        for poly, col, *layer in faces:
             cam = [xf(p) for p in poly]
             n = norm(cross(
                 (cam[1][0] - cam[0][0], cam[1][1] - cam[0][1], cam[1][2] - cam[0][2]),
@@ -320,8 +404,10 @@ def render(cart, name):
                 continue
             z = sum(p[2] for p in cam) / len(cam)
             pts = [project(p, big) for p in cam]
-            drawn.append((z, pts, shade(col, n)))
-        for z, pts, col in sorted(drawn, key=lambda x: x[0]):   # painter's: far first
+            drawn.append((layer[0] if layer else 0, z, pts, shade(col, n)))
+        # layer first, then depth: the body sorts among itself, and anything moulded into the front
+        # face lands on top of it regardless of how the tilt skews their centroids.
+        for _, z, pts, col in sorted(drawn, key=lambda x: (x[0], x[1])):
             d.polygon(pts, fill=col + (255,))
 
         # PUNCH THE LABEL OUT. The art gets warped into this hole at runtime, so the shell's bevel

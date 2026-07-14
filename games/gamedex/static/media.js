@@ -63,11 +63,11 @@ const MEDIA = {
   // Wider than tall, and NO notch on the front — the shape detector is a cut on a bottom REAR
   // corner, which you never see from here.
   "Game Boy Advance":    { kind: "cart", w: 140, h: 86,  d: 12, shell: "#5b5f6b", label: [8, 11, 84, 70], shape: "gba" , sprite: "gba" },
-  "Nintendo DS":         { kind: "card", w: 118, h: 102, d: 7,  shell: "#3a3d45", label: [8, 10, 84, 70], shape: "dscard" },
-  "Nintendo 3DS":        { kind: "card", w: 118, h: 102, d: 7,  shell: "#2e3138", label: [8, 10, 84, 70], shape: "dscard" },
+  "Nintendo DS":         { kind: "card", w: 118, h: 102, d: 7,  shell: "#3a3d45", label: [8, 10, 84, 70], shape: "dscard" , sprite: "ds" },
+  "Nintendo 3DS":        { kind: "card", w: 118, h: 102, d: 7,  shell: "#2e3138", label: [8, 10, 84, 70], shape: "dscard" , sprite: "n3ds" },
   // The Switch card is tiny, red, and its corner is clipped.
-  "Nintendo Switch":     { kind: "card", w: 92,  h: 108, d: 6,  shell: "#c0392b", label: [9, 9, 82, 76], shape: "switch" },
-  "Nintendo Switch 2":   { kind: "card", w: 92,  h: 108, d: 6,  shell: "#8e2a20", label: [9, 9, 82, 76], shape: "switch" },
+  "Nintendo Switch":     { kind: "card", w: 92,  h: 108, d: 6,  shell: "#c0392b", label: [9, 9, 82, 76], shape: "switch" , sprite: "switch" },
+  "Nintendo Switch 2":   { kind: "card", w: 92,  h: 108, d: 6,  shell: "#8e2a20", label: [9, 9, 82, 76], shape: "switch" , sprite: "switch" },
   // Genesis: tall, black, and the grip ridges are a band across the top of the face.
   "Sega Genesis":        { kind: "cart", w: 105, h: 134, d: 20, shell: "#26282d", label: [10, 22, 80, 56], shape: "genesis" , sprite: "genesis" },
   "Sega Master System":  { kind: "card", w: 128, h: 108, d: 9,  shell: "#26282d", label: [9, 11, 82, 66], shape: "sms" },

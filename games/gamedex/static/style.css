@@ -3579,6 +3579,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* HINGED — cards and discs. Those cases really do swing open, so the media comes out toward you. */
 .sh-case.open .sh-inside .md-cart { transform: translateZ(84px) translateY(-6px) scale(.92) rotateY(-6deg); }
+.sh-case.open:not(.slide) .sh-inside .md-shell {
+  transform: translateZ(84px) translateY(-6px) scale(.92) rotateY(-6deg);
+}
 .sh-case.open .sh-inside .md-disc { transform: translateZ(84px) rotateX(0deg) scale(.9); }
 .sh-case.open .sh-inside .md-umd  { transform: translateZ(84px) scale(.9); }
 
