@@ -21,6 +21,7 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 | [`auth/authelia/`](auth/authelia/) | Authelia — OIDC provider + (future) Traefik forward-auth. Shared login for every service in the cluster. | [auth/authelia/README](auth/authelia/README.md) |
 | [`docs/paperless-ngx/`](docs/paperless-ngx/) | Paperless-ngx — self-hosted document management with OCR + full-text search. Bundles Postgres, Redis, Tika, and Gotenberg inline. | [docs/paperless-ngx/README](docs/paperless-ngx/README.md) |
 | [`docs/stirling-pdf/`](docs/stirling-pdf/) | Stirling PDF — locally-processed toolkit for ~50 PDF operations (merge/convert/OCR/sign/redact). Gated behind Authelia forward-auth at the Traefik ingress. | [docs/stirling-pdf/README](docs/stirling-pdf/README.md) |
+| [`web/kelsey-green/`](web/kelsey-green/) | kelsey.green — static Astro site, no image of our own: git-sync pulls the CI-built `deploy` branch and nginx serves it. Public via a Cloudflare tunnel (outbound-only) as well as the usual DuckDNS ingress. | [web/kelsey-green/README](web/kelsey-green/README.md) |
 
 ## Conventions
 

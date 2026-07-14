@@ -1,0 +1,10 @@
+apiVersion: v2
+name: kelsey-green
+description: kelsey.green — static Astro site, git-sync'd from the deploy branch and served by nginx
+type: application
+version: 1.0.0
+# No app image of our own: this chart runs stock nginx + git-sync + cloudflared.
+# appVersion tracks the chart, not a build.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kelsey-green.fullname" . }}
+  labels:
+    {{- include "kelsey-green.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "kelsey-green.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Re-roll when the deploy key or the nginx config changes.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "kelsey-green.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        # git-sync's uid/gid. As a pod-level fsGroup it is also added as a
+        # supplementary group to the nginx container, which is what lets nginx
+        # (uid 101) read the tree git-sync (uid 65533) writes into the shared
+        # emptyDir.
+        fsGroup: 65533
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "kelsey-green.selectorLabels" . | nindent 20 }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}"
+          imagePullPolicy: {{ .Values.nginx.image.pullPolicy }}
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          # Readiness hits the real page, so a pod only takes traffic once
+          # git-sync has actually produced a site to serve. Liveness hits the
+          # static healthz instead: if a sync breaks, the right outcome is to
+          # keep serving the last good version, not to restart in a loop.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: site
+              mountPath: /var/www
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            # readOnlyRootFilesystem is on, and nginx needs somewhere to put its
+            # pid file and its request-body/proxy temp files.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            {{- toYaml .Values.nginx.resources | nindent 12 }}
+
+        - name: git-sync
+          image: "{{ .Values.gitSync.image.repository }}:{{ .Values.gitSync.image.tag }}"
+          imagePullPolicy: {{ .Values.gitSync.image.pullPolicy }}
+          securityContext:
+            runAsUser: 65533
+            runAsGroup: 65533
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          args:
+            - --repo={{ .Values.gitSync.repo }}
+            - --ref={{ .Values.gitSync.ref }}
+            - --period={{ .Values.gitSync.period }}
+            - --depth=1
+            - --root=/git
+            # nginx serves /var/www/current; git-sync checks out into hashed
+            # dirs and repoints this symlink atomically when a checkout is
+            # complete, so a partially-synced tree is never served.
+            - --link=current
+            - --ssh-key-file=/etc/git-secret/ssh
+            - --ssh-known-hosts-file=/etc/git-secret/known_hosts
+          volumeMounts:
+            - name: site
+              mountPath: /git
+            - name: git-ssh
+              mountPath: /etc/git-secret
+              readOnly: true
+            # git-sync's HOME is /tmp and it writes a gitconfig there on
+            # startup. readOnlyRootFilesystem is on, so it needs a real
+            # writable /tmp or it dies immediately.
+            - name: git-tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.gitSync.resources | nindent 12 }}
+      volumes:
+        - name: site
+          emptyDir: {}
+        - name: git-ssh
+          secret:
+            secretName: {{ include "kelsey-green.fullname" . }}
+            defaultMode: 0400
+            items:
+              - key: ssh
+                path: ssh
+              - key: known_hosts
+                path: known_hosts
+        - name: nginx-conf
+          configMap:
+            name: {{ include "kelsey-green.fullname" . }}-nginx
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: nginx-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: git-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

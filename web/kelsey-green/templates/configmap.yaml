@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kelsey-green.fullname" . }}-nginx
+  labels:
+    {{- include "kelsey-green.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      # 8080, not 80: the unprivileged image runs as uid 101 and cannot bind a
+      # privileged port. The Service maps 80 → 8080.
+      listen 8080;
+      server_name _;
+
+      # git-sync repoints this symlink atomically once a checkout is complete,
+      # so nginx never serves a half-synced tree.
+      root /var/www/current;
+      index index.html;
+
+      # Resolve the symlink on every request. Without this nginx caches the
+      # inode of the old worktree and keeps serving it after a sync.
+      disable_symlinks off;
+      open_file_cache off;
+
+      location / {
+        try_files $uri $uri/ $uri.html =404;
+      }
+
+      # Astro fingerprints everything under /_astro/, so those are immutable and
+      # can be cached hard. HTML is not fingerprinted and must stay short-lived,
+      # or a content change would not reach a returning visitor for a long time.
+      location /_astro/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+      }
+
+      location = /index.html {
+        add_header Cache-Control "public, max-age=300";
+      }
+
+      error_page 404 /404.html;
+
+      gzip on;
+      gzip_vary on;
+      gzip_types text/css application/javascript image/svg+xml application/json;
+
+      # Static site, no inline third-party anything, so these can be strict.
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+      # Health endpoint for the probes: always answers, even before the first
+      # sync lands, so a slow initial clone doesn't look like a crash loop.
+      location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+      }
+    }

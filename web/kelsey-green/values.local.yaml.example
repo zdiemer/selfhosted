@@ -1,0 +1,25 @@
+# Copy to values.local.yaml (gitignored) and fill in. Nothing here belongs in git.
+
+gitSync:
+  # The PRIVATE half of the read-only deploy key registered on
+  # github.com/zdiemer/kelsey-dot-green (Settings → Deploy keys). Paste the
+  # whole PEM, BEGIN/END lines included.
+  #
+  # To mint a fresh one:
+  #   ssh-keygen -t ed25519 -f kelsey-site-deploy -N "" -C "git-sync-kelsey-green"
+  #   gh repo deploy-key add kelsey-site-deploy.pub --repo zdiemer/kelsey-dot-green --title git-sync
+  #   # paste the contents of kelsey-site-deploy below, then delete both files
+  deployKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    ...
+    -----END OPENSSH PRIVATE KEY-----
+
+# Only needed once the Cloudflare tunnel exists. Until then leave
+# cloudflared.enabled false in values.yaml and reach the site over the DuckDNS
+# ingress.
+cloudflared:
+  enabled: false
+  # Connector token from the Cloudflare dashboard:
+  # Zero Trust → Networks → Tunnels → kelsey-green → Install connector.
+  # It is a bearer credential for the tunnel: treat it like a password.
+  token: ""

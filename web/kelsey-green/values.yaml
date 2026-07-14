@@ -1,0 +1,96 @@
+# kelsey.green — https://github.com/zdiemer/kelsey-dot-green
+#
+# There is no image to build. GitHub Actions builds the Astro site and
+# force-pushes dist/ to the `deploy` branch; the git-sync sidecar below polls
+# that branch and nginx serves whatever it last checked out. To ship a content
+# change you push to `main` and wait ~2 minutes. Nothing here needs to change.
+
+nginx:
+  # Unprivileged variant: listens on 8080 as uid 101, so the container needs no
+  # root and runs with a read-only root filesystem.
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.29-alpine"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+gitSync:
+  image:
+    repository: registry.k8s.io/git-sync/git-sync
+    tag: "v4.4.0"
+    pullPolicy: IfNotPresent
+  repo: git@github.com:zdiemer/kelsey-dot-green.git
+  # The branch CI publishes the built site to. Never `main`.
+  ref: deploy
+  period: 60s
+  # REQUIRED — set in values.local.yaml. The PRIVATE half of a read-only deploy
+  # key on the repo (the whole PEM, including the BEGIN/END lines). Read-only:
+  # the cluster pulls, it never pushes, and GitHub never gets cluster access.
+  deployKey: ""
+  # Pinned GitHub host keys, so the sidecar verifies who it is talking to
+  # instead of trusting the first host that answers. From `ssh-keyscan
+  # github.com`; if GitHub ever rotates these, the sync fails loudly and these
+  # get updated.
+  knownHosts: |
+    github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+    github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# No PVC and no per-pod state (each pod keeps its own clone in an emptyDir), so
+# unlike the rest of the fleet this one can safely run more than one replica and
+# roll rather than recreate. Two means a node drain is invisible to visitors.
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+
+# The public path: cloudflared holds an outbound connection to Cloudflare's edge
+# and Cloudflare terminates TLS for kelsey.green. No inbound ports, no dynamic
+# DNS, and the home IP can change freely.
+#
+# Disabled until the Cloudflare zone + tunnel exist (see docs/infrastructure.md
+# in the site repo). Until then, the DuckDNS ingress below serves the same pods.
+cloudflared:
+  enabled: false
+  image:
+    repository: cloudflare/cloudflared
+    tag: "2026.6.1"
+    pullPolicy: IfNotPresent
+  # REQUIRED when enabled — set in values.local.yaml. The connector token from
+  # the Cloudflare dashboard (Zero Trust → Networks → Tunnels).
+  token: ""
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+# A DuckDNS hostname on the existing Traefik ingress, so the whole pipeline can
+# be verified today without waiting on Cloudflare, and so there is a way in that
+# does not depend on Cloudflare later. Rides the existing wildcard cert exactly
+# like every other service in this repo; adds no new DNS record and touches
+# nothing about the existing DuckDNS setup.
+ingress:
+  enabled: true
+  className: traefik
+  host: kelsey.zachd.duckdns.org
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account top-level, so sub-subdomain
+    # certs ride the wildcard SAN. Mirrors every other service in this repo.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
