@@ -1808,7 +1808,11 @@ function rommRomId(row) {
   return id != null ? id : null;
 }
 
-const rommPlayUrl = (id) => `${ROMM.baseUrl}/console/rom/${id}/play`;
+// The standard EmulatorJS player, NOT Console Mode (/console/rom/<id>/play).
+// Both get RomM's cross-origin-isolation headers, but Console Mode's UI white-
+// screens on iOS Safari (the controller-style shell never boots the core),
+// whereas /rom/<id>/ejs plays fine on iPhone. So link the plain player.
+const rommPlayUrl = (id) => `${ROMM.baseUrl}/rom/${id}/ejs`;
 
 function rommHtml(row) {
   const id = rommRomId(row);

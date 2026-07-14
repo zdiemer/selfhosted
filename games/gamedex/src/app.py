@@ -239,7 +239,7 @@ async def api_nas_put(request: Request):
 @app.get("/api/romm")
 def api_romm():
     """{"<igdb_id>|<platform folder>": rom_id} — the frontend turns a hit into
-    <baseUrl>/console/rom/<id>/play. Empty (not an error) when RomM is off."""
+    <baseUrl>/rom/<id>/ejs. Empty (not an error) when RomM is off."""
     if not ROMM.enabled:
         return {"enabled": False, "roms": {}}
     return ROMM.snapshot()
