@@ -1007,6 +1007,14 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 }
 .drawer-back:hover { border-color: var(--accent-line); color: var(--accent); }
 .drawer-back[hidden] { display: none !important; }
+/* Both buttons float ABOVE the hero, and the hero's contents are bottom-aligned in it — so a
+   title long enough to grow the hero climbs into the top-right corner and straight under Back.
+   `.drawer h2`'s 40px right margin reserves room for Close, but Back is up to 220px wide and sits
+   beside it, and nothing was holding that ground. Reserve it vertically instead of horizontally:
+   when there's a game to go back to, start the hero below the buttons (16px top + 32px tall + a
+   gap). The hero's contents are bottom-aligned, so on every title short enough to have never had
+   the problem, this moves nothing. */
+.drawer.has-back .hero { padding-top: 60px; }
 
 .drawer-close {
   position: absolute; top: 16px; right: 16px; z-index: 2;
@@ -1118,7 +1126,11 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 .hltb-row b { font-variant-numeric: tabular-nums; }
 .hltb-row.mine { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; border-bottom: none; }
 .hltb-row.mine b { color: var(--good); }
-.hltb-link { display: inline-block; margin-top: 8px; color: var(--accent-2); font-size: 12px; text-decoration: none; }
+/* A section can carry more than one of these (In the box has up to three, Wikidata two), and
+   they're emitted back-to-back with no whitespace between them — so inline-blocks with no margin
+   sat flush and read as one run-on link. The right margin travels with each link, so they space
+   whether they sit on one line or wrap onto two. */
+.hltb-link { display: inline-block; margin: 8px 14px 0 0; color: var(--accent-2); font-size: 12px; text-decoration: none; }
 .hltb-link:hover { text-decoration: underline; }
 
 /* Raw sheet fields — collapsed; the enriched view leads */

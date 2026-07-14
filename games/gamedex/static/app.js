@@ -3213,6 +3213,8 @@ function openDrawer(row, sheetKey, keepStack) {
   const back = $("#drawerBack");
   const prev = drawerStack[drawerStack.length - 1];
   back.hidden = !prev;
+  // The hero has to know, so it can keep its title out from under the button (see .has-back).
+  $("#drawer").classList.toggle("has-back", !!prev);
   if (prev) {
     const t = drawerTitleOf(prev.row);
     back.textContent = `← ${t.length > 22 ? t.slice(0, 21) + "…" : t}`;
