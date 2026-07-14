@@ -120,6 +120,8 @@ const GDC = {};                    // matchKey -> StrategyWiki guide
 const COOPC = {};                  // matchKey -> Co-Optimus co-op details
 const MANC = {};                   // matchKey -> Internet Archive manual (pages, PDF)
 const GTDBC = {};                  // matchKey -> GameTDB disc face + box wrap
+const PCGWC = {};                  // matchKey -> PCGamingWiki PC tech (exact, by appid)
+const WDC = {};                    // matchKey -> Wikidata bridge (composer, Wikipedia, Moby)
 const ENRICH_REQUESTED = new Set();
 const UPLOADS = {};                // matchKey -> {url, v} : hand-uploaded box art
 const GR = {};                     // matchKey -> {score, n, url} : GameRankings archive
@@ -541,6 +543,11 @@ function mapControlHtml(key) {
   if (ENRICH_SOURCES.includes("speedrun")) rows.push({ id: "speedrun", label: "speedrun.com", ph: "speedrun.com/<game>" });
   if (ENRICH_SOURCES.includes("cooptimus")) rows.push({ id: "cooptimus", label: "Co-Optimus", ph: "co-optimus.com/game/<id>/..." });
   if (ENRICH_SOURCES.includes("guides")) rows.push({ id: "guides", label: "StrategyWiki guide", ph: "strategywiki.org/wiki/<Page>" });
+  // These two join on an id rather than a title (the Steam appid, the IGDB slug), so they
+  // can't strictly be MIS-matched — but the id itself can be missing or point at the wrong
+  // entry, so the escape hatch still earns its place.
+  if (ENRICH_SOURCES.includes("pcgw")) rows.push({ id: "pcgw", label: "PCGamingWiki", ph: "pcgamingwiki.com/wiki/<Page>" });
+  if (ENRICH_SOURCES.includes("wikidata")) rows.push({ id: "wikidata", label: "Wikidata", ph: "igdb.com/games/<slug>" });
   return `<details class="map-menu"><summary>${icon("i-edit", 13)} Fix mapping</summary>` +
     rows.map((s) => `<div class="map-src" data-src="${s.id}"><label>${escapeHtml(s.label)}</label>
       <div class="map-row"><input type="url" placeholder="${s.ph}" value="${escapeHtml(cur[s.id] || "")}" data-map-input>
@@ -862,6 +869,58 @@ function guidesHtml(key) {
     `<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">${g.hasWalkthrough ? "Read the walkthrough" : "Open the guide"} ↗</a></div>`;
 }
 
+/* PCGamingWiki: will it actually run properly? Joined on the Steam appid, so unlike every
+   fuzzy-title source in here it CANNOT be the wrong game.
+
+   The wiki's vocabulary is kept as it is. "hackable" and "limited" are not "yes", and
+   flattening them to a tick would be lying about what it says. */
+const _PCGW_TONE = { true: "good", false: "bad", hackable: "warn", limited: "warn" };
+const pcgwCell = (v) =>
+  `<b class="${_PCGW_TONE[String(v).toLowerCase()] || ""}">${escapeHtml(titleCase(String(v)))}</b>`;
+
+function pcgwHtml(key) {
+  const p = PCGWC[key];
+  if (!p) return "";
+  const display = [
+    ["Widescreen", p.widescreen], ["Ultrawide", p.ultrawide],
+    ["4K", p.uhd4k], ["HDR", p.hdr], ["Ray tracing", p.rayTracing],
+    ["Controller", p.controller], ["Surround", p.surround],
+  ].filter(([, v]) => v)
+    .map(([l, v]) => `<div class="hltb-row"><span>${l}</span>${pcgwCell(v)}</div>`).join("");
+  // The APIs it renders with, and whether it's a 64-bit binary — the things that decide
+  // whether a 2007 PC game is going to behave on a modern machine.
+  const tech = [
+    ["Direct3D", p.d3d], ["OpenGL", p.opengl], ["Vulkan", p.vulkan],
+    ["64-bit", p.win64],
+  ].filter(([, v]) => v)
+    .map(([l, v]) => `<div class="hltb-row"><span>${l}</span><b>${escapeHtml(titleCase(String(v)))}</b></div>`).join("");
+  if (!(display || tech)) return "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-play", 15)} On PC (PCGamingWiki)</div>` +
+    display + tech +
+    (p.url ? `<a class="hltb-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Fixes and details on PCGamingWiki ↗</a>` : "") +
+    `</div>`;
+}
+
+/* Wikidata: the bridge. Joined on the IGDB slug, so also exact.
+
+   Not a metadata source — it's how we reach the things IGDB has never carried. The composer
+   is the headline: nothing else in the app knows who scored a game. */
+function wikidataHtml(key) {
+  const w = WDC[key];
+  if (!w) return "";
+  const people = [["Composer", w.composers], ["Director", w.directors]]
+    .filter(([, v]) => v && v.length)
+    .map(([l, v]) => `<div class="hltb-row"><span>${v.length > 1 ? l + "s" : l}</span><b>${escapeHtml(v.join(", "))}</b></div>`)
+    .join("");
+  const links = [
+    w.wikipedia ? `<a class="hltb-link" href="${escapeHtml(w.wikipedia)}" target="_blank" rel="noopener">Read about it on Wikipedia ↗</a>` : "",
+    w.mobyUrl ? `<a class="hltb-link" href="${escapeHtml(w.mobyUrl)}" target="_blank" rel="noopener">View on MobyGames ↗</a>` : "",
+  ].filter(Boolean).join("");
+  if (!(people || links)) return "";
+  return `<div class="hltb"><div class="hltb-head">${icon("i-library", 15)} Also known (Wikidata)</div>` +
+    people + links + `</div>`;
+}
+
 /* The physical object: the booklet, the printed disc, the box wrap — and the facts about
    YOUR copy that the Notes column already told us and nobody ever read back.
 
@@ -964,7 +1023,8 @@ function renderIgdbSection(key, el, status, detail) {
   }
   el.innerHTML = content + hltbHtml(HLTBC[key]) + speedrunHtml(key) + metacriticHtml(key)
     + coopHtml(key) + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
-    + salesHtml(key) + physicalHtml(key) + gameyeHtml(key) + mapControlHtml(key);
+    + pcgwHtml(key) + salesHtml(key) + physicalHtml(key) + wikidataHtml(key)
+    + gameyeHtml(key) + mapControlHtml(key);
 
   // The Shelf's manual reader, reached from the drawer too — you shouldn't have to go and
   // find the box on the shelf to read the booklet that came in it.
@@ -1052,6 +1112,8 @@ async function loadDetail(key, el, attempt = 0, row = null) {
     if ("cooptimus" in j) COOPC[key] = j.cooptimus;
     if ("manuals" in j) MANC[key] = j.manuals;
     if ("gametdb" in j) GTDBC[key] = j.gametdb;
+    if ("pcgw" in j) PCGWC[key] = j.pcgw;
+    if ("wikidata" in j) WDC[key] = j.wikidata;
     if (j.status === "matched" && j.detail) { DETAIL[key] = j.detail; renderIgdbSection(key, el, "matched", j.detail); }
     else if (j.status === "no_match") { renderIgdbSection(key, el, "no_match", null); }
     else if (j.status === "pending") {
@@ -1904,6 +1966,14 @@ function extraFacetCols(tab = activeTab) {
     // What we think you'd score it — a filter for "things I'd probably love".
     { key: "__predicted", label: "Predicted for you", type: "text", facet: true, virtual: true, kind: "bucket",
       buckets: METACRITIC_BUCKETS, getVal: predictedOf },
+    // PCGamingWiki, joined on the Steam appid. "true"/"false"/"hackable"/"limited" is the
+    // wiki's own vocabulary — keep its words, they mean something ("hackable" is not "yes").
+    { key: "__ultrawide", label: "Ultrawide", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return e && e.pcgwUltrawide ? [titleCase(e.pcgwUltrawide)] : []; } },
+    // Who scored it. Wikidata is the only source in the app that knows, and filtering a
+    // collection by composer is a thing you simply could not do before.
+    { key: "__composer", label: "Composer", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: (r) => { const e = ENRICH[r._k]; return (e && e.composers) || []; } },
   ];
 }
 const facetCols = () => [...columns().filter((c) => c.facet).map(unifiedFacetCol), ...igdbFacetCols(), ...extraFacetCols()];

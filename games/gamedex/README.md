@@ -41,6 +41,12 @@ Key files:
 - `src/app.py` — FastAPI: `/api/data`, `/api/health`, enrichment endpoints, UI.
 - `src/igdb.py` — IGDB client (Twitch auth, one nested request per title) + matcher.
 - `src/enrich.py` — lazy, host-cached enrichment (SQLite on the PVC).
+- `src/pcgamingwiki.py`, `src/wikidata.py` — the two **exact-join, bulk** sources. They
+  do no per-game fetching at all: each pulls its whole dataset once (Cargo API / SPARQL),
+  caches it on the PVC, and every lookup is a dict hit. PCGamingWiki joins on the Steam
+  appid (ultrawide, 4K, HDR, ray tracing, D3D/Vulkan, 64-bit, controller); Wikidata joins
+  on the IGDB slug and brings the composer, the director, a Wikipedia article and a
+  MobyGames id. Because both key on an id rather than a title, neither can mismatch.
 - `src/match_validator.py`, `src/constants.py`, `src/excel_game.py` — title
   matcher ported near-verbatim from [zdiemer/GamesMaster](https://github.com/zdiemer/GamesMaster).
 - `static/` — `index.html`, `app.js`, `style.css` (no build step).

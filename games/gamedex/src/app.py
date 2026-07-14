@@ -39,6 +39,8 @@ from enrich import Enricher
 from fallback import FallbackClient
 from gameye import GameEyeClient
 from gametdb import GameTdb
+from pcgamingwiki import PcGamingWiki
+from wikidata import Wikidata
 from hltb import HltbClient
 from manuals import ManualClient
 from igdb import IgdbClient
@@ -105,6 +107,15 @@ if _on("MANUALS_ENABLED"):
 if _on("GAMETDB_ENABLED"):
     # The printed face of the disc, which is its own artwork and nothing else has it.
     _secondary["gametdb"] = GameTdb(os.environ.get("GAMETDB_DIR", "/data/gametdb"))
+if _on("PCGW_ENABLED"):
+    # Will it actually run properly: ultrawide, 4K, HDR, ray tracing, D3D/Vulkan, 64-bit,
+    # controller support. Joined on the Steam appid, so the match cannot be wrong — and the
+    # whole dataset arrives in ~100 bulk calls, not one per game.
+    _secondary["pcgw"] = PcGamingWiki(os.environ.get("PCGW_DIR", "/data/pcgamingwiki"))
+if _on("WIKIDATA_ENABLED"):
+    # The bridge: a MobyGames id, a Wikipedia article, the composer, the director. Joined on
+    # the IGDB slug — also exact, also bulk, also free.
+    _secondary["wikidata"] = Wikidata(os.environ.get("WIKIDATA_DIR", "/data/wikidata"))
 # Fallback metadata (IGN → Steam) for games IGDB doesn't match. GameSpot is
 # off by default — its API is Cloudflare-blocked (see fallback.py).
 _fallback = (
@@ -513,7 +524,9 @@ def enrichment_detail(key: str):
             # drawer simply never asked for them. Everything past the three light fields
             # each (the booklet's page count, the PDF, the HQ box wrap) was unreachable.
             "manuals": enricher.get_secondary("manuals", key),
-            "gametdb": enricher.get_secondary("gametdb", key)}
+            "gametdb": enricher.get_secondary("gametdb", key),
+            "pcgw": enricher.get_secondary("pcgw", key),
+            "wikidata": enricher.get_secondary("wikidata", key)}
 
 
 @app.get("/api/enrichment/stats")

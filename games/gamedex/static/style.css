@@ -924,6 +924,13 @@ tr.row-col-partial td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 .thumby-desc { font-size: 12.5px; line-height: 1.65; color: var(--muted); white-space: pre-wrap; margin: 2px 0 8px; }
 
+/* Verdict colours. The vars have always existed; the classes never did — so coopHtml's
+   `<b class="good">` has been rendering as plain text this whole time. PCGamingWiki needs
+   all three, because "hackable" is genuinely neither a yes nor a no. */
+.hltb-row b.good { color: var(--good); }
+.hltb-row b.bad { color: var(--bad); }
+.hltb-row b.warn { color: var(--warn); }
+
 /* Shortplay footage of the real arcade cabinet, straight from ArcadeDB. Never autoplayed —
    preload="none" so opening a drawer costs nothing until you actually press play. */
 .adb-vid {

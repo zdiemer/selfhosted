@@ -21,6 +21,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 from match_validator import MatchValidator
+from wikidata import slug_from_igdb_url
 
 log = logging.getLogger("gamedex.enrich")
 
@@ -69,7 +70,11 @@ def _light_video(rec):
 # Light fields each secondary source contributes to the cover/facet map.
 # Sources keyed on the Steam appid, which lives in the IGDB *enrichment* record
 # rather than the sheet — so their worker has to wait for IGDB to resolve first.
-_NEEDS_APPID = {"steamx"}
+_NEEDS_APPID = {"steamx", "pcgw"}
+# Keyed on the IGDB *slug* rather than the sheet's title, so like the appid sources these
+# have to wait for IGDB to resolve before there is anything to look them up by. The payoff
+# is that the join is exact: it cannot return the wrong game.
+_NEEDS_SLUG = {"wikidata"}
 
 _SECONDARY_LIGHT = {
     "hltb": lambda d: {"hltbMain": d.get("main"), "hltbBest": d.get("best"), "hltbUrl": d.get("url")},
@@ -110,6 +115,12 @@ _SECONDARY_LIGHT = {
     # a light field with no reader is precisely the bug this release exists to fix.
     "gametdb": lambda d: {"discArt": d.get("disc"), "gtdbId": d.get("gameId"),
                           "gtdbUrl": d.get("url"), "gtdbCover": d.get("cover")},
+    # Light because it's a facet: "which of my PC games actually support ultrawide" is a
+    # filter, not a detail. Everything else PCGamingWiki knows stays in the drawer.
+    "pcgw": lambda d: {"pcgwUltrawide": d.get("ultrawide")},
+    # And the composer is a facet too — filtering a collection by who scored it is the kind
+    # of thing you can only do once someone hands you the data. Nothing else here has it.
+    "wikidata": lambda d: {"composers": d.get("composers") or None},
 }
 
 # Not every source applies to every game. These gates keep the queues honest:
@@ -139,11 +150,18 @@ _SOURCE_GATE = {
     "manuals": lambda m: m.get("platform") in _MANUAL_PLATFORMS,
     # GameTDB only scans discs, and only Nintendo's.
     "gametdb": lambda m: m.get("platform") in _GAMETDB_PLATFORMS,
+    # PCGamingWiki documents PC games and joins on the Steam appid. Gated on platform, not
+    # on the appid, for the same reason steamx is: the appid isn't known until IGDB has
+    # resolved, and gates run at queue time.
+    "pcgw": lambda m: m.get("platform") in _PCGW_PLATFORMS,
+    # Wikidata is ungated — any game may have an item. The IGDB slug is the real gate, and
+    # that is applied in the worker, once IGDB has resolved.
 }
 # Imported rather than restated, so the gate and the client can never disagree about which
 # platforms a source speaks for.
 from manuals import PLATFORMS as _MANUAL_PLATFORMS          # noqa: E402
 from gametdb import PLATFORMS as _GAMETDB_PLATFORMS         # noqa: E402
+from pcgamingwiki import PLATFORMS as _PCGW_PLATFORMS       # noqa: E402
 
 _SHEET_TITLE = {"games": "title", "completed": "game", "onOrder": "title"}
 _now = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -163,6 +181,8 @@ GAMETDB_VERSION = "2"
 # page" for any scanned booklet (its pages live in a _jp2.zip; the one loose image is the
 # Archive's thumbnail). The count now comes from scandata.xml, and v2 re-does every row.
 MANUALS_FILES_VERSION = "2"
+# Bump to discard PCGamingWiki rows written while its dump was still incomplete.
+PCGW_VERSION = "2"
 
 
 class Enricher:
@@ -362,6 +382,20 @@ class Enricher:
         if not st:
             return None
         return st.get("id") if isinstance(st, dict) else str(st)
+
+    def slug_for(self, key):
+        """The IGDB slug from a key's primary metadata record.
+
+        Wikidata files games under the slug (`chrono-trigger`), not the numeric id, and the
+        slug is already sitting in every IGDB record's `url`. A record that came from a
+        FALLBACK source (IGN, Steam, LaunchBox…) has a url too, but not an igdb.com one —
+        slug_from_igdb_url returns None for those, which is correct: Wikidata can't be
+        joined to them.
+        """
+        row = self._get("enrichment", [key]).get(key)
+        if not row or row[0] != "matched" or not row[1]:
+            return None
+        return slug_from_igdb_url(row[1].get("url"))
 
     # -- keys / index -------------------------------------------------------
     def key_for(self, title, platform, year) -> str:
@@ -686,6 +720,17 @@ class Enricher:
                 continue
             requeued = False
             try:
+                # A dump-backed source (PCGamingWiki, Wikidata, GameTDB) fetches its dataset
+                # in the background at boot. Asking it anything before that lands would get
+                # None back and be written down as a permanent no_match — a source that is
+                # merely still loading would end up with an empty table forever. Wait.
+                client = self._secondary.get(src)
+                if client is not None and not getattr(client, "ready", True):
+                    with self._lock:
+                        self._q[src].append(key)
+                    requeued = True
+                    time.sleep(0.5)
+                    continue
                 if src == "igdb":
                     enrichment, score = self._igdb.match(
                         meta["title"], meta["platform"], meta["year"],
@@ -712,6 +757,21 @@ class Enricher:
                         continue
                     client = self._secondary[src]
                     self._save_secondary(src, key, client.match_meta({**meta, "steamAppId": appid}))
+                elif src in _NEEDS_SLUG:
+                    slug = self.slug_for(key)
+                    if slug is None:
+                        if self._status("enrichment", key) is None:
+                            with self._lock:            # IGDB hasn't got here yet — retry
+                                self._q[src].append(key)
+                            requeued = True
+                            time.sleep(0.05)
+                            continue
+                        # IGDB resolved to nothing (or to a fallback source, which has no
+                        # slug), so there is no key to look this up by. Nothing to ask.
+                        self._save_secondary(src, key, None)
+                        continue
+                    client = self._secondary[src]
+                    self._save_secondary(src, key, client.match_meta({**meta, "igdbSlug": slug}))
                 else:
                     client = self._secondary[src]
                     # ArcadeDB keys on the MAME romset and Thumby/VNDB on
@@ -1008,6 +1068,26 @@ class Enricher:
                 return False
         return False
 
+    def reset_pcgw(self):
+        """Throw away PCGamingWiki rows resolved against an INCOMPLETE dump.
+
+        1.29.0 shipped with the dump abandoning itself on a 429 a third of the way through,
+        and `ready` returning true for a partial map — so every PC game the walk hadn't
+        reached yet was resolved to `no_match`, and a no_match is written once and never
+        revisited. Those rows are not findings; they're an artefact of a truncated fetch.
+        Delete them (never a hand-pinned one) and let them be asked again properly.
+        """
+        if "pcgw" not in self._secondary:
+            return
+        if self._kv_get("pcgw_version") == PCGW_VERSION:
+            return
+        with self._db_lock:
+            n = self._db.execute(
+                "DELETE FROM pcgw WHERE COALESCE(manual,0)=0").rowcount
+            self._db.commit()
+        self._kv_set("pcgw_version", PCGW_VERSION)
+        log.info("pcgw: cleared %d rows resolved against a partial dump", n)
+
     def backfill_gametdb(self):
         """Re-match GameTDB when the record shape changes.
 
@@ -1105,6 +1185,10 @@ class Enricher:
         log.info("manuals: %d booklets now carry a page count", done)
 
     def start(self):
+        # Synchronously, and BEFORE anything is queued: reindex() calls request(), which
+        # skips any key that already has a status. Clear the bad rows first or they'd be
+        # skipped as "already resolved" and the reset would do nothing.
+        self.reset_pcgw()
         for src in self._sources:
             t = threading.Thread(target=self._loop, args=(src,), name=f"enricher-{src}", daemon=True)
             self._workers[src] = t

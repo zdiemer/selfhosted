@@ -58,15 +58,37 @@ Working list. Checked = shipped and deployed.
       now fill the cover chain and the Shelf, so a disc IGDB never matched gets a
       real, region-correct box instead of a grey slab.
 
+- [x] **PCGamingWiki + Wikidata** — the two free, bulk, EXACT-join sources. Neither
+      does any per-game fetching and neither can be the wrong game.
+      *PCGamingWiki* joins on the Steam appid via MediaWiki's Cargo API: ultrawide,
+      4K, HDR, ray tracing, D3D/OpenGL/Vulkan, 64-bit, controller, surround. The
+      whole joined table comes down 500 rows at a time (~100 calls), cached on the
+      PVC. New **Ultrawide** facet. Its `Special:` pages are Cloudflare-walled but
+      `api.php` isn't, and the field names are NOT guessable — `Field_of_view_FOV`,
+      `Anti_aliasing_AA` and `Availability.DRM` don't exist. Every name in the
+      module was verified live.
+      *Wikidata* joins on the IGDB **slug** (P5794 stores `chrono-trigger`, which is
+      already sitting in each record's `url`) and brings what nothing else here has:
+      the composer, the director, a Wikipedia article, a MobyGames id. Four narrow
+      SPARQL queries merged locally, ~21s, 37,925 slugs — one query with four
+      OPTIONALs is the obvious way to write it and it times out. New **Composer**
+      facet, so the collection can be filtered by who scored it.
+
 ## Next
 
-- [ ] **New sources** — investigated but not yet chosen. Candidates worth verifying
-      properly (API terms, rate limits, and above all whether a BULK DUMP exists,
-      because 14k per-game scrapes is the thing to avoid): RetroAchievements (428
-      owned games sit on RA-class platforms), PriceCharting (alongside GameEye),
-      Wikidata SPARQL (free bulk cross-IDs, one query for thousands of rows),
-      MobyGames (staff credits — nothing we have covers who MADE a game),
-      OpenCritic, PCGamingWiki. Nothing here is confirmed yet.
+- [ ] **RetroAchievements** — the next source to add, and the shape is ideal:
+      `GetGameList` is a BULK endpoint returning every game for a console in one
+      call, with achievement counts AND ROM hashes. ~30 calls, not 14k. The hashes
+      could join exactly against the NAS index / RomM rather than by title. Free,
+      needs an API key from the account panel. 428 owned games are on RA platforms.
+- [ ] **MobyGames** — the staff credits (who MADE a game), which nothing here has.
+      Wikidata now hands us 33,902 MobyGames ids for free, so the matching is
+      already done. Non-commercial limit is 720/hr (1 per 5s) → ~20h backfill;
+      free access is by application.
+- [ ] **PriceCharting** — only if paying. Bulk CSV price guide incl. UPC/barcode is
+      gated to their top tier. Complements GameEye (adds barcode + graded prices).
+- [ ] **OpenCritic** — skip. Behind RapidAPI, and Metacritic + IGDB's critic
+      aggregate + GameRankings already cover critic scores.
 
 - [ ] **Match confidence for SECONDARY sources** — HLTB, Metacritic, GameEye, VNDB,
       VGChartz, speedrun and guides all compute MatchValidator.match_score and then
