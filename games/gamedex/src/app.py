@@ -14,9 +14,11 @@ IGDB credentials are configured.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -168,6 +170,59 @@ async def api_prefs_put(key: str, request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True}
+
+
+# ---------- the NAS ----------
+# Which games are actually in the ROM library. The answer is computed on the workstation by
+# tools/nas_index.py (only it can see the CIFS mount) and posted here; we just hold it and hand it
+# to the browser. Three states, and the third is the point: a platform whose receipt doesn't NAME
+# its games (Wii U's title-ids, the 360's DLC-only dump) is "not indexed", never "not on the NAS" —
+# see tools/nas_index.py.
+NAS_PATH = Path(os.environ.get("NAS_INDEX", "/data/nas.json"))
+NAS_TOKEN = os.environ.get("NAS_TOKEN", "")
+_nas = {"generatedAt": 0, "unindexed": [], "games": {}}
+if NAS_PATH.exists():
+    try:
+        _nas = json.loads(NAS_PATH.read_text())
+        logging.getLogger("gamedex").info(
+            "nas: %d games on the NAS, %d platforms not indexed",
+            len(_nas.get("games", {})), len(_nas.get("unindexed", [])))
+    except (OSError, ValueError):
+        logging.getLogger("gamedex").warning("nas: %s unreadable; starting empty", NAS_PATH)
+
+
+@app.get("/api/nas")
+def api_nas():
+    """{match_key: {system, file, size}} plus the platforms we refuse to answer for."""
+    return _nas
+
+
+@app.post("/api/nas")
+async def api_nas_put(request: Request):
+    """Replace the index. Token-gated, unlike the art uploads — those add one game's cover and are
+    trivially undone, whereas a bad POST here silently rewrites what the whole library knows about
+    itself. With no NAS_TOKEN set the endpoint is closed, so forgetting to configure it fails shut
+    rather than leaving a public write open."""
+    if not NAS_TOKEN or request.headers.get("X-Nas-Token") != NAS_TOKEN:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    if not isinstance(body.get("games"), dict):
+        return JSONResponse({"error": "games must be an object"}, status_code=400)
+
+    global _nas
+    _nas = {"generatedAt": int(body.get("generatedAt") or time.time()),
+            "systems": body.get("systems") or [],
+            "unindexed": body.get("unindexed") or [],
+            "games": body["games"]}
+    NAS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = NAS_PATH.with_suffix(".tmp")           # atomic: a torn write here is a torn library
+    tmp.write_text(json.dumps(_nas))
+    tmp.replace(NAS_PATH)
+    logging.getLogger("gamedex").info("nas: indexed %d games", len(_nas["games"]))
+    return {"ok": True, "games": len(_nas["games"]), "unindexed": _nas["unindexed"]}
 
 
 @app.get("/api/romm")

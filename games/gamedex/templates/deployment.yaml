@@ -64,6 +64,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "gamedex.fullname" . }}
                   key: romm-password
+            - name: NAS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: nas-token
             - name: IGDB_CLIENT_ID
               valueFrom:
                 secretKeyRef:

@@ -3649,3 +3649,21 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 @keyframes mdshim { to { background-position: -160% 0; } }
 @media (prefers-reduced-motion: reduce) { .md-skel-page i { animation: none; } }
+
+/* ---- is it in the ROM library? (drawer, under Your history) ---- */
+.nas-line {
+  display: flex; align-items: center; gap: 11px;
+  margin: 14px 0 4px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+}
+.nas-line svg { flex: none; }
+.nas-line b { display: block; font: 700 13px/1.3 var(--display); }
+.nas-line span { display: block; font-size: 11.5px; color: var(--dim); margin-top: 2px;
+  overflow-wrap: anywhere; }
+.nas-line.on { border-color: rgba(63, 185, 80, .34); background: rgba(63, 185, 80, .08); }
+.nas-line.on svg, .nas-line.on b { color: var(--good); }
+.nas-line.off svg { color: var(--dim); }
+.nas-line.off b { color: var(--muted); }
+/* Not a failure state — we simply cannot answer for this platform, and saying so is the point. */
+.nas-line.unknown { border-color: rgba(245, 165, 36, .28); background: rgba(245, 165, 36, .06); }
+.nas-line.unknown svg, .nas-line.unknown b { color: var(--warn); }

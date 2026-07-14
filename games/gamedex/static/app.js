@@ -1508,6 +1508,54 @@ async function loadRomm() {
   } catch (_) { /* RomM being down must never break gamedex */ }
 }
 
+/* ---- Is it in the ROM library? ------------------------------------------
+
+   Built on the workstation from romnas's download receipts (tools/nas_index.py) — the library is
+   80TiB on a NAS the cluster can't even see, so nothing here scans anything; it reads a map.
+
+   THREE states, and the third is why this is trustworthy. Some systems' receipts don't NAME their
+   games — the Wii U records title-ids, the 360's dump is DLC only — and title-matching those
+   produces a confident wrong answer. Those platforms say "not indexed" instead of lying. */
+let NAS = { generatedAt: 0, unindexed: [], games: {} };
+async function loadNas() {
+  try {
+    const r = await fetch("/api/nas");
+    if (r.ok) NAS = await r.json();
+  } catch (_) { /* no index yet is not an error — the section just doesn't render */ }
+}
+
+const nasBytes = (n) => {
+  if (!n) return "";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, f = n;
+  while (f >= 1024 && i < u.length - 1) { f /= 1024; i++; }
+  return `${f < 10 && i > 1 ? f.toFixed(1) : Math.round(f)} ${u[i]}`;
+};
+
+function nasSectionHtml(row) {
+  if (!NAS.generatedAt) return "";                       // no index posted yet
+  const hit = NAS.games[row._k];
+  if (hit) {
+    const size = nasBytes(hit.size);
+    return `<div class="nas-line on">
+      ${icon("i-check", 14)}
+      <div><b>In the ROM library</b>
+        <span>${escapeHtml(hit.file || "")}${size ? ` · ${size}` : ""} · ${escapeHtml(hit.system)}</span>
+      </div></div>`;
+  }
+  if ((NAS.unindexed || []).includes(row.platform)) {
+    return `<div class="nas-line unknown">
+      ${icon("i-alert", 14)}
+      <div><b>Not indexed</b>
+        <span>${escapeHtml(row.platform)} receipts don't name their games, so we can't say</span>
+      </div></div>`;
+  }
+  return `<div class="nas-line off">
+    ${icon("i-close", 14)}
+    <div><b>Not in the ROM library</b><span>Nothing on the NAS for this one</span></div>
+  </div>`;
+}
+
 // The GameRankings archive — a frozen fallback critic score, joined server-side on
 // (title, platform). Feeds criticOf(), so it lights up the facet, stats, predictions and
 // challenges as soon as it lands.
@@ -2922,7 +2970,7 @@ function openDrawer(row, sheetKey, keepStack) {
     if (MINE.includes(c.key)) continue;        // the history section tells these properly
     raw += cell(c, v);
   }
-  if (!row._collection) html += mineSectionHtml(row);
+  if (!row._collection) html += mineSectionHtml(row) + nasSectionHtml(row);
   else {                                       // a grouped card's values are aggregates, not yours
     for (const c of cols) {
       const v = row[c.key];
@@ -3192,6 +3240,7 @@ async function load() {
   applyStateFromURL();          // restore tab/filters/sort/view from the URL
   loadAllEnrichment();          // global covers + IGDB facets (polls during backfill)
   loadRomm();                   // which games we can actually play in the browser
+  loadNas();                    // which games are actually in the ROM library
   loadUploads();                // hand-uploaded box art becomes the cover everywhere
   loadGameRankings();           // frozen fallback critic score for pre-Metacritic games
   loadPrefs();                  // saved views + custom challenges follow you between browsers

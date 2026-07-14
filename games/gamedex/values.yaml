@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "1.26.0"
+  tag: "1.27.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -118,3 +118,9 @@ romm:
   publicUrl: ""                               # what the browser opens
   username: ""
   password: ""
+
+# The NAS index (which games are in the ROM library). tools/nas_index.py runs on the workstation —
+# only it can see the CIFS mount — and posts the result. With no token the POST endpoint is closed,
+# so this fails shut rather than leaving a public write open. Set nas.token in values.local.yaml.
+nas:
+  token: ""
