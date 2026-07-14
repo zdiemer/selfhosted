@@ -3510,11 +3510,20 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .md-cart.card { border-radius: 4px; }
 
 /* ---- discs ---- */
+/* The rainbow is a background LAYER of the disc, screened over the label — not a blended child on
+   top of it. A child with mix-blend-mode has to be composited against its backdrop as a group, and
+   Chrome flattens the 3D rendering context to do it: the disc's own read side (a 3D child, see
+   .md-under) then has no depth to sit behind, and never paints at all. Same blend, same look, in a
+   place that costs the disc nothing. */
 .md-disc {
   position: relative; width: var(--ms); height: var(--ms); border-radius: 50%;
   background:
+    conic-gradient(from 210deg,
+      rgba(255,0,120,.20), rgba(0,200,255,.20), rgba(120,255,60,.16),
+      rgba(255,220,0,.18), rgba(255,0,120,.20)),
     var(--face, none) center/cover no-repeat,
     radial-gradient(circle at 50% 50%, #e9ecf1 34%, var(--tint) 36%, var(--tint) 100%);
+  background-blend-mode: screen, normal, normal;
   box-shadow: 0 10px 30px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.14);
   transform: rotateX(58deg) rotateZ(0deg);
   animation: mdSpin 9s linear infinite;
@@ -3525,7 +3534,29 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   to   { transform: rotateX(58deg) rotateZ(360deg); }
 }
 .md-disc.mini { }                                  /* the 8cm GameCube disc — sized in JS */
-/* The data side's rainbow. A conic gradient is exactly the right tool and nothing else is. */
+/* THE OTHER SIDE OF A DISC IS THE DATA SIDE. Turn one over and you get silver, not the label
+   printed backwards — but the disc is one div carrying its label as a background, so from
+   underneath that background simply painted through, mirrored. It can't be fixed with
+   `backface-visibility: hidden` on the disc: Chrome culls the culled face's whole SUBTREE, so the
+   disc would take its own read side down with it and vanish. Lay the read side ON it instead —
+   an opaque panel a hair proud of the label, facing the other way, which is what occludes it. */
+.md-under {
+  position: absolute; inset: 0; border-radius: 50%;
+  transform: rotateY(180deg) translateZ(1px);     /* faces away from the label */
+  backface-visibility: hidden;
+  background: radial-gradient(circle at 50% 50%,
+    #e9ecf1 30%, #cfd4dc 32%, #b9bfc9 62%, #9aa1ac 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18);
+}
+.md-under::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  mix-blend-mode: screen; opacity: .32;
+  background: conic-gradient(from 30deg,
+    rgba(255,0,120,.20), rgba(0,200,255,.20), rgba(120,255,60,.16),
+    rgba(255,220,0,.18), rgba(255,0,120,.20));
+}
+/* The UMD's sheen. A conic gradient is exactly the right tool and nothing else is. The disc used
+   to wear this too and now carries it in its own background instead — see .md-disc. */
 .md-sheen {
   position: absolute; inset: 0; border-radius: 50%; pointer-events: none; mix-blend-mode: screen;
   background: conic-gradient(from 210deg,
@@ -3596,8 +3627,15 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-case .f-front {
   transform-origin: left center;
   transform-style: preserve-3d;
+  /* AND IT MUST NOT CLIP. `overflow: hidden` (inherited from .sh-face, where it's right — those
+     faces have no 3D children) computes transform-style down to FLAT, whatever preserve-3d says.
+     The lid's children — its edge slabs, its liner — were being squashed into the cover's own
+     plane, which is why the edges never really stood proud of it and why the liner could not get
+     behind the art. The cover art is a 100%-of-the-face image; it has nothing to clip anyway. */
+  overflow: visible;
   transition: transform .85s cubic-bezier(.22,.85,.25,1), filter .6s ease;
 }
+.sh-case .f-front img { border-radius: 2px; }   /* the clip the face's overflow used to do */
 /* THE COVERS ARE SLABS. A real case is two ridged shells hinged at a spine, each a few millimetres
    of plastic. Ours had one 5px sliver on the lid's free edge, so from any angle the cover was still
    a decal. Both covers now carry a full perimeter edge — top, bottom and free side — and the box
@@ -3632,19 +3670,29 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
               inset 0 0 0 3px rgba(0, 0, 0, .30),
               inset 0 1px 2px rgba(255, 255, 255, .10);
 }
-/* THE LID HINGES ON ITS SPINE EDGE, not on its middle. With the default transform-origin the
-   cover swung about its own centre, which slid it sideways off the box and left a gap between
-   the lid and the case — you looked straight through the hinge at the shelf behind. A real case
-   is joined along the spine: pin the axis to the lid's left edge and the cover stays attached to
-   the box it belongs to, which is also the only way the hinge can read as a hinge. */
-.sh-case .f-front { transform-origin: left center; }
+/* THE INSIDE OF THE LID IS NOT THE COVER, SEEN BACKWARDS. Past 90° you are looking at the back of
+   the front cover, and the back of a printed cover is the inside of the box — dark plastic, the
+   same shell the media sits against. It was showing the cover ART, mirrored, and a dimming filter
+   was thrown over the whole lid to disguise it: a mirrored cover at 34% brightness is still a
+   mirrored cover, and the filter dimmed the FRONT of the lid too.
+
+   The lid must keep `backface-visibility: visible` — Chrome culls the whole SUBTREE of a face that
+   is turned away, so hiding the lid's back takes the lid's edges and this liner with it, and the
+   cover disappears out of the open box entirely. So: let the face keep painting, tell the IMAGE
+   (a 3D child in its own right, which is why it was never covered by the face's own backface rule)
+   to hide its back, and lay an opaque LINER a hair behind the cover, facing into the box.
+   Front of the lid, cover art. Back of the lid, the inside of the case. */
 .sh-case.open .f-front {
   transform: translateZ(calc(var(--d) / 2)) rotateY(-128deg);
-  /* Past 90° you're looking at the BACK of the cover — which is the inside of the lid. It has to
-     be visible (it's hidden by default, to stop faces showing through the box) and it has to stop
-     looking like cover art: dim it down to printed-cardboard. */
   backface-visibility: visible;
-  filter: brightness(.34) saturate(.55);
+}
+.sh-case .f-front img { backface-visibility: hidden; }
+.sh-liner {
+  position: absolute; inset: 0; border-radius: 2px;
+  transform: rotateY(180deg) translateZ(1px);   /* its own front faces INTO the box */
+  backface-visibility: hidden;
+  background: linear-gradient(170deg, #26262e, #15151a);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .06);
 }
 
 /* The inside of the case: dark plastic, and the media sitting in it. */

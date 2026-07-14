@@ -393,9 +393,16 @@ function shBuild(i) {
 
   /* THE LID IS A SLAB. A real case's cover is a few millimetres of plastic, and a single sliver
      down its free edge didn't sell that from any angle — so the lid gets a full perimeter edge:
-     top, bottom, and the free side. The BACK cover gets its thickness from a moulded rim in CSS
-     instead; it must not hold 3D children (see .f-back::after in style.css for why). */
+     top, bottom, the free side and the hinge. The BACK cover gets its thickness from a moulded rim
+     in CSS instead; it must not hold 3D children (see .f-back::after in style.css for why). */
   const lid = el.querySelector(".f-front");
+  // ...and a LINING, because the back of the cover is the inside of the box, not the cover
+  // printed backwards. See .sh-liner.
+  if (lid) {
+    const liner = document.createElement("span");
+    liner.className = "sh-liner";
+    lid.appendChild(liner);
+  }
   for (const e of lid ? ["e-t", "e-r", "e-b", "e-l"] : []) {
     const edge = document.createElement("span");
     edge.className = `sh-edge ${e}`;

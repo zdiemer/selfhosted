@@ -272,8 +272,12 @@ function discHtml(m, art) {
   const kind = m.kind === "umd" ? "md-umd" : "md-disc";
   return `<div class="${kind}${m.mini ? " mini" : ""}"
     style="--ms:${m.size}px;--tint:${m.tint}${face ? `;--face:url('${escapeHtml(face)}')` : ""}">
-    <span class="md-sheen"></span>
-    ${m.kind === "umd" ? `<span class="md-umd-shell"></span>` : `<span class="md-hub"></span>`}
+    ${m.kind === "umd"
+      // The UMD is a flat card with nothing behind it, so its sheen can stay a blended child.
+      // A DISC cannot afford one — it has a read side to show, and blending flattens the 3D it
+      // needs to hide behind the label. Its rainbow lives in its own background (see .md-disc).
+      ? `<span class="md-sheen"></span><span class="md-umd-shell"></span>`
+      : `<span class="md-hub"></span><span class="md-under"></span>`}
   </div>`;
 }
 
