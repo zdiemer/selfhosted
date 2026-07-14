@@ -359,17 +359,29 @@ function shBuild(i) {
       <div class="sh-face f-left std" style="background:${spineStyle(g.p).base}">${stdSpineHtml(g)}</div>
       <div class="sh-face f-right"></div><div class="sh-face f-top"></div><div class="sh-face f-bottom"></div>`;
 
-  /* THE INSIDE OF THE BOX. Built into the 3D case itself, sitting just behind the front cover,
-     so when the cover swings open on its hinge the media is genuinely in there — not a picture
-     that appears next to the box. It only exists when there is something real to put in it. */
-  if (typeof hasBoxContents === "function" && hasBoxContents(g.mk) && typeof mediaFor === "function") {
-    const m = mediaFor(g.p);
-    if (m) {
-      const inside = document.createElement("div");
-      inside.className = "sh-inside";
-      inside.innerHTML = mediaModelHtml(g);
-      el.appendChild(inside);
-    }
+  /* THE INSIDE OF THE BOX. Built into the 3D case itself, behind the front cover, so when the
+     cover swings the media is genuinely in there — not a picture that appears beside the box.
+
+     Built for EVERY game, even ones with nothing to put in it. The back face is
+     backface-visibility:hidden (it has to be, or faces show through the closed box), which means
+     that from the inside it simply is not there — so a case with no interior panel opened onto a
+     view straight through the box to the shelf behind. The interior is the back wall. */
+  const inside = document.createElement("div");
+  inside.className = "sh-inside";
+  inside.innerHTML = (typeof mediaModelHtml === "function" && mediaFor(g.p)) ? mediaModelHtml(g) : "";
+  el.appendChild(inside);
+
+  // The case element is REUSED between games. Leave it open and the next box you pull out is
+  // already hanging open — which is exactly what happened.
+  el.classList.remove("open");
+
+  /* The lid is a LID, not a sheet of paper. A real case's cover has a few millimetres of plastic,
+     and without it the thing that swings open is a decal. Give the front face its own free edge. */
+  const lid = el.querySelector(".f-front");
+  if (lid) {
+    const edge = document.createElement("span");
+    edge.className = "sh-lid-edge";
+    lid.appendChild(edge);
   }
 
   // Where the case has to START: exactly on top of the spine it came from. At

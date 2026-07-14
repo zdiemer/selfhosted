@@ -3469,9 +3469,25 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    left edge and rotating BEFORE the translate puts the hinge line exactly on the front-left edge of
    the box — which is where a real case hinges. Rotate after the translate and the door swings about
    the middle of the box and tears through the spine. */
-.sh-case .f-front { transition: transform .85s cubic-bezier(.22,.85,.25,1), filter .6s ease; }
-.sh-case.open .f-front {
+/* THE HINGE LIVES ON THE BASE RULE, not on .open — and this is the whole reason closing looked
+   wrong. transform-origin was only set in the open state, so on the way IN the cover swung about
+   its left edge like a door, and on the way OUT the origin snapped back to the centre and the
+   cover rotated about the middle of the box, unhinged from it. Declare it once, and it hinges in
+   both directions. */
+.sh-case .f-front {
   transform-origin: left center;
+  transform-style: preserve-3d;
+  transition: transform .85s cubic-bezier(.22,.85,.25,1), filter .6s ease;
+}
+/* The lid's own thickness. Without it the thing swinging open is a decal, not a cover. */
+.sh-lid-edge {
+  position: absolute; top: 0; right: 0; width: 5px; height: 100%;
+  transform-origin: right center;
+  transform: rotateY(90deg) translateZ(2.5px);
+  background: linear-gradient(180deg, #34343c, #1e1e24);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, .12);
+}
+.sh-case.open .f-front {
   transform: translateZ(calc(var(--d) / 2)) rotateY(-128deg);
   /* Past 90° you're looking at the BACK of the cover — which is the inside of the lid. It has to
      be visible (it's hidden by default, to stop faces showing through the box) and it has to stop
