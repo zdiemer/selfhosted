@@ -1520,8 +1520,23 @@ let NAS = { generatedAt: 0, unindexed: [], games: {} };
 async function loadNas() {
   try {
     const r = await fetch("/api/nas");
-    if (r.ok) NAS = await r.json();
-  } catch (_) { /* no index yet is not an error — the section just doesn't render */ }
+    if (!r.ok) return;
+    NAS = await r.json();
+    if (!NAS.generatedAt) return;
+    // The index lands AFTER the first render, so the ROM library facet would sit there with three
+    // empty buckets until you touched something else. Same as the GameRankings archive does.
+    if (!SPECIAL_TABS.includes(activeTab)) renderFacets();
+  } catch (_) { /* no index yet is not an error — the facet and the drawer line just don't render */ }
+}
+
+/* The facet value, and it is the SAME three states the drawer shows — deliberately. A filter that
+   quietly folded "we can't answer for this platform" into "not on the NAS" would hand you a list of
+   games to go download, with the Wii U library sitting in it. */
+function nasFacetVals(row) {
+  if (!NAS.generatedAt) return [];
+  if (NAS.games[row._k]) return ["On the NAS"];
+  if ((NAS.unindexed || []).includes(row.platform)) return ["Not indexed"];
+  return ["Not on the NAS"];
 }
 
 const nasBytes = (n) => {
@@ -1767,6 +1782,10 @@ function extraFacetCols(tab = activeTab) {
     { key: "__metacritic", label: "Critic score", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: metacriticOf },
     { key: "__userrating", label: "User Rating", type: "text", facet: true, virtual: true, kind: "bucket", buckets: METACRITIC_BUCKETS, getVal: userRatingOf },
     { key: "__sales", label: "Sales (VGChartz)", type: "text", facet: true, virtual: true, kind: "bucket", buckets: SALES_BUCKETS, getVal: salesOf },
+    // Is it in the ROM library? Independent of enrichment — this comes from romnas's download
+    // receipts (see loadNas), so it lives here and not among the IGDB facets.
+    { key: "__nas", label: "ROM library", type: "text", facet: true, virtual: true, kind: "fn",
+      getVals: nasFacetVals },
     // Arcade-only, from the MAME romset lookup — blank for everything else.
     { key: "__adbplayers", label: "Arcade players", type: "text", facet: true, virtual: true, kind: "fn",
       getVals: (r) => { const e = ENRICH[r._k]; return e && e.adbPlayers ? [e.adbPlayers] : []; } },
