@@ -68,7 +68,9 @@ _GAMES = [
     ("Metacritic Rating",    "rating", False, False, False),
     ("GameFAQs User Rating", "rating", False, False, False),
     ("Playing Status",       "text",   True,  False, True),
-    ("Playing Progress",     "text",   False, False, False),
+    # A fraction, not a string: Excel's percent cells arrive as 0.16666666666666666, and
+    # typing it as text shipped that straight to the browser, which duly printed it.
+    ("Playing Progress",     "rating", False, False, False),
     ("Priority",             "text",   True,  False, False),
     ("Format",               "text",   True,  False, False),
     ("Owned",                "bool",   True,  False, True),

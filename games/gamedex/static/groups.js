@@ -66,6 +66,7 @@ function groupIndex(kind) {
   }
   const out = [];
   const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
+  // (playedHoursOf is defined below — hoisted, and only called once a group is being built.)
   for (const [name, games] of m) {
     // Release order is how any of these is meant to be read.
     games.sort((a, b) => String(a.releaseDate || a.releaseYear || "").localeCompare(
@@ -83,8 +84,7 @@ function groupIndex(kind) {
     const rated = games.map((x) => x.rating).filter((v) => v != null);
     const crits = games.map((x) => (typeof criticOf === "function" ? criticOf(x) : null))
       .filter((v) => v != null);
-    const played = games.reduce(
-      (s, x) => s + (x.completed && x.completionTime ? +x.completionTime : 0), 0);
+    const played = games.reduce((s, x) => s + (playedHoursOf(x) ?? 0), 0);
     const left = games.filter((x) => !x.completed).reduce((s, x) => {
       const t = typeof playtimeOf === "function" ? playtimeOf(x) : null;
       return s + (t != null ? t : 0);
@@ -212,6 +212,20 @@ function groupFavHtml(s) {
   </div>`;
 }
 
+/* The hours a finished game ACTUALLY took.
+
+   Not on the row you'd expect: All Games' `completionTime` is blank for most rows, and the
+   real number lives on the Completed sheet as `playTime`. historyOf() already joins the two
+   sheets on the match key for exactly this reason — Groupings just never asked it, so it
+   read a mostly-empty column, found nothing, and fell back to an HowLongToBeat estimate for
+   games that had a real time recorded all along. The group's "You've played" total was
+   undercounting for the same reason. */
+function playedHoursOf(g) {
+  if (!g.completed) return null;
+  const t = typeof historyOf === "function" ? historyOf(g).playTime : g.completionTime;
+  return t != null && t !== "" ? +t : null;
+}
+
 function groupGameRow(g, i) {
   const cs = coverSrc(ENRICH[g._k], "cover_small");
   const state = g.completed ? "done" : g.playingStatus ? "playing" : g.owned ? "owned" : "missing";
@@ -219,12 +233,22 @@ function groupGameRow(g, i) {
   const bits = [g.platform, g.releaseYear].filter(Boolean).map((x) => escapeHtml(String(x))).join(" · ");
   const score = g.rating != null
     ? `<span class="${ratingClass(g.rating)}">${Math.round(g.rating * 100)}</span>` : "";
-  const t = playtimeOf(g);
+  /* Your time if you finished it, an estimate if you haven't. playtimeOf() is an ESTIMATE
+     (HowLongToBeat, else VNDB, else the sheet's guess) — the right answer for a game still in
+     the backlog, the wrong one for a game you beat and wrote a time down for.
+
+     A finished game with no recorded time still falls back to the estimate (Health flags the
+     ~700 of them). The ~ marks it, so a guess can never be read as a measurement. */
+  const mine = playedHoursOf(g);
+  const t = mine != null ? mine : playtimeOf(g);
+  const time = t == null ? "" :
+    `<span class="muted" title="${mine != null ? "Your completion time" : "Estimated time to beat"}">${
+      mine != null ? "" : "~"}${escapeHtml(fmtHours(t))}</span>`;
   return `<button class="fr-game fr-${state}" data-fg="${escapeHtml(String(g._k || ""))}" data-fi="${i}">
     <span class="fr-mark">${mark}</span>
     ${cs ? `<img loading="lazy" src="${escapeHtml(cs)}" alt="">` : `<span class="fr-ph">${icon("i-library", 16)}</span>`}
     <span class="fr-game-t"><b>${escapeHtml(String(g.title))}</b><span class="muted">${bits}</span></span>
-    <span class="fr-game-x">${t != null ? `<span class="muted">${fmtHours(t)}</span>` : ""}${score}</span>
+    <span class="fr-game-x">${time}${score}</span>
   </button>`;
 }
 

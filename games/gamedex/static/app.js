@@ -3105,7 +3105,7 @@ function mineSectionHtml(row) {
   const pills = [];
   if (h.beaten) pills.push(`<span class="mine-pill done">✓ Beaten</span>`);
   else if (h.status) pills.push(`<span class="mine-pill live">${escapeHtml(h.status)}${
-    h.progress ? ` · ${escapeHtml(String(h.progress))}` : ""}</span>`);
+    h.progress != null ? ` · ${Math.round(h.progress * 100)}% done` : ""}</span>`);
   if (h.owned) {
     const own = ["Owned", h.format, h.condition].filter(Boolean).join(" · ");
     pills.push(`<span class="mine-pill">${escapeHtml(own)}</span>`);
