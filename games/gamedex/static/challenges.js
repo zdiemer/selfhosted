@@ -536,23 +536,23 @@ function chClearedTimeline(res) {
   if (!nodes.length) return `<div class="ch-empty">Nothing cleared yet.</div>`;
 
   const html = nodes.map(({ key, row, also }) => {
-    const cs = coverSrc(ENRICH[row._k], "cover_small");
-    const art = cs
-      ? `<img src="${cs}" alt="" loading="lazy">`
-      : `<span class="chtl-ph">${icon("i-library", 18)}</span>`;
-    // The bucket is the headline (it's what was cleared); the game is the story, so it goes
-    // in the tooltip and the drawer rather than competing for the two lines we have.
-    const also_ = also ? ` (+${also} more since)` : "";
-    const tip = `${row.title}${row.platform ? ` · ${row.platform}` : ""} — cleared ${key}${also_}`;
-    return `<button class="chtl-node" title="${escapeHtml(tip)}"
-      data-gk="${escapeHtml(String(row._k || ""))}"
-      data-gt="${escapeHtml(String(row.title))}"
-      data-gp="${escapeHtml(String(row.platform || ""))}">
-      <span class="chtl-dot"></span>
-      <span class="chtl-art">${art}</span>
-      <b class="chtl-key">${escapeHtml(String(key))}</b>
-      <span class="chtl-date">${escapeHtml(chShortDate(row.dateCompleted))}</span>
-    </button>`;
+    // The SAME listing card as the grid and Home — a game is a game wherever you meet it.
+    // The bucket it cleared and the date it fell are the note, because that is the one thing
+    // that's true here and nowhere else. The rail, the dot and nothing else are ours.
+    // The note is the bucket and the day it fell — nothing else. "+31 more" (the other games
+    // beaten in that bucket since) ran the note to three lines and swallowed the cover it was
+    // sitting on, for a number nobody came here to read. It lives in the tooltip.
+    const tip = `${row.title} — cleared ${key} on ${fmtDate(row.dateCompleted)}`
+      + (also ? ` (${also} more beaten in this bucket since)` : "");
+    const card = posterCardHtml(row, {
+      cls: "chtl-card",
+      note: `<b>${escapeHtml(String(key))}</b> · ${escapeHtml(chShortDate(row.dateCompleted))}`,
+      attrs: `title="${escapeHtml(tip)}"
+              data-gk="${escapeHtml(String(row._k || ""))}"
+              data-gt="${escapeHtml(String(row.title))}"
+              data-gp="${escapeHtml(String(row.platform || ""))}"`,
+    });
+    return `<div class="chtl-node"><span class="chtl-dot"></span>${card}</div>`;
   }).join("");
 
   const first = chShortDate(nodes[0].row.dateCompleted);
@@ -668,14 +668,16 @@ function renderChallenges() {
   for (const el of host.querySelectorAll(".ch-showall")) {
     el.onclick = () => { chState.showAll = el.dataset.showall; renderChallenges(); };
   }
-  for (const el of host.querySelectorAll(".ch-chip, .chtl-node")) {
-    el.onclick = () => {
-      const row = chRows().find((r) =>
-        String(r._k || "") === el.dataset.gk &&
-        String(r.title) === el.dataset.gt &&
-        String(r.platform || "") === el.dataset.gp);
-      if (row) openDrawer(row, "games");
-    };
+  for (const el of host.querySelectorAll(".ch-chip, .chtl-card")) {
+    const row = chRows().find((r) =>
+      String(r._k || "") === el.dataset.gk &&
+      String(r.title) === el.dataset.gt &&
+      String(r.platform || "") === el.dataset.gp);
+    if (!row) continue;
+    el.onclick = () => openDrawer(row, "games");
+    // It's the grid's card, so it gets the grid's hover-to-play trailer too. Anything less
+    // and it would only LOOK like the same card.
+    if (el.classList.contains("chtl-card")) wirePreviewFor(el, row);
   }
   host.scrollIntoView({ block: "start" });
 }

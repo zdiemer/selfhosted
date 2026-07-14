@@ -164,22 +164,15 @@ function suggestions(n = 6) {
 
 // ---- pieces --------------------------------------------------------------
 
+// The shared listing card (posterCardHtml, app.js), with Home's own hooks on it. Home used
+// to carry its own copy of this markup; there is only one now, so a card cannot look like a
+// different kind of object here than it does in the grid.
 function homeCard(row, sheet, note) {
-  const cs = coverSrc(ENRICH[row._k], "cover_big");
-  const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
-  const title = escapeHtml(String(row.title || row.game || "Untitled"));
-  const cover = cs
-    ? `<img class="card-cover${pixel}" loading="lazy" src="${escapeHtml(cs)}" alt="">`
-    : `<div class="card-cover ph">${icon("i-library", 26)}</div>`;
-  const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
-    .map((x) => escapeHtml(String(x))).join(" · ");
-  return `<button class="card h-card" data-hk="${escapeHtml(String(row._k || ""))}" data-hs="${sheet}">
-    ${cover}
-    <div class="card-body">
-      <div class="card-title">${title}</div>
-      <div class="card-sub">${sub}</div>
-      ${note ? `<div class="h-note">${note}</div>` : ""}
-    </div></button>`;
+  return posterCardHtml(row, {
+    cls: "h-card",
+    note,
+    attrs: `data-hk="${escapeHtml(String(row._k || ""))}" data-hs="${sheet}"`,
+  });
 }
 
 // A horizontally-scrolling shelf with arrows.

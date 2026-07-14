@@ -2501,6 +2501,35 @@ function cardBodyHtml(row) {
     `</div></div>`;
 }
 
+/* The listing card, in ONE place.
+
+   The grid builds its cards imperatively — it needs the row map, the hover-preview wiring
+   and the fan-in stagger — but everywhere else just wants a string of the same thing. Home's
+   shelves, the Challenges timeline and the grid all render the identical poster: cover,
+   title, platform · year, and an optional note line. When they each had their own copy of
+   this markup they drifted, and a game looked like a different kind of object depending on
+   which tab you found it on.
+
+   `note` is free HTML because the callers mean different things by it — Home says why it
+   picked the game, the timeline says which bucket it cleared and when. */
+function posterCardHtml(row, { cls = "", note = "", attrs = "" } = {}) {
+  const cs = coverSrc(ENRICH[row._k], "cover_big");
+  const pixel = coverIsPixelArt(ENRICH[row._k], cs) ? " pixel" : "";
+  const title = escapeHtml(String(row.title || row.game || "Untitled"));
+  const cover = cs
+    ? `<img class="card-cover${pixel}" loading="lazy" src="${escapeHtml(cs)}" alt="">`
+    : `<div class="card-cover ph">${icon("i-library", 26)}</div>`;
+  const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
+    .map((x) => escapeHtml(String(x))).join(" · ");
+  return `<button class="card${cls ? " " + cls : ""}" ${attrs}>
+    ${cover}
+    <div class="card-body">
+      <div class="card-title">${title}</div>
+      <div class="card-sub">${sub}</div>
+      ${note ? `<div class="card-note">${note}</div>` : ""}
+    </div></button>`;
+}
+
 function renderGrid(pageRows) {
   const grid = $("#grid");
   stopPreview();                 // the card it was attached to is about to vanish
