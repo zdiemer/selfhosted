@@ -43,8 +43,8 @@
    Sizes below preserve each cart's true aspect ratio; the absolute px are normalised so they all
    read at about the same size on screen, since you only ever see one at a time. */
 const MEDIA = {
-  "NES":                 { kind: "cart", w: 115, h: 128, d: 20, shell: "#b8b3a7", label: [12, 14, 76, 56], shape: "nes" },
-  "Nintendo Entertainment System": { kind: "cart", w: 115, h: 128, d: 20, shell: "#b8b3a7", label: [12, 14, 76, 56], shape: "nes" },
+  "NES":                 { kind: "cart", w: 115, h: 128, d: 20, shell: "#b8b3a7", label: [12, 14, 76, 56], shape: "nes" , sprite: "nes" },
+  "Nintendo Entertainment System": { kind: "cart", w: 115, h: 128, d: 20, shell: "#b8b3a7", label: [12, 14, 76, 56], shape: "nes" , sprite: "nes" },
   /* SNES (North America). Checked against a reference rather than drawn from memory, because
      the first pass was cartridge-SHAPED and not a SNES cartridge:
        - it is WIDER THAN TALL (~12cm x 11cm). I had it near-square.
@@ -55,21 +55,21 @@ const MEDIA = {
          edge, so the top of the cart carries a strip of the same label.
        - the front is the famous "gray rounded front": softened top corners, not the hard
          taper I gave it. */
-  "SNES":                { kind: "cart", w: 132, h: 121, d: 20, shell: "#b9b5ad", label: [17, 16, 66, 54], shape: "snes" },
-  "Super Nintendo":      { kind: "cart", w: 132, h: 121, d: 20, shell: "#b9b5ad", label: [17, 16, 66, 54], shape: "snes" },
-  "Nintendo 64":         { kind: "cart", w: 92,  h: 135, d: 20, shell: "#33353b", label: [11, 11, 78, 52], shape: "n64" },
-  "Game Boy":            { kind: "cart", w: 105, h: 121, d: 14, shell: "#c8c5bd", label: [11, 13, 78, 58], shape: "gb" },
-  "Game Boy Color":      { kind: "cart", w: 105, h: 121, d: 14, shell: "#c8c5bd", label: [11, 13, 78, 58], shape: "gb" },
+  "SNES":                { kind: "cart", w: 132, h: 121, d: 20, shell: "#b9b5ad", label: [17, 16, 66, 54], shape: "snes" , sprite: "snes" },
+  "Super Nintendo":      { kind: "cart", w: 132, h: 121, d: 20, shell: "#b9b5ad", label: [17, 16, 66, 54], shape: "snes" , sprite: "snes" },
+  "Nintendo 64":         { kind: "cart", w: 92,  h: 135, d: 20, shell: "#33353b", label: [11, 11, 78, 52], shape: "n64" , sprite: "n64" },
+  "Game Boy":            { kind: "cart", w: 105, h: 121, d: 14, shell: "#c8c5bd", label: [11, 13, 78, 58], shape: "gb" , sprite: "gb" },
+  "Game Boy Color":      { kind: "cart", w: 105, h: 121, d: 14, shell: "#c8c5bd", label: [11, 13, 78, 58], shape: "gb" , sprite: "gb" },
   // Wider than tall, and NO notch on the front — the shape detector is a cut on a bottom REAR
   // corner, which you never see from here.
-  "Game Boy Advance":    { kind: "cart", w: 140, h: 86,  d: 12, shell: "#5b5f6b", label: [8, 11, 84, 70], shape: "gba" },
+  "Game Boy Advance":    { kind: "cart", w: 140, h: 86,  d: 12, shell: "#5b5f6b", label: [8, 11, 84, 70], shape: "gba" , sprite: "gba" },
   "Nintendo DS":         { kind: "card", w: 118, h: 102, d: 7,  shell: "#3a3d45", label: [8, 10, 84, 70], shape: "dscard" },
   "Nintendo 3DS":        { kind: "card", w: 118, h: 102, d: 7,  shell: "#2e3138", label: [8, 10, 84, 70], shape: "dscard" },
   // The Switch card is tiny, red, and its corner is clipped.
   "Nintendo Switch":     { kind: "card", w: 92,  h: 108, d: 6,  shell: "#c0392b", label: [9, 9, 82, 76], shape: "switch" },
   "Nintendo Switch 2":   { kind: "card", w: 92,  h: 108, d: 6,  shell: "#8e2a20", label: [9, 9, 82, 76], shape: "switch" },
   // Genesis: tall, black, and the grip ridges are a band across the top of the face.
-  "Sega Genesis":        { kind: "cart", w: 105, h: 134, d: 20, shell: "#26282d", label: [10, 22, 80, 56], shape: "genesis" },
+  "Sega Genesis":        { kind: "cart", w: 105, h: 134, d: 20, shell: "#26282d", label: [10, 22, 80, 56], shape: "genesis" , sprite: "genesis" },
   "Sega Master System":  { kind: "card", w: 128, h: 108, d: 9,  shell: "#26282d", label: [9, 11, 82, 66], shape: "sms" },
   "Game Gear":           { kind: "cart", w: 118, h: 92,  d: 14, shell: "#2b2d32", label: [9, 11, 82, 68], shape: "gba" },
   "Virtual Boy":         { kind: "cart", w: 112, h: 116, d: 16, shell: "#7a1f1f", label: [11, 13, 78, 58], shape: "gb" },
@@ -133,8 +133,113 @@ function mediaArt(mk) {
   };
 }
 
+/* ---- the rendered shells ---------------------------------------------------
+
+   Six CSS faces with clip-paths cannot describe a cartridge. A real one has chamfers, draft angles
+   and a recessed label well, so every tweak made it a slightly different wrong shape. So the shells
+   are MODELLED and pre-rendered by tools/render_carts.py: 24 frames of a slow turn, each with the
+   label area punched out to transparent, plus the four corners of that hole in image space.
+
+   Here we play the frames and warp the game's own label into the hole with a homography. Because
+   the label goes UNDERNEATH the frame, the shell's bevel and ribs draw over its edges — the label
+   is occluded by the plastic around it for free, which is the thing that sells it.
+
+   Which way the box opens is decided by what's in it: a bare cart never lived in a hinged case, so
+   retro carts SLIDE OUT of the sleeve; cards (DS, 3DS, Switch) and discs are in hinged cases. */
+const opensBy = (platform) => (mediaFor(platform)?.kind === "cart" ? "slide" : "hinge");
+
+const _cartMeta = {};
+const cartMeta = (id) => (_cartMeta[id] ||= fetch(`carts/${id}.json`).then((r) => r.json()));
+
+/* Map the label element's own rectangle onto the four corners of the punched-out hole.
+
+   This is the projective (not affine) transform — the hole is a quad in perspective, so parallel
+   edges do NOT stay parallel, and a scale+skew cannot reach it. Solve for the 3x3 and hand CSS the
+   matrix3d; the trailing scale() is what turns the element's pixel coords into the unit square the
+   solution is written in. */
+function homography(w, h, q) {
+  const [p0, p1, p2, p3] = q;                                   // TL, TR, BR, BL
+  const dx1 = p1[0] - p2[0], dx2 = p3[0] - p2[0], dx3 = p0[0] - p1[0] + p2[0] - p3[0];
+  const dy1 = p1[1] - p2[1], dy2 = p3[1] - p2[1], dy3 = p0[1] - p1[1] + p2[1] - p3[1];
+  const den = dx1 * dy2 - dx2 * dy1;
+  let g = 0, i = 0;
+  if (Math.abs(den) > 1e-9 && (Math.abs(dx3) > 1e-9 || Math.abs(dy3) > 1e-9)) {
+    g = (dx3 * dy2 - dx2 * dy3) / den;
+    i = (dx1 * dy3 - dx3 * dy1) / den;
+  }
+  const a = p1[0] - p0[0] + g * p1[0], b = p3[0] - p0[0] + i * p3[0], c = p0[0];
+  const d = p1[1] - p0[1] + g * p1[1], e = p3[1] - p0[1] + i * p3[1], f = p0[1];
+  return `matrix3d(${a},${d},0,${g},${b},${e},0,${i},0,0,1,0,${c},${f},0,1)`
+       + ` scale(${1 / w},${1 / h})`;
+}
+
+const LAB = 200;                     // the label element's own size; the homography does the rest
+
+function shellHtml(m, art, title) {
+  const face = art.scan || art.cover;
+  const lab = face
+    ? `<span class="md-lab" style="background-image:url('${escapeHtml(face)}')"></span>`
+    : `<span class="md-lab blank"><b>${escapeHtml((title || "").slice(0, 24))}</b></span>`;
+  return `<div class="md-shell" data-cart="${m.sprite}"
+    style="--sheet:url('carts/${m.sprite}.png');--lab:${LAB}px">${lab}
+    <span class="md-frames"></span></div>`;
+}
+
+/* Start (or restart) every rendered shell under `root`. Idle sway, and you can grab it and turn it.
+   The interval stops itself once the element leaves the document — boxes get opened and closed a
+   lot, and a timer per open box that never dies is a leak with a long fuse. */
+function mountShells(root) {
+  (root || document).querySelectorAll(".md-shell[data-cart]").forEach(async (el) => {
+    if (el._mounted) return;
+    el._mounted = true;
+    const meta = await cartMeta(el.dataset.cart);
+    const frames = el.querySelector(".md-frames");
+    const lab = el.querySelector(".md-lab");
+
+    /* The label element has to be the SHAPE OF THE WELL it's going into. Leave it square and
+       `background-size: cover` crops the art to a square, which the homography then squashes into
+       a wide well — every GBA label came out stretched. Size it to the well's own aspect and the
+       crop happens in the right proportion, before the warp. */
+    const lw = LAB, lh = Math.round(LAB / meta.aspect);
+    lab.style.width = lw + "px";
+    lab.style.height = lh + "px";
+    let t = 0, grab = null;
+
+    const paint = () => {
+      const i = ((Math.round(t) % meta.frames) + meta.frames) % meta.frames;
+      frames.style.backgroundPosition = `${(i / (meta.frames - 1)) * 100}% 0`;
+      const k = (el.clientWidth || 1) / meta.size;
+      lab.style.opacity = meta.front[i] ? "1" : "0";
+      lab.style.transform = homography(lw, lh, meta.quads[i].map(([x, y]) => [x * k, y * k]));
+    };
+
+    el.addEventListener("pointerdown", (e) => {
+      grab = { x: e.clientX, t };
+      el.setPointerCapture(e.pointerId);
+      el.classList.add("grabbed");
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!grab) return;
+      t = grab.t + (e.clientX - grab.x) / 9;      // turn it with your finger
+      paint();
+    });
+    const drop = () => { grab = null; el.classList.remove("grabbed"); };
+    el.addEventListener("pointerup", drop);
+    el.addEventListener("pointercancel", drop);
+
+    const tick = setInterval(() => {
+      if (!el.isConnected) return clearInterval(tick);
+      if (grab) return;
+      t += 1;
+      paint();
+    }, 110);
+    paint();
+  });
+}
+
 // ---- the models ------------------------------------------------------------
 function cartHtml(m, art, title) {
+  if (m.sprite) return shellHtml(m, art, title);
   const face = art.scan || art.cover;
   const [lx, ly, lw, lh] = m.label;
   // The label is a CROP of the cover, not the whole cover squashed onto a sticker — a squashed

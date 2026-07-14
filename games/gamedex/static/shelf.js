@@ -366,14 +366,22 @@ function shBuild(i) {
      backface-visibility:hidden (it has to be, or faces show through the closed box), which means
      that from the inside it simply is not there — so a case with no interior panel opened onto a
      view straight through the box to the shelf behind. The interior is the back wall. */
+  /* …and it needs WALLS, not just a back panel. Every face of the case is backface-visibility:
+     hidden, so from inside the box none of them exist — the back wall alone left the sides and top
+     open, and you looked straight out through them to the shelf behind. That's the interior that
+     kept coming up "invisible": not a missing panel, a missing ROOM. Four inner walls close it. */
   const inside = document.createElement("div");
   inside.className = "sh-inside";
-  inside.innerHTML = (typeof mediaModelHtml === "function" && mediaFor(g.p)) ? mediaModelHtml(g) : "";
+  inside.innerHTML =
+    `<span class="sh-wall w-l"></span><span class="sh-wall w-r"></span>
+     <span class="sh-wall w-t"></span><span class="sh-wall w-b"></span>`
+    + ((typeof mediaModelHtml === "function" && mediaFor(g.p)) ? mediaModelHtml(g) : "");
   el.appendChild(inside);
+  if (typeof mountShells === "function") mountShells(inside);
 
   // The case element is REUSED between games. Leave it open and the next box you pull out is
   // already hanging open — which is exactly what happened.
-  el.classList.remove("open");
+  el.classList.remove("open", "slide");
 
   /* The lid is a LID, not a sheet of paper. A real case's cover has a few millimetres of plastic,
      and without it the thing that swings open is a decal. Give the front face its own free edge. */
@@ -421,7 +429,7 @@ function shBuild(i) {
     </dl>
     <div class="sh-acts">
       <button class="sh-btn primary" id="shDetails">Full details</button>
-      ${typeof mediaFor === "function" && (mediaFor(g.p) || (ENRICH[g.mk] || {}).manualEmbed)
+      ${typeof hasBoxContents === "function" && hasBoxContents(g.mk)
         ? `<button class="sh-btn" id="shOpen">Open the box</button>` : ""}
       <button class="sh-btn" id="shArt">${g.src === "upload" ? "Change art" : "Add / fix art"}</button>
       <button class="sh-btn" id="shBack">← Put it back</button>
@@ -433,10 +441,14 @@ function shBuild(i) {
     const host = document.getElementById("shMedia");
     const kase = shEl;
     const opening = !kase.classList.contains("open");
+    // A bare cartridge never lived in a hinged case — it slid out of a sleeve. Cards and discs did,
+    // so those still swing open. The box opens the way the real one did.
+    kase.classList.toggle("slide", opensBy(g.p) === "slide");
     kase.classList.toggle("open", opening);
     openBtn.textContent = opening ? "Close the box" : "Open the box";
     host.innerHTML = opening ? mediaPanelHtml(g) : "";
     if (!opening) return;
+    mountShells(host);
     const man = document.getElementById("mdManual");
     if (man) man.onclick = () => openManual(g);
   };

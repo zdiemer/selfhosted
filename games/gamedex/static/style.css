@@ -3511,19 +3511,67 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background: #16161b; border-radius: 2px;
   box-shadow: inset 0 0 34px rgba(0, 0, 0, .8);
 }
-/* Seated in the box it sits still — the idle turn/spin is for when it's out and being looked at. */
-.sh-inside .md-cart, .sh-inside .md-disc, .sh-inside .md-umd {
+/* THE FOUR INNER WALLS. Every case face is backface-visibility:hidden — it has to be, or the far
+   faces show through the closed box — so from INSIDE, none of them exist. A back panel on its own
+   is a wall with no room behind it: you looked past its edges straight out through the sides of the
+   box to the shelf beyond. These close the box in. Each is pinned to one edge of the back wall and
+   swung forward a quarter turn, so it stands up exactly --d deep, which is the case's own depth. */
+.sh-wall { position: absolute; background: linear-gradient(180deg, #23232b, #131318); }
+.sh-wall.w-l { left: 0; top: 0; width: var(--d); height: 100%; transform-origin: left center; transform: rotateY(-90deg); }
+.sh-wall.w-r { right: 0; top: 0; width: var(--d); height: 100%; transform-origin: right center; transform: rotateY(90deg); }
+.sh-wall.w-t { left: 0; top: 0; width: 100%; height: var(--d); transform-origin: center top; transform: rotateX(90deg); }
+.sh-wall.w-b { left: 0; bottom: 0; width: 100%; height: var(--d); transform-origin: center bottom; transform: rotateX(-90deg); }
+
+/* Seated in the box it sits still — the idle turn is for when it's out and being looked at. */
+.sh-inside .md-cart, .sh-inside .md-disc, .sh-inside .md-umd, .sh-inside .md-shell {
   animation: none;
   transform: scale(.82);
   transition: transform .9s cubic-bezier(.22,.85,.25,1);
   box-shadow: 0 8px 22px rgba(0, 0, 0, .6);
 }
+.sh-inside .md-shell {
+  width: calc(var(--h) * 1.12); height: calc(var(--h) * 1.12);
+  box-shadow: none;                       /* the shell has its own rendered shading */
+}
 .sh-inside .md-disc { transform: rotateX(0deg) scale(.8); }
-/* …and when the box opens, it comes OUT of it, toward you. */
+
+/* HINGED — cards and discs. Those cases really do swing open, so the media comes out toward you. */
 .sh-case.open .sh-inside .md-cart { transform: translateZ(84px) translateY(-6px) scale(.92) rotateY(-6deg); }
 .sh-case.open .sh-inside .md-disc { transform: translateZ(84px) rotateX(0deg) scale(.9); }
 .sh-case.open .sh-inside .md-umd  { transform: translateZ(84px) scale(.9); }
 
+/* SLIDE-OUT — retro cartridges. A NES cart never lived in a hinged case; it slid out of a sleeve.
+   So the lid stays SHUT and the cart rises out of the top instead. It stays on the back wall, which
+   is behind the cover, so the half still in the box is genuinely occluded by the box — the cart
+   doesn't pass through the lid, it emerges from behind it. */
+.sh-case.slide.open .f-front { transform: translateZ(calc(var(--d) / 2)); filter: none; }
+.sh-case.slide.open .sh-inside .md-shell,
+.sh-case.slide.open .sh-inside .md-cart {
+  transform: translateY(-66%) translateZ(4px) scale(.9);
+}
+
+/* The pre-rendered shell: frames on top, the game's warped label underneath (see media.js). */
+.md-shell { position: relative; touch-action: none; cursor: grab; }
+.md-shell.grabbed { cursor: grabbing; }
+.md-frames {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: var(--sheet);
+  background-size: 2400% 100%;                /* 24 frames across one strip */
+  background-repeat: no-repeat;
+}
+.md-lab {
+  position: absolute; top: 0; left: 0;
+  width: var(--lab); height: var(--lab);
+  transform-origin: 0 0; pointer-events: none;
+  background-size: cover; background-position: center;
+}
+.md-lab.blank {
+  display: grid; place-items: center; text-align: center; padding: 14px;
+  background: #2b2d34; color: #cfd3db;
+  font: 700 20px/1.25 var(--font, system-ui);
+}
+.md-stage .md-shell { width: 268px; height: 268px; }
+
 @media (prefers-reduced-motion: reduce) {
-  .sh-case .f-front, .sh-inside .md-cart, .sh-inside .md-disc { transition: none; }
+  .sh-case .f-front, .sh-inside .md-cart, .sh-inside .md-disc, .sh-inside .md-shell { transition: none; }
 }
