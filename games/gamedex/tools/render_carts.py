@@ -92,13 +92,17 @@ def extrude(outline, z0, z1, col_face, col_side, bevel=0.0, bevel_z=0.0):
     front_outline = outline
     zf = z1
     if bevel > 0:
-        cx = sum(x for x, _ in outline) / n
-        cy = sum(y for _, y in outline) / n
+        # Offset each vertex along its own inward edge normals — NOT radially from the centroid.
+        # A radial inset on a tall cart pulls the corners in much further than the long edges, so
+        # the chamfer visibly fattens at the corners. This keeps it a constant width all the way
+        # round, which is what a moulded chamfer is.
         inset = []
-        for (x, y) in outline:
-            dx, dy = x - cx, y - cy
-            d = math.sqrt(dx * dx + dy * dy) or 1
-            inset.append((x - dx / d * bevel, y - dy / d * bevel))
+        for i in range(n):
+            (px, py), (x, y), (nx, ny) = outline[i - 1], outline[i], outline[(i + 1) % n]
+            e1 = norm((x - px, y - py, 0))
+            e2 = norm((nx - x, ny - y, 0))
+            v = norm((-e1[1] - e2[1], e1[0] + e2[0], 0))    # inward normal, CCW winding
+            inset.append((x + v[0] * bevel, y + v[1] * bevel))
         zb = z1 - bevel_z
         # side walls up to the chamfer
         for i in range(n):
@@ -148,7 +152,7 @@ def ribs(x0, y0, x1, y1, z, count, col, vertical=True, h=0.9):
     return f
 
 
-def rounded(w, h, r, notch=None, steps=5):
+def rounded(w, h, r, notch=None, steps=5, radii=None):
     """Cart outline, centred, counter-clockwise, with rounded corners.
 
     `notch` chamfers ONE corner ("tr" = the Game Boy's anti-insert cut). It has to be emitted in
@@ -157,23 +161,26 @@ def rounded(w, h, r, notch=None, steps=5):
     render did (the NES came out as a folded paper aeroplane).
     """
     hw, hh = w / 2, h / 2
+    # Real carts are not uniformly rounded: the SNES and the N64 both have generous TOP corners and
+    # much tighter bottom ones, where the shell meets the connector. (tr, tl, bl, br)
+    rtr, rtl, rbl, rbr = radii or (r, r, r, r)
     pts = []
 
-    def arc(cx, cy, a0, a1):
+    def arc(cx, cy, rr, a0, a1):
         for i in range(steps + 1):
             a = math.radians(a0 + (a1 - a0) * i / steps)
-            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+            pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
 
     # CCW from the right edge: TR, TL, BL, BR
     if notch == "tr":
-        n = notch_size = max(r, 10)
+        n = max(rtr, 10)
         pts.append((hw, hh - n))
         pts.append((hw - n, hh))
     else:
-        arc(hw - r, hh - r, 0, 90)
-    arc(-hw + r, hh - r, 90, 180)
-    arc(-hw + r, -hh + r, 180, 270)
-    arc(hw - r, -hh + r, 270, 360)
+        arc(hw - rtr, hh - rtr, rtr, 0, 90)
+    arc(-hw + rtl, hh - rtl, rtl, 90, 180)
+    arc(-hw + rbl, -hh + rbl, rbl, 180, 270)
+    arc(hw - rbr, -hh + rbr, rbr, 270, 360)
     return pts
 
 
@@ -191,39 +198,42 @@ def nes():
 
 
 def snes():
+    """From the photo, not from memory. The first pass had NINE fine vertical ribs down each flank;
+    a real SNES cart has THREE chunky horizontal grooves cut into each side wing, the wings stand
+    proud of a big recessed label well, and there's a raised lip across the top."""
     W, H, D = 120, 110, 20
-    body = rounded(W, H, 9)
+    body = rounded(W, H, 0, radii=(13, 13, 4, 4))     # big top corners, tight at the connector
     shell = (189, 185, 176)
-    side = (152, 148, 140)
+    side = (150, 146, 138)
     f = extrude(body, -D / 2, D / 2, shell, side, bevel=2.6, bevel_z=2.6)
-    lab = (-40, -18, 40, 40)
-    f += well(lab[0] - 3, lab[1] - 3, lab[2] + 3, lab[3] + 3, D / 2, 1.6, (166, 162, 153))
-    # ribbed flanks — the grips run down each LONG EDGE
-    f += ribs(-W / 2 + 4, -H / 2 + 8, -W / 2 + 13, H / 2 - 10, D / 2 - 2.6, 1, (150, 146, 138))
-    f += ribs(W / 2 - 13, -H / 2 + 8, W / 2 - 4, H / 2 - 10, D / 2 - 2.6, 1, (150, 146, 138))
-    for i in range(9):
-        y0 = -H / 2 + 10 + i * 9
-        f += [([(-W / 2 + 4, y0, D / 2 - 1.4), (-W / 2 + 13, y0, D / 2 - 1.4),
-                (-W / 2 + 13, y0 + 4.5, D / 2 - 1.4), (-W / 2 + 4, y0 + 4.5, D / 2 - 1.4)], (172, 168, 159))]
-        f += [([(W / 2 - 13, y0, D / 2 - 1.4), (W / 2 - 4, y0, D / 2 - 1.4),
-                (W / 2 - 4, y0 + 4.5, D / 2 - 1.4), (W / 2 - 13, y0 + 4.5, D / 2 - 1.4)], (172, 168, 159))]
-    return dict(faces=f, label=lab, label_z=D / 2 - 1.6, size=(W, H, D))
+
+    lab = (-38, -30, 38, 34)                          # BIG, and wider than tall
+    f += well(lab[0] - 3, lab[1] - 3, lab[2] + 3, lab[3] + 3, D / 2, 2.0, (164, 160, 151))
+
+    # Three grooves per wing. Cut IN, not stuck on.
+    for sx in (-1, 1):
+        x0, x1 = (-W / 2 + 5, -W / 2 + 16) if sx < 0 else (W / 2 - 16, W / 2 - 5)
+        for i in range(3):
+            y0 = -20 + i * 13
+            f += well(x0, y0, x1, y0 + 7, D / 2 - 2.6, 1.5, (146, 142, 134))
+    return dict(faces=f, label=lab, label_z=D / 2 - 2.0, size=(W, H, D))
 
 
 def n64():
-    W, H, D = 75, 116, 18
-    body = rounded(W, H, 5)
-    shell = (52, 54, 60)
-    side = (38, 40, 45)
-    f = extrude(body, -D / 2, D / 2, shell, side, bevel=2.0, bevel_z=2.0)
-    lab = (-28, -8, 28, 42)
-    f += well(lab[0] - 2.5, lab[1] - 2.5, lab[2] + 2.5, lab[3] + 2.5, D / 2, 1.3, (44, 46, 52))
-    for i in range(7):
-        y0 = -H / 2 + 12 + i * 7
-        for xa, xb in ((-W / 2 + 3, -W / 2 + 9), (W / 2 - 9, W / 2 - 3)):
-            f += [([(xa, y0, D / 2 - 1.2), (xb, y0, D / 2 - 1.2),
-                    (xb, y0 + 3.5, D / 2 - 1.2), (xa, y0 + 3.5, D / 2 - 1.2)], (66, 68, 74))]
-    return dict(faces=f, label=lab, label_z=D / 2 - 1.3, size=(W, H, D))
+    """From the photo. The defining feature is a WIDE perimeter chamfer ramping down from a raised
+    centre plateau — not a flat slab with a bevelled lip — plus very large corner radii."""
+    W, H, D = 76, 115, 18
+    body = rounded(W, H, 0, radii=(13, 13, 6, 6))
+    shell = (68, 70, 77)
+    side = (44, 46, 52)
+    # The broad ramp: a 6mm chamfer dropping 3mm. This is what reads as "N64 cartridge" at a glance.
+    f = extrude(body, -D / 2, D / 2, shell, side, bevel=7.0, bevel_z=2.4)
+
+    lab = (-29, -24, 29, 41)
+    f += well(lab[0] - 2.5, lab[1] - 2.5, lab[2] + 2.5, lab[3] + 2.5, D / 2, 1.6, (48, 50, 56))
+    # The seam across the lower shell, and the lip above the connector.
+    f += well(-W / 2 + 9, -H / 2 + 9, W / 2 - 9, -H / 2 + 12, D / 2, 1.0, (44, 46, 51))
+    return dict(faces=f, label=lab, label_z=D / 2 - 1.6, size=(W, H, D))
 
 
 def gameboy():
@@ -280,7 +290,7 @@ def render(cart, name):
 
     # scale so the tallest cart fills the frame consistently
     span = max(cart["size"][0], cart["size"][1])
-    scale = (SIZE * SS * 0.66) / span
+    scale = (SIZE * SS * 0.80) / span
 
     meta = {"frames": FRAMES, "size": SIZE, "quads": [], "front": [],
             "aspect": round((lx1 - lx0) / (ly1 - ly0), 4)}

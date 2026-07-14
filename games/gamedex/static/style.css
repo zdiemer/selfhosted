@@ -2928,6 +2928,25 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .sh-pull.open .sh-info { transform:translateY(0); }
   .sh-info dl { grid-template-columns:auto 1fr auto 1fr; }   /* denser on a wide sheet */
   .sh-acts .sh-btn { flex:1 1 auto; text-align:center; padding:12px; }
+
+  /* The sheet covered the box — which is the thing you opened the box to look at. Collapse it to
+     its title with a tap and the case, the cartridge and the disc are all visible again. */
+  .sh-info { max-height: 76vh; overflow-y: auto; }
+  .sh-grip { display: block; }
+  .sh-info.min { max-height: none; overflow: visible; }
+  .sh-info.min .sh-badge, .sh-info.min dl, .sh-info.min #shMedia,
+  .sh-info.min .sh-acts .sh-btn:not(#shBack):not(#shOpen) { display: none; }
+  .sh-info.min h3 { font-size: 17px; margin-bottom: 2px; }
+  .sh-info.min .sh-plat { margin-bottom: 10px; }
+}
+/* The grab handle. Desktop has room for the card beside the box, so it only appears on a phone. */
+.sh-grip {
+  display: none; position: absolute; top: 8px; right: 14px;
+  width: 34px; height: 26px; border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); color: var(--dim); font-size: 13px; line-height: 26px;
+}
+.sh-info::before {
+  content: ""; display: none;
 }
 
 /* ---- the cover editor (shelf + drawer) ---- */
@@ -3249,7 +3268,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* ================= what was in the box ================= */
 .md-panel { display: flex; gap: 22px; align-items: center; margin-top: 16px;
   padding-top: 16px; border-top: 1px solid var(--border); }
-.md-stage { flex: none; width: 170px; height: 170px; display: grid; place-items: center;
+.md-stage { flex: none; width: 168px; height: 168px; display: grid; place-items: center; overflow: hidden;
   perspective: 700px; }
 .md-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .md-what { font: 700 13px/1.2 var(--display); }
@@ -3479,13 +3498,34 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   transform-style: preserve-3d;
   transition: transform .85s cubic-bezier(.22,.85,.25,1), filter .6s ease;
 }
-/* The lid's own thickness. Without it the thing swinging open is a decal, not a cover. */
-.sh-lid-edge {
-  position: absolute; top: 0; right: 0; width: 5px; height: 100%;
-  transform-origin: right center;
-  transform: rotateY(90deg) translateZ(2.5px);
-  background: linear-gradient(180deg, #34343c, #1e1e24);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, .12);
+/* THE COVERS ARE SLABS. A real case is two ridged shells hinged at a spine, each a few millimetres
+   of plastic. Ours had one 5px sliver on the lid's free edge, so from any angle the cover was still
+   a decal. Both covers now carry a full perimeter edge — top, bottom and free side — and the box
+   reads as a box. */
+.sh-case { --t: 6px; }
+.sh-edge {
+  position: absolute;
+  background: linear-gradient(180deg, #3b3b45, #1d1d24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10);
+}
+.sh-edge.e-r { top: 0; right: 0; width: var(--t); height: 100%;
+  transform-origin: right center; transform: rotateY(90deg) translateZ(calc(var(--t) / 2)); }
+.sh-edge.e-t { top: 0; left: 0; width: 100%; height: var(--t);
+  transform-origin: center top; transform: rotateX(-90deg) translateZ(calc(var(--t) / 2)); }
+.sh-edge.e-b { bottom: 0; left: 0; width: 100%; height: var(--t);
+  transform-origin: center bottom; transform: rotateX(90deg) translateZ(calc(var(--t) / 2)); }
+
+/* THE BACK COVER CANNOT HAVE 3D CHILDREN. Giving .f-back `transform-style: preserve-3d` so it could
+   hold edge spans made Chrome stop honouring its `backface-visibility: hidden` — so the back cover
+   painted straight through the front of the box, mirrored by its own rotateY(180). (On a JP wrap
+   whose back is the same scan, that reads as the cover printed backwards. It was.) The back keeps
+   its thickness the flat way: a moulded rim, which is what you actually see on a real case anyway —
+   a raised lip stepped in from the edge, on the front and the back both. */
+.sh-case .f-front::before, .sh-case .f-back::before {
+  content: ""; position: absolute; inset: 4px; z-index: 1; border-radius: 3px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .13),
+              inset 0 0 0 3px rgba(0, 0, 0, .30),
+              inset 0 1px 2px rgba(255, 255, 255, .10);
 }
 .sh-case.open .f-front {
   transform: translateZ(calc(var(--d) / 2)) rotateY(-128deg);
@@ -3517,10 +3557,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    box to the shelf beyond. These close the box in. Each is pinned to one edge of the back wall and
    swung forward a quarter turn, so it stands up exactly --d deep, which is the case's own depth. */
 .sh-wall { position: absolute; background: linear-gradient(180deg, #23232b, #131318); }
-.sh-wall.w-l { left: 0; top: 0; width: var(--d); height: 100%; transform-origin: left center; transform: rotateY(-90deg); }
-.sh-wall.w-r { right: 0; top: 0; width: var(--d); height: 100%; transform-origin: right center; transform: rotateY(90deg); }
-.sh-wall.w-t { left: 0; top: 0; width: 100%; height: var(--d); transform-origin: center top; transform: rotateX(90deg); }
-.sh-wall.w-b { left: 0; bottom: 0; width: 100%; height: var(--d); transform-origin: center bottom; transform: rotateX(-90deg); }
+.sh-wall { --wd: calc(var(--d) - 8px); visibility: hidden; }
+.sh-case.open:not(.slide) .sh-wall { visibility: visible; }
+.sh-wall.w-r { right: 3px; top: 3px; width: var(--wd); height: calc(100% - 6px); transform-origin: right center; transform: rotateY(90deg); }
+.sh-wall.w-t { left: 3px; top: 3px; width: calc(100% - 6px); height: var(--wd); transform-origin: center top; transform: rotateX(90deg); }
+.sh-wall.w-b { left: 3px; bottom: 3px; width: calc(100% - 6px); height: var(--wd); transform-origin: center bottom; transform: rotateX(-90deg); }
 
 /* Seated in the box it sits still — the idle turn is for when it's out and being looked at. */
 .sh-inside .md-cart, .sh-inside .md-disc, .sh-inside .md-umd, .sh-inside .md-shell {
@@ -3530,7 +3571,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   box-shadow: 0 8px 22px rgba(0, 0, 0, .6);
 }
 .sh-inside .md-shell {
-  width: calc(var(--h) * 1.12); height: calc(var(--h) * 1.12);
+  width: min(calc(var(--w) - 14px), calc(var(--h) - 14px));
+  height: min(calc(var(--w) - 14px), calc(var(--h) - 14px));
   box-shadow: none;                       /* the shell has its own rendered shading */
 }
 .sh-inside .md-disc { transform: rotateX(0deg) scale(.8); }
@@ -3570,8 +3612,37 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background: #2b2d34; color: #cfd3db;
   font: 700 20px/1.25 var(--font, system-ui);
 }
-.md-stage .md-shell { width: 268px; height: 268px; }
+.md-stage .md-shell { width: 100%; height: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
   .sh-case .f-front, .sh-inside .md-cart, .sh-inside .md-disc, .sh-inside .md-shell { transition: none; }
 }
+
+/* The manual's loading state. A blank white iframe reads as broken; two shimmering pages read as
+   "it's coming". Sits over the frame and is removed on load — see openManual(). */
+.md-book { position: relative; }
+.md-skel {
+  position: absolute; inset: 44px 0 0; z-index: 2;
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  background: var(--surface); transition: opacity .4s ease;
+}
+.md-skel.gone { opacity: 0; pointer-events: none; }
+.md-skel-page {
+  width: min(26vw, 230px); aspect-ratio: 3 / 4; border-radius: 4px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  padding: 16px; display: flex; flex-direction: column; gap: 9px;
+}
+.md-skel-page i {
+  display: block; height: 9px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface) 50%, var(--border) 75%);
+  background-size: 260% 100%;
+  animation: mdshim 1.5s linear infinite;
+}
+.md-skel-page i:first-child { height: 15px; width: 70%; }
+.md-skel-page i:last-child { width: 45%; }
+.md-skel-say {
+  position: absolute; bottom: 28px; left: 0; right: 0; text-align: center;
+  font-size: 12px; color: var(--dim);
+}
+@keyframes mdshim { to { background-position: -160% 0; } }
+@media (prefers-reduced-motion: reduce) { .md-skel-page i { animation: none; } }

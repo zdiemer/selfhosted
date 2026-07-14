@@ -331,9 +331,22 @@ function openManual(g) {
         <a class="sh-btn" href="${escapeHtml(art.manualUrl)}" target="_blank" rel="noopener">Open at the Archive ↗</a>
         <button class="sh-btn" id="mdClose">Close</button>
       </div>
+      <div class="md-skel" aria-hidden="true">
+        <div class="md-skel-page"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="md-skel-page"><i></i><i></i><i></i><i></i><i></i></div>
+        <span class="md-skel-say">Fetching the booklet from the Internet Archive…</span>
+      </div>
       <iframe src="${escapeHtml(art.manual)}" allowfullscreen frameborder="0"></iframe>
     </div>`;
   document.body.appendChild(host);
+  /* The Archive's BookReader takes a few seconds to boot, and until it does the iframe is a blank
+     white rectangle that reads as broken. Hold a pair of skeleton pages over it until it loads —
+     and drop them on `load` whether or not it succeeded, so a failure shows the reader's own error
+     rather than a shimmer that never ends. */
+  const frame = host.querySelector("iframe");
+  const skel = host.querySelector(".md-skel");
+  frame.addEventListener("load", () => skel.classList.add("gone"), { once: true });
+  setTimeout(() => skel.classList.add("gone"), 12000);      // never shimmer forever
   syncScrollLock?.();
   const close = () => { host.remove(); syncScrollLock?.(); };
   host.querySelector("#mdClose").onclick = close;

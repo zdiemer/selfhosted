@@ -373,8 +373,8 @@ function shBuild(i) {
   const inside = document.createElement("div");
   inside.className = "sh-inside";
   inside.innerHTML =
-    `<span class="sh-wall w-l"></span><span class="sh-wall w-r"></span>
-     <span class="sh-wall w-t"></span><span class="sh-wall w-b"></span>`
+    `<span class="sh-wall w-r"></span><span class="sh-wall w-t"></span>
+     <span class="sh-wall w-b"></span>`
     + ((typeof mediaModelHtml === "function" && mediaFor(g.p)) ? mediaModelHtml(g) : "");
   el.appendChild(inside);
   if (typeof mountShells === "function") mountShells(inside);
@@ -383,12 +383,14 @@ function shBuild(i) {
   // already hanging open — which is exactly what happened.
   el.classList.remove("open", "slide");
 
-  /* The lid is a LID, not a sheet of paper. A real case's cover has a few millimetres of plastic,
-     and without it the thing that swings open is a decal. Give the front face its own free edge. */
+  /* THE LID IS A SLAB. A real case's cover is a few millimetres of plastic, and a single sliver
+     down its free edge didn't sell that from any angle — so the lid gets a full perimeter edge:
+     top, bottom, and the free side. The BACK cover gets its thickness from a moulded rim in CSS
+     instead; it must not hold 3D children (see .f-back::after in style.css for why). */
   const lid = el.querySelector(".f-front");
-  if (lid) {
+  for (const e of lid ? ["e-t", "e-r", "e-b"] : []) {
     const edge = document.createElement("span");
-    edge.className = "sh-lid-edge";
+    edge.className = `sh-edge ${e}`;
     lid.appendChild(edge);
   }
 
@@ -419,6 +421,7 @@ function shBuild(i) {
           : `<span class="sh-badge none">No art anywhere</span>`;
 
   document.getElementById("shInfo").innerHTML = `
+    <button class="sh-grip" id="shGrip" aria-label="Collapse this card">▾</button>
     <h3>${escapeHtml(g.t)}</h3>
     <div class="sh-plat">${escapeHtml(g.p)}${g.done ? ' · <span class="sh-done">Beaten</span>' : ""}</div>
     ${src}
@@ -435,6 +438,17 @@ function shBuild(i) {
       <button class="sh-btn" id="shBack">← Put it back</button>
     </div>
     <div id="shMedia"></div>`;
+  /* On a phone the detail card is a bottom sheet, and it sat on top of the very box it describes —
+     open the box and the cartridge you opened it for was behind the sheet. Fold it down to its
+     title and the case is visible again. */
+  const grip = document.getElementById("shGrip");
+  const card = document.getElementById("shInfo");
+  if (grip) grip.onclick = () => {
+    const min = card.classList.toggle("min");
+    grip.textContent = min ? "▴" : "▾";
+    grip.setAttribute("aria-label", min ? "Expand this card" : "Collapse this card");
+  };
+
   // Open the box: the media comes out, and the booklet with it.
   const openBtn = document.getElementById("shOpen");
   if (openBtn) openBtn.onclick = () => {
