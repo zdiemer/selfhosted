@@ -3646,13 +3646,19 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background: linear-gradient(180deg, #3b3b45, #1d1d24);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10);
 }
+/* EVERY EDGE GOES BACKWARDS, INTO THE CASE. The printed cover is the front SURFACE of the lid and
+   the plastic is behind it — so the slabs must run from the art back towards the box, never out in
+   front of it. Top and bottom always did. The two sides ran the other way and stuck out in front,
+   which sank the cover art into a well: with the lid flattened (see .f-front's overflow) nobody
+   could see it, and the moment the lid became real 3D, there it was. The sign of the turn is the
+   whole difference — right edge turns -90°, left edge +90°, and both lie back along -z. */
 .sh-edge.e-r { top: 0; right: 0; width: var(--t); height: 100%;
-  transform-origin: right center; transform: rotateY(90deg) translateZ(calc(var(--t) / 2)); }
+  transform-origin: right center; transform: rotateY(-90deg) translateZ(calc(var(--t) / 2)); }
 /* The hinge edge. Closed, it's buried against the spine and nobody sees it; OPEN, it's the edge
    the cover turns on and it faces you — and it was the one edge the lid didn't have, so the
    cover ended in nothing at exactly the place you were looking. */
 .sh-edge.e-l { top: 0; left: 0; width: var(--t); height: 100%;
-  transform-origin: left center; transform: rotateY(-90deg) translateZ(calc(var(--t) / 2)); }
+  transform-origin: left center; transform: rotateY(90deg) translateZ(calc(var(--t) / 2)); }
 .sh-edge.e-t { top: 0; left: 0; width: 100%; height: var(--t);
   transform-origin: center top; transform: rotateX(-90deg) translateZ(calc(var(--t) / 2)); }
 .sh-edge.e-b { bottom: 0; left: 0; width: 100%; height: var(--t);
@@ -3689,7 +3695,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .sh-case .f-front img { backface-visibility: hidden; }
 .sh-liner {
   position: absolute; inset: 0; border-radius: 2px;
-  transform: rotateY(180deg) translateZ(1px);   /* its own front faces INTO the box */
+  /* Facing into the box, and set back by the lid's full thickness — it is the far side of the
+     slab the edges wrap, not a sheet of plastic hovering just under the art. */
+  transform: rotateY(180deg) translateZ(var(--t));
   backface-visibility: hidden;
   background: linear-gradient(170deg, #26262e, #15151a);
   box-shadow: inset 0 0 30px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .06);
