@@ -451,11 +451,12 @@ td.cover { width: 46px; padding: 5px 8px; }
 .card:hover { transform: translateY(-6px); border-color: var(--accent-line); box-shadow: var(--sh-2); }
 .card:focus-visible { transform: translateY(-6px); }
 .card:hover .card-cover { transform: scale(1.07); }
-/* VR badge — a small chip over the cover's top-right. Self-contained dark glass
+/* VR badge — a small chip over the cover's top-LEFT, clear of the done/partial
+   check and the rating chip that both live top-right. Self-contained dark glass
    + white icon so it reads on any cover art, in either theme. pointer-events
    off so it never intercepts the card's hover-to-play or click. */
 .vr-badge {
-  position: absolute; top: 7px; right: 7px; z-index: 4;
+  position: absolute; top: 7px; left: 7px; z-index: 4;
   display: grid; place-items: center;
   width: 24px; height: 24px; border-radius: var(--r-sm);
   background: rgba(8, 10, 15, .58);
@@ -465,6 +466,8 @@ td.cover { width: 46px; padding: 5px 8px; }
   pointer-events: none;
 }
 .vr-badge svg { display: block; width: 15px; height: 15px; }
+/* The Metacritic chip also sits top-left; slide it right of the VR badge. */
+.card.has-vr .card-meta { left: 37px; }
 .card-cover {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; display: block;
