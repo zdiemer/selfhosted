@@ -4480,18 +4480,36 @@ $("#fabSort").addEventListener("click", () => setSheet(true));
 $("#fabTop").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 // Mobile: the floating filter bar is fixed at the bottom and sits over the pager.
 // Tuck it away on scroll-down (you're heading for the page controls), bring it
-// back on scroll-up. Desktop never sees it (.fab is display:none > 760px), so the
-// listener is a cheap no-op there. rAF-throttled; a small threshold kills jitter.
+// back on scroll-up. Desktop never sees it (.fab is display:none > 760px).
+//
+// The class is flipped ONCE per sustained direction change, never per frame: we
+// accumulate travel in the current direction and only cross a threshold decides
+// it, with hysteresis so a fast fling (or iOS momentum's end-of-scroll bounce)
+// can't thrash it. That keeps the CSS transition on its own clock — the slide
+// always plays out fully, at the same pace, no matter how fast you scrolled.
 (() => {
   const fab = $("#fab");
   if (!fab) return;
-  let lastY = window.scrollY, ticking = false;
+  const HIDE_AT = 48, SHOW_AT = 24, TOP = 80, BOTTOM = 96;   // px thresholds
+  let lastY = Math.max(0, window.scrollY), acc = 0, tucked = false, ticking = false;
+  const set = (v) => { if (v !== tucked) { tucked = v; fab.classList.toggle("fab-tucked", v); } acc = 0; };
   const update = () => {
     ticking = false;
-    const y = window.scrollY, dy = y - lastY;
-    if (Math.abs(dy) < 6) return;             // ignore twitch; keep lastY as anchor
-    fab.classList.toggle("fab-tucked", dy > 0 && y > 80);   // reveal near the top
+    const y = Math.max(0, window.scrollY), dy = y - lastY;
     lastY = y;
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    // Near the bottom the pager is on screen, so the bar must not be. Force it
+    // hidden — but only when the page scrolls enough that you can bring it back
+    // by scrolling up; on a short page just hold state so the controls aren't
+    // stranded. This also absorbs iOS's end-of-scroll bounce (a phantom upward
+    // delta that would otherwise re-show it right over the pager).
+    if (maxY - y <= BOTTOM) { if (maxY > 240) set(true); else acc = 0; return; }
+    if (y <= TOP) { set(false); return; }          // always reveal near the top
+    if (!dy) return;
+    if ((dy > 0) !== (acc > 0)) acc = 0;           // direction flipped — reset run
+    acc += dy;
+    if (!tucked && acc > HIDE_AT) set(true);
+    else if (tucked && acc < -SHOW_AT) set(false);
   };
   window.addEventListener("scroll", () => {
     if (!ticking) { ticking = true; requestAnimationFrame(update); }
