@@ -122,14 +122,18 @@ function mediaArt(mk) {
   const e = (typeof ENRICH !== "undefined" && ENRICH[mk]) || {};
   return {
     // A real scan of the printed disc — GameTDB. Nothing else in the app has this.
-    disc: e.discArt || null,
+    disc: cImg(e.discArt) || null,
     // Reserved for ScreenScraper's `support` media when the dev key lands.
-    scan: e.mediaArt || null,
+    scan: cImg(e.mediaArt) || null,
     // Everything else derives from the cover. A cart label usually IS a crop of the cover,
     // which is why this holds up.
     cover: coverSrc(e, "cover_big") || null,
     manual: e.manualEmbed || null,
     manualUrl: e.manualUrl || null,
+    // The PDF itself, cached on the PVC — when the Archive item has one we page
+    // through our own copy (instant on a repeat open, works offline) instead of
+    // booting their BookReader over the network. Falls back to the embed below.
+    manualPdf: e.manualPdf || null,
     // How thick the booklet is — a 4-page leaflet and a 64-page JRPG tome are different
     // propositions, and you want to know which before you open it.
     manualPages: e.manualPages || null,
@@ -327,7 +331,13 @@ const mediaName = (m, platform) =>
    building a PDF viewer to re-render something they already render would be daft. */
 function openManual(g) {
   const art = mediaArt(g.mk);
-  if (!art.manual) return;
+  if (!art.manual && !art.manualPdf) return;
+  // Prefer our PVC-cached PDF in the browser's own viewer: a booklet opened before
+  // comes off local disk in a blink. Only when the Archive item has no PDF do we
+  // fall back to their BookReader embed (which boots over the network every time).
+  const pdf = art.manualPdf ? cManual(art.manualPdf) : "";
+  const src = pdf ? `${pdf}#view=FitH` : art.manual;
+  const say = pdf ? "Loading the booklet…" : "Fetching the booklet from the Internet Archive…";
   const host = document.createElement("div");
   host.className = "md-scrim";
   host.innerHTML = `
@@ -341,9 +351,9 @@ function openManual(g) {
       <div class="md-skel" aria-hidden="true">
         <div class="md-skel-page"><i></i><i></i><i></i><i></i><i></i></div>
         <div class="md-skel-page"><i></i><i></i><i></i><i></i><i></i></div>
-        <span class="md-skel-say">Fetching the booklet from the Internet Archive…</span>
+        <span class="md-skel-say">${say}</span>
       </div>
-      <iframe src="${escapeHtml(art.manual)}" allowfullscreen frameborder="0"></iframe>
+      <iframe src="${escapeHtml(src)}" allowfullscreen frameborder="0"></iframe>
     </div>`;
   document.body.appendChild(host);
   /* The Archive's BookReader takes a few seconds to boot, and until it does the iframe is a blank

@@ -116,6 +116,16 @@ spec:
                   key: gamespot-api-key
             - name: GAMESPOT_ENABLED
               value: {{ (.Values.gamespot | default dict).enabled | default false | quote }}
+            # Third-party asset caches on the PVC: images (covers/screenshots/art)
+            # and the Internet Archive PDF manuals.
+            - name: IMG_CACHE_ENABLED
+              value: {{ (.Values.imageCache | default dict).enabled | default true | quote }}
+            - name: IMG_CACHE_MAX_MB
+              value: {{ (.Values.imageCache | default dict).maxMb | default 500 | quote }}
+            - name: MANUAL_CACHE_ENABLED
+              value: {{ (.Values.manualCache | default dict).enabled | default true | quote }}
+            - name: MANUAL_CACHE_MAX_MB
+              value: {{ (.Values.manualCache | default dict).maxMb | default 1024 | quote }}
           # Ready only once the first Dropbox load succeeds (health returns 503
           # until then), so traffic never hits an empty dataset.
           readinessProbe:
@@ -137,7 +147,8 @@ spec:
             # scratch dir. The games data itself stays in memory.
             - name: tmp
               mountPath: /tmp
-            # Persistent IGDB enrichment cache (SQLite).
+            # Persistent state: the IGDB enrichment cache (SQLite), the shelf box
+            # cuts, and the third-party image cache (/data/imgcache).
             - name: data
               mountPath: /data
           resources:

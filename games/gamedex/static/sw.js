@@ -11,7 +11,7 @@
    The cache name carries the build version, so a deploy evicts the old shell
    rather than serving stale JS forever. */
 
-const VERSION = "v1.32.5";
+const VERSION = "v1.33.0";
 const SHELL = `gamedex-shell-${VERSION}`;
 const DATA = `gamedex-data-${VERSION}`;
 
@@ -53,6 +53,23 @@ self.addEventListener("fetch", (e) => {
 
   // Never cache a mutation or a live status poll.
   if (url.pathname.includes("/api/refresh") || url.pathname.includes("/api/enrichment/stats")) return;
+
+  // Server-cached images (/api/img proxy, /api/shelf/face box cuts): the bytes for a
+  // given URL never change, so cache-first with no revalidation — one hit on the
+  // network, everything after off the device. This MUST precede the generic /api/
+  // branch below, which is network-first and would defeat the point. Keeping a
+  // browser copy on top of the PVC cache means a repeat view costs neither a CDN
+  // fetch nor a round-trip to the pod.
+  if (url.pathname.startsWith("/api/img") || url.pathname.startsWith("/api/manual")
+      || url.pathname.startsWith("/api/shelf/face")) {
+    e.respondWith(
+      caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(DATA).then((c) => c.put(e.request, copy)); }
+        return res;
+      }))
+    );
+    return;
+  }
 
   // Data: network first, fall back to the last good copy.
   if (url.pathname.startsWith("/api/")) {

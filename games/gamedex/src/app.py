@@ -24,10 +24,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import assetcache as assetcache_mod
 import picross as picross_mod
 import prefs as prefs_mod
 import romm
@@ -257,6 +258,60 @@ if _rp.exists():
         "shelf: %d real box wraps, %d spine colours",
         len(_resolved.get("wraps", {})), len(_resolved.get("hues", {})))
 SHELF = shelf_mod.Shelf(_resolved, Path(os.environ.get("COVERS_CACHE", "/data/covers")))
+
+# Every third-party cover / screenshot / artwork <img> in the UI points at /api/img,
+# and every Internet Archive PDF manual at /api/manual — both cache the bytes here on
+# the PVC so the second time anyone opens one it comes off local disk instead of the
+# source server. Two caches, one per policy: images (small cap, image/* only) and
+# manuals (roomier cap, PDF only). Both are bounded + self-evicting.
+IMG_CACHE = assetcache_mod.AssetCache(
+    Path(os.environ.get("IMG_CACHE_DIR", "/data/imgcache")),
+    allowed_types=assetcache_mod.IMAGE_TYPES,
+    max_mb=int(os.environ.get("IMG_CACHE_MAX_MB", "500")),
+    max_item_mb=20,
+    enabled=_on("IMG_CACHE_ENABLED", "true"),
+)
+MANUAL_CACHE = assetcache_mod.AssetCache(
+    Path(os.environ.get("MANUAL_CACHE_DIR", "/data/manualcache")),
+    allowed_types=assetcache_mod.PDF_TYPES,
+    max_mb=int(os.environ.get("MANUAL_CACHE_MAX_MB", "1024")),
+    max_item_mb=int(os.environ.get("MANUAL_CACHE_MAX_ITEM_MB", "64")),
+    enabled=_on("MANUAL_CACHE_ENABLED", "true"),
+)
+
+
+def _served_from_cache(cache, u: str, media_type: str):
+    """Shared handler: serve `u` from the PVC cache, else 302 to the original.
+
+    On any miss we can't satisfy (caching off, source down, wrong type) we redirect
+    to the source so the asset still loads — the cache is an optimisation, never a
+    gate. We only ever redirect to a URL we'd have been willing to fetch ourselves,
+    so this is not an open redirect."""
+    hit = cache.get(u)
+    if hit is None:
+        if cache.ok_url(u):
+            return RedirectResponse(u, status_code=302)
+        return JSONResponse({"error": "bad url"}, status_code=400)
+    data, ct = hit
+    return Response(content=data, media_type=ct or media_type,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.get("/api/img")
+def api_img(u: str):
+    """Cache a third-party image on the PVC and serve it locally. The UI points every
+    cover / screenshot / artwork <img> here instead of at the source CDN, so a repeat
+    view clears as fast as the disk rather than waiting on a cross-origin round-trip."""
+    return _served_from_cache(IMG_CACHE, u, "image/jpeg")
+
+
+@app.get("/api/manual")
+def api_manual(u: str):
+    """Cache an Internet Archive PDF manual on the PVC and serve it locally. The drawer's
+    manual reader points here so opening a booklet a second time is instant and works
+    offline, instead of booting the Archive's BookReader over the network every time."""
+    return _served_from_cache(MANUAL_CACHE, u, "application/pdf")
+
 
 # GameRankings: a frozen archive baked into the image, joined on (title, platform).
 GR = gr_mod.GameRankings()

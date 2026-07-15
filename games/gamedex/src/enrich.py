@@ -107,7 +107,8 @@ _SECONDARY_LIGHT = {
     # The booklet, and the disc's printed face. Both are for the Shelf: you open the box and
     # what was actually inside it is there.
     "manuals": lambda d: {"manualEmbed": d.get("embed"), "manualUrl": d.get("url"),
-                          "manualName": d.get("name"), "manualPages": d.get("pages")},
+                          "manualName": d.get("name"), "manualPages": d.get("pages"),
+                          "manualPdf": d.get("pdf")},
     # `cover` is the region-correct box front straight off GameTDB's CDN — for a Wii or
     # GameCube disc that IGDB never matched, it is the only real art we have, so it goes in
     # the light map that feeds the grid and the Shelf. The full printed wrap (`coverFull`)

@@ -88,7 +88,19 @@ function escapeHtml(s) {
 }
 
 // ---- IGDB enrichment (lazy, per visible page) ---------------------------
-const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg` : "");
+// Route every third-party image through our PVC-backed cache (/api/img) so the
+// second time anyone loads a cover it comes off local disk, not the source CDN —
+// which is what shortens the skeleton shimmer. YouTube thumbnails are left
+// hotlinked (already fast and Google-cached); anything that isn't an absolute
+// http(s) URL (a local /api/... upload, a data: URI) passes through untouched.
+const cImg = (u) =>
+  (u && /^https?:\/\//.test(u) && !/(^|\.)ytimg\.com$/.test((u.split("/")[2] || "")))
+    ? `/api/img?u=${encodeURIComponent(u)}`
+    : (u || "");
+// Same idea for the Internet Archive PDF manuals: proxy them through the PVC so a
+// booklet you've opened before comes off local disk, not the Archive.
+const cManual = (u) => (u && /^https?:\/\//.test(u) ? `/api/manual?u=${encodeURIComponent(u)}` : (u || ""));
+const IMG = (id, size) => (id ? cImg(`https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg`) : "");
 // Cover URL: fallback sources give a full coverUrl; IGDB gives an image id.
 // Cover: IGDB image id, else a fallback source's full URL, else the art the
 // gated sources bring — an arcade cabinet scan or a VN cover beats a blank box.
@@ -98,10 +110,10 @@ const IMG = (id, size) => (id ? `https://images.igdb.com/igdb/image/upload/t_${s
 // so they only ever fill a box that would otherwise have been blank.
 const coverSrc = (e, size) => (
   !e ? "" :
-  e.uploadCover ? e.uploadCover :          // your hand-uploaded art wins everywhere
-  e.coverUrl ? e.coverUrl :
+  e.uploadCover ? e.uploadCover :          // your hand-uploaded art wins everywhere (local, same-origin)
+  e.coverUrl ? cImg(e.coverUrl) :
   e.cover ? IMG(e.cover, size) :
-  e.vnCover || e.adbCover || e.thumbyCover || e.gtdbCover || e.vgcCover || "");
+  cImg(e.vnCover || e.adbCover || e.thumbyCover || e.gtdbCover || e.vgcCover || ""));
 // Thumby art is a 64x64 icon — scale it up with hard edges, not a blur.
 const coverIsPixelArt = (e, src) => !!(e && e.thumbyCover && src === e.thumbyCover);
 let ENRICH_ENABLED = false;
@@ -714,7 +726,7 @@ function arcadeHtml(key) {
   const shots = [["Cabinet", a.cabinet], ["Marquee", a.marquee], ["Flyer", a.flyer],
                  ["Title", a.titleScreen], ["In game", a.ingame]]
     .filter(([, u]) => u)
-    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(cImg(u))}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
     .join("");
   const spec = [
     ["Players", a.playersDetail || (a.players != null ? String(a.players) : null)],
@@ -777,7 +789,7 @@ function thumbyHtml(key) {
   const t = THC[key];
   if (!t) return "";
   const art = [["Title", t.titleImage], ["Icon", t.icon]].filter(([, u]) => u)
-    .map(([l, u]) => `<figure class="adb-art"><img class="pixel" loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .map(([l, u]) => `<figure class="adb-art"><img class="pixel" loading="lazy" src="${escapeHtml(cImg(u))}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
     .join("");
   // Tinymine and Thoom ship no still image at all — only an animated title
   // card. Show it, so they aren't blank.
@@ -939,7 +951,7 @@ function physicalHtml(key) {
   const m = MANC[key], g = GTDBC[key], row = drawerRow || {};
   const art = [["Disc face", g && g.disc], ["Box wrap", g && g.coverFull]]
     .filter(([, u]) => u)
-    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(u)}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
+    .map(([l, u]) => `<figure class="adb-art"><img loading="lazy" src="${escapeHtml(cImg(u))}" alt="${l}"><figcaption>${l}</figcaption></figure>`)
     .join("");
 
   const rows = [];
@@ -960,7 +972,7 @@ function physicalHtml(key) {
   if (m && m.embed) {
     links.push(`<a class="hltb-link" href="#" data-read-manual>Read the manual${m.pages ? ` (${m.pages} pages)` : ""}</a>`);
   }
-  if (m && m.pdf) links.push(`<a class="hltb-link" href="${escapeHtml(m.pdf)}" target="_blank" rel="noopener">Download the PDF ↗</a>`);
+  if (m && m.pdf) links.push(`<a class="hltb-link" href="${escapeHtml(cManual(m.pdf))}" target="_blank" rel="noopener">Open the PDF ↗</a>`);
   if (g && g.url) links.push(`<a class="hltb-link" href="${escapeHtml(g.url)}" target="_blank" rel="noopener">View on GameTDB ↗</a>`);
 
   if (!(art || body || dmg || links.length)) return "";

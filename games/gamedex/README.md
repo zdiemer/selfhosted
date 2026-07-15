@@ -74,6 +74,77 @@ Endpoints: `POST /api/enrichment` (batch of matchKeys → light covers/facets),
 `GET /api/enrichment/detail?key=` (full detail for the drawer),
 `GET /api/enrichment/stats`. Each served row carries a `_k` matchKey.
 
+## Local asset cache
+
+The UI pulls a *lot* of assets from third parties — IGDB covers/screenshots/artwork
+above all, plus GameTDB disc & box scans, VNDB covers, the Arcade Database's
+cabinet/marquee art, the IGN/GameSpot fallback covers, and the Internet Archive's
+PDF instruction manuals. Each is a fresh cross-origin round-trip that keeps a
+skeleton shimmering until the bytes arrive, and it repeats for every visitor on
+every device.
+
+With `imageCache.enabled` / `manualCache.enabled` (both default on), the frontend
+points every one of those requests at **`/api/img?u=<url>`** (images) or
+**`/api/manual?u=<url>`** (PDF manuals) instead of the source server. The first
+request fetches the asset and stores it under `/data/imgcache` or
+`/data/manualcache`; every request after — from any browser — is a local read off
+the PVC. Each cache is keyed by the sha256 of the source URL and **bounded**: once
+it passes its `maxMb` it evicts the least-recently-served files, so it can't fill
+the volume. The service worker keeps a browser-side copy on top of that, so a
+repeat view costs neither a source fetch nor a round-trip to the pod.
+
+The **manuals** were the slowest thing in the app: the drawer used to embed the
+Archive's BookReader, which boots over the network every time you open a booklet.
+When the Archive item has a PDF, the reader now pages through our cached copy in
+the browser's own viewer — instant on a repeat open, and it works offline. Items
+with no PDF still fall back to the BookReader embed.
+
+Everything **fails open**: if a URL is unsafe, the source is down, or the body
+isn't the type we expected, the endpoint 302s to the original so the asset still
+loads — caching is an optimisation, never a gate. An **SSRF guard** only fetches
+public http(s) hosts (private/loopback/link-local/metadata addresses are refused)
+and only stores bytes that actually sniff to the advertised type (image, or PDF),
+each under a per-item size cap.
+
+**Not cached, on purpose:** YouTube thumbnails (already fast and Google-cached)
+and the drawer videos (ArcadeDB shortplays, Thumby title cards) — those are few,
+large, and would bloat the volume.
+
+## Enlarging the volume
+
+The PVC rides the k3s **local-path** provisioner, which is *not* a CSI driver, so
+`allowVolumeExpansion` is `false` and an existing claim **cannot be resized in
+place** — raising `persistence.size` and running `helm upgrade` would make the
+upgrade *fail* on the PVC patch. Local-path also doesn't enforce a quota, so the
+declared size is nominal: the pod can already use the node's free disk, and the
+self-evicting caches keep themselves well within it. In other words you rarely
+*need* to enlarge it — the caps do the bounding.
+
+If you do want a bigger declared size, the only data-safe way is a one-time
+**Retain → recreate** migration (brief downtime while the pod is down):
+
+```bash
+NS=games; PVC=gamedex-data
+PV=$(kubectl -n $NS get pvc $PVC -o jsonpath='{.spec.volumeName}')
+
+# 1. Keep the data if the PVC is deleted, and bump the PV's (nominal) capacity.
+kubectl patch pv $PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+kubectl patch pv $PV -p '{"spec":{"capacity":{"storage":"10Gi"}}}'
+
+# 2. Drop the pod so it releases the mount, then delete the PVC (data survives).
+kubectl -n $NS scale deploy/gamedex --replicas=0
+kubectl -n $NS delete pvc $PVC
+
+# 3. Free the PV to bind again.
+kubectl patch pv $PV --type=merge -p '{"spec":{"claimRef":null}}'   # -> Available
+
+# 4. Set persistence.size: 10Gi in values, then recreate everything. The new
+#    10Gi PVC binds to the now-Available 10Gi PV — same directory, data intact.
+./upgrade.sh
+```
+
+Afterwards, optionally set the PV's reclaim policy back to `Delete`.
+
 ## Getting the Dropbox link
 
 **Prefer a direct file link.** In Dropbox, right-click
@@ -134,7 +205,11 @@ Dropbox…"). `/api/health` returns `503` until that first load completes.
 | `refreshIntervalSeconds` | either | `600` | Poll cadence; re-parses only on change |
 | `igdb.clientId` / `igdb.clientSecret` | local | — | Twitch app creds; enables enrichment |
 | `igdb.backfill` | either | `false` | Slowly enrich every game in the background |
-| `persistence.size` | either | `1Gi` | PVC for the SQLite IGDB cache |
+| `imageCache.enabled` | either | `true` | Cache hotlinked covers/screenshots/art on the PVC via `/api/img` |
+| `imageCache.maxMb` | either | `500` | On-disk cap for the image cache; oldest-served files evicted past it |
+| `manualCache.enabled` | either | `true` | Cache Internet Archive PDF manuals on the PVC via `/api/manual` |
+| `manualCache.maxMb` | either | `1024` | On-disk cap for the manual cache; oldest-served files evicted past it |
+| `persistence.size` | either | `1Gi` | PVC for the SQLite IGDB cache, shelf cuts, and asset caches (see *Enlarging the volume*) |
 | `ingress.host` | either | `games.zachd.duckdns.org` | Public hostname |
 | `image.tag` | either | `0.2.0` | GHCR image tag `build.sh` pushes |
 

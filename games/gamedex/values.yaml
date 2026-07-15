@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "1.32.15"
+  tag: "1.33.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -81,7 +81,32 @@ gamespot:
   apiKey: ""
   enabled: false
 
-# PVC holding the SQLite IGDB cache — the only persistent state. Small.
+# Third-party asset cache on the PVC. The UI hotlinks a large number of covers,
+# screenshots and artwork from external CDNs (IGDB, GameTDB, VNDB, ArcadeDB, the
+# IGN/GameSpot fallbacks) plus the Internet Archive PDF manuals. With this on,
+# each is proxied through /api/img (or /api/manual) and the bytes are stored on
+# the volume, so the second time anyone opens it, it comes off local disk instead
+# of the network — which is what shortens the skeleton shimmer. Both caches are
+# bounded + self-evicting (least-recently-served first), so they never fill the
+# PVC. YouTube thumbnails are deliberately left hotlinked. Drawer videos (ArcadeDB
+# shortplays, Thumby title cards) are NOT cached — few, large, and would bloat it.
+imageCache:
+  enabled: true
+  maxMb: 500              # covers/screenshots/artwork; oldest-served evicted past this
+manualCache:
+  enabled: true
+  maxMb: 1024             # Archive.org PDFs are larger, so give them their own, roomier cap
+
+# PVC holding the SQLite IGDB cache, the shelf box cuts, and the asset caches above.
+#
+# NOTE: the size below only applies to a FRESH install. The k3s local-path
+# provisioner is not a CSI driver, so an existing PVC CANNOT be resized in place
+# (allowVolumeExpansion=false) — raising this and running `helm upgrade` would
+# make the upgrade FAIL on the PVC patch. It's also nominal: local-path does not
+# enforce a quota, so the pod can already use the host disk's free space and the
+# self-evicting caches keep themselves well within it. To actually enlarge the
+# declared size on the live PVC, do the one-time Retain → recreate migration (see
+# README "Enlarging the volume"), which is the only data-safe way here.
 persistence:
   size: 1Gi
   storageClass: ""        # "" → cluster default (local-path)
