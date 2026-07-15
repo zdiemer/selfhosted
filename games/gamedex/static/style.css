@@ -2662,9 +2662,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
      stay reachable. Sits below the facet drawer + its backdrop (z 29/30). */
   .fab {
     display: flex; gap: 8px; align-items: center;
-    position: fixed; z-index: 28; left: 50%; transform: translateX(-50%);
+    position: fixed; z-index: 28; left: 50%; transform: translate(-50%, 0);
     bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    transition: transform .26s var(--ease), opacity .26s var(--ease);
+    /* Longer, gentle ease-in-out reads smoother than the snappy default. Promote
+       the bar to its own layer so the slide is a compositor job and the buttons'
+       backdrop-blur isn't re-sampled per frame (the main source of the jank). */
+    transition: transform .38s cubic-bezier(.4, 0, .2, 1), opacity .3s ease;
+    will-change: transform, opacity;
   }
   /* Hidden on scroll-down so it stops covering the pager; JS toggles this. The
      translateX(-50%) must stay or it'd jump off-centre while sliding down. */
