@@ -354,6 +354,7 @@ function renderHome() {
     .slice(0, 60), 18, "loved");   // rotate 18 out of the top ~60 predicted
 
   host.innerHTML =
+    `<div class="h-top"><button class="h-attract" id="hAttract">${icon("i-play", 15)} Attract mode</button></div>` +
     heroSection(playing) +
     (picks.length ? `<section class="h-sect">
       <div class="h-sect-head"><h2>${icon("i-sparkle", 17)} Picked for you</h2>
@@ -470,6 +471,8 @@ function wireHome(host, playing) {
       if (shelfEl) shelfEl.scrollBy({ left: +el.dataset.dir * shelfEl.clientWidth * 0.8, behavior: "smooth" });
     };
   });
+  const attract = $("#hAttract");
+  if (attract) attract.onclick = () => openAttract();
   const more = $("#hPickMore");
   if (more) more.onclick = () => { switchTab("pick"); nav(); };
   const chalAll = $("#hChalAll");

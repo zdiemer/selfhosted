@@ -3307,6 +3307,7 @@ let _scrollLockY = 0;
 function anyOverlayOpen() {
   return !$("#overlay").hidden
     || !$("#lightbox").hidden
+    || !$("#attract-overlay").hidden                             // full-screen attract mode
     || (typeof cmdk !== "undefined" && cmdk.open)
     || $("#facets").classList.contains("open")
     || !!document.querySelector(".ce-scrim")                        // cover editor

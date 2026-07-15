@@ -213,6 +213,19 @@
     <div class="lb-count" id="lbCount"></div>
   </div>
 
+  <!-- Attract mode: full-screen slideshow of random games, trailer autoplaying
+       behind. Stages are built/torn down by attract.js; the controls are fixtures. -->
+  <div class="attract-overlay" id="attract-overlay" hidden>
+    <div class="attract-stages" id="attractStages"></div>
+    <div class="attract-hint">Esc to exit · ← → to browse · click a game for details</div>
+    <div class="attract-controls">
+      <button class="attract-btn" id="attractMute" aria-label="Unmute">🔇</button>
+      <button class="attract-btn" id="attractPrev" aria-label="Previous">‹</button>
+      <button class="attract-btn" id="attractNext" aria-label="Next">›</button>
+      <button class="attract-btn" id="attractClose" aria-label="Exit attract mode"><svg class="ico" width="18" height="18" aria-hidden="true"><use href="#i-close"/></svg></button>
+    </div>
+  </div>
+
   <div id="banner" class="banner" hidden></div>
 
   <div class="cmdk" id="cmdkOverlay" hidden>
@@ -224,6 +237,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="attract.js"></script>
   <script src="charts.js"></script>
   <script src="reviews.js"></script>
   <script src="home.js"></script>

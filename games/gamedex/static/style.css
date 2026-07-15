@@ -3930,3 +3930,105 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* Not a failure state — we simply cannot answer for this platform, and saying so is the point. */
 .nas-line.unknown { border-color: rgba(245, 165, 36, .28); background: rgba(245, 165, 36, .06); }
 .nas-line.unknown svg, .nas-line.unknown b { color: var(--warn); }
+
+/* ---- Attract mode ------------------------------------------------------- */
+/* Full-screen, above everything (cmdk is 90). Stages stack in .attract-stages
+   and cross-fade; only one plays at a time (attract.js tears the rest down). */
+.attract-overlay { position: fixed; inset: 0; z-index: 95; background: #000; overflow: hidden; }
+.attract-overlay[hidden] { display: none; }
+.attract-stages { position: absolute; inset: 0; }
+
+.attract-stage {
+  position: absolute; inset: 0; cursor: pointer;
+  opacity: 0; transition: opacity 900ms ease;   /* MUST match ATTRACT_FADE in attract.js */
+}
+.attract-stage.attract-in { opacity: 1; }
+
+.attract-bg { position: absolute; inset: 0; background: #06070b; }
+.attract-bg.attract-bg-empty { background: radial-gradient(circle at 50% 38%, #171b24, #05060a); }
+/* Blurred, dimmed backdrop so the details read cleanly over it. */
+.attract-art {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  filter: blur(2px) brightness(.68); transform: scale(1.06);
+}
+.attract-art.kb { animation: attract-kb 26s ease-in-out infinite alternate; }
+@keyframes attract-kb {
+  from { transform: scale(1.06) translate3d(0, 0, 0); }
+  to   { transform: scale(1.2) translate3d(-2.5%, -2%, 0); }
+}
+/* The trailer, fading in over the art only once it truly starts. */
+.attract-video { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease; }
+.attract-video.on { opacity: 1; }
+/* Cover the viewport with a 16:9 iframe, cropping the overflow either way. */
+.attract-frame {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 100vw; height: 56.25vw; min-height: 100vh; min-width: 177.78vh;
+  border: 0; pointer-events: none;
+}
+
+.attract-scrim {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.55) 26%, rgba(0,0,0,0) 54%);
+}
+
+.attract-info {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
+  display: flex; align-items: flex-end; gap: clamp(16px, 2.5vw, 34px);
+  padding: clamp(24px, 5vw, 66px); color: #fff;
+}
+.attract-cover { flex: none; width: clamp(88px, 10vw, 150px); border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.6); }
+.attract-txt { min-width: 0; max-width: 72ch; }
+.attract-info h1 {
+  font-family: var(--display); font-weight: 800; letter-spacing: -.01em;
+  font-size: clamp(30px, 5vw, 66px); line-height: 1.02; margin: 0 0 .28em;
+  text-shadow: 0 2px 22px rgba(0,0,0,.7);
+}
+.attract-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5em;
+  font-size: clamp(13px, 1.4vw, 18px); margin-bottom: .55em;
+}
+.attract-meta > span { opacity: .88; }
+.attract-meta > span + span::before { content: "·"; margin-right: .55em; opacity: .5; }
+.attract-rating { font-weight: 700; }
+.attract-rating::before { content: none; }        /* it's not a dotted meta item */
+.attract-rating.rating-good { color: var(--good); }
+.attract-rating.rating-mid  { color: var(--warn); }
+.attract-rating.rating-bad  { color: var(--bad); }
+.attract-genres { display: flex; flex-wrap: wrap; gap: .4em; margin-bottom: .7em; }
+.attract-genre {
+  font-size: 12px; padding: .28em .72em; border-radius: 999px;
+  background: rgba(255,255,255,.14); backdrop-filter: blur(4px);
+}
+.attract-summary {
+  margin: 0; font-size: clamp(14px, 1.5vw, 19px); line-height: 1.5; opacity: .9;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.attract-controls { position: absolute; top: 16px; right: 18px; z-index: 5; display: flex; gap: 8px; }
+.attract-btn {
+  width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer; font-size: 22px; line-height: 1;
+  color: #fff; background: rgba(255,255,255,.12); backdrop-filter: blur(6px); transition: background .14s;
+}
+.attract-btn:hover { background: var(--accent); }
+.attract-hint {
+  position: absolute; top: 24px; left: 26px; z-index: 5;
+  color: rgba(255,255,255,.58); font-size: 13px; pointer-events: none;
+}
+
+/* Home launcher */
+.h-top { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.h-attract {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 15px; border-radius: 999px; cursor: pointer;
+  font: 600 13px/1 var(--display); color: #fff;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  border: none; transition: filter .14s, transform .14s;
+}
+.h-attract:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.h-attract .ico { opacity: .95; }
+
+@media (prefers-reduced-motion: reduce) {
+  .attract-art.kb { animation: none; }
+  .attract-stage { transition-duration: 380ms; }
+}
