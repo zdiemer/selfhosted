@@ -2664,6 +2664,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
     display: flex; gap: 8px; align-items: center;
     position: fixed; z-index: 28; left: 50%; transform: translateX(-50%);
     bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    transition: transform .26s var(--ease), opacity .26s var(--ease);
+  }
+  /* Hidden on scroll-down so it stops covering the pager; JS toggles this. The
+     translateX(-50%) must stay or it'd jump off-centre while sliding down. */
+  .fab.fab-tucked {
+    transform: translate(-50%, calc(100% + 24px)); opacity: 0; pointer-events: none;
   }
   .fab button {
     display: inline-flex; align-items: center; gap: 6px;

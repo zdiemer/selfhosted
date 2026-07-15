@@ -4478,6 +4478,25 @@ placeControls();
 $("#fabFilters").addEventListener("click", () => setFacets(true));
 $("#fabSort").addEventListener("click", () => setSheet(true));
 $("#fabTop").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+// Mobile: the floating filter bar is fixed at the bottom and sits over the pager.
+// Tuck it away on scroll-down (you're heading for the page controls), bring it
+// back on scroll-up. Desktop never sees it (.fab is display:none > 760px), so the
+// listener is a cheap no-op there. rAF-throttled; a small threshold kills jitter.
+(() => {
+  const fab = $("#fab");
+  if (!fab) return;
+  let lastY = window.scrollY, ticking = false;
+  const update = () => {
+    ticking = false;
+    const y = window.scrollY, dy = y - lastY;
+    if (Math.abs(dy) < 6) return;             // ignore twitch; keep lastY as anchor
+    fab.classList.toggle("fab-tucked", dy > 0 && y > 80);   // reveal near the top
+    lastY = y;
+  };
+  window.addEventListener("scroll", () => {
+    if (!ticking) { ticking = true; requestAnimationFrame(update); }
+  }, { passive: true });
+})();
 $("#sheetClose").addEventListener("click", () => setSheet(false));
 $("#sheetBackdrop").addEventListener("click", () => setSheet(false));
 // Picking a sort/view is the whole point of the sheet — dismiss it so the
