@@ -3410,6 +3410,9 @@ function syncURL(push) {
     if (groupState.open) p.set("gk", groupState.open);
   } else if (activeTab === "challenges") {
     if (chState.open) p.set("ch", chState.open);
+  } else if (activeTab === "stats") {
+    if (statsState.section && statsState.section !== "overview") p.set("s", statsState.section);
+    if (statsState.year) p.set("sy", String(statsState.year));
   } else if (tabState[activeTab]) {
     // Guarded on tabState, not on a list of tab names. Home, Reviews and Health
     // have no row state, and the old `!== "stats"` test let them fall in here and
@@ -3436,6 +3439,12 @@ function applyStateFromURL() {
   if (SPECIAL_TABS.includes(tab)) {
     if (tab === "pick") { pickState.selector = p.get("sel") || pickState.selector; pickState.param = p.get("pp") || ""; pickState.minutes = +(p.get("mins") || 0); }
     if (tab === "challenges") { chState.open = p.get("ch") || null; chState.showAll = null; }
+    if (tab === "stats") {
+      const s = p.get("s");
+      statsState.section = STATS_SECTIONS.some((x) => x.id === s) ? s : "overview";
+      const sy = parseInt(p.get("sy"), 10);
+      if (sy) statsState.year = sy;
+    }
     if (tab === "groups") {
       // ?fr=<franchise> was the old Series link; it means the franchise axis.
       const legacy = p.get("fr");
@@ -3599,7 +3608,56 @@ const yearOf = (iso) => (typeof iso === "string" && /^\d{4}/.test(iso) ? +iso.sl
 const bucketize = (data, buckets, val) => buckets.map(([label, lo, hi]) => ({ label, value: data.filter((r) => { const v = val(r); return v != null && v >= lo && v < hi; }).length }));
 
 // ---- Year in review + backlog burn-down ---------------------------------
-const statsState = { year: null };
+// The Stats tab is split into sub-pages: the page used to be one enormous scroll
+// that re-rendered ~40 charts on every visit. `section` says which sub-page is
+// showing; it rides in the URL (?s=) like the other special tabs' sub-state.
+const statsState = { year: null, section: "overview" };
+const STATS_SECTIONS = [
+  { id: "overview", label: "Overview" },
+  { id: "year", label: "Year in Review" },
+  { id: "completed", label: "Completed" },
+  { id: "backlog", label: "Backlog" },
+  { id: "purchases", label: "Purchases & Value" },
+  { id: "reviews", label: "Reviews" },
+];
+const STATS_NAV_BLURB = {
+  year: "Your year in games — heatmap, the best of it, and the backlog burn-down.",
+  completed: "Everything you've finished: playthroughs, your taste, and you against the critics.",
+  backlog: "What's left to play — by platform, genre, length and status.",
+  purchases: "Spending, collection value, and how long games sit before you play them.",
+  reviews: "The words behind your scores, and how well the rating model does.",
+};
+
+// Counts of a field, as bars that filter that tab when clicked. A bar is a pile
+// of games; say which ones — a count you can't interrogate is just a number.
+// Shared by the Completed / Backlog / Purchases sections, so it lives here.
+const statNameOf = (r) => String(r.game || r.title || "");
+const countBars = (src, field, n, tab) =>
+  topCounts(src.map((r) => r[field]), n).map((d) => {
+    const members = src.filter((r) => r[field] === d.label);
+    return { ...d, link: facetLink(tab, field, d.label),
+             tip: tipList(`${d.label} — ${d.value.toLocaleString()} games`, members.map(statNameOf), members.length) };
+  });
+
+// A stats sub-section header + its grid of panels.
+const sect = (title, panels) =>
+  `<h2 class="stat-sec"><span>${escapeHtml(title)}</span><i>${panels.length}</i></h2>` +
+  `<div class="stat-grid">${panels.join("")}</div>`;
+
+// The pill sub-nav shown atop every Stats sub-page.
+const statsNav = () =>
+  `<nav class="stats-nav">` + STATS_SECTIONS.map((s) =>
+    `<button class="stats-nav-pill${statsState.section === s.id ? " active" : ""}" data-ssec="${s.id}">${escapeHtml(s.label)}</button>`
+  ).join("") + `</nav>`;
+
+// The Overview landing: headline cards + a card per other sub-page.
+const statsNavGrid = () =>
+  `<div class="stats-navgrid">` + STATS_SECTIONS.filter((s) => s.id !== "overview").map((s) =>
+    `<button class="stats-navcard" data-ssec="${s.id}">
+      <span class="stats-navcard-t">${escapeHtml(s.label)}</span>
+      <span class="stats-navcard-d">${escapeHtml(STATS_NAV_BLURB[s.id] || "")}</span>
+      <span class="stats-navcard-c" aria-hidden="true">›</span>
+    </button>`).join("") + `</div>`;
 let VALUE_HISTORY = null;          // [{day,total,games,priced}] — daily snapshots
 let RECS = null;                   // "because you liked …" (see src/recommend.py)
 
@@ -3764,6 +3822,8 @@ function predictionPanel() {
     </div>`;
 }
 
+// Stats is split into sub-pages (statsState.section). renderStats() renders the
+// pill sub-nav and the active section only — one section's charts, not all forty.
 function renderStats() {
   const rows = (DATA.sheets.completed || { rows: [] }).rows;
   const games = ((DATA.sheets.games || {}).rows) || [];
@@ -3771,18 +3831,34 @@ function renderStats() {
   if (!rows.length && !games.length) { host.innerHTML = emptyState("No data yet", "The spreadsheet hasn’t loaded."); return; }
   resetChartLinks();
 
-  // Counts of a field, as bars that filter that tab when clicked.
-  // A bar is a pile of games. Say which ones — a count you can't interrogate is
-  // just a number.
-  const nameOf = (r) => String(r.game || r.title || "");
-  const countBars = (src, field, n, tab) =>
-    topCounts(src.map((r) => r[field]), n).map((d) => {
-      const members = src.filter((r) => r[field] === d.label);
-      return { ...d, link: facetLink(tab, field, d.label),
-               tip: tipList(`${d.label} — ${d.value.toLocaleString()} games`, members.map(nameOf), members.length) };
-    });
+  const section = STATS_SECTIONS.some((s) => s.id === statsState.section) ? statsState.section : "overview";
+  statsState.section = section;
+  const body =
+    section === "year" ? (yearInReview(rows, games) + burnDown(rows, games))
+    : section === "completed" ? renderStatsCompleted(rows, games)
+    : section === "backlog" ? renderStatsBacklog(rows, games)
+    : section === "purchases" ? renderStatsPurchases(rows, games)
+    : section === "reviews" ? renderStatsReviews(rows)
+    : renderStatsOverview(rows, games);
 
-  // --- completed ---
+  host.innerHTML = statsNav() + `<div class="stats-body">${body}</div>`;
+
+  host.querySelectorAll("[data-ssec]").forEach((el) => {
+    el.onclick = () => { statsState.section = el.dataset.ssec; renderStats(); nav(); host.scrollTop = 0; };
+  });
+  const yp = $("#yrPick");
+  if (yp) yp.onchange = (e) => { statsState.year = +e.target.value; renderStats(); nav(); };
+  host.querySelectorAll("[data-yg]").forEach((el) => {
+    el.onclick = () => {
+      const row = rows.find((r) => String(r._k || "") === el.dataset.yg);
+      if (row) openDrawer(row, "completed");
+    };
+  });
+  wireCharts(host);
+}
+
+// Overview — the headline "all time" numbers, then a card into each sub-page.
+function renderStatsOverview(rows, games) {
   const hours = rows.reduce((a, r) => a + (r.playTime || 0), 0);
   const rated = rows.filter((r) => r.rating != null);
   const avg = rated.length ? rated.reduce((a, r) => a + r.rating, 0) / rated.length : null;
@@ -3791,6 +3867,41 @@ function renderStats() {
   const years = rows.map((r) => yearOf(r.date)).filter(Boolean);
   const curYear = years.length ? Math.max(...years) : 0;
   const thisYear = years.filter((y) => y === curYear).length;
+  const backlog = games.filter((r) => !r.completed);
+  const backlogHours = backlog.reduce((a, r) => a + (playtimeOf(r) || 0), 0);
+  const complPct = games.length ? Math.round(100 * games.filter((r) => r.completed).length / games.length) : 0;
+  const purchases = games.filter((r) => r.purchasePrice != null && yearOf(r.datePurchased));
+  const totalSpent = purchases.reduce((a, r) => a + r.purchasePrice, 0);
+  const ownedPhys = games.filter((r) => r.owned && (r.format || "").toLowerCase() === "physical");
+  const collectionVal = ownedPhys.map((r) => collectionValueOf(r)).filter((v) => v != null).reduce((a, v) => a + v, 0);
+  const dayGaps = games.filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
+    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5).filter((d) => d >= 0);
+  const avgGapMo = dayGaps.length ? Math.round(dayGaps.reduce((a, b) => a + b, 0) / dayGaps.length / 30) : null;
+
+  // Two ranks. Beaten / backlog / library-done are the three numbers the page is
+  // actually about; the rest are supporting. Green means beaten and amber means
+  // outstanding — the accent stays out of it.
+  return `<h2 class="stat-sec">All time</h2>
+    <div class="stat-cards lead">
+      ${statCard(rows.length, "Beaten", "", "", { tone: "good", icon: "i-trophy", sub: `of ${games.length.toLocaleString()} catalogued` })}
+      ${statCard(backlog.length, "In backlog", "", "", { tone: "warn", icon: "i-clock", sub: `${Math.round(backlogHours).toLocaleString()} hours of it` })}
+      ${statCard(complPct, "Library done", "", "%", { tone: "lead", icon: "i-target", sub: `${thisYear} beaten in ${curYear || "—"}` })}
+    </div>
+    <div class="stat-cards">
+      ${statCard(Math.round(hours), "Hours played", "", "h", { icon: "i-clock" })}
+      ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%", { icon: "i-star" })}
+      ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics", "", "", { icon: "i-trend" })}
+      ${statCard(Math.round(totalSpent), "Total spent", "$", "", { icon: "i-package" })}
+      ${statCard(Math.round(collectionVal), "Collection value", "$", "", { icon: "i-trend" })}
+      ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo", { icon: "i-calendar" })}
+    </div>
+    <h2 class="stat-sec">Dig in</h2>
+    ${statsNavGrid()}`;
+}
+
+// Completed — playthroughs, taste, and you against the critics.
+function renderStatsCompleted(rows, games) {
+  const years = rows.map((r) => yearOf(r.date)).filter(Boolean);
   const byYear = countBy(years);
   const yearData = [...byYear.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: byYear.get(y) }));
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -3807,8 +3918,6 @@ function renderStats() {
   const gaps = rows.filter((r) => r.criticScore != null && r.rating != null)
     .map((r) => ({ label: r.game, value: Math.round((r.rating - r.criticScore) * 100), link: gameLink(r, "completed") }))
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
-  const best = rows.filter((r) => r.rating != null).sort((a, b) => b.rating - a.rating).slice(0, 10)
-    .map((r) => ({ label: r.game, value: Math.round(r.rating * 100), link: gameLink(r, "completed") }));
   // Running total of everything ever finished, set against the two ways a game
   // arrives. A finishing rate on its own says nothing; the GAP between the lines
   // is the backlog, drawn.
@@ -3856,46 +3965,7 @@ function renderStats() {
     { label: "VR", value: rows.filter((r) => r.vr).length },
   ];
 
-  // --- backlog ---
-  const backlog = games.filter((r) => !r.completed);
-  const backlogHours = backlog.reduce((a, r) => a + (playtimeOf(r) || 0), 0);
-  const complPct = games.length ? Math.round(100 * games.filter((r) => r.completed).length / games.length) : 0;
-  const backlogTime = bucketize(backlog, [["< 2h", -1, 2], ["2–5h", 2, 5], ["5–10h", 5, 10], ["10–20h", 10, 20], ["20–40h", 20, 40], ["40h+", 40, 1e9]], playtimeOf);
-
-  // --- purchases & value ---
-  const purchases = games.filter((r) => r.purchasePrice != null && yearOf(r.datePurchased));
-  const spendMap = new Map(), boughtMap = new Map();
-  purchases.forEach((r) => { const y = yearOf(r.datePurchased); spendMap.set(y, (spendMap.get(y) || 0) + r.purchasePrice); boughtMap.set(y, (boughtMap.get(y) || 0) + 1); });
-  const spendData = [...spendMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: Math.round(spendMap.get(y)) }));
-  const boughtData = [...boughtMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: boughtMap.get(y) }));
-  const totalSpent = purchases.reduce((a, r) => a + r.purchasePrice, 0);
-  const dayGaps = games.filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
-    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5).filter((d) => d >= 0);
-  const avgGapMo = dayGaps.length ? Math.round(dayGaps.reduce((a, b) => a + b, 0) / dayGaps.length / 30) : null;
-  const ownedPhys = games.filter((r) => r.owned && (r.format || "").toLowerCase() === "physical");
-  const valued = ownedPhys.map((r) => ({ r, v: collectionValueOf(r) })).filter((x) => x.v != null);
-  const collectionVal = valued.reduce((a, x) => a + x.v, 0);
-  const topValue = valued.sort((a, b) => b.v - a.v).slice(0, 10)
-    .map((x) => ({ label: x.r.title, value: Math.round(x.v), link: gameLink(x.r, "games") }));
-  let runSpend = 0;
-  const cumSpend = [...spendMap.keys()].sort((a, b) => a - b).map((yy) => {
-    runSpend += spendMap.get(yy);
-    return { label: yr2(yy), value: Math.round(runSpend) };
-  });
-  const topValueRows = valued.slice(0, 12).map((x) => x.r);
-
-  /* ---- ported from GamePicker's statistics/ selectors --------------------- */
-
-  // Spend by quarter. A year is too coarse to see a Steam sale in.
-  const qMap = new Map();
-  for (const r of purchases) {
-    const d = String(r.datePurchased);
-    if (!/^\d{4}-\d{2}/.test(d)) continue;
-    const q = `${d.slice(0, 4)} Q${Math.floor((+d.slice(5, 7) - 1) / 3) + 1}`;
-    qMap.set(q, (qMap.get(q) || 0) + r.purchasePrice);
-  }
-  const quarterly = [...qMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-16)
-    .map(([q, v]) => ({ label: q.replace(" ", "\u2009"), value: Math.round(v) }));
+  /* ---- playthrough pacing & overlap, ported from GamePicker's statistics/ ---- */
 
   // How hard you actually played it: hours finished / days it took.
   const paced = rows.filter((r) => r.playTime > 0 && r.started && r.date && r.date >= r.started)
@@ -3967,61 +4037,7 @@ function renderStats() {
       link: gameLink(x.r, "completed"),
       tip: `${x.r.game}\n${shortD(x.r.started)} → ${shortD(x.r.date)}\n${fmtSpan((x.e - x.s) / 864e5)}` }));
 
-  // Buy it, then actually play it — how long does that take?
-  const gapMonths = games
-    .filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
-    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5 / 30.4)
-    .filter((m) => m >= 0);
-  const gapBuckets = [
-    ["Same month", (m) => m < 1], ["1-3 months", (m) => m >= 1 && m < 3],
-    ["3-6 months", (m) => m >= 3 && m < 6], ["6-12 months", (m) => m >= 6 && m < 12],
-    ["1-2 years", (m) => m >= 12 && m < 24], ["2-5 years", (m) => m >= 24 && m < 60],
-    ["5 years+", (m) => m >= 60],
-  ].map(([label, test]) => ({ label, value: gapMonths.filter(test).length }));
-  // What a game is worth NOW minus what you paid for it. This is the one thing
-  // the price data knows that the crown-jewels wall can't show: a $60 game worth
-  // $58 is not a find, and a $5 one worth $180 is. Both ends, because the losses
-  // are the more interesting half.
-  const moved = ownedPhys
-    .map((r) => ({ r, gain: (collectionValueOf(r) ?? NaN) - r.purchasePrice }))
-    .filter((x) => r0(x.r.purchasePrice) && isFinite(x.gain) && Math.abs(x.gain) >= 1)
-    .sort((a, b) => b.gain - a.gain);
-  const moverCount = moved.length;
-  const moverBar = (x) => ({
-    label: x.r.title, value: Math.round(x.gain), link: gameLink(x.r, "games"),
-    tip: `${x.r.title}\nPaid ${usd(x.r.purchasePrice)} · now ${usd(collectionValueOf(x.r))}\n${
-      x.gain > 0 ? "Up" : "Down"} ${usd(Math.abs(x.gain))}`,
-  });
-  const movers = [...moved.slice(0, 8).map(moverBar), ...moved.slice(-5).reverse().map(moverBar)]
-    .filter((b, i, a) => a.findIndex((o) => o.label === b.label) === i);   // tiny sets can overlap
-  const topSales = games.map((r) => ({ r, v: salesOf(r) })).filter((x) => x.v != null)
-    .sort((a, b) => b.v - a.v).slice(0, 10)
-    .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
-
-  const sect = (title, panels) =>
-    `<h2 class="stat-sec"><span>${escapeHtml(title)}</span><i>${panels.length}</i></h2>` +
-    `<div class="stat-grid">${panels.join("")}</div>`;
-  host.innerHTML =
-    yearInReview(rows, games) +
-    burnDown(rows, games) +
-    `<h2 class="stat-sec">All time</h2>` +
-    // Two ranks. Beaten / backlog / library-done are the three numbers the page is
-    // actually about; the rest are supporting. Green means beaten and amber means
-    // outstanding — the accent stays out of it.
-    `<div class="stat-cards lead">
-      ${statCard(rows.length, "Beaten", "", "", { tone: "good", icon: "i-trophy", sub: `of ${games.length.toLocaleString()} catalogued` })}
-      ${statCard(backlog.length, "In backlog", "", "", { tone: "warn", icon: "i-clock", sub: `${Math.round(backlogHours).toLocaleString()} hours of it` })}
-      ${statCard(complPct, "Library done", "", "%", { tone: "lead", icon: "i-target", sub: `${thisYear} beaten in ${curYear || "—"}` })}
-    </div>
-    <div class="stat-cards">
-      ${statCard(Math.round(hours), "Hours played", "", "h", { icon: "i-clock" })}
-      ${statCard(avg != null ? Math.round(avg * 100) : null, "Avg rating", "", "%", { icon: "i-star" })}
-      ${statCard(avg != null && avgCrit != null ? `${Math.round(avg * 100)}/${Math.round(avgCrit * 100)}` : "—", "You vs critics", "", "", { icon: "i-trend" })}
-      ${statCard(Math.round(totalSpent), "Total spent", "$", "", { icon: "i-package" })}
-      ${statCard(Math.round(collectionVal), "Collection value", "$", "", { icon: "i-trend" })}
-      ${statCard(avgGapMo != null ? avgGapMo : null, "Avg buy→finish", "", " mo", { icon: "i-calendar" })}
-    </div>` +
-    sect("Completed games", [
+  return sect("Completed games", [
       statPanel("Finished vs added, cumulatively", multiLine([
         { points: cumAcquired, color: 3, name: "Acquired", label: `Acquired · ${last(cumAcquired)}` },
         { points: cumAdded, color: 1, name: "Added to the sheet", label: `Added to the sheet · ${last(cumAdded)}` },
@@ -4063,45 +4079,106 @@ function renderStats() {
         bsMed != null
           ? `Half the games you start, you start within ${fmtSpan(bsMed)} of buying them — but the average is ${fmtSpan(bsAvg)}, dragged out by the tail on the right. The shape is what matters: you either play it almost at once, or it sits for years. That right-hand spike is the backlog.`
           : "Needs both a purchase date and a start date."),
-    ]) +
-    sect("Backlog", [
-      statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),
-      statPanel("Backlog by genre", barsH(countBars(backlog, "genre", 12, "games"))),
-      statPanel("Backlog by length", barsH(backlogTime)),
-      statPanel("Backlog by status", barsH(countBars(backlog, "playingStatus", 6, "games"))),
-    ]) +
-    sect("Purchases & collection", [
-      statPanel("Spending per year", barsV(spendData, { fmt: usd, tone: "warn" }), "wide"),
-      statPanel("Games bought per year", barsV(boughtData)),
-      statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, fmt: usd, label: usd(totalSpent) + " all in" }), "wide"),
-      ...(VALUE_HISTORY && VALUE_HISTORY.length > 1
-        ? [statPanel("Collection value over time",
-            areaLine(VALUE_HISTORY.map((h) => ({ label: fmtDate(h.day).replace(/,.*/, ""), value: Math.round(h.total) })),
-              { color: 2, fmt: usd, label: usd(VALUE_HISTORY[VALUE_HISTORY.length - 1].total) + " today" }), "wide")]
-        : [statPanel("Collection value over time",
-            `<div class="s-empty">Recording daily from today — a trend needs at least two points.
-             ${VALUE_HISTORY && VALUE_HISTORY.length ? `First snapshot: ${escapeHtml(fmtDate(VALUE_HISTORY[0].day))} at ${usd(VALUE_HISTORY[0].total)}.` : ""}</div>`, "wide")]),
-      statPanel("The crown jewels", posterRow(topValueRows, { note: (r) => usd(collectionValueOf(r)) }), "wide"),
-      statPanel("Biggest movers", barsH(movers, { fmt: (v) => (v > 0 ? "+" : "-") + usd(Math.abs(v)) }), "wide",
-        `What it's worth now minus what you paid, across ${moverCount.toLocaleString()} games where we know both. Up is profit.`),
-      statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
-      statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
-      statPanel("Spending by quarter", barsV(quarterly, { fmt: usd, tone: "warn" }), "wide",
-        "A year is too coarse to see a Steam sale in."),
-      statPanel("Bought, then finally played", barsH(gapBuckets), "",
-        `How long a game waits between the till and the credits. ${gapMonths.length.toLocaleString()} games where we know both dates.`),
-    ]) +
-    (typeof reviewStats === "function" ? reviewStats(rows) : "") +
-    predictionPanel();
-  const yp = $("#yrPick");
-  if (yp) yp.onchange = (e) => { statsState.year = +e.target.value; renderStats(); };
-  host.querySelectorAll("[data-yg]").forEach((el) => {
-    el.onclick = () => {
-      const row = rows.find((r) => String(r._k || "") === el.dataset.yg);
-      if (row) openDrawer(row, "completed");
-    };
+    ]);
+}
+
+// Backlog — what's left to play.
+function renderStatsBacklog(rows, games) {
+  const backlog = games.filter((r) => !r.completed);
+  const backlogTime = bucketize(backlog, [["< 2h", -1, 2], ["2–5h", 2, 5], ["5–10h", 5, 10], ["10–20h", 10, 20], ["20–40h", 20, 40], ["40h+", 40, 1e9]], playtimeOf);
+  return sect("Backlog", [
+    statPanel("Backlog by platform", barsH(countBars(backlog, "platform", 10, "games"))),
+    statPanel("Backlog by genre", barsH(countBars(backlog, "genre", 12, "games"))),
+    statPanel("Backlog by length", barsH(backlogTime)),
+    statPanel("Backlog by status", barsH(countBars(backlog, "playingStatus", 6, "games"))),
+  ]);
+}
+
+// Purchases & Value — spending, collection worth, and buy→play lag.
+function renderStatsPurchases(rows, games) {
+  const purchases = games.filter((r) => r.purchasePrice != null && yearOf(r.datePurchased));
+  const spendMap = new Map(), boughtMap = new Map();
+  purchases.forEach((r) => { const y = yearOf(r.datePurchased); spendMap.set(y, (spendMap.get(y) || 0) + r.purchasePrice); boughtMap.set(y, (boughtMap.get(y) || 0) + 1); });
+  const spendData = [...spendMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: Math.round(spendMap.get(y)) }));
+  const boughtData = [...boughtMap.keys()].sort((a, b) => a - b).map((y) => ({ label: yr2(y), value: boughtMap.get(y) }));
+  const totalSpent = purchases.reduce((a, r) => a + r.purchasePrice, 0);
+  const ownedPhys = games.filter((r) => r.owned && (r.format || "").toLowerCase() === "physical");
+  const valued = ownedPhys.map((r) => ({ r, v: collectionValueOf(r) })).filter((x) => x.v != null);
+  let runSpend = 0;
+  const cumSpend = [...spendMap.keys()].sort((a, b) => a - b).map((yy) => {
+    runSpend += spendMap.get(yy);
+    return { label: yr2(yy), value: Math.round(runSpend) };
   });
-  wireCharts(host);
+  const topValueRows = valued.slice().sort((a, b) => b.v - a.v).slice(0, 12).map((x) => x.r);
+
+  // Spend by quarter. A year is too coarse to see a Steam sale in.
+  const qMap = new Map();
+  for (const r of purchases) {
+    const d = String(r.datePurchased);
+    if (!/^\d{4}-\d{2}/.test(d)) continue;
+    const q = `${d.slice(0, 4)} Q${Math.floor((+d.slice(5, 7) - 1) / 3) + 1}`;
+    qMap.set(q, (qMap.get(q) || 0) + r.purchasePrice);
+  }
+  const quarterly = [...qMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-16)
+    .map(([q, v]) => ({ label: q.replace(" ", " "), value: Math.round(v) }));
+
+  // Buy it, then actually play it — how long does that take?
+  const gapMonths = games
+    .filter((r) => r.completed && /^\d{4}-/.test(String(r.datePurchased)) && /^\d{4}-/.test(String(r.dateCompleted)))
+    .map((r) => (new Date(r.dateCompleted) - new Date(r.datePurchased)) / 864e5 / 30.4)
+    .filter((m) => m >= 0);
+  const gapBuckets = [
+    ["Same month", (m) => m < 1], ["1-3 months", (m) => m >= 1 && m < 3],
+    ["3-6 months", (m) => m >= 3 && m < 6], ["6-12 months", (m) => m >= 6 && m < 12],
+    ["1-2 years", (m) => m >= 12 && m < 24], ["2-5 years", (m) => m >= 24 && m < 60],
+    ["5 years+", (m) => m >= 60],
+  ].map(([label, test]) => ({ label, value: gapMonths.filter(test).length }));
+  // What a game is worth NOW minus what you paid for it. This is the one thing
+  // the price data knows that the crown-jewels wall can't show: a $60 game worth
+  // $58 is not a find, and a $5 one worth $180 is. Both ends, because the losses
+  // are the more interesting half.
+  const moved = ownedPhys
+    .map((r) => ({ r, gain: (collectionValueOf(r) ?? NaN) - r.purchasePrice }))
+    .filter((x) => r0(x.r.purchasePrice) && isFinite(x.gain) && Math.abs(x.gain) >= 1)
+    .sort((a, b) => b.gain - a.gain);
+  const moverCount = moved.length;
+  const moverBar = (x) => ({
+    label: x.r.title, value: Math.round(x.gain), link: gameLink(x.r, "games"),
+    tip: `${x.r.title}\nPaid ${usd(x.r.purchasePrice)} · now ${usd(collectionValueOf(x.r))}\n${
+      x.gain > 0 ? "Up" : "Down"} ${usd(Math.abs(x.gain))}`,
+  });
+  const movers = [...moved.slice(0, 8).map(moverBar), ...moved.slice(-5).reverse().map(moverBar)]
+    .filter((b, i, a) => a.findIndex((o) => o.label === b.label) === i);   // tiny sets can overlap
+  const topSales = games.map((r) => ({ r, v: salesOf(r) })).filter((x) => x.v != null)
+    .sort((a, b) => b.v - a.v).slice(0, 10)
+    .map((x) => ({ label: x.r.title, value: x.v, link: gameLink(x.r, "games") }));
+
+  return sect("Purchases & collection", [
+    statPanel("Spending per year", barsV(spendData, { fmt: usd, tone: "warn" }), "wide"),
+    statPanel("Games bought per year", barsV(boughtData)),
+    statPanel("Cumulative spend", areaLine(cumSpend, { color: 3, fmt: usd, label: usd(totalSpent) + " all in" }), "wide"),
+    ...(VALUE_HISTORY && VALUE_HISTORY.length > 1
+      ? [statPanel("Collection value over time",
+          areaLine(VALUE_HISTORY.map((h) => ({ label: fmtDate(h.day).replace(/,.*/, ""), value: Math.round(h.total) })),
+            { color: 2, fmt: usd, label: usd(VALUE_HISTORY[VALUE_HISTORY.length - 1].total) + " today" }), "wide")]
+      : [statPanel("Collection value over time",
+          `<div class="s-empty">Recording daily from today — a trend needs at least two points.
+           ${VALUE_HISTORY && VALUE_HISTORY.length ? `First snapshot: ${escapeHtml(fmtDate(VALUE_HISTORY[0].day))} at ${usd(VALUE_HISTORY[0].total)}.` : ""}</div>`, "wide")]),
+    statPanel("The crown jewels", posterRow(topValueRows, { note: (r) => usd(collectionValueOf(r)) }), "wide"),
+    statPanel("Biggest movers", barsH(movers, { fmt: (v) => (v > 0 ? "+" : "-") + usd(Math.abs(v)) }), "wide",
+      `What it's worth now minus what you paid, across ${moverCount.toLocaleString()} games where we know both. Up is profit.`),
+    statPanel("Best selling (VGChartz)", barsH(topSales, { fmt: fmtUnits })),
+    statPanel("Purchases by platform", barsH(countBars(purchases, "platform", 10, "games"))),
+    statPanel("Spending by quarter", barsV(quarterly, { fmt: usd, tone: "warn" }), "wide",
+      "A year is too coarse to see a Steam sale in."),
+    statPanel("Bought, then finally played", barsH(gapBuckets), "",
+      `How long a game waits between the till and the credits. ${gapMonths.length.toLocaleString()} games where we know both dates.`),
+  ]);
+}
+
+// Reviews — the words behind your scores, and how the rating model does.
+function renderStatsReviews(rows) {
+  return (typeof reviewStats === "function" ? reviewStats(rows) : "") + predictionPanel();
 }
 
 // ---- "Pick my next game" ------------------------------------------------
