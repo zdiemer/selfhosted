@@ -2539,7 +2539,7 @@ function posterCardHtml(row, { cls = "", note = "", attrs = "" } = {}) {
     : `<div class="card-cover ph">${icon("i-library", 26)}</div>`;
   const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
     .map((x) => escapeHtml(String(x))).join(" · ");
-  return `<button class="card${cls ? " " + cls : ""}${row.vr ? " has-vr" : ""}" ${attrs}>
+  return `<button class="card${cls ? " " + cls : ""}" ${attrs}>
     ${cover}${vrBadgeHtml(row)}
     <div class="card-body">
       <div class="card-title">${title}</div>
@@ -2565,8 +2565,7 @@ function renderGrid(pageRows) {
     // ring — the compilation itself isn't finished even on the Completed tab.
     const cstat = collectionStatus(row);
     card.className = "card" + (cstat === "partial" ? " partial"
-      : (cstat === "complete" || rowCompleted(row)) ? " done" : "")
-      + (row.vr ? " has-vr" : "");
+      : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
     if (row._k) card.dataset.k = row._k;
     CARD_ROW.set(card, row);
     card.innerHTML = `${cover}${vrBadgeHtml(row)}<div class="card-body">${cardBodyHtml(row)}</div>`;
@@ -4289,8 +4288,7 @@ function pickCard(row) {
     : `<div class="card-cover ph${pend ? " skel" : ""}">${pend ? "" : icon("i-library", 26)}</div>`;
   const cstat = collectionStatus(row);
   const cls = "card" + (cstat === "partial" ? " partial"
-    : (cstat === "complete" || rowCompleted(row)) ? " done" : "")
-    + (row.vr ? " has-vr" : "");
+    : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
   const game = `<div class="${cls}" id="pickGameCard">${cover}${vrBadgeHtml(row)}<div class="card-body">${cardBodyHtml(row)}</div></div>`;
 
   const chips = [row.platform, row.releaseYear, row.genre, row.franchise]
