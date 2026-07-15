@@ -22,12 +22,13 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import accounts as accounts_mod
 import assetcache as assetcache_mod
 import picross as picross_mod
 import prefs as prefs_mod
@@ -70,6 +71,17 @@ IGDB_CLIENT_SECRET = os.environ.get("IGDB_CLIENT_SECRET", "")
 ENRICH_DB = os.environ.get("ENRICH_DB", "/data/enrichment.sqlite")
 ENRICH_BACKFILL = os.environ.get("ENRICH_BACKFILL", "false").lower() in ("1", "true", "yes")
 _on = lambda name, default="true": os.environ.get(name, default).lower() in ("1", "true", "yes")
+
+# Single-admin login. The account is seeded once from the environment (first boot
+# only); everything after is the in-app change-password screen. COOKIE_SECURE is
+# on by default (prod is HTTPS via Traefik) but can be flipped off for a plain-http
+# local port-forward.
+ACCOUNTS_DB = os.environ.get("ACCOUNTS_DB", "/data/accounts.sqlite")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "zachd")
+ADMIN_INITIAL_PASSWORD = os.environ.get("ADMIN_INITIAL_PASSWORD", "")
+SESSION_COOKIE = "gamedex_session"
+SESSION_TTL_DAYS = 30
+COOKIE_SECURE = _on("COOKIE_SECURE", "true")
 
 # Enricher is optional — only when IGDB creds are present. HLTB (playtimes) and
 # Metacritic (critic scores) are secondary sources, on unless disabled.
@@ -137,6 +149,16 @@ store = DataStore(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.start()
+    # Seed the one admin account on first boot only (bootstrap is a no-op once a
+    # user exists). With no initial password the account never gets created, so
+    # login can't succeed and every write stays closed — fails shut, like NAS_TOKEN.
+    ACCOUNTS.purge_expired()
+    if ADMIN_INITIAL_PASSWORD:
+        if ACCOUNTS.bootstrap(ADMIN_USERNAME, ADMIN_INITIAL_PASSWORD):
+            logging.getLogger("gamedex").info("accounts: seeded admin %r", ADMIN_USERNAME)
+    else:
+        logging.getLogger("gamedex").warning(
+            "accounts: ADMIN_INITIAL_PASSWORD unset; no admin seeded (login disabled)")
     # After the startup peak (xlsx parse + enrichment backfills), not during it.
     SHELF.warm(delay=90)
     if enricher:
@@ -165,14 +187,86 @@ if ROMM.enabled:
 # Saved views + custom challenges, so they follow you between browsers.
 PREFS = prefs_mod.Prefs(os.environ.get("PREFS_DB", "/data/prefs.sqlite"))
 
+# The single admin account + its sessions (see accounts.py). Bootstrapped in
+# lifespan; the account is what turns the write endpoints below from open to gated.
+ACCOUNTS = accounts_mod.Accounts(ACCOUNTS_DB)
+
+
+# ---------- auth ----------
+def current_user(request: Request) -> dict | None:
+    """Soft gate: the logged-in user, or None for the public. Never raises — a
+    read handler uses it to decide whether to return real data or an empty shell."""
+    return ACCOUNTS.resolve_session(request.cookies.get(SESSION_COOKIE))
+
+
+def require_admin(user: dict | None = Depends(current_user)) -> dict:
+    """Hard gate: 401 unless a valid session is present. There is one role, so a
+    live session IS admin."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return user
+
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/login")
+def api_login(body: Login, response: Response):
+    uid = ACCOUNTS.verify_password(body.username, body.password)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    # Always a fresh token on login — no pre-auth token is ever elevated (fixation).
+    token = ACCOUNTS.create_session(uid, ttl_days=SESSION_TTL_DAYS)
+    response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL_DAYS * 86400,
+                        httponly=True, secure=COOKIE_SECURE, samesite="lax", path="/")
+    return {"authenticated": True, "username": body.username}
+
+
+@app.post("/api/logout")
+def api_logout(request: Request, response: Response):
+    tok = request.cookies.get(SESSION_COOKIE)
+    if tok:
+        ACCOUNTS.revoke_session(tok)        # kill it server-side, not just the cookie
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def api_me(user: dict | None = Depends(current_user)):
+    if user is None:
+        return {"authenticated": False, "username": None}
+    return {"authenticated": True, "username": user["username"]}
+
+
+class PwChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/account/password")
+def api_change_password(body: PwChange, request: Request,
+                        user: dict = Depends(require_admin)):
+    if ACCOUNTS.verify_password(user["username"], body.current_password) is None:
+        raise HTTPException(status_code=403, detail="current password is wrong")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    ACCOUNTS.set_password(user["user_id"], body.new_password)
+    # Keep this session, drop every other — a password change locks out other devices.
+    ACCOUNTS.revoke_user_sessions(user["user_id"], keep=request.cookies.get(SESSION_COOKIE))
+    return {"ok": True}
+
 
 @app.get("/api/prefs")
-def api_prefs_get():
-    return {"prefs": PREFS.get_all()}
+def api_prefs_get(user: dict | None = Depends(current_user)):
+    # The prefs (saved views, challenges, the picross streak) are the admin's own —
+    # hide them from the public so an anonymous browser keeps its local-only copy.
+    return {"prefs": PREFS.get_all() if user else {}}
 
 
 @app.put("/api/prefs/{key}")
-async def api_prefs_put(key: str, request: Request):
+async def api_prefs_put(key: str, request: Request, user: dict = Depends(require_admin)):
     try:
         value = await request.json()
     except Exception:
@@ -204,8 +298,12 @@ if NAS_PATH.exists():
 
 
 @app.get("/api/nas")
-def api_nas():
-    """{match_key: {system, file, size}} plus the platforms we refuse to answer for."""
+def api_nas(user: dict | None = Depends(current_user)):
+    """{match_key: {system, file, size}} plus the platforms we refuse to answer for.
+    Admin-only: it leaks NAS file paths and sizes, so the public gets the empty shape
+    (which the frontend reads as "no index" — the section and facet just don't render)."""
+    if user is None:
+        return {"generatedAt": 0, "unindexed": [], "games": {}}
     return _nas
 
 
@@ -238,11 +336,12 @@ async def api_nas_put(request: Request):
 
 
 @app.get("/api/romm")
-def api_romm():
+def api_romm(user: dict | None = Depends(current_user)):
     """{"<igdb_id>|<platform folder>": rom_id} — the frontend turns a hit into
     a Console Mode link on desktop, or the ROM page on mobile. Empty (not an
-    error) when RomM is off."""
-    if not ROMM.enabled:
+    error) when RomM is off. Admin-only: the public gets the "off" shape, so the
+    Play buttons simply never appear for them."""
+    if user is None or not ROMM.enabled:
         return {"enabled": False, "roms": {}}
     return ROMM.snapshot()
 
@@ -373,7 +472,8 @@ async def api_shelf_upload(request: Request, key: str, kind: str = "wrap", rotat
                           w: float | None = None, h: float | None = None, d: float | None = None,
                           face_rot: int = 0,
                           cx1: float | None = None, cy1: float | None = None,
-                          cx2: float | None = None, cy2: float | None = None):
+                          cx2: float | None = None, cy2: float | None = None,
+                          user: dict = Depends(require_admin)):
     """Store a hand-supplied cover for one game — the image bytes are the raw POST body.
 
     The editor derives the box's proportions from the image (front aspect) and the user's
@@ -488,7 +588,7 @@ def api_uploads():
 
 
 @app.delete("/api/shelf/cover")
-def api_shelf_upload_delete(key: str):
+def api_shelf_upload_delete(key: str, user: dict = Depends(require_admin)):
     """Drop a manual upload, reverting to the auto-resolved cover."""
     return {"ok": SHELF.remove_cover(key)}
 
@@ -605,7 +705,7 @@ _PRIMARY_FALLBACKS = ("ign", "steam", "gamespot", "launchbox", "keitai")
 
 
 @app.post("/api/enrichment/override")
-def enrichment_override(body: Override):
+def enrichment_override(body: Override, user: dict = Depends(require_admin)):
     if not enricher:
         return JSONResponse(status_code=400, content={"error": "enrichment disabled"})
     src = body.source or "igdb"
@@ -669,7 +769,7 @@ def value_history():
 
 
 @app.post("/api/refresh")
-def refresh():
+def refresh(user: dict = Depends(require_admin)):
     """Eagerly re-check Dropbox now (instead of waiting for the poll interval)."""
     try:
         changed = store.refresh_once()

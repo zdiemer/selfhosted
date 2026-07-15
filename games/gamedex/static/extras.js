@@ -239,6 +239,9 @@ const prefsMirror = (key, val) => {
 // round-trip, then the server catches up.
 async function prefsSave(key, val) {
   prefsMirror(key, val);
+  // Anonymous visitors keep views/challenges local-only — the server refuses their
+  // writes (admin-only), and that refusal is by design, not an error to apologise for.
+  if (typeof IS_ADMIN !== "undefined" && !IS_ADMIN) return;
   try {
     const r = await fetch(`api/prefs/${key}`, {
       method: "PUT",

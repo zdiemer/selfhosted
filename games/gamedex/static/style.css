@@ -3147,6 +3147,20 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .ce-opt.on { background:var(--accent); color:#fff; }
 .ce-hint { font-size:12.5px; color:var(--dim); margin:0 0 14px; line-height:1.45; min-height:34px; }
 .ce-hint.ce-err { color:var(--bad); }
+
+/* Login / account modal — reuses the .ce-scrim + .ce shell. */
+.ce.ce-narrow { max-width:360px; }
+.auth-form { display:flex; flex-direction:column; gap:12px; }
+.auth-form label { display:flex; flex-direction:column; gap:5px;
+  font:600 11px/1 var(--font); letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
+.auth-form input { font:500 14px var(--font); color:var(--text); background:var(--surface-2);
+  border:1px solid var(--border); border-radius:9px; padding:10px 11px; text-transform:none; letter-spacing:0; }
+.auth-form input:focus { outline:none; border-color:var(--accent); }
+.auth-form .ce-acts { margin-top:4px; }
+.auth-err { color:var(--bad); font-size:12.5px; margin:0; line-height:1.4; }
+.auth-menu { display:flex; flex-direction:column; gap:8px; }
+.auth-menu .sh-btn { text-align:center; padding:11px; }
+#account.signed-in { color:var(--accent); }
 .ce-drop { display:block; border:1.5px dashed var(--border); border-radius:12px;
   min-height:220px; cursor:pointer; overflow:hidden; position:relative;
   background:var(--surface-2); transition:border-color .15s; }

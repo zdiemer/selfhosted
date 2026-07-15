@@ -116,6 +116,8 @@ const coverSrc = (e, size) => (
   cImg(e.vnCover || e.adbCover || e.thumbyCover || e.gtdbCover || e.vgcCover || ""));
 // Thumby art is a 64x64 icon — scale it up with hard edges, not a blur.
 const coverIsPixelArt = (e, src) => !!(e && e.thumbyCover && src === e.thumbyCover);
+let IS_ADMIN = false;              // set from /api/me on boot; gates every write + sensitive read
+let ME = null;                     // {authenticated, username}
 let ENRICH_ENABLED = false;
 let ENRICH_COMPLETE = false;       // all sources backfilled → stop shimmering covers
 let ENRICH_SOURCES = [];           // enabled secondary sources (hltb, metacritic, gameye)
@@ -1046,7 +1048,7 @@ function renderIgdbSection(key, el, status, detail) {
   el.innerHTML = content + hltbHtml(HLTBC[key]) + speedrunHtml(key) + metacriticHtml(key)
     + coopHtml(key) + steamxHtml(key) + arcadeHtml(key) + vndbHtml(key) + thumbyHtml(key) + guidesHtml(key)
     + pcgwHtml(key) + salesHtml(key) + physicalHtml(key) + wikidataHtml(key)
-    + gameyeHtml(key) + mapControlHtml(key);
+    + gameyeHtml(key) + (IS_ADMIN ? mapControlHtml(key) : "");   // "Fix mapping" is a write — admin only
 
   // The Shelf's manual reader, reached from the drawer too — you shouldn't have to go and
   // find the box on the shelf to read the booklet that came in it.
@@ -1718,7 +1720,7 @@ async function loadNas() {
    quietly folded "we can't answer for this platform" into "not on the NAS" would hand you a list of
    games to go download, with the Wii U library sitting in it. */
 function nasFacetVals(row) {
-  if (!NAS.generatedAt) return [];
+  if (!IS_ADMIN || !NAS.generatedAt) return [];   // admin-only facet; empty read for anon anyway
   if (NAS.games[row._k]) return ["On the NAS"];
   if ((NAS.unindexed || []).includes(row.platform)) return ["Not indexed"];
   return ["Not on the NAS"];
@@ -1817,7 +1819,7 @@ function refreshDrawerCover() {
 // The rom id for this row, or null. Requires BOTH the game and the platform to
 // agree — a PSX Doom must not offer to play the 3DO one.
 function rommRomId(row) {
-  if (!ROMM.enabled || !row) return null;
+  if (!IS_ADMIN || !ROMM.enabled || !row) return null;   // Play is admin-only (read is empty for anon)
   const e = ENRICH[row._k];
   if (!e || !e.igdbId) return null;
   const folder = ROMM_PLATFORM[row.platform] || row.platform;
@@ -3208,7 +3210,7 @@ function openDrawer(row, sheetKey, keepStack) {
   // (or supplied outright) from any detail card. Offered for every real sheet row, not
   // just owned physical ones: a game IGDB never matched has no cover at all, and this is
   // the only way to give it one. Grouped collection cards have no single row to attach to.
-  if (row._k && !row._collection) html += `<button class="sh-btn drawer-art" id="drawerArt">Manage box art</button>`;
+  if (IS_ADMIN && row._k && !row._collection) html += `<button class="sh-btn drawer-art" id="drawerArt">Manage box art</button>`;
 
   /* Your own history with the game was buried in the "Raw data" disclosure,
      alongside File Size and MAME Romset — and it's the most personal thing on the
@@ -3230,7 +3232,9 @@ function openDrawer(row, sheetKey, keepStack) {
     if (MINE.includes(c.key)) continue;        // the history section tells these properly
     raw += cell(c, v);
   }
-  if (!row._collection) html += mineSectionHtml(row) + nasSectionHtml(row);
+  // The personal "history" (purchase price, dates) stays public; the NAS section leaks
+  // file paths/sizes, so it's admin-only (the read is empty for anon anyway).
+  if (!row._collection) html += mineSectionHtml(row) + (IS_ADMIN ? nasSectionHtml(row) : "");
   else {                                       // a grouped card's values are aggregates, not yours
     for (const c of cols) {
       const v = row[c.key];
@@ -3244,7 +3248,7 @@ function openDrawer(row, sheetKey, keepStack) {
   // Sheet fields collapse behind a "Raw data" disclosure — the enriched view
   // leads. A grouped collection card has no sheet row of its own; its values are
   // aggregates over the members, so don't dress them up as raw data.
-  if (raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
+  if (IS_ADMIN && raw && !row._collection) html += `<details class="raw-data"><summary>Raw data</summary>${raw}</details>`;
   body.innerHTML = html;
   const back = $("#drawerBack");
   const prev = drawerStack[drawerStack.length - 1];
@@ -3487,6 +3491,7 @@ function setFreshness() {
 // ---- boot ---------------------------------------------------------------
 async function load() {
   showSkeletons();
+  await loadMe();               // admin state first, so nothing renders an admin-only control to the public
   let payload = null;
   for (let attempt = 0; attempt < 40; attempt++) {
     const res = await fetch("api/data", { cache: "no-store" });
@@ -4856,6 +4861,143 @@ function showToast(msg) {
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => { t.classList.remove("show"); setTimeout(() => (t.hidden = true), 250); }, 2500);
 }
+
+/* ---- admin login -----------------------------------------------------------
+   One privileged account. The public gets a read-only app; signing in reveals the
+   write controls (fix mappings, box art, refresh) and the sensitive reads (NAS, RomM),
+   which the server gates too — this only decides what's shown. */
+async function loadMe() {
+  try {
+    const r = await fetch("api/me");
+    if (r.ok) { ME = await r.json(); IS_ADMIN = !!ME.authenticated; }
+  } catch (_) { /* offline: stay public */ }
+  applyAdminUI();
+}
+
+function applyAdminUI() {
+  const acct = $("#account");
+  $("#refresh").hidden = !IS_ADMIN;          // the endpoint is gated too; hide the button
+  if (!acct) return;
+  if (IS_ADMIN) {
+    acct.title = `Signed in as ${ME.username} — account`;
+    acct.setAttribute("aria-label", "Account");
+    acct.classList.add("signed-in");
+  } else {
+    acct.title = "Sign in";
+    acct.setAttribute("aria-label", "Sign in");
+    acct.classList.remove("signed-in");
+  }
+}
+
+function closeAuthModal() {
+  document.querySelector(".ce-scrim.auth")?.remove();
+  if (typeof syncScrollLock === "function") syncScrollLock();
+}
+
+function openAuthModal(inner) {
+  closeAuthModal();
+  const host = document.createElement("div");
+  host.className = "ce-scrim auth";
+  host.innerHTML = `<div class="ce ce-narrow" role="dialog" aria-modal="true">
+      <button class="ce-x" aria-label="Close">✕</button>${inner}</div>`;
+  host.addEventListener("mousedown", (e) => { if (e.target === host) closeAuthModal(); });
+  host.querySelector(".ce-x").onclick = closeAuthModal;
+  document.body.appendChild(host);
+  if (typeof syncScrollLock === "function") syncScrollLock();
+  return host;
+}
+
+function openLoginDialog() {
+  const host = openAuthModal(`
+      <h3>Sign in</h3>
+      <div class="ce-sub">Admin access</div>
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <label>Username<input id="loginUser" type="text" autocomplete="username" autofocus></label>
+        <label>Password<input id="loginPass" type="password" autocomplete="current-password"></label>
+        <p class="auth-err" id="loginErr" hidden></p>
+        <div class="ce-acts"><span></span><div class="ce-right">
+          <button class="sh-btn" type="button" id="loginCancel">Cancel</button>
+          <button class="sh-btn primary" type="submit">Sign in</button>
+        </div></div>
+      </form>`);
+  const err = host.querySelector("#loginErr");
+  host.querySelector("#loginCancel").onclick = closeAuthModal;
+  host.querySelector("#loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const username = host.querySelector("#loginUser").value.trim();
+    const password = host.querySelector("#loginPass").value;
+    try {
+      const r = await fetch("api/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (r.ok) { closeAuthModal(); location.reload(); return; }
+      err.textContent = r.status === 401 ? "Wrong username or password." : "Sign in failed.";
+      err.hidden = false;
+    } catch (_) { err.textContent = "Couldn't reach the server."; err.hidden = false; }
+  });
+}
+
+function openAccountMenu() {
+  const host = openAuthModal(`
+      <h3>${escapeHtml(ME.username)}</h3>
+      <div class="ce-sub">Signed in</div>
+      <div class="auth-menu">
+        <button class="sh-btn" id="acctPw" type="button">${icon("i-lock", 14)} Change password</button>
+        <button class="sh-btn" id="acctOut" type="button">Log out</button>
+      </div>`);
+  host.querySelector("#acctPw").onclick = openPasswordDialog;
+  host.querySelector("#acctOut").onclick = async () => {
+    try { await fetch("api/logout", { method: "POST" }); } catch (_) {}
+    closeAuthModal(); location.reload();
+  };
+}
+
+function openPasswordDialog() {
+  const host = openAuthModal(`
+      <h3>Change password</h3>
+      <div class="ce-sub">${escapeHtml(ME.username)}</div>
+      <form id="pwForm" class="auth-form">
+        <label>Current password<input id="pwCur" type="password" autocomplete="current-password" autofocus></label>
+        <label>New password<input id="pwNew" type="password" autocomplete="new-password"></label>
+        <label>Confirm new password<input id="pwNew2" type="password" autocomplete="new-password"></label>
+        <p class="auth-err" id="pwErr" hidden></p>
+        <div class="ce-acts"><span></span><div class="ce-right">
+          <button class="sh-btn" type="button" id="pwCancel">Cancel</button>
+          <button class="sh-btn primary" type="submit">Update</button>
+        </div></div>
+      </form>`);
+  const err = host.querySelector("#pwErr");
+  const fail = (m) => { err.textContent = m; err.hidden = false; };
+  host.querySelector("#pwCancel").onclick = closeAuthModal;
+  host.querySelector("#pwForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const cur = host.querySelector("#pwCur").value;
+    const nw = host.querySelector("#pwNew").value;
+    const nw2 = host.querySelector("#pwNew2").value;
+    if (nw.length < 8) return fail("New password must be at least 8 characters.");
+    if (nw !== nw2) return fail("The new passwords don't match.");
+    try {
+      const r = await fetch("api/account/password", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: cur, new_password: nw }),
+      });
+      if (r.ok) { closeAuthModal(); showToast("Password changed ✓"); return; }
+      if (r.status === 403) return fail("Your current password is wrong.");
+      const j = await r.json().catch(() => ({}));
+      fail(j.detail || "Couldn't change the password.");
+    } catch (_) { fail("Couldn't reach the server."); }
+  });
+}
+
+$("#account").addEventListener("click", () => {
+  if (IS_ADMIN) openAccountMenu(); else openLoginDialog();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeAuthModal();
+});
 
 $("#refresh").addEventListener("click", async () => {
   const btn = $("#refresh");

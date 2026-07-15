@@ -69,6 +69,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "gamedex.fullname" . }}
                   key: nas-token
+            # Single-admin login. The account is seeded from these on first boot only;
+            # changing them later does NOT reset the password (see values.yaml).
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: admin-username
+            - name: ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gamedex.fullname" . }}
+                  key: admin-initial-password
+            - name: ACCOUNTS_DB
+              value: /data/accounts.sqlite
             - name: IGDB_CLIENT_ID
               valueFrom:
                 secretKeyRef:

@@ -438,7 +438,8 @@ function shBuild(i) {
       <button class="sh-btn primary" id="shDetails">Full details</button>
       ${typeof hasBoxContents === "function" && hasBoxContents(g.mk)
         ? `<button class="sh-btn" id="shOpen">Open the box</button>` : ""}
-      <button class="sh-btn" id="shArt">${g.src === "upload" ? "Change art" : "Add / fix art"}</button>
+      ${typeof IS_ADMIN !== "undefined" && IS_ADMIN
+        ? `<button class="sh-btn" id="shArt">${g.src === "upload" ? "Change art" : "Add / fix art"}</button>` : ""}
       <button class="sh-btn" id="shBack">← Put it back</button>
     </div>
     <div id="shMedia"></div>`;
@@ -477,7 +478,8 @@ function shBuild(i) {
     const row = (DATA.sheets.games.rows || []).find((r) => r._k === g.mk);
     if (row) openDrawer(row, "games");
   };
-  document.getElementById("shArt").onclick = () =>
+  const artBtn = document.getElementById("shArt");   // absent for the public (admin-only)
+  if (artBtn) artBtn.onclick = () =>
     openCoverEditor({ key: g.k, platform: g.p, title: g.t, hasUpload: g.src === "upload",
       caseDefault: g.case, existing: g.upload, onDone: () => reloadShelfBox(g.k) });
 }

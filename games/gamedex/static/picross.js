@@ -77,11 +77,15 @@ async function pxBumpStreak() {
   s.last = PX.date;
   pxPrefs = s;
   try { localStorage.setItem(PX_LOCAL, JSON.stringify(s)); } catch (_) {}
-  try {
-    await fetch("api/prefs/picross", {
-      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
-    });
-  } catch (_) { /* the streak is a nicety, never a blocker */ }
+  // The server-side streak is the admin's own (per-user, cross-device). The public
+  // keeps a local streak only — the write is admin-gated, so don't even attempt it.
+  if (typeof IS_ADMIN === "undefined" || IS_ADMIN) {
+    try {
+      await fetch("api/prefs/picross", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
+      });
+    } catch (_) { /* the streak is a nicety, never a blocker */ }
+  }
   return s;
 }
 

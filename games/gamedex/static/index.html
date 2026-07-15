@@ -97,6 +97,8 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.8 21.5 20H2.5z"/><path d="M12 10v4.2"/><circle cx="12" cy="17.4" r=".2" stroke-width="2.2"/></g></symbol>
     <symbol id="i-trend" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 16.5 5.5-6 4 3.5 7.5-8"/><path d="M15 6h5.5v5.5"/></g></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></g></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></g></symbol>
   </defs>
 </svg>
 
@@ -112,7 +114,8 @@
     <div class="freshness" id="freshness"></div>
     <button id="cmdk" class="kbdbtn" title="Search everything" aria-label="Command palette"><kbd id="cmdkMod">Ctrl</kbd><kbd>K</kbd></button>
     <button id="theme" class="refreshbtn" title="Toggle light / dark" aria-label="Toggle theme"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-theme"/></svg></button>
-    <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+    <button id="refresh" class="refreshbtn" title="Refresh data from Dropbox now" aria-label="Refresh data" hidden><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+    <button id="account" class="refreshbtn" title="Sign in" aria-label="Sign in"><svg class="ico" width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg></button>
   </header>
   <div class="progress" id="progress" hidden><div class="progress-bar" id="progressBar"></div></div>
   <div id="toast" class="toast" hidden></div>

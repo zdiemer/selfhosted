@@ -2,7 +2,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package is public so every node
   # pulls it anonymously (the cluster is multi-node, so side-loading doesn't fit).
   repository: ghcr.io/zdiemer/gamedex
-  tag: "1.35.1"
+  tag: "1.36.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -149,3 +149,14 @@ romm:
 # so this fails shut rather than leaving a public write open. Set nas.token in values.local.yaml.
 nas:
   token: ""
+
+# Single-admin login. Public visitors stay read-only; writes (fixing mappings,
+# uploading box art, refreshing) and a couple of sensitive reads (the NAS index,
+# the RomM play links) require this account. ONE account is seeded on first boot,
+# only when the accounts DB is empty — changing initialPassword afterward does
+# nothing. Change the password in-app (there's a change-password screen), or reset
+# by deleting /data/accounts.sqlite to re-seed. Leave initialPassword blank and
+# login is disabled (fails shut). Set both in values.local.yaml.
+admin:
+  username: "zachd"
+  initialPassword: ""

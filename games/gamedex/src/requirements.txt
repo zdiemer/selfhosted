@@ -14,3 +14,6 @@ beautifulsoup4==4.12.3
 # browser's TLS handshake, which is the only thing that gets through.
 curl_cffi==0.7.4
 Pillow==11.0.0
+# Single-admin login: password hashing (salt embedded in the hash). manylinux
+# wheels, so the "no build toolchain" image promise holds.
+bcrypt==4.2.1

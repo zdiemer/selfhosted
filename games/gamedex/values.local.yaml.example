@@ -22,3 +22,10 @@ igdb:
 # metadata chain. IGN + Steam fallbacks work without it.
 gamespot:
   apiKey: ""
+
+# Single-admin login. Seeds ONE account on first boot (when the accounts DB is
+# empty). Set a strong initial password, log in, then change it in-app — changing
+# it here afterward does nothing. Blank initialPassword = login disabled.
+admin:
+  username: "zachd"
+  initialPassword: "CHANGE-ME-to-a-strong-random-password"
