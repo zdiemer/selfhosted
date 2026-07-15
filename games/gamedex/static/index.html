@@ -240,6 +240,20 @@
     // Installable + offline. The SW is opt-out-safe: if registration fails the
     // app just behaves as it always did.
     if ("serviceWorker" in navigator) {
+      // Auto-adopt a new build. The worker uses skipWaiting + clients.claim, so on a
+      // deploy the updated worker takes control of this already-open tab — but the page
+      // is still running the OLD shell it loaded, and the cache is per-file, so a stale
+      // app.js can outlive a fresh index.html. Reload once when control changes so the
+      // whole new shell loads together. Guarded against loops, and skipped on the very
+      // first install (no prior controller = not an update).
+      if (navigator.serviceWorker.controller) {
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (reloaded) return;
+          reloaded = true;
+          location.reload();
+        });
+      }
       window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
     }
   </script>
