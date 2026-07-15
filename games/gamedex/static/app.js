@@ -5,10 +5,12 @@ let PAGE_SIZE = 50;
 // How each tab presents its rows. This is PER TAB: one shared global meant the
 // Completed tab's timeline followed you onto other tabs and rendered there.
 //   view    — "table" | "grid" | "timeline" (Completed only)
-//   combine — fold rows that are the same IGDB game into one entry. Orthogonal
-//             to the view: a list can be combined just as a grid can.
+//   combine — fold rows that are the same IGDB game into one entry. No longer a
+//             user toggle: it's the default everywhere EXCEPT Completed, where
+//             every finished game (each episode of a series included) stands on
+//             its own. Orthogonal to the view: a list combines just as a grid does.
 const VIEW_DEFAULT = { games: "grid", completed: "timeline", onOrder: "grid" };
-const COMBINE_DEFAULT = { games: true, completed: false, onOrder: false };
+const COMBINE_DEFAULT = { games: true, completed: false, onOrder: true };
 const FACET_CAP = 12;              // values shown before "show more"
 const FACET_FILTER_THRESHOLD = 12; // show a per-facet search box past this many values
 
@@ -2378,10 +2380,6 @@ function renderTable(rows) {
   for (const [id, m] of [["viewTable", "table"], ["viewGrid", "grid"], ["viewTimeline", "timeline"]]) {
     $("#" + id).classList.toggle("active", view === m);
   }
-  // Combining is meaningless on the timeline, which plots completions by date.
-  $("#combine").hidden = view === "timeline";
-  $("#combine").classList.toggle("active", st.combine);
-  $("#combine").setAttribute("aria-pressed", String(!!st.combine));
   if (view === "timeline") {
     renderTimeline(rows);
     $("#count").textContent = `${rows.length.toLocaleString()} of ${sheet().rows.length.toLocaleString()} games`;
@@ -3355,7 +3353,10 @@ function renderAll() {
   if (activeTab === "picross") { setSpecialMode("picross"); renderPicross(); return; }
   setSpecialMode(null);
   renderFacets();
-  currentFiltered = groupCollections(filterRows(null));
+  // Completed shows every finished game individually — each episode of a series
+  // stands on its own rather than collapsing into one collection card. (The
+  // collection is still reachable: a member's drawer links up to it.)
+  currentFiltered = filterRows(null);
   renderTable(currentFiltered);
 }
 
@@ -3395,7 +3396,6 @@ function syncURL(push) {
     // blow up on tabState["health"].view.
     const st = tabState[activeTab];
     if (st.view !== VIEW_DEFAULT[activeTab]) p.set("view", st.view);
-    if (st.combine !== COMBINE_DEFAULT[activeTab]) p.set("combine", st.combine ? "1" : "0");
     if (PAGE_SIZE !== 50) p.set("ps", String(PAGE_SIZE));
     if (st.search) p.set("q", st.search);
     if (st.page > 1) p.set("page", String(st.page));
@@ -3427,7 +3427,7 @@ function applyStateFromURL() {
   }
   const st = tabState[tab];
   st.view = ["table", "grid", "timeline"].includes(p.get("view")) ? p.get("view") : VIEW_DEFAULT[tab];
-  st.combine = p.has("combine") ? p.get("combine") === "1" : COMBINE_DEFAULT[tab];
+  st.combine = COMBINE_DEFAULT[tab];
   PAGE_SIZE = parseInt(p.get("ps"), 10) || 50;
   st.search = p.get("q") || "";
   st.page = parseInt(p.get("page"), 10) || 1;
@@ -4451,13 +4451,6 @@ function setView(mode) {
 $("#viewTable").addEventListener("click", () => { setView("table"); nav(); });
 $("#viewGrid").addEventListener("click", () => { setView("grid"); nav(); });
 $("#viewTimeline").addEventListener("click", () => { setView("timeline"); nav(); });
-$("#combine").addEventListener("click", () => {
-  const st = tabState[activeTab];
-  st.combine = !st.combine;
-  st.page = 1;                          // the row count just changed under us
-  renderTable(currentFiltered);
-  nav();
-});
 // ---- Mobile floating controls ------------------------------------------
 // On mobile the page is one scroller, so the result bar scrolls away. Move the
 // sort/per-page/view cluster into a bottom sheet and reach it from a FAB.
