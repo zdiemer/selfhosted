@@ -2020,6 +2020,11 @@ function facetLabel(col, value) {
 }
 
 // ---- filtering ----------------------------------------------------------
+// Fold text for search: lowercase AND strip diacritics, so "pokemon" matches
+// "Pokémon" and "naive" matches "naïve". NFD splits an accented letter into its
+// base + a combining mark; we drop the marks. Applied to both haystack and query
+// so the two always meet in the same alphabet.
+const foldText = (s) => String(s).toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 // Row matches free-text search.
 // The searchable text of a row, built once and kept. A WeakMap keyed on the row
 // object means a fresh spreadsheet invalidates it for free.
@@ -2027,7 +2032,7 @@ const HAYSTACK = new WeakMap();
 function rowHaystack(row, cols) {
   let hay = HAYSTACK.get(row);
   if (hay === undefined) {
-    hay = cols.map((k) => row[k]).filter((v) => v != null).join(" ").toLowerCase();
+    hay = foldText(cols.map((k) => row[k]).filter((v) => v != null).join(" "));
     HAYSTACK.set(row, hay);
   }
   return hay;
@@ -2042,7 +2047,7 @@ function searchGenreHay(row) {
   if (!ENRICH_ENABLED || !ENRICH[row._k]) return "";
   const c = _genreHay.get(row);
   if (c && c.e === _enrichEpoch) return c.h;
-  const h = unifiedGenreVals(row).join(" ").toLowerCase();
+  const h = foldText(unifiedGenreVals(row).join(" "));
   _genreHay.set(row, { e: _enrichEpoch, h });
   return h;
 }
@@ -2065,7 +2070,7 @@ let _searchBase = { tab: null, q: null, rows: null };
 function searchedRows() {
   const st = tabState[activeTab];
   if (_searchBase.tab === activeTab && _searchBase.q === st.search) return _searchBase.rows;
-  const terms = st.search.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = foldText(st.search).split(/\s+/).filter(Boolean);
   const sCols = searchCols();
   const rows = terms.length
     ? sheet().rows.filter((row) => matchesSearch(row, terms, sCols))
@@ -2309,7 +2314,7 @@ function effectiveSort() {
 // another field (genre, publisher…). So searching "Adventure" surfaces the game
 // *named* Adventure above everything merely tagged with the Adventure genre.
 function searchRank(row, terms) {
-  const title = String(row.title ?? row.game ?? "").toLowerCase();
+  const title = foldText(row.title ?? row.game ?? "");
   let score = 0;
   for (const t of terms) {
     if (title === t) score += 100;
@@ -2322,7 +2327,7 @@ function searchRank(row, terms) {
 
 function sortRows(rows) {
   const spec = effectiveSort();
-  const q = (tabState[activeTab].search || "").toLowerCase().trim();
+  const q = foldText(tabState[activeTab].search || "").trim();
   const terms = q ? q.split(/\s+/).filter(Boolean) : [];
   return [...rows].sort((a, b) => {
     if (terms.length) {
