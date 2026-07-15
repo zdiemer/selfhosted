@@ -4091,6 +4091,7 @@ function renderStats() {
       statPanel("Bought, then finally played", barsH(gapBuckets), "",
         `How long a game waits between the till and the credits. ${gapMonths.length.toLocaleString()} games where we know both dates.`),
     ]) +
+    (typeof reviewStats === "function" ? reviewStats(rows) : "") +
     predictionPanel();
   const yp = $("#yrPick");
   if (yp) yp.onchange = (e) => { statsState.year = +e.target.value; renderStats(); };
