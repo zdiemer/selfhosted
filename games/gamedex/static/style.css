@@ -1277,6 +1277,10 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
 .stats-nav-pill.active {
   color: #fff; border-color: transparent;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  /* Clip the gradient to the padding box: with a transparent border and the
+     default border-box clip, the accent stop bled a 1px ring past the rounded
+     edge — a blue sliver on the left. */
+  background-clip: padding-box;
 }
 /* First section header sits right under the pills, so it doesn't need the big
    top gap the between-section rules carry. */
