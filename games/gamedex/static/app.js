@@ -2510,6 +2510,15 @@ function cardBodyHtml(row) {
     `</div></div>`;
 }
 
+// A little VR-headset badge for the top-right of a poster card. `row.vr` is the
+// sheet's VR bool (parse.py), already on every row. Returns "" for flat games so
+// the badge only ever appears where it means something. pointer-events:none in
+// CSS keeps it from stealing the card's hover/click.
+const vrBadgeHtml = (row) =>
+  row && row.vr
+    ? `<span class="vr-badge" title="Playable in VR" aria-label="Playable in VR">${icon("i-vr", 15)}</span>`
+    : "";
+
 /* The listing card, in ONE place.
 
    The grid builds its cards imperatively — it needs the row map, the hover-preview wiring
@@ -2531,7 +2540,7 @@ function posterCardHtml(row, { cls = "", note = "", attrs = "" } = {}) {
   const sub = [row.platform, row.releaseYear].filter((x) => x != null && x !== "")
     .map((x) => escapeHtml(String(x))).join(" · ");
   return `<button class="card${cls ? " " + cls : ""}" ${attrs}>
-    ${cover}
+    ${cover}${vrBadgeHtml(row)}
     <div class="card-body">
       <div class="card-title">${title}</div>
       <div class="card-sub">${sub}</div>
@@ -2559,7 +2568,7 @@ function renderGrid(pageRows) {
       : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
     if (row._k) card.dataset.k = row._k;
     CARD_ROW.set(card, row);
-    card.innerHTML = `${cover}<div class="card-body">${cardBodyHtml(row)}</div>`;
+    card.innerHTML = `${cover}${vrBadgeHtml(row)}<div class="card-body">${cardBodyHtml(row)}</div>`;
     card.onclick = () => openDrawer(row);
     wirePreview(card);
     grid.appendChild(card);
@@ -4280,7 +4289,7 @@ function pickCard(row) {
   const cstat = collectionStatus(row);
   const cls = "card" + (cstat === "partial" ? " partial"
     : (cstat === "complete" || rowCompleted(row)) ? " done" : "");
-  const game = `<div class="${cls}" id="pickGameCard">${cover}<div class="card-body">${cardBodyHtml(row)}</div></div>`;
+  const game = `<div class="${cls}" id="pickGameCard">${cover}${vrBadgeHtml(row)}<div class="card-body">${cardBodyHtml(row)}</div></div>`;
 
   const chips = [row.platform, row.releaseYear, row.genre, row.franchise]
     .filter((x) => x != null && x !== "")
