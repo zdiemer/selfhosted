@@ -340,7 +340,10 @@ function predictWhyHtml(row) {
   const p = typeof predictedCached === "function" ? predictedCached(row) : null;
   if (!p || !p.signals || !p.signals.length) return "";
   const base = p.baseline;                       // what you'd give an ordinary game TODAY
-  const barBase = p.baselineAllTime ?? base;     // the bars are all-time group averages
+  // One baseline for everything the panel shows — the verdict, the up/down split, every bar, and
+  // the foot line. Splitting the bars onto the all-time average let a factor read "above your
+  // average" in its bar while the verdict, reading today's average, called it one you rate lower.
+  const barBase = base;
   const conf = p.confidence >= 0.75 ? "high" : p.confidence >= 0.5 ? "fair" : "low";
   const pts = (v) => Math.round(v * 100);
   const delta = (v) => pts(v) - pts(barBase);
