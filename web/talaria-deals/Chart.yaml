@@ -1,0 +1,10 @@
+apiVersion: v2
+name: talaria-deals
+description: Publishes the sibling talaria project at talaria.deals through the shared Cloudflare tunnel
+type: application
+version: 1.0.0
+# No app and no image: this chart is a single Ingress. The app it points at is
+# built and deployed from the talaria repo, so there is no appVersion to track.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

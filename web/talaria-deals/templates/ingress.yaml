@@ -1,0 +1,39 @@
+{{/*
+Renders into the release namespace, which must be the namespace talaria runs in
+— an Ingress can only reference a Service beside it. upgrade.sh defaults to
+`default` and pre-flights that the target service is actually there.
+
+Deliberately a separate Ingress object rather than a rule bolted onto talaria's:
+that one belongs to the talaria release, and editing it from here would have the
+two releases fighting over the same object on every upgrade.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "talaria-deals.fullname" . }}
+  labels:
+    {{- include "talaria-deals.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # No router.tls.certresolver — public TLS ends at Cloudflare and the tunnel
+    # dials in with No TLS Verify. See values.yaml.
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.target.service }}
+                port:
+                  number: {{ .Values.target.port }}
+{{- /*
+  No `tls:` block: that list is what Traefik feeds to ACME, and talaria.deals
+  must never end up in a DuckDNS cert request — DNS-01 can only answer for the
+  duckdns.org zone, so including it would fail the whole order and could take the
+  wildcard down with it.
+*/}}

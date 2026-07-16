@@ -3,9 +3,13 @@
 A reusable, outbound-only [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 connector that publishes the cluster's user-facing services on an external domain
 without opening any inbound port or depending on dynamic DNS. The chart is
-domain-agnostic — it just runs the connector and feeds it a token. It currently
-fronts `diemer.codes`; adding another domain is config, not code (see
-[Reusing for another domain](#reusing-for-another-domain)).
+domain-agnostic — it just runs the connector and feeds it a token. It fronts
+`diemer.codes` and `talaria.deals`; adding another domain is config, not code
+(see [Reusing for another domain](#reusing-for-another-domain)).
+
+`talaria.deals` is the proof of that: it was added to this connector with **no
+redeploy and no change to this chart** — one dashboard hostname, and a Traefik
+route in [web/talaria-deals](../../web/talaria-deals/).
 
 Cloudflare terminates public TLS at its edge and forwards each request through the
 tunnel to the in-cluster **Traefik** service, which routes by `Host` header to the
@@ -50,10 +54,12 @@ per service, all with the same origin:
 | `pdf.diemer.codes` | same | same |
 | `games.diemer.codes` | same | same |
 | `romm.diemer.codes` | same | same |
+| `talaria.deals` | same | same |
 
 Leave the HTTP `Host` header blank (preserve original) so Traefik can match the
-ingress rule. Adding each hostname auto-creates its proxied CNAME in the
-`diemer.codes` DNS zone — no manual DNS records.
+ingress rule. Adding each hostname auto-creates its proxied CNAME in that
+hostname's own DNS zone — no manual DNS records. One tunnel serves several
+zones: `talaria.deals` is an apex, not a `diemer.codes` subdomain.
 
 ## Deploy
 

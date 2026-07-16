@@ -1,6 +1,7 @@
 # A Cloudflare Tunnel connector. Domain-agnostic: this chart just runs the
-# connector and feeds it a token. It currently fronts the diemer.codes zone, but
-# nothing here is tied to that name.
+# connector and feeds it a token. It fronts the diemer.codes and talaria.deals
+# zones, but nothing here is tied to either name — a single tunnel serves any
+# number of zones in the account, and talaria.deals joined with no redeploy.
 #
 # The connection is outbound-only: cloudflared dials Cloudflare's edge and holds
 # it open. Nothing listens here, no inbound port is forwarded, and the home IP

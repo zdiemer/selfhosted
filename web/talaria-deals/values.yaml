@@ -1,0 +1,54 @@
+# talaria.deals — the public front door for the sibling talaria project.
+#
+# This chart is one Ingress and nothing else. It exists because talaria is the
+# only service on the cluster whose chart lives in ANOTHER repo
+# (~/Code/talaria). Every other service publishes an external hostname by adding
+# it to its own `ingress.cloudflareHosts` list; talaria can't do that without
+# putting cluster routing config in the app repo, so the route lives here
+# instead.
+#
+#     browser ──TLS──▶ Cloudflare edge ──tunnel──▶ cloudflared (infra/cloudflared)
+#                                                        │ https, No TLS Verify
+#                                                        ▼
+#                                   traefik.kube-system.svc.cluster.local:443
+#                                                        │ Host: talaria.deals
+#                                                        ▼
+#                                              talaria-nginx.default:80
+#
+# ADDITIVE, not a move: talaria keeps answering on zachd.duckdns.org via its own
+# DuckDNS ingress (owned by the talaria chart, untouched by this one). The app
+# still treats the DuckDNS name as canonical — it's what the CSP allows, what
+# email links point at, and what eBay's webhook is registered against. Making
+# talaria.deals canonical is a separate job in the talaria repo.
+#
+# ⚠️  THE DASHBOARD HALF: this chart only teaches Traefik to route the Host
+# header. The public-hostname -> origin map lives ON the tunnel in Cloudflare
+# (Zero Trust -> Networks -> Tunnels), not in git. Until `talaria.deals` is added
+# there, nothing reaches this Ingress. See README.
+
+host: talaria.deals
+
+# The in-cluster service to route to. This chart does NOT own this service —
+# talaria's own chart does, from its own repo. That's the one real cost of
+# keeping this config here: if talaria ever renames the service or moves its
+# port, nothing in that repo knows this Ingress exists and it would start
+# answering 503. upgrade.sh pre-flights both, so the break is loud at deploy
+# time rather than silent in production.
+target:
+  service: talaria-nginx
+  port: 80
+
+ingress:
+  className: traefik
+  # No certresolver on purpose, and this is the part that looks wrong but isn't.
+  #
+  # Public TLS for talaria.deals terminates at Cloudflare's edge. The tunnel then
+  # dials Traefik with "No TLS Verify" ON, so whatever certificate Traefik
+  # presents on this router is never validated — the tunnel is the trust
+  # boundary. Asking the `duckdns` certresolver for a talaria.deals cert would
+  # fail anyway: DuckDNS can only answer DNS-01 for its own zone.
+  #
+  # So Traefik answers with its default self-signed cert and the name mismatch is
+  # expected. Same arrangement as every *.diemer.codes host.
+  tls:
+    enabled: true
