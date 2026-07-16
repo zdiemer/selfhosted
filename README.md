@@ -11,6 +11,10 @@ Each subfolder is a standalone project with its own chart, docs, and
 install/upgrade scripts. Per-project secrets live in a gitignored
 `values.local.yaml` alongside the tracked `values.yaml`.
 
+The exception is [`scripts/k3s/`](scripts/k3s/), which isn't a project: it
+operates on the nodes themselves (health, disk cleanup, rolling restarts, OS
+and k3s upgrades) over `tailscale ssh`, so it lives at the repo root.
+
 Some projects live in their own repo and are tracked here as submodules, so this
 repo stays the full index of what runs on the cluster. Clone with
 `git clone --recurse-submodules`; an existing clone catches up with
@@ -35,6 +39,8 @@ repo stays the full index of what runs on the cluster. Clone with
 | [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) and `talaria.deals` through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. One tunnel, any number of zones. | [infra/cloudflared/README](infra/cloudflared/README.md) |
 | [`infra/duckdns/`](infra/duckdns/) | **Load-bearing for the whole cluster.** Keeps `zachd.duckdns.org` pointed at the house (updater CronJob) *and* defines the `duckdns` Traefik ACME DNS-01 certresolver every ingress here names, holding the `*.zachd.duckdns.org` wildcard cert. Moved out of the sibling `talaria` project. | [infra/duckdns/README](infra/duckdns/README.md) |
 | [`infra/cluster-status/`](infra/cluster-status/) | **Public** dashboard at `status.diemer.codes` — nodes, CPU/RAM/disk broken down pods-vs-k3s-vs-system, pod tables, deployment health, warnings. A read-only collector sidecar writes JSON; nginx serves it as a static page, so public traffic never touches the k8s API. Ported from talaria's authed `/admin/cluster`. | [infra/cluster-status/README](infra/cluster-status/README.md) |
+| [`infra/priority-classes/`](infra/priority-classes/) | **Load-bearing for the whole cluster.** The three cluster-wide scheduling priorities, including the `platform-app` globalDefault that every pod here inherits without naming it. Pure policy, no workload. Moved out of talaria. | [infra/priority-classes/README](infra/priority-classes/README.md) |
+| [`infra/headlamp/`](infra/headlamp/) | Headlamp — Kubernetes dashboard on the LAN at `<node-ip>:30100`. Stock upstream chart, values only. **cluster-admin**: the login token is a full cluster credential, so it's deliberately never published externally. Moved out of talaria. | [infra/headlamp/README](infra/headlamp/README.md) |
 
 ## Conventions
 

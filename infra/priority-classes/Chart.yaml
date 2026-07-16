@@ -1,0 +1,9 @@
+apiVersion: v2
+name: priority-classes
+description: Cluster-wide pod scheduling priorities, including the globalDefault every workload inherits
+type: application
+version: 1.0.0
+# Pure policy: three cluster-scoped objects, no image, no workload.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

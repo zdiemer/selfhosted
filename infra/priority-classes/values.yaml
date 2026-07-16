@@ -1,0 +1,52 @@
+# Cluster-wide scheduling priority. Three PriorityClasses, one of which is the
+# globalDefault that EVERY pod on the cluster inherits unless it names another.
+#
+# These lived in the sibling talaria project's chart, which meant an app repo
+# owned the default scheduling policy for every workload here — 55 pods across
+# 11 namespaces, only 15 of them talaria's. Nothing in this repo names a
+# priorityClassName; they all inherit `platform-app` silently. Moved here so the
+# dependency is where the dependents are.
+#
+# HOW KUBERNETES USES THESE: the priority admission controller stamps a pod's
+# numeric priority at admission time, from its priorityClassName or from the
+# globalDefault. Higher wins when the scheduler has to choose, and a higher-
+# priority pending pod can preempt (evict) lower-priority running ones to make
+# room — unless the pending pod's class sets preemptionPolicy: Never.
+#
+# ⚠️  THE VALUE FIELD IS IMMUTABLE. Kubernetes will not let you change `value` on
+# an existing PriorityClass; you'd have to delete and recreate it, and deleting
+# the globalDefault has the failure mode described below. Name and description
+# are mutable. Think before renumbering.
+#
+# ⚠️  DELETING THE globalDefault IS QUIETLY DESTRUCTIVE. A pod's priority is baked
+# into its spec at admission, so running pods keep the value they were admitted
+# with. Remove `platform-app` and nothing appears to break — but every pod
+# scheduled afterwards admits at priority 0, while everything still running sits
+# at 10000. The next restart makes a workload preemptible by every pod that
+# hasn't restarted yet, and platform-core (100000) outranks it outright. The
+# symptom is inexplicable evictions, hours or days after the change.
+# `helm uninstall priority-classes` does exactly this. Don't, casually.
+
+priorityClasses:
+  # Stateful things whose eviction costs data or a long recovery: databases,
+  # search indices, caches, game servers. Deliberately above everything else.
+  - name: platform-core
+    value: 100000
+    globalDefault: false
+    description: "Stateful services whose eviction loses state or takes a slow recovery (databases, search, caches, game servers)"
+
+  # The globalDefault. Every pod that doesn't name a class lands here, which is
+  # currently every workload in this repo.
+  - name: platform-app
+    value: 10000
+    globalDefault: true
+    description: "Default for application deployments. Inherited by any pod that does not name a priorityClassName"
+
+  # Interruptible work. preemptionPolicy: Never means these can be evicted to
+  # make room for others, but will never evict anyone themselves — a burst of
+  # queued workers can't take the cluster down.
+  - name: batch-worker
+    value: 1000
+    globalDefault: false
+    preemptionPolicy: Never
+    description: "Interruptible queue workers (KEDA-scaled). Lowest priority, never preempts."

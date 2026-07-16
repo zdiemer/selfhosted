@@ -1,0 +1,33 @@
+# Headlamp — the cluster's Kubernetes dashboard.
+#
+# Stock upstream chart (headlamp/headlamp), so this is values only: no Chart.yaml
+# here, same shape as minecraft/. It lived in the sibling talaria project, which
+# had nothing to do with it — Headlamp is cluster infra and reads the whole
+# cluster.
+#
+# ⚠️  THIS SERVICE ACCOUNT IS cluster-admin. `clusterRoleBinding.create: true`
+# binds Headlamp's ServiceAccount to cluster-admin, which is what lets the UI
+# see and edit everything. A token minted for it is a full cluster credential —
+# treat `./token.sh` output like a root password. See the README before running
+# token-server.sh.
+#
+# ⚠️  NodePort 30100 is open on EVERY node IP, on the LAN, with no ingress and no
+# Authelia in front. Headlamp itself demands a token to do anything, so the
+# exposure is the login page rather than the cluster — but it is not behind the
+# tunnel and not behind auth. Reach it at http://<any-node-ip>:30100.
+#
+# Deliberately NOT published externally: no ingress, no cloudflareHosts. A
+# cluster-admin dashboard has no business on the public internet, and
+# status.diemer.codes already covers the read-only "how is the cluster doing"
+# case for anyone outside.
+
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30100
+
+clusterRoleBinding:
+  create: true
+
+serviceAccount:
+  create: true

@@ -1,0 +1,23 @@
+{{/*
+Cluster-scoped, so these carry no namespace — the release lives in `infra` but
+the objects belong to the whole cluster. They predate this chart (talaria's
+release created them), so upgrade.sh adopts them rather than trying to create
+over the top.
+
+Labels intentionally omit talaria's — these are no longer talaria's.
+*/}}
+{{- range .Values.priorityClasses }}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "priority-classes.labels" $ | nindent 4 }}
+value: {{ .value }}
+globalDefault: {{ .globalDefault }}
+{{- with .preemptionPolicy }}
+preemptionPolicy: {{ . }}
+{{- end }}
+description: {{ .description | quote }}
+{{- end }}
