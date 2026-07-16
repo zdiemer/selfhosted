@@ -4029,8 +4029,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
    attract's own chrome (the drawer owns the screen now). */
 .attract-overlay.attract-behind { z-index: 30; }
 .attract-overlay.attract-behind .attract-controls,
-.attract-overlay.attract-behind .attract-hint,
-.attract-overlay.attract-behind .attract-progress { display: none; }
+.attract-overlay.attract-behind .attract-hint { display: none; }
+/* Hidden with opacity, NOT display:none — the bar's frozen width must stay laid out so
+   the countdown can animate again from where it paused when the drawer closes. */
+.attract-overlay.attract-behind .attract-progress { opacity: 0; }
 
 /* Desktop: fade the chrome (and the cursor) after a still moment; any mouse move
    brings it back. attract.js only adds .attract-idle on a fine pointer, so touch

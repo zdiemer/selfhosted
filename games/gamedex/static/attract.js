@@ -20,6 +20,9 @@ let attractPaused = false;      // true while a game's drawer is open over a pau
 let attractPool = [];          // shuffled [{row, sheetKey}]
 let attractIdx = -1;
 let attractTimer = null;
+let attractDwellStart = 0;     // Date.now() when the current game's countdown began
+let attractDwellLeft = 16000;  // ms budgeted for it — trimmed to what's LEFT on a resume
+let attractStartPct = 0;       // bar % the current countdown began at (nonzero after a resume)
 let attractStage = null;       // the stage currently on screen
 let attractMuted = true;       // start muted so autoplay is never blocked
 let attractWentFullscreen = false;   // we requested fullscreen and should undo it on exit
@@ -95,7 +98,7 @@ function closeAttract() {
     host.innerHTML = "";
   }
   attractStage = null;
-  attractResetProgress(true);
+  attractClearProgress();
   document.removeEventListener("mousemove", attractPoke, true);
   clearTimeout(attractIdleTimer); attractIdleTimer = null;
   $("#attract-overlay").classList.remove("attract-idle", "attract-behind");
@@ -134,8 +137,15 @@ function attractPoke() {
 function attractPause() {
   if (!attractOn || attractPaused) return;
   attractPaused = true;
+  // Freeze the countdown mid-flight (all from time, no DOM reads): how far the bar had
+  // filled, and how much of this game's turn is left to bank for the resume.
+  const elapsed = Date.now() - attractDwellStart;
+  const frac = attractDwellLeft > 0 ? Math.min(1, elapsed / attractDwellLeft) : 1;
+  attractStartPct = attractStartPct + (100 - attractStartPct) * frac;
+  attractDwellLeft = Math.max(1500, attractDwellLeft - elapsed);
   clearTimeout(attractTimer); attractTimer = null;
   clearTimeout(attractIdleTimer); attractIdleTimer = null;
+  attractSetProgressStatic(attractStartPct);
   attractStopPlayer(attractStage);
   const ov = $("#attract-overlay");
   ov.classList.remove("attract-idle");
@@ -150,7 +160,7 @@ function attractResume() {
   $("#attract-overlay").classList.remove("attract-behind");
   syncScrollLock();
   if (attractDesktop()) attractPoke();
-  attractNext(0);                 // resume the SAME game — reopen its scene, don't skip on
+  attractNext(0, attractDwellLeft, attractStartPct);   // same game, from where its turn paused
   return true;
 }
 
@@ -181,7 +191,7 @@ function attractKey(e) {
   }
 }
 
-function attractNext(dir) {
+function attractNext(dir, dwellMs, startPct) {
   if (!attractOn) return;
   clearTimeout(attractTimer); attractTimer = null;
   const n = attractPool.length;
@@ -207,22 +217,36 @@ function attractNext(dir) {
   const nxt = attractPool[(attractIdx + 1) % n];
   if (nxt && nxt.row._k) attractFetchDetail(nxt.row._k);
 
-  attractResetProgress();
-  attractTimer = setTimeout(() => attractNext(1), ATTRACT_DWELL);
+  // A fresh game (or a manual next/prev) gets the full dwell from an empty bar. A
+  // resume passes the time that was LEFT when the drawer opened AND the bar % it froze
+  // at, so the countdown continues from there rather than restarting.
+  const ms = dwellMs || ATTRACT_DWELL;
+  attractDwellStart = Date.now();
+  attractDwellLeft = ms;
+  attractStartPct = startPct || 0;
+  attractSetProgress(attractStartPct, ms);
+  attractTimer = setTimeout(() => attractNext(1), ms);
 }
 
-// The countdown bar: fill 0→100% over one dwell, restarted on every game. It's
-// the "when does it move on" indicator; a manual next/prev just restarts it.
-function attractResetProgress(clear) {
+// The countdown bar. Progress is tracked from TIME (not by measuring the animating
+// DOM), so freezing it mid-flight is exact. attractSetProgress animates startPct→100%
+// over `ms`; attractSetProgressStatic pins it; attractClearProgress empties it.
+function attractSetProgress(startPct, ms) {
   const fill = $("#attractProgressFill");
   if (!fill) return;
   fill.style.transition = "none";
-  fill.style.width = "0%";
-  if (clear) return;
-  void fill.offsetWidth;                                   // commit the reset before animating
-  fill.style.transition = `width ${ATTRACT_DWELL}ms linear`;
+  fill.style.width = startPct + "%";
+  void fill.offsetWidth;                                   // commit the start before animating
+  fill.style.transition = `width ${ms}ms linear`;
   fill.style.width = "100%";
 }
+function attractSetProgressStatic(pct) {
+  const fill = $("#attractProgressFill");
+  if (!fill) return;
+  fill.style.transition = "none";
+  fill.style.width = pct + "%";
+}
+function attractClearProgress() { attractSetProgressStatic(0); }
 
 function attractBuildStage(entry) {
   const { row, sheetKey } = entry;
