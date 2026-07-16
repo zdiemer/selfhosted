@@ -2,7 +2,10 @@
 
 Helm charts and install scripts for the services running on my home k3s
 cluster (10 nodes: 3 control-plane, 7 workers). External exposure goes
-through the sibling `talaria` project's DuckDNS + cert-manager ingress.
+through [`infra/duckdns/`](infra/duckdns/): DuckDNS dynamic DNS plus a
+Traefik ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard
+cert (no cert-manager involved). Some services are additionally published
+on `diemer.codes` via [`infra/cloudflared/`](infra/cloudflared/).
 
 Each subfolder is a standalone project with its own chart, docs, and
 install/upgrade scripts. Per-project secrets live in a gitignored
@@ -29,6 +32,7 @@ repo stays the full index of what runs on the cluster. Clone with
 | [`web/kelsey-green/`](web/kelsey-green/) | kelsey.green — static Astro site, no image of our own: git-sync pulls the CI-built `deploy` branch and nginx serves it. Public via a Cloudflare tunnel (outbound-only) as well as the usual DuckDNS ingress. | [web/kelsey-green/README](web/kelsey-green/README.md) |
 | [`web/old-diemer-codes/`](web/old-diemer-codes/) → **submodule** | old.diemer.codes — the 2019 Create React App personal site, kept exactly as it was. Inverts the usual submodule shape: the app repo is a frozen archive we don't modify, so the chart + Dockerfile live here and the source is the submodule under `site/`. Public via the shared Cloudflare tunnel. | [web/old-diemer-codes/README](web/old-diemer-codes/README.md) |
 | [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. Reusable for more domains. | [infra/cloudflared/README](infra/cloudflared/README.md) |
+| [`infra/duckdns/`](infra/duckdns/) | **Load-bearing for the whole cluster.** Keeps `zachd.duckdns.org` pointed at the house (updater CronJob) *and* defines the `duckdns` Traefik ACME DNS-01 certresolver every ingress here names, holding the `*.zachd.duckdns.org` wildcard cert. Moved out of the sibling `talaria` project. | [infra/duckdns/README](infra/duckdns/README.md) |
 
 ## Conventions
 

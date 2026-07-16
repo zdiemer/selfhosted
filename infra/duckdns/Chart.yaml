@@ -1,0 +1,10 @@
+apiVersion: v2
+name: duckdns
+description: DuckDNS dynamic DNS updater + the Traefik ACME certresolver every ingress in this cluster rides on
+type: application
+version: 1.0.0
+# No app image of our own: the updater is a curl one-liner and the rest is
+# config. appVersion tracks the updater image, not a build.
+appVersion: "8.11.1"
+maintainers:
+  - name: zachd

@@ -1,0 +1,11 @@
+# Copy to values.local.yaml (gitignored) and fill in. The token never belongs in git.
+#
+#   Sign in at https://www.duckdns.org — the token is the UUID shown at the top
+#   of the page, and it is the same one for every domain on the account. It
+#   grants full control of all of them (including re-pointing them at someone
+#   else's IP): treat it like a password.
+#
+# The live cluster's value can also be read back out of the running secret:
+#
+#   kubectl get secret duckdns-token -n kube-system -o jsonpath='{.data.token}' | base64 -d
+token: "00000000-0000-0000-0000-000000000000"

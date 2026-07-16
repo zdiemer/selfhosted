@@ -1,0 +1,57 @@
+{{- if .Values.traefik.enabled }}
+{{/*
+k3s ships Traefik as a managed HelmChart. A HelmChartConfig named after that
+release lets us overlay values onto it without owning the install — the
+helm-controller merges this in and redeploys Traefik whenever `valuesContent`
+changes. Keep edits deliberate: every change here is a cluster-wide ingress
+blip, and `deployment.strategy: Recreate` (below) means it's a real gap rather
+than a rolling one.
+
+`valuesContent` is Traefik's entire overlay, so it necessarily carries a few
+non-DuckDNS settings (the ACME storage PVC, the http->https redirect, the
+Recreate strategy). They're here because they share the object, not because
+they belong to DuckDNS.
+*/}}
+{{- $r := .Values.traefik.certResolver }}
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: {{ .Values.traefik.name }}
+  namespace: {{ .Values.traefik.namespace }}
+  labels:
+    {{- include "duckdns.labels" . | nindent 4 }}
+spec:
+  valuesContent: |-
+    persistence:
+      enabled: true
+      size: {{ .Values.traefik.acmeStorage.size }}
+      path: {{ .Values.traefik.acmeStorage.path }}
+      accessMode: ReadWriteOnce
+    deployment:
+      kind: Deployment
+      strategy:
+        type: Recreate
+    ports:
+      web:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+    additionalArguments:
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge=true"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.provider=duckdns"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.resolvers={{ join "," .Values.traefik.acme.resolvers }}"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.delaybeforecheck={{ .Values.traefik.acme.delayBeforeCheck }}"
+      - "--certificatesresolvers.{{ $r }}.acme.email={{ .Values.traefik.acme.email }}"
+      - "--certificatesresolvers.{{ $r }}.acme.storage={{ .Values.traefik.acmeStorage.path }}/acme.json"
+    env:
+      - name: DUCKDNS_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: {{ include "duckdns.secretName" . }}
+            key: token
+      - name: DUCKDNS_PROPAGATION_TIMEOUT
+        value: "{{ .Values.traefik.acme.propagationTimeout }}"
+      - name: DUCKDNS_POLLING_INTERVAL
+        value: "{{ .Values.traefik.acme.pollingInterval }}"
+{{- end }}

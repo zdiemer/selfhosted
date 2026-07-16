@@ -1,0 +1,66 @@
+{{- if .Values.updater.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "duckdns.fullname" . }}-updater
+  labels:
+    {{- include "duckdns.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.updater.schedule | quote }}
+  # A backed-up run has nothing to add: the next tick sends the same IP.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Don't retry for 6 hours on a persistent failure (revoked token, no
+      # egress) — the next tick is 5 minutes away and is the real retry.
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "duckdns.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: updater
+              image: {{ .Values.updater.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: DUCKDNS_DOMAIN
+                  value: {{ .Values.domain | quote }}
+                - name: DUCKDNS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "duckdns.secretName" . }}
+                      key: token
+              command:
+                - sh
+                - -c
+                # An empty `ip=` is the whole trick: DuckDNS records whatever
+                # source IP the request arrives from, so the cluster never has
+                # to discover its own public address.
+                #
+                # DuckDNS answers HTTP 200 with a literal "KO" body on a bad
+                # token or an unknown domain, so the status code alone can't
+                # tell success from failure — the body is the real result, and
+                # a silent `curl -s` would let a dead token look healthy for
+                # months. Exit non-zero so a broken run actually surfaces.
+                - |
+                  set -eu
+                  resp="$(curl -fsS --retry 3 --retry-delay 5 \
+                    "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=")"
+                  echo "duckdns update ${DUCKDNS_DOMAIN}: ${resp}"
+                  [ "${resp}" = "OK" ]
+              resources:
+                {{- toYaml .Values.updater.resources | nindent 16 }}
+{{- end }}
