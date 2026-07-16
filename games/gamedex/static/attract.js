@@ -344,10 +344,17 @@ function attractArtImg(src, motion) {
   img.className = "attract-art" + (motion && WANTS_MOTION ? " kb" : "");
   img.src = src;
   if (motion && WANTS_MOTION) {
+    // Desktop/landscape: zoom + drift toward a random point.
     img.style.setProperty("--kb-x", (Math.random() * 10 - 5).toFixed(1) + "%");
     img.style.setProperty("--kb-y", (Math.random() * 10 - 5).toFixed(1) + "%");
     img.style.setProperty("--kb-s", (1.16 + Math.random() * 0.12).toFixed(3));
     img.style.setProperty("--kb-dur", (16 + Math.random() * 8).toFixed(1) + "s");
+    // Portrait (phones): a landscape screenshot overflows the sides under cover-fit,
+    // so pan across it horizontally — a fixed random direction per screenshot (see CSS).
+    const l2r = Math.random() < 0.5;
+    img.style.setProperty("--pan-from", l2r ? "12%" : "88%");
+    img.style.setProperty("--pan-to", l2r ? "88%" : "12%");
+    img.style.setProperty("--pan-dur", (22 + Math.random() * 10).toFixed(1) + "s");
   }
   return img;
 }

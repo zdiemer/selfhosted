@@ -3959,6 +3959,21 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   from { transform: scale(1.06) translate3d(0, 0, 0); }
   to   { transform: scale(var(--kb-s, 1.2)) translate3d(var(--kb-x, -2%), var(--kb-y, -2%), 0); }
 }
+/* Portrait (phones): a landscape screenshot cover-fits to the height and overflows the
+   sides, so instead of the zoom, slide across it horizontally — a slow, fixed
+   random-direction pan per screenshot. Video (.attract-frame) is unaffected. */
+@keyframes attract-pan-x {
+  from { object-position: var(--pan-from, 15%) center; }
+  to   { object-position: var(--pan-to, 85%) center; }
+}
+@media (orientation: portrait) {
+  .attract-art.kb {
+    animation-name: attract-pan-x;
+    animation-duration: var(--pan-dur, 24s);
+    animation-timing-function: linear;
+    transform: scale(1.04);
+  }
+}
 /* The trailer, fading in over the art only once it truly starts. */
 .attract-video { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease; }
 .attract-video.on { opacity: 1; }
