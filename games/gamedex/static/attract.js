@@ -229,7 +229,8 @@ function attractBuildStage(entry) {
 
   const stage = document.createElement("div");
   stage.className = "attract-stage";
-  stage._loop = null; stage._watch = null; stage._frame = null; stage._shotLoop = null; stage._dead = false;
+  stage._loop = null; stage._watch = null; stage._frame = null; stage._shotLoop = null;
+  stage._dead = false; stage._videoLive = false; stage._detail = null; stage._k = k;
 
   const bg = document.createElement("div");
   bg.className = "attract-bg";
@@ -253,52 +254,73 @@ function attractBuildStage(entry) {
   stage.appendChild(bg);
   stage.appendChild(scrim);
   stage.appendChild(info);
+  stage._bg = bg; stage._scrim = scrim;
 
   // Click anywhere on a game → step aside into its full drawer; closing the drawer
   // resumes the slideshow (attractPause + closeDrawer's attractResume hook).
   stage.addEventListener("click", () => { attractPause(); openDrawer(row, sheetKey); });
 
-  const vid = e.video;
-  const wantsVideo = vid && !YT_BLOCKED && WANTS_MOTION;
-  if (wantsVideo) attractPlayVideo(stage, bg, vid, cs);
-  else attractShowArt(bg, cs, false);
-
-  // Upgrade with the full detail once it lands: summary, genres, rating, and — when
-  // there's no trailer — a screenshot backdrop, which beats the box art.
+  // The BACKDROP is always the game's own imagery — the cover right away, upgraded to
+  // a cross-fading screenshot slideshow once the detail lands. A trailer, when we have
+  // one, is a separate layer that fades in OVER this only if it genuinely plays. So a
+  // device that blocks YouTube (or a dead trailer) just shows the screenshots — no
+  // stretched box art, no black rectangle.
+  attractShowArt(bg, cs, true);
   if (k) attractFetchDetail(k).then((d) => {
     if (!d || stage._dead) return;
+    stage._detail = d;
     attractFillDetail(stage, row, d);
-    if (!wantsVideo) {
-      // No trailer → cross-fade through the game's screenshots (then artworks) as
-      // the backdrop; a single one just gets the Ken-Burns still.
-      const shots = [...(d.screenshots || []), ...(d.artworks || [])].slice(0, 6).map((id) => IMG(id, "screenshot_big"));
-      if (WANTS_MOTION && shots.length > 1) attractRunShots(stage, bg, shots);
-      else if (shots.length) attractShowArt(bg, shots[0], true);
-    }
+    if (!stage._videoLive) attractShowBackdrop(stage, d, cs);
   });
+
+  if (e.video && !YT_BLOCKED && WANTS_MOTION) attractPlayVideo(stage, e.video, cs);
 
   return stage;
 }
 
-// A still backdrop: blurred and dimmed so the details read over it, optionally with
-// a slow Ken-Burns drift (only when the game has no trailer and motion is welcome).
+// Pick the best backdrop from a game's detail: cross-fade its screenshots (then
+// artworks); a single image gets a Ken-Burns still; nothing usable falls back to the
+// cover, which at least pans rather than sitting there stretched.
+function attractShowBackdrop(stage, d, cs) {
+  const shots = [...((d && d.screenshots) || []), ...((d && d.artworks) || [])]
+    .slice(0, 6).map((id) => IMG(id, "screenshot_big"));
+  if (WANTS_MOTION && shots.length > 1) attractRunShots(stage, stage._bg, shots);
+  else attractShowArt(stage._bg, shots[0] || cs, true);
+}
+
+// A slow Ken-Burns pan+zoom, each image in a RANDOM direction so consecutive shots
+// don't all drift the same way. The end point and duration ride on CSS vars.
+function attractArtImg(src, motion) {
+  const img = document.createElement("img");
+  img.className = "attract-art" + (motion && WANTS_MOTION ? " kb" : "");
+  img.src = src;
+  if (motion && WANTS_MOTION) {
+    img.style.setProperty("--kb-x", (Math.random() * 10 - 5).toFixed(1) + "%");
+    img.style.setProperty("--kb-y", (Math.random() * 10 - 5).toFixed(1) + "%");
+    img.style.setProperty("--kb-s", (1.16 + Math.random() * 0.12).toFixed(3));
+    img.style.setProperty("--kb-dur", (16 + Math.random() * 8).toFixed(1) + "s");
+  }
+  return img;
+}
+
+// A single blurred, dimmed backdrop image (optionally panning).
 function attractShowArt(bg, src, motion) {
   if (!src) { bg.innerHTML = ""; bg.classList.add("attract-bg-empty"); return; }
   bg.classList.remove("attract-bg-empty");
-  bg.innerHTML = `<img class="attract-art${motion && WANTS_MOTION ? " kb" : ""}" src="${escapeHtml(src)}" alt="">`;
+  bg.innerHTML = "";
+  bg.appendChild(attractArtImg(src, motion));
 }
 
 const ATTRACT_SHOT_MS = 4200;   // how long each screenshot holds before the next fades in
 // Cross-fade through several screenshots for the length of the game's turn. New layers
 // fade in over the old (which is dropped after the fade), so at most two are ever live.
 function attractRunShots(stage, bg, shots) {
+  if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
   bg.classList.remove("attract-bg-empty");
   bg.innerHTML = "";
   let i = 0, cur = null;
   const show = (idx) => {
-    const img = document.createElement("img");
-    img.className = "attract-art kb";
-    img.src = shots[idx];
+    const img = attractArtImg(shots[idx], true);
     img.style.opacity = "0";
     bg.appendChild(img);
     void img.offsetWidth;                     // commit opacity:0 so the fade-in runs
@@ -310,12 +332,12 @@ function attractRunShots(stage, bg, shots) {
   stage._shotLoop = setInterval(() => { i = (i + 1) % shots.length; show(i); }, ATTRACT_SHOT_MS);
 }
 
-// The trailer as a full-bleed backdrop. Same clean-embed trick as the hover
-// preview (no start/loop params — seek + loop over the IFrame API instead, so
-// YouTube doesn't draw its full chrome), sized to cover the viewport. It fades in
-// only once it truly starts, so a dead/blocked trailer just leaves the art showing.
-function attractPlayVideo(stage, bg, vid, cs) {
-  attractShowArt(bg, cs, false);          // art shows first; video reveals over it
+// The trailer as a full-bleed layer OVER the screenshot backdrop. Same clean-embed
+// trick as the hover preview (no start/loop params — seek + loop over the IFrame API,
+// so YouTube draws no chrome). It stays invisible until it truly starts, so a blocked
+// or dead trailer never shows — the screenshots behind it carry the screen. If it does
+// start, it stops the slideshow (no point cross-fading behind an opaque video).
+function attractPlayVideo(stage, vid, cs) {
   const wrap = document.createElement("div");
   wrap.className = "attract-video";
   const frame = document.createElement("iframe");
@@ -327,13 +349,18 @@ function attractPlayVideo(stage, bg, vid, cs) {
   frame.tabIndex = -1;
   frame.setAttribute("aria-hidden", "true");
   wrap.appendChild(frame);
-  bg.appendChild(wrap);
+  stage.insertBefore(wrap, stage._scrim);   // above the backdrop, below scrim + details
   stage._frame = frame;
 
   let duration = 0, clip = null;
   stage._watch = ytWatch(frame,
-    () => { wrap.remove(); stage._frame = null; },     // never played → keep the art
-    () => { wrap.classList.add("on"); ytCmd(frame, attractMuted ? "mute" : "unMute"); },
+    () => { wrap.remove(); stage._frame = null; attractVideoFailed(stage, cs); },
+    () => {
+      stage._videoLive = true;
+      if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
+      wrap.classList.add("on");
+      ytCmd(frame, attractMuted ? "mute" : "unMute");
+    },
     (info) => {
       if (info.duration) duration = info.duration;
       if (!clip && duration) {
@@ -342,6 +369,16 @@ function attractPlayVideo(stage, bg, vid, cs) {
         stage._loop = setInterval(() => ytCmd(frame, "seekTo", [clip.start, true]), clip.len * 1000);
       }
     });
+}
+
+// The trailer never played — make sure the screenshot backdrop is up (it usually
+// already is from the detail fetch; this covers the race where detail lands late).
+function attractVideoFailed(stage, cs) {
+  if (stage._dead || stage._videoLive || stage._shotLoop) return;
+  if (stage._detail) attractShowBackdrop(stage, stage._detail, cs);
+  else if (stage._k) attractFetchDetail(stage._k).then((d) => {
+    if (d && !stage._dead && !stage._videoLive) { stage._detail = d; attractShowBackdrop(stage, d, cs); }
+  });
 }
 
 function attractFillDetail(stage, row, d) {

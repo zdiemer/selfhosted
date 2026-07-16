@@ -3952,10 +3952,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   filter: blur(2px) brightness(.68); transform: scale(1.06);
   transition: opacity .95s ease;   /* stacked layers cross-fade for the screenshot slideshow */
 }
-.attract-art.kb { animation: attract-kb 26s ease-in-out infinite alternate; }
+/* Ken-Burns: slow pan+zoom toward a per-image random end point (set by attract.js). */
+.attract-art.kb { animation: attract-kb var(--kb-dur, 20s) ease-in-out infinite alternate; }
 @keyframes attract-kb {
   from { transform: scale(1.06) translate3d(0, 0, 0); }
-  to   { transform: scale(1.2) translate3d(-2.5%, -2%, 0); }
+  to   { transform: scale(var(--kb-s, 1.2)) translate3d(var(--kb-x, -2%), var(--kb-y, -2%), 0); }
 }
 /* The trailer, fading in over the art only once it truly starts. */
 .attract-video { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease; }
