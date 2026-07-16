@@ -1701,6 +1701,7 @@ html.modal-open body { position: fixed; left: 0; right: 0; width: 100%; }
   }
   .h-dots { position: static; flex-basis: 100%; justify-content: center; margin-top: 4px; }
   .h-sect { padding: 18px 12px 4px; }
+  .h-top { padding: 12px 12px 0; }
   .h-otd-head { padding: 20px 12px 0; }
   .h-shelf > .card { flex-basis: 124px; }
   .h-picks { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px; }
@@ -4053,7 +4054,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 
 /* Home launcher */
-.h-top { display: flex; justify-content: flex-end; padding-top: 14px; margin-bottom: 10px; }
+/* Align with the section column (max-width + 20px inset) so the button doesn't hug
+   the screen edge. */
+.h-top { max-width: 1180px; margin: 0 auto 10px; padding: 14px 20px 0; display: flex; justify-content: flex-end; }
 .h-attract {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 15px; border-radius: 999px; cursor: pointer;
