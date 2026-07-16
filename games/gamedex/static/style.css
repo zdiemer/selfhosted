@@ -3961,9 +3961,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* The trailer, fading in over the art only once it truly starts. */
 .attract-video { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease; }
 .attract-video.on { opacity: 1; }
-/* Cover the viewport with a 16:9 iframe, cropping the overflow either way. */
+/* Cover the viewport with a 16:9 iframe, cropping the overflow either way. The extra
+   scale + upward nudge push YouTube's top title/share chrome (which controls=0 doesn't
+   suppress, and which flashes for ~2.5s on start) off the top edge, out of view. */
 .attract-frame {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -54%) scale(1.22);
   width: 100vw; height: 56.25vw; min-height: 100vh; min-width: 177.78vh;
   border: 0; pointer-events: none;
 }

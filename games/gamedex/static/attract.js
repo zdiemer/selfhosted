@@ -169,6 +169,7 @@ function attractStopPlayer(stage) {
   if (!stage) return;
   if (stage._loop) { clearInterval(stage._loop); stage._loop = null; }
   if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
+  if (stage._volRamp) { clearInterval(stage._volRamp); stage._volRamp = null; }
   if (stage._watch) { stage._watch(); stage._watch = null; }
   if (stage._frame) {
     const wrap = stage._frame.closest(".attract-video");
@@ -209,6 +210,7 @@ function attractNext(dir, dwellMs, startPct) {
   stage.classList.add("attract-in");
   if (prev) {
     prev.classList.remove("attract-in");
+    attractRampVolume(prev, 0, ATTRACT_FADE);   // fade the outgoing trailer's audio out too
     setTimeout(() => attractTeardownStage(prev), ATTRACT_FADE);
   }
   attractStage = stage;
@@ -258,6 +260,7 @@ function attractBuildStage(entry) {
   stage.className = "attract-stage";
   stage._loop = null; stage._watch = null; stage._frame = null; stage._shotLoop = null;
   stage._dead = false; stage._videoLive = false; stage._detail = null; stage._k = k;
+  stage._volRamp = null; stage._vol = 0;
 
   const bg = document.createElement("div");
   bg.className = "attract-bg";
@@ -386,7 +389,11 @@ function attractPlayVideo(stage, vid, cs) {
       stage._videoLive = true;
       if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
       wrap.classList.add("on");
-      ytCmd(frame, attractMuted ? "mute" : "unMute");
+      // Start silent, then ease the audio up (only audible once unmuted). The visual
+      // itself already cross-fades via CSS; this gives the sound the same soft entrance.
+      ytCmd(frame, "setVolume", [0]); stage._vol = 0;
+      if (attractMuted) ytCmd(frame, "mute");
+      else attractRampVolume(stage, 100, ATTRACT_AUDIO_FADE);
     },
     (info) => {
       if (info.duration) duration = info.duration;
@@ -396,6 +403,28 @@ function attractPlayVideo(stage, vid, cs) {
         stage._loop = setInterval(() => ytCmd(frame, "seekTo", [clip.start, true]), clip.len * 1000);
       }
     });
+}
+
+const ATTRACT_AUDIO_FADE = 1100;   // ms to ease a trailer's audio in / out
+// Ramp a stage's trailer volume from where it is to `to` (0–100) over `ms`, via the
+// IFrame API's setVolume. YouTube autoplay forces a muted start, so this is only
+// audible after the user has unmuted — but the fade is applied regardless.
+function attractRampVolume(stage, to, ms) {
+  if (!stage || !stage._frame) return;
+  if (stage._volRamp) { clearInterval(stage._volRamp); stage._volRamp = null; }
+  const frame = stage._frame;
+  const from = stage._vol != null ? stage._vol : 0;
+  const t0 = Date.now();
+  if (to > 0) ytCmd(frame, "unMute");
+  stage._volRamp = setInterval(() => {
+    const p = Math.min(1, (Date.now() - t0) / ms);
+    stage._vol = Math.round(from + (to - from) * p);
+    ytCmd(frame, "setVolume", [Math.max(0, Math.min(100, stage._vol))]);
+    if (p >= 1) {
+      clearInterval(stage._volRamp); stage._volRamp = null;
+      if (to <= 0) ytCmd(frame, "mute");   // silence fully once faded out
+    }
+  }, 50);
 }
 
 // The trailer never played — make sure the screenshot backdrop is up (it usually
@@ -433,6 +462,7 @@ function attractTeardownStage(stage) {
   stage._dead = true;
   if (stage._loop) { clearInterval(stage._loop); stage._loop = null; }
   if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
+  if (stage._volRamp) { clearInterval(stage._volRamp); stage._volRamp = null; }
   if (stage._watch) { stage._watch(); stage._watch = null; }   // ytWatch's own cleanup
   stage.remove();
 }
@@ -454,7 +484,11 @@ function attractFetchDetail(k) {
 
 function attractToggleMute() {
   attractMuted = !attractMuted;
-  if (attractStage && attractStage._frame) ytCmd(attractStage._frame, attractMuted ? "mute" : "unMute");
+  const stage = attractStage;
+  if (stage && stage._frame) {
+    if (attractMuted) attractRampVolume(stage, 0, 450);    // fade down, then mute
+    else attractRampVolume(stage, 100, 650);               // unmute + fade up
+  }
   attractApplyMuteBtn();
 }
 function attractApplyMuteBtn() {
