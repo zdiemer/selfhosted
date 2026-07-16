@@ -86,6 +86,11 @@ ingress:
   enabled: false
   className: traefik
   host: pdf.zachd.duckdns.org
+  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared). TLS
+  # for these is terminated at Cloudflare, so they are NOT added to the ACME cert
+  # list. A list — add more domains here to serve this app on them too.
+  cloudflareHosts:
+    - pdf.diemer.codes
   tls:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain

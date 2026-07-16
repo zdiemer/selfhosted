@@ -52,6 +52,11 @@ stringData:
         {{- toYaml .Values.accessControl.rules | nindent 8 }}
 
     session:
+      # One cookie per registrable domain Authelia protects. A browser scopes
+      # each cookie to its domain, so SSO is shared within a domain, not across
+      # them — during a domain migration both live side by side and users get an
+      # independent session on whichever domain they use. Add a domain here (and
+      # reach Authelia at its authelia_url) to protect apps served on it.
       cookies:
         - name: authelia_session
           domain: {{ .Values.sessionDomain | quote }}
@@ -60,6 +65,15 @@ stringData:
           expiration: 1h
           inactivity: 15m
           remember_me: 1M
+        {{- range .Values.extraSessionCookies }}
+        - name: authelia_session
+          domain: {{ .domain | quote }}
+          authelia_url: {{ .autheliaUrl | quote }}
+          same_site: lax
+          expiration: 1h
+          inactivity: 15m
+          remember_me: 1M
+        {{- end }}
 
     regulation:
       max_retries: 3

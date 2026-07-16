@@ -30,6 +30,23 @@ stringData:
   PAPERLESS_URL: {{ . | quote }}
   {{- end }}
 
+  {{- /*
+    Serving on a second domain (the Cloudflare tunnel host) needs Django to trust
+    that origin for CSRF, or logins/POSTs 400. Trust every hostname this app is
+    served on — the DuckDNS ingress host plus any cloudflareHosts. PAPERLESS_URL
+    above stays the canonical URL for absolute links.
+
+    ALLOWED_HOSTS is deliberately NOT pinned: it stays at Paperless's default
+    ('*'). The kubelet health probe hits the pod by IP, and a pinned ALLOWED_HOSTS
+    would reject that Host as DisallowedHost, so the pod would never go Ready.
+    Traefik and the tunnel already constrain which hostnames reach this service.
+  */}}
+  {{- if .Values.ingress.cloudflareHosts }}
+  {{- $origins := list }}
+  {{- range prepend .Values.ingress.cloudflareHosts .Values.ingress.host }}{{ $origins = append $origins (printf "https://%s" .) }}{{- end }}
+  PAPERLESS_CSRF_TRUSTED_ORIGINS: {{ join "," $origins | quote }}
+  {{- end }}
+
   {{- if .Values.paperless.tikaEnabled }}
   PAPERLESS_TIKA_ENABLED: "1"
   PAPERLESS_TIKA_ENDPOINT: "http://{{ $fullname }}-tika:{{ .Values.tika.service.port }}"

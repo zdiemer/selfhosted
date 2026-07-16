@@ -1,0 +1,52 @@
+# A Cloudflare Tunnel connector. Domain-agnostic: this chart just runs the
+# connector and feeds it a token. It currently fronts the diemer.codes zone, but
+# nothing here is tied to that name.
+#
+# The connection is outbound-only: cloudflared dials Cloudflare's edge and holds
+# it open. Nothing listens here, no inbound port is forwarded, and the home IP
+# can change without anything breaking. Cloudflare terminates public TLS and
+# forwards each request through the tunnel to the in-cluster Traefik service,
+# which routes by Host header to the right chart (each service grows an
+# `ingress.cloudflareHosts` list entry for its external name).
+#
+# The public-hostname -> service map lives ON the tunnel in the Cloudflare
+# dashboard (Zero Trust -> Networks -> Tunnels), NOT in this chart — the connector
+# pulls that config down using the token. Every public hostname there points at:
+#
+#     Service:       https://traefik.kube-system.svc.cluster.local:443
+#     TLS:           No TLS Verify = ON   (Traefik serves the DuckDNS wildcard
+#                    cert, whose name won't match an external domain; the tunnel
+#                    is the trust boundary, so the mismatch is expected/ignored)
+#     HTTP Host Hdr: (leave blank — preserve original, so Traefik can route)
+#
+# ADDING ANOTHER DOMAIN — two options, no code change either way:
+#   1. Same tunnel (simplest): a single tunnel can publish hostnames from any
+#      number of zones in the same Cloudflare account. Just add the new zone to
+#      Cloudflare and add its public hostnames to THIS tunnel. Add the new host to
+#      the relevant service's `ingress.cloudflareHosts`. This connector serves it
+#      with no redeploy of its own.
+#   2. Separate connector (isolation): install a second release of this chart with
+#      its own token — `RELEASE=cloudflared-otherdomain NAMESPACE=infra ./upgrade.sh`.
+#      Every resource is release-name-derived, so multiple connectors coexist.
+
+# Two replicas with anti-affinity: Cloudflare load-balances across all healthy
+# connectors, so a node drain stays invisible.
+replicaCount: 2
+
+image:
+  repository: cloudflare/cloudflared
+  tag: "2026.6.1"
+  pullPolicy: IfNotPresent
+
+# REQUIRED — set in values.local.yaml (gitignored). The connector token from the
+# Cloudflare dashboard: Zero Trust -> Networks -> Tunnels -> your tunnel -> the
+# long value after `--token` in the install snippet (starts with eyJ...). It is a
+# bearer credential for the whole tunnel: treat it like a password.
+token: ""
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

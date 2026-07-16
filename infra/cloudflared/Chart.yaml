@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cloudflared
+description: Shared Cloudflare Tunnel connector — publishes *.diemer.codes through Traefik over an outbound-only tunnel
+type: application
+version: 1.0.0
+# No app image of our own: this chart runs stock cloudflared. appVersion tracks
+# the connector image, not a build.
+appVersion: "2026.6.1"
+maintainers:
+  - name: zachd

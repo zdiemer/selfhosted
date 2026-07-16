@@ -16,6 +16,14 @@ externalUrl: "https://auth.zachd.duckdns.org"
 # this domain so the session cookie is sent to them.
 sessionDomain: "zachd.duckdns.org"
 
+# Additional cookie domains Authelia protects, beyond the primary above. Each
+# needs its own reachable Authelia URL (published via the Cloudflare tunnel —
+# infra/cloudflared). A browser can't share one cookie across two registrable
+# domains, so each domain is its own SSO realm. Empty = single-domain (duckdns).
+extraSessionCookies:
+  - domain: "diemer.codes"
+    autheliaUrl: "https://auth.diemer.codes"
+
 persistence:
   # Holds the SQLite storage database (user 2FA registrations, OIDC consent
   # history). Tiny; a few MB after years of use.
@@ -49,6 +57,13 @@ accessControl:
     # apps can't do an OIDC redirect, so webdav.zachd uses its own static
     # Basic auth (see ../keepass/).
     - domain: "keepass.zachd.duckdns.org"
+      policy: "two_factor"
+    # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
+    # already two_factor, so these are explicit-for-parity rather than strictly
+    # required; keeping them mirrors the duckdns hosts as those get retired.
+    - domain: "romm.diemer.codes"
+      policy: "two_factor"
+    - domain: "keepass.diemer.codes"
       policy: "two_factor"
 
 # OIDC clients (values.local.yaml holds the real secrets). Each entry is a
@@ -99,6 +114,11 @@ ingress:
   enabled: false                      # flip on once secrets + users are populated
   className: traefik
   host: auth.zachd.duckdns.org
+  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared). TLS
+  # for these is terminated at Cloudflare, so they are NOT added to the ACME cert
+  # list. A list — add more domains here to serve this app on them too.
+  cloudflareHosts:
+    - auth.diemer.codes
   tls:
     enabled: true
     certResolver: duckdns

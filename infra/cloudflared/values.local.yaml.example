@@ -1,0 +1,6 @@
+# Copy to values.local.yaml (gitignored) and fill in. The token never belongs in git.
+#
+#   Zero Trust -> Networks -> Tunnels -> <your tunnel> -> Configure -> copy the
+#   token from the install command (the long eyJ... string after `--token`).
+#   It is a bearer credential for the tunnel: treat it like a password.
+token: "eyJ...replace-me..."

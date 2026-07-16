@@ -27,6 +27,25 @@ spec:
                 name: {{ include "gamedex.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
+    {{- /*
+      Extra hosts served over the Cloudflare tunnel: TLS is terminated at
+      Cloudflare's edge, so these are deliberately absent from the ACME cert list
+      below. Traefik routes them by Host header; the tunnel dials in with No TLS
+      Verify. A list, so the service can be published across any number of
+      external domains. See infra/cloudflared.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gamedex.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
