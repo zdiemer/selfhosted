@@ -4024,6 +4024,14 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background: rgba(0,0,0,.4); backdrop-filter: blur(6px);
   text-shadow: 0 1px 4px rgba(0,0,0,.7);
 }
+/* A game's drawer is open over a paused run: sit BELOW the drawer (z-index 40) so it
+   shows on top, keep the game's scene visible through the drawer's scrim, and hide
+   attract's own chrome (the drawer owns the screen now). */
+.attract-overlay.attract-behind { z-index: 30; }
+.attract-overlay.attract-behind .attract-controls,
+.attract-overlay.attract-behind .attract-hint,
+.attract-overlay.attract-behind .attract-progress { display: none; }
+
 /* Desktop: fade the chrome (and the cursor) after a still moment; any mouse move
    brings it back. attract.js only adds .attract-idle on a fine pointer, so touch
    keeps its controls up. */

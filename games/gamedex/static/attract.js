@@ -98,7 +98,7 @@ function closeAttract() {
   attractResetProgress(true);
   document.removeEventListener("mousemove", attractPoke, true);
   clearTimeout(attractIdleTimer); attractIdleTimer = null;
-  $("#attract-overlay").classList.remove("attract-idle");
+  $("#attract-overlay").classList.remove("attract-idle", "attract-behind");
   attractExitFullscreen();
   $("#attract-overlay").hidden = true;
   syncScrollLock();
@@ -128,15 +128,18 @@ function attractPoke() {
 }
 
 // Clicking a game hands off to its full drawer, but attract mode isn't over — it
-// just steps aside. Pause the run and hide the overlay (the drawer sits at a lower
-// z-index, so it must be uncovered), silence the trailer, and let closeDrawer()
-// call attractResume() to pick the slideshow back up.
+// just steps aside. Freeze the run (stop the trailer + countdown) and drop the overlay
+// BELOW the drawer rather than hiding it, so the game's scene still shows through the
+// drawer's scrim. closeDrawer() calls attractResume() to pick it back up.
 function attractPause() {
   if (!attractOn || attractPaused) return;
   attractPaused = true;
   clearTimeout(attractTimer); attractTimer = null;
+  clearTimeout(attractIdleTimer); attractIdleTimer = null;
   attractStopPlayer(attractStage);
-  $("#attract-overlay").hidden = true;
+  const ov = $("#attract-overlay");
+  ov.classList.remove("attract-idle");
+  ov.classList.add("attract-behind");
 }
 
 // Returns true if it actually resumed — closeDrawer uses that to skip its own
@@ -144,10 +147,10 @@ function attractPause() {
 function attractResume() {
   if (!attractOn || !attractPaused) return false;
   attractPaused = false;
-  $("#attract-overlay").hidden = false;
+  $("#attract-overlay").classList.remove("attract-behind");
   syncScrollLock();
   if (attractDesktop()) attractPoke();
-  attractNext(1);                 // move on to a fresh game and restart the clock
+  attractNext(0);                 // resume the SAME game — reopen its scene, don't skip on
   return true;
 }
 
