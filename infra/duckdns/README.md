@@ -99,9 +99,25 @@ Two names in there are easy to conflate:
 ## Rotating the token
 
 Regenerate at [duckdns.org](https://www.duckdns.org), update `values.local.yaml`,
-re-run `./upgrade.sh`. The updater picks it up on its next tick. Traefik only
-re-reads the env var on restart, but it won't need it until the next renewal
-(~60 days), so no restart is required to stay healthy.
+re-run `./upgrade.sh` — then **restart Traefik**:
+
+```bash
+kubectl rollout restart deployment traefik -n kube-system
+```
+
+The updater picks the new token up on its next tick, because every run is a fresh
+pod. Traefik does not. It reads `DUCKDNS_TOKEN` into its environment at pod start,
+and env vars are never refreshed afterwards — a *mounted* secret would track the
+change, an env var can't. A running Traefik therefore keeps using the old token
+until something restarts it.
+
+What makes this easy to get wrong is the delay: certs are 90 days and Traefik
+renews at 30 days remaining, so it won't touch DuckDNS for ~60 days. Skip the
+restart and everything looks perfectly healthy right up until a renewal fails
+DNS-01 against a token that no longer exists. Do it while you're thinking about it.
+
+The restart is a brief ingress blip (`Recreate`, see above), but it re-issues
+nothing — `acme.json` is on the PVC.
 
 ## History
 
