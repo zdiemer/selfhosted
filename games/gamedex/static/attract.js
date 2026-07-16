@@ -26,6 +26,7 @@ let attractStartPct = 0;       // bar % the current countdown began at (nonzero 
 let attractStage = null;       // the stage currently on screen
 let attractMuted = true;       // start muted so autoplay is never blocked
 let attractWentFullscreen = false;   // we requested fullscreen and should undo it on exit
+let attractWakeLock = null;          // Screen Wake Lock sentinel — keeps the display awake
 let attractIdleTimer = null;         // desktop: hide the chrome after a spell of no movement
 const ATTRACT_IDLE = 2600;
 
@@ -78,6 +79,7 @@ function openAttract() {
   document.addEventListener("keydown", attractKey, true);
   syncScrollLock();
   attractApplyMuteBtn();
+  attractAcquireWake();                                  // keep the screen awake (esp. mobile)
   if (attractDesktop()) {
     attractRequestFullscreen();                          // needs the launch click's gesture
     document.addEventListener("mousemove", attractPoke, true);
@@ -103,6 +105,7 @@ function closeAttract() {
   clearTimeout(attractIdleTimer); attractIdleTimer = null;
   $("#attract-overlay").classList.remove("attract-idle", "attract-behind");
   attractExitFullscreen();
+  attractReleaseWake();
   $("#attract-overlay").hidden = true;
   syncScrollLock();
   if (typeof tourKick === "function") tourKick();   // let Home's ambient tour resume
@@ -116,6 +119,22 @@ function attractRequestFullscreen() {
 function attractExitFullscreen() {
   if (attractWentFullscreen && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   attractWentFullscreen = false;
+}
+
+// Keep the screen from dimming/sleeping while a trailer plays (no touches to register
+// activity). The OS drops the lock whenever the tab is backgrounded, so it's re-acquired
+// on visibilitychange while attract is up. HTTPS + the launch gesture make it grantable.
+async function attractAcquireWake() {
+  if (attractWakeLock || !("wakeLock" in navigator)) return;
+  try {
+    attractWakeLock = await navigator.wakeLock.request("screen");
+    attractWakeLock.addEventListener("release", () => { attractWakeLock = null; });
+  } catch (_) { attractWakeLock = null; }   // denied (e.g. low battery) → just let it dim
+}
+function attractReleaseWake() {
+  if (!attractWakeLock) return;
+  try { attractWakeLock.release(); } catch (_) { /* already gone */ }
+  attractWakeLock = null;
 }
 
 // Desktop: reveal the controls/hint on any movement, then fade them (and the cursor)
@@ -519,5 +538,10 @@ function attractApplyMuteBtn() {
     const wasOurs = attractWentFullscreen;
     attractWentFullscreen = false;
     if (wasOurs && attractOn && !attractPaused) closeAttract();
+  });
+
+  // The OS drops the wake lock when the tab is backgrounded — take it back on return.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && attractOn) attractAcquireWake();
   });
 })();
