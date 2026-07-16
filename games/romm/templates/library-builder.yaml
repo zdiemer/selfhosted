@@ -13,6 +13,8 @@ read-only at /nas, and this init container builds /romm/library as symlinks:
     /romm/library/Roms/3DO/BrainDead 13 (USA)  -> /nas/Roms/3DO/BrainDead 13 (USA)
     /romm/library/Roms/3DO/Doctor Hauzer...chd -> /nas/Roms/3DO/_hacks/Doctor Hauzer...chd
                                                                       ^^^^^^ lifted to top level
+    /romm/library/Roms/MAME/005.zip            -> /nas/Roms/MAME/0.288/roms/005.zip
+                                                                  ^^^^^^^^^^ descended into
 
 So the nested games become real, individually-matched games, and the share is
 unchanged. Python's scandir/is_dir/open all follow symlinks, so scanning, hashing
@@ -29,7 +31,7 @@ metadata:
     {{- include "romm.labels" . | nindent 4 }}
 data:
   build.py: |
-    import os, sys, yaml, time
+    import glob, os, re, sys, yaml, time
 
     # The share lives under the library root (see the deployment): RomM resolves
     # real files and rejects anything outside base_path, so symlinks must point
@@ -41,7 +43,14 @@ data:
     excluded = set((cfg.get("exclude") or {}).get("platforms") or [])
     FLATTEN = set({{ .Values.config.flattenFolders | toJson }})
     SKIP    = set({{ .Values.config.skipFolders | toJson }})
+    SUBDIRS = {{ .Values.config.platformSubdirs | toJson }}
     KEEP    = {"{{ .Values.config.firmwareFolder }}"}
+
+    def _vkey(p):
+        """Sort paths so 0.288 < 0.289 and 0.9 < 0.288 — a plain string sort gets
+        both wrong. Each element is a comparable (kind, num, text) tuple."""
+        return [(0, int(t), "") if t.isdigit() else (1, 0, t)
+                for t in re.split(r"(\d+)", p)]
 
     # RomM looks for firmware at <library>/<firmware_folder>/<platform> — NOT at
     # <platform>/<firmware_folder>. (config has_structure_path_b is False for a
@@ -54,13 +63,25 @@ data:
     t0 = time.time()
     os.makedirs(DST, exist_ok=True)
     os.makedirs(FW, exist_ok=True)
-    links = flat = fw = 0
+    links = flat = fw = sub_n = 0
     for plat in sorted(os.listdir(SRC)):
         if plat in excluded or plat not in wanted:
             continue
         src = os.path.join(SRC, plat)
         if not os.path.isdir(src):
             continue
+        # Some platforms keep no games at their root — see config.platformSubdirs.
+        # Descend to the real ROM dir before linking anything.
+        pattern = SUBDIRS.get(plat)
+        if pattern:
+            hits = sorted((h for h in glob.glob(os.path.join(src, pattern))
+                           if os.path.isdir(h)), key=_vkey)
+            if not hits:
+                print(f"WARNING: {plat}: nothing matches {pattern!r} under {src} "
+                      f"— platform skipped", flush=True)
+                continue
+            src = hits[-1]          # highest version wins
+            sub_n += 1
         dst = os.path.join(DST, plat)
         os.makedirs(dst, exist_ok=True)
         bios = os.path.join(src, "{{ .Values.config.firmwareFolder }}")
@@ -90,12 +111,18 @@ data:
                 os.symlink(bios, link); fw += 1
 
         for e in os.scandir(src):
-            if e.name in SKIP or e.name == "{{ .Values.config.firmwareFolder }}":
+            # Dotfiles are never games. The NAS drops a .romnas-download.json
+            # manifest in every platform folder, and RomM catalogued all 45 of
+            # them as games.
+            if (e.name.startswith(".") or e.name in SKIP
+                    or e.name == "{{ .Values.config.firmwareFolder }}"):
                 continue
             # Lift the contents of a flatten-folder up to the platform root, so each
             # nested game becomes a game in its own right.
             if e.name in FLATTEN and e.is_dir():
                 for sub in os.scandir(e.path):
+                    if sub.name.startswith("."):
+                        continue
                     link = os.path.join(dst, sub.name)
                     if not os.path.lexists(link):
                         os.symlink(sub.path, link); flat += 1
@@ -104,5 +131,5 @@ data:
             if not os.path.lexists(link):
                 os.symlink(e.path, link); links += 1
     print(f"library: {links} entries linked, {flat} lifted out of {sorted(FLATTEN)}, "
-          f"{fw} platforms with firmware, across {len(wanted)} platforms "
-          f"in {time.time()-t0:.0f}s", flush=True)
+          f"{sub_n} descended into a subdir, {fw} platforms with firmware, "
+          f"across {len(wanted)} platforms in {time.time()-t0:.0f}s", flush=True)

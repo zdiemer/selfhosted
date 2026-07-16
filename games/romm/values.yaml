@@ -94,6 +94,20 @@ config:
   skipFolders:
     - _psn
     - _unused
+  # Platforms that keep no games at their folder root, so the builder has to
+  # descend before linking. MAME is a full romset snapshot, not a game folder:
+  #
+  #   MAME/0.288/roms/*.zip     16,146 arcade games   <- the only games here
+  #             /chds/          disc images for boards no EmulatorJS core runs
+  #             /softlist_roms/ console dumps that duplicate our real platforms
+  #             /extras/        artwork, flyers, dats, cheats
+  #             /multimedia/    videosnaps and soundtracks
+  #
+  # RomM doesn't recurse, so it saw the version folder as ONE game called "0.288"
+  # and the whole arcade platform came to 2 entries. Glob the version rather than
+  # pinning it, so a 0.289 bump needs no chart change; highest version wins.
+  platformSubdirs:
+    MAME: "*/roms"
   # Hashing reads every ROM in full. The playable set is 8.06 TB over a link that
   # sustains 107 MB/s, so this is a ~22h one-off — deliberately accepted, because
   # hashes are what Hasheous and RetroAchievements identify games BY. They're
