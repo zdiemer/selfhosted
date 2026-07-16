@@ -3291,7 +3291,11 @@ function openDrawer(row, sheetKey, keepStack) {
   if (ENRICH_ENABLED && row._k) loadDetail(row._k, $("#igdbDetail"), 0, row);
 }
 function closeDrawer() {
-  $("#overlay").hidden = true; drawerStack = []; syncScrollLock();
+  $("#overlay").hidden = true; drawerStack = [];
+  // If this drawer was opened FROM attract mode, closing it hands the screen straight
+  // back to the slideshow (which re-locks scroll itself) — don't also kick the tour.
+  if (typeof attractResume === "function" && attractResume()) return;
+  syncScrollLock();
   // The pointerdown that closed this fired while the overlay was still open, so the tour
   // refused to arm itself. Now that it's shut, start the clock.
   tourKick();

@@ -16,6 +16,7 @@ const ATTRACT_DWELL = 16000;   // how long each game holds the screen
 const ATTRACT_FADE  = 900;     // cross-fade duration — MUST match the CSS transition
 
 let attractOn = false;
+let attractPaused = false;      // true while a game's drawer is open over a paused run
 let attractPool = [];          // shuffled [{row, sheetKey}]
 let attractIdx = -1;
 let attractTimer = null;
@@ -56,6 +57,7 @@ function openAttract() {
   attractPool = attractBuildPool();
   if (!attractPool.length) return;
   attractOn = true;
+  attractPaused = false;
   attractIdx = -1;
   // Nothing should be playing behind the overlay: stop the tour AND any hover.
   if (typeof tourStop === "function") tourStop();
@@ -72,6 +74,7 @@ function openAttract() {
 function closeAttract() {
   if (!attractOn) return;
   attractOn = false;
+  attractPaused = false;
   clearTimeout(attractTimer); attractTimer = null;
   document.removeEventListener("keydown", attractKey, true);
   const host = $("#attractStages");
@@ -80,15 +83,52 @@ function closeAttract() {
     host.innerHTML = "";
   }
   attractStage = null;
+  attractResetProgress(true);
   $("#attract-overlay").hidden = true;
   syncScrollLock();
   if (typeof tourKick === "function") tourKick();   // let Home's ambient tour resume
 }
 
+// Clicking a game hands off to its full drawer, but attract mode isn't over — it
+// just steps aside. Pause the run and hide the overlay (the drawer sits at a lower
+// z-index, so it must be uncovered), silence the trailer, and let closeDrawer()
+// call attractResume() to pick the slideshow back up.
+function attractPause() {
+  if (!attractOn || attractPaused) return;
+  attractPaused = true;
+  clearTimeout(attractTimer); attractTimer = null;
+  attractStopPlayer(attractStage);
+  $("#attract-overlay").hidden = true;
+}
+
+// Returns true if it actually resumed — closeDrawer uses that to skip its own
+// scroll-unlock / tour-kick, since attract mode is taking the screen straight back.
+function attractResume() {
+  if (!attractOn || !attractPaused) return false;
+  attractPaused = false;
+  $("#attract-overlay").hidden = false;
+  syncScrollLock();
+  attractNext(1);                 // move on to a fresh game and restart the clock
+  return true;
+}
+
+// Stop a stage's trailer (audio + loop) without tearing the whole stage down.
+function attractStopPlayer(stage) {
+  if (!stage) return;
+  if (stage._loop) { clearInterval(stage._loop); stage._loop = null; }
+  if (stage._watch) { stage._watch(); stage._watch = null; }
+  if (stage._frame) {
+    const wrap = stage._frame.closest(".attract-video");
+    (wrap || stage._frame).remove();
+    stage._frame = null;
+  }
+}
+
 // Attract owns the keyboard while it's up, so global shortcuts don't fire behind
 // the overlay (capture + stopPropagation beats app.js's document-level listeners).
 function attractKey(e) {
-  if (!attractOn) return;
+  // Paused (a game's drawer is open over us) → the drawer owns the keyboard.
+  if (!attractOn || attractPaused || $("#attract-overlay").hidden) return;
   e.stopPropagation();
   switch (e.key) {
     case "Escape":     e.preventDefault(); closeAttract(); break;
@@ -124,7 +164,21 @@ function attractNext(dir) {
   const nxt = attractPool[(attractIdx + 1) % n];
   if (nxt && nxt.row._k) attractFetchDetail(nxt.row._k);
 
+  attractResetProgress();
   attractTimer = setTimeout(() => attractNext(1), ATTRACT_DWELL);
+}
+
+// The countdown bar: fill 0→100% over one dwell, restarted on every game. It's
+// the "when does it move on" indicator; a manual next/prev just restarts it.
+function attractResetProgress(clear) {
+  const fill = $("#attractProgressFill");
+  if (!fill) return;
+  fill.style.transition = "none";
+  fill.style.width = "0%";
+  if (clear) return;
+  void fill.offsetWidth;                                   // commit the reset before animating
+  fill.style.transition = `width ${ATTRACT_DWELL}ms linear`;
+  fill.style.width = "100%";
 }
 
 function attractBuildStage(entry) {
@@ -160,8 +214,9 @@ function attractBuildStage(entry) {
   stage.appendChild(scrim);
   stage.appendChild(info);
 
-  // Click anywhere on a game → drop out of attract into its full drawer.
-  stage.addEventListener("click", () => { closeAttract(); openDrawer(row, sheetKey); });
+  // Click anywhere on a game → step aside into its full drawer; closing the drawer
+  // resumes the slideshow (attractPause + closeDrawer's attractResume hook).
+  stage.addEventListener("click", () => { attractPause(); openDrawer(row, sheetKey); });
 
   const vid = e.video;
   const wantsVideo = vid && !YT_BLOCKED && WANTS_MOTION;
@@ -275,7 +330,7 @@ function attractToggleMute() {
 function attractApplyMuteBtn() {
   const b = $("#attractMute");
   if (!b) return;
-  b.textContent = attractMuted ? "🔇" : "🔊";
+  b.innerHTML = icon(attractMuted ? "i-muted" : "i-volume", 20);
   b.setAttribute("aria-label", attractMuted ? "Unmute" : "Mute");
 }
 

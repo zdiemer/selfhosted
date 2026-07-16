@@ -4004,16 +4004,30 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-.attract-controls { position: absolute; top: 16px; right: 18px; z-index: 5; display: flex; gap: 8px; }
+/* Countdown to the next game, along the very top edge. */
+.attract-progress { position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 6; background: rgba(255,255,255,.14); }
+.attract-progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 8px rgba(124,92,255,.6); }
+
+.attract-controls { position: absolute; top: 16px; right: 18px; z-index: 6; display: flex; gap: 8px; }
 .attract-btn {
   width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
   border: none; border-radius: 999px; cursor: pointer; font-size: 22px; line-height: 1;
-  color: #fff; background: rgba(255,255,255,.12); backdrop-filter: blur(6px); transition: background .14s;
+  color: #fff; background: rgba(0,0,0,.4); backdrop-filter: blur(6px); transition: background .14s;
 }
 .attract-btn:hover { background: var(--accent); }
 .attract-hint {
-  position: absolute; top: 24px; left: 26px; z-index: 5;
-  color: rgba(255,255,255,.58); font-size: 13px; pointer-events: none;
+  position: absolute; top: 20px; left: 22px; z-index: 5; pointer-events: none;
+  color: rgba(255,255,255,.9); font-size: 12.5px;
+  padding: 6px 12px; border-radius: 999px;
+  background: rgba(0,0,0,.4); backdrop-filter: blur(6px);
+  text-shadow: 0 1px 4px rgba(0,0,0,.7);
+}
+/* Touch has no Esc/arrow keys, and the long hint collides with the controls on a
+   narrow screen — drop it; the on-screen × and ‹ › are the affordance there. */
+@media (max-width: 640px) {
+  .attract-hint { display: none; }
+  .attract-controls { top: 12px; right: 12px; }
+  .attract-btn { width: 40px; height: 40px; }
 }
 
 /* Home launcher */
