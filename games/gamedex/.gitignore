@@ -1,6 +1,0 @@
-data/.cdx-cache.json
-# stray screenshots/scratch from local test runs — never belongs in the chart
-/*.png
-/*.jpg
-/*.mjs
-/*.tar

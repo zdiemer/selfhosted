@@ -1,0 +1,4 @@
+[submodule "games/gamedex"]
+	path = games/gamedex
+	url = git@github.com:zdiemer/gamedex.git
+	branch = main

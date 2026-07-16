@@ -8,6 +8,11 @@ Each subfolder is a standalone project with its own chart, docs, and
 install/upgrade scripts. Per-project secrets live in a gitignored
 `values.local.yaml` alongside the tracked `values.yaml`.
 
+Some projects live in their own repo and are tracked here as submodules, so this
+repo stays the full index of what runs on the cluster. Clone with
+`git clone --recurse-submodules`; an existing clone catches up with
+`git submodule update --init`.
+
 ## Projects
 
 | Folder | What it is | Docs |
@@ -17,7 +22,7 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 | [`minecraft/claude-mod/`](minecraft/claude-mod/) | Tiny server-side Fabric mod that registers `/claude <prompt>` via Brigadier and prints a recognizable line for `claude-bridge` to pick up. Sideloaded into the PVC via `install.sh`. | [minecraft/claude-mod/README](minecraft/claude-mod/README.md) |
 | [`discord/vocard/`](discord/vocard/) | Vocard music bot + Lavalink + MongoDB — slash-command music player for voice channels. Bot-only (no dashboard). | [discord/vocard/README](discord/vocard/README.md) |
 | [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
-| [`games/gamedex/`](games/gamedex/) | Gamedex — searchable browser for the Games Master List spreadsheet, mirrored live from a Dropbox shared link. Faceted search, no auth, PII columns stripped. | [games/gamedex/README](games/gamedex/README.md) |
+| [`games/gamedex/`](games/gamedex/) → **submodule** | Gamedex — searchable browser for the Games Master List spreadsheet, mirrored live from a Dropbox shared link. Faceted search, no auth, PII columns stripped. Chart + source live in [zdiemer/gamedex](https://github.com/zdiemer/gamedex); the pin here is the deployed commit. | [zdiemer/gamedex README](https://github.com/zdiemer/gamedex#readme) |
 | [`auth/authelia/`](auth/authelia/) | Authelia — OIDC provider + (future) Traefik forward-auth. Shared login for every service in the cluster. | [auth/authelia/README](auth/authelia/README.md) |
 | [`docs/paperless-ngx/`](docs/paperless-ngx/) | Paperless-ngx — self-hosted document management with OCR + full-text search. Bundles Postgres, Redis, Tika, and Gotenberg inline. | [docs/paperless-ngx/README](docs/paperless-ngx/README.md) |
 | [`docs/stirling-pdf/`](docs/stirling-pdf/) | Stirling PDF — locally-processed toolkit for ~50 PDF operations (merge/convert/OCR/sign/redact). Gated behind Authelia forward-auth at the Traefik ingress. | [docs/stirling-pdf/README](docs/stirling-pdf/README.md) |
@@ -34,3 +39,13 @@ install/upgrade scripts. Per-project secrets live in a gitignored
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.
+- **Apps we write ourselves live in their own repo**, added back here as a
+  submodule so this repo still lists everything on the cluster. The app repo owns
+  its chart *and* its source together — `Chart.yaml` `appVersion` tracks
+  `values.yaml` `image.tag`, so a release is one commit in one place. It builds to
+  `ghcr.io/zdiemer/<name>` (public package: the cluster is multi-node, so every
+  node pulls anonymously) and ships `build.sh` + `upgrade.sh`.
+  [zdiemer/gamedex](https://github.com/zdiemer/gamedex) is the reference shape.
+  Work in the app's own checkout and deploy from there — only that checkout needs
+  the `values.local.yaml` secrets. Afterwards record what shipped with
+  `git submodule update --remote games/<name>` and commit the moved pin.
