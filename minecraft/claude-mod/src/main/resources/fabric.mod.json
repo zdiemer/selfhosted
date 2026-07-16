@@ -6,7 +6,7 @@
   "description": "Registers /claude <prompt>; the prompt is picked up by the claude-bridge sidecar via stdout. Server-only, no client install needed.",
   "authors": ["zachd"],
   "contact": {
-    "homepage": "https://github.com/zdiemer/minecraft-k3s/tree/main/minecraft/claude-mod"
+    "homepage": "https://github.com/zdiemer/selfhosted/tree/main/minecraft/claude-mod"
   },
   "license": "MIT",
   "environment": "server",

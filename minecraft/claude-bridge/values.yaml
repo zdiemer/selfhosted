@@ -525,7 +525,7 @@ bridge:
   # line to FEEDBACK.md, commits, and pushes. Falls back to a local JSONL
   # audit log if git fails (network blip, conflict, etc.).
   feedback:
-    repoUrl: "https://github.com/zdiemer/minecraft-k3s.git"
+    repoUrl: "https://github.com/zdiemer/selfhosted.git"
     branch: "main"
     file: "FEEDBACK.md"
     # Author identity for the auto-commits. Email gets a +bot suffix so
@@ -592,7 +592,7 @@ auth:
 # SECRETS — filled by values.local.yaml (gitignored).
 # ============================================================================
 secrets:
-  # GitHub PAT with `repo` scope on zdiemer/minecraft-k3s. Used to push
+  # GitHub PAT with `repo` scope on zdiemer/selfhosted. Used to push
   # FEEDBACK.md updates. Leave empty to fall back to a JSONL audit log only.
   #   https://github.com/settings/tokens/new?scopes=repo&description=claude-bridge
   githubToken: ""

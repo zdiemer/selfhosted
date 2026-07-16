@@ -8,7 +8,7 @@
 #
 # Generate githubToken at:
 #   https://github.com/settings/tokens/new?scopes=repo&description=claude-bridge
-# (only `repo` scope on zdiemer/minecraft-k3s is needed; leave empty to skip
+# (only `repo` scope on zdiemer/selfhosted is needed; leave empty to skip
 # auto-commit and just keep a local JSONL audit log)
 
 secrets:
