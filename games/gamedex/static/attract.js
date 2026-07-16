@@ -22,6 +22,13 @@ let attractIdx = -1;
 let attractTimer = null;
 let attractStage = null;       // the stage currently on screen
 let attractMuted = true;       // start muted so autoplay is never blocked
+let attractWentFullscreen = false;   // we requested fullscreen and should undo it on exit
+let attractIdleTimer = null;         // desktop: hide the chrome after a spell of no movement
+const ATTRACT_IDLE = 2600;
+
+// Fullscreen + auto-hiding controls are desktop affordances: touch has no mouse to
+// go idle, and mobile fullscreen is a mess. Gate both on a fine pointer.
+const attractDesktop = () => window.matchMedia("(pointer: fine)").matches;
 
 // Fisher–Yates. Home's shuffle is date-seeded (stable per day) on purpose; an
 // attract run wants fresh randomness every time, so it gets its own.
@@ -68,6 +75,11 @@ function openAttract() {
   document.addEventListener("keydown", attractKey, true);
   syncScrollLock();
   attractApplyMuteBtn();
+  if (attractDesktop()) {
+    attractRequestFullscreen();                          // needs the launch click's gesture
+    document.addEventListener("mousemove", attractPoke, true);
+    attractPoke();                                       // arm the idle-hide countdown
+  }
   attractNext(1);
 }
 
@@ -84,9 +96,35 @@ function closeAttract() {
   }
   attractStage = null;
   attractResetProgress(true);
+  document.removeEventListener("mousemove", attractPoke, true);
+  clearTimeout(attractIdleTimer); attractIdleTimer = null;
+  $("#attract-overlay").classList.remove("attract-idle");
+  attractExitFullscreen();
   $("#attract-overlay").hidden = true;
   syncScrollLock();
   if (typeof tourKick === "function") tourKick();   // let Home's ambient tour resume
+}
+
+function attractRequestFullscreen() {
+  const el = document.documentElement;                  // the PAGE, not the overlay: hiding
+  if (document.fullscreenElement || !el.requestFullscreen) return;  // the overlay when a
+  el.requestFullscreen().then(() => { attractWentFullscreen = true; }).catch(() => {});
+}                                                        // drawer opens must not drop fullscreen
+function attractExitFullscreen() {
+  if (attractWentFullscreen && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  attractWentFullscreen = false;
+}
+
+// Desktop: reveal the controls/hint on any movement, then fade them (and the cursor)
+// after a still moment. Never hides while a drawer is open over a paused run.
+function attractPoke() {
+  const ov = $("#attract-overlay");
+  if (!ov) return;
+  ov.classList.remove("attract-idle");
+  clearTimeout(attractIdleTimer);
+  attractIdleTimer = setTimeout(() => {
+    if (attractOn && !attractPaused) ov.classList.add("attract-idle");
+  }, ATTRACT_IDLE);
 }
 
 // Clicking a game hands off to its full drawer, but attract mode isn't over — it
@@ -108,6 +146,7 @@ function attractResume() {
   attractPaused = false;
   $("#attract-overlay").hidden = false;
   syncScrollLock();
+  if (attractDesktop()) attractPoke();
   attractNext(1);                 // move on to a fresh game and restart the clock
   return true;
 }
@@ -116,6 +155,7 @@ function attractResume() {
 function attractStopPlayer(stage) {
   if (!stage) return;
   if (stage._loop) { clearInterval(stage._loop); stage._loop = null; }
+  if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
   if (stage._watch) { stage._watch(); stage._watch = null; }
   if (stage._frame) {
     const wrap = stage._frame.closest(".attract-video");
@@ -189,7 +229,7 @@ function attractBuildStage(entry) {
 
   const stage = document.createElement("div");
   stage.className = "attract-stage";
-  stage._loop = null; stage._watch = null; stage._frame = null; stage._dead = false;
+  stage._loop = null; stage._watch = null; stage._frame = null; stage._shotLoop = null; stage._dead = false;
 
   const bg = document.createElement("div");
   bg.className = "attract-bg";
@@ -229,8 +269,11 @@ function attractBuildStage(entry) {
     if (!d || stage._dead) return;
     attractFillDetail(stage, row, d);
     if (!wantsVideo) {
-      const shot = (d.screenshots || [])[0] || (d.artworks || [])[0];
-      if (shot) attractShowArt(bg, IMG(shot, "screenshot_big"), true);
+      // No trailer → cross-fade through the game's screenshots (then artworks) as
+      // the backdrop; a single one just gets the Ken-Burns still.
+      const shots = [...(d.screenshots || []), ...(d.artworks || [])].slice(0, 6).map((id) => IMG(id, "screenshot_big"));
+      if (WANTS_MOTION && shots.length > 1) attractRunShots(stage, bg, shots);
+      else if (shots.length) attractShowArt(bg, shots[0], true);
     }
   });
 
@@ -243,6 +286,28 @@ function attractShowArt(bg, src, motion) {
   if (!src) { bg.innerHTML = ""; bg.classList.add("attract-bg-empty"); return; }
   bg.classList.remove("attract-bg-empty");
   bg.innerHTML = `<img class="attract-art${motion && WANTS_MOTION ? " kb" : ""}" src="${escapeHtml(src)}" alt="">`;
+}
+
+const ATTRACT_SHOT_MS = 4200;   // how long each screenshot holds before the next fades in
+// Cross-fade through several screenshots for the length of the game's turn. New layers
+// fade in over the old (which is dropped after the fade), so at most two are ever live.
+function attractRunShots(stage, bg, shots) {
+  bg.classList.remove("attract-bg-empty");
+  bg.innerHTML = "";
+  let i = 0, cur = null;
+  const show = (idx) => {
+    const img = document.createElement("img");
+    img.className = "attract-art kb";
+    img.src = shots[idx];
+    img.style.opacity = "0";
+    bg.appendChild(img);
+    void img.offsetWidth;                     // commit opacity:0 so the fade-in runs
+    img.style.opacity = "";                   // → stylesheet's 1, transitions in
+    const old = cur; cur = img;
+    if (old) setTimeout(() => old.remove(), 950);
+  };
+  show(0);
+  stage._shotLoop = setInterval(() => { i = (i + 1) % shots.length; show(i); }, ATTRACT_SHOT_MS);
 }
 
 // The trailer as a full-bleed backdrop. Same clean-embed trick as the hover
@@ -303,6 +368,7 @@ function attractTeardownStage(stage) {
   if (!stage) return;
   stage._dead = true;
   if (stage._loop) { clearInterval(stage._loop); stage._loop = null; }
+  if (stage._shotLoop) { clearInterval(stage._shotLoop); stage._shotLoop = null; }
   if (stage._watch) { stage._watch(); stage._watch = null; }   // ytWatch's own cleanup
   stage.remove();
 }
@@ -345,4 +411,15 @@ function attractApplyMuteBtn() {
   bind("attractMute", attractToggleMute);
   bind("attractPrev", () => attractNext(-1));
   bind("attractNext", () => attractNext(1));
+
+  // Leaving fullscreen (Esc / F11) while watching means "I'm done" — exit attract too,
+  // so a single Esc gets you all the way out. Skipped while a game's drawer is open over
+  // a paused run (that Esc belongs to the drawer), and a no-op when WE dropped fullscreen
+  // on the way out (attractWentFullscreen is already cleared by then).
+  document.addEventListener("fullscreenchange", () => {
+    if (document.fullscreenElement) return;
+    const wasOurs = attractWentFullscreen;
+    attractWentFullscreen = false;
+    if (wasOurs && attractOn && !attractPaused) closeAttract();
+  });
 })();

@@ -3950,6 +3950,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .attract-art {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
   filter: blur(2px) brightness(.68); transform: scale(1.06);
+  transition: opacity .95s ease;   /* stacked layers cross-fade for the screenshot slideshow */
 }
 .attract-art.kb { animation: attract-kb 26s ease-in-out infinite alternate; }
 @keyframes attract-kb {
@@ -4022,6 +4023,14 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   background: rgba(0,0,0,.4); backdrop-filter: blur(6px);
   text-shadow: 0 1px 4px rgba(0,0,0,.7);
 }
+/* Desktop: fade the chrome (and the cursor) after a still moment; any mouse move
+   brings it back. attract.js only adds .attract-idle on a fine pointer, so touch
+   keeps its controls up. */
+.attract-controls, .attract-hint { transition: opacity .35s ease; }
+.attract-overlay.attract-idle { cursor: none; }
+.attract-overlay.attract-idle .attract-controls,
+.attract-overlay.attract-idle .attract-hint { opacity: 0; pointer-events: none; }
+
 /* Touch has no Esc/arrow keys, and the long hint collides with the controls on a
    narrow screen — drop it; the on-screen × and ‹ › are the affordance there. */
 @media (max-width: 640px) {
