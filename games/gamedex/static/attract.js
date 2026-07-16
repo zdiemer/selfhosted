@@ -80,8 +80,8 @@ function openAttract() {
   syncScrollLock();
   attractApplyMuteBtn();
   attractAcquireWake();                                  // keep the screen awake (esp. mobile)
-  if (attractDesktop()) {
-    attractRequestFullscreen();                          // needs the launch click's gesture
+  attractRequestFullscreen();                            // desktop AND mobile; no-ops on iPhone
+  if (attractDesktop()) {                                // idle-hide is mouse-only
     document.addEventListener("mousemove", attractPoke, true);
     attractPoke();                                       // arm the idle-hide countdown
   }
