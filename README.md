@@ -1,8 +1,8 @@
 # selfhosted
 
 Helm charts and install scripts for the services running on my home k3s
-cluster (single node, `zachd-ubuntu`). External exposure goes through the
-sibling [`talaria`](../talaria) project's DuckDNS + cert-manager ingress.
+cluster (10 nodes: 3 control-plane, 7 workers). External exposure goes
+through the sibling `talaria` project's DuckDNS + cert-manager ingress.
 
 Each subfolder is a standalone project with its own chart, docs, and
 install/upgrade scripts. Per-project secrets live in a gitignored
