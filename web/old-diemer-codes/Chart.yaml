@@ -1,0 +1,9 @@
+apiVersion: v2
+name: old-diemer-codes
+description: old.diemer.codes — the 2019 Create React App personal site, built from a submodule and served by nginx
+type: application
+version: 1.0.0
+# appVersion tracks the image tag in values.yaml (image.tag).
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

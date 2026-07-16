@@ -27,6 +27,7 @@ repo stays the full index of what runs on the cluster. Clone with
 | [`docs/paperless-ngx/`](docs/paperless-ngx/) | Paperless-ngx — self-hosted document management with OCR + full-text search. Bundles Postgres, Redis, Tika, and Gotenberg inline. | [docs/paperless-ngx/README](docs/paperless-ngx/README.md) |
 | [`docs/stirling-pdf/`](docs/stirling-pdf/) | Stirling PDF — locally-processed toolkit for ~50 PDF operations (merge/convert/OCR/sign/redact). Gated behind Authelia forward-auth at the Traefik ingress. | [docs/stirling-pdf/README](docs/stirling-pdf/README.md) |
 | [`web/kelsey-green/`](web/kelsey-green/) | kelsey.green — static Astro site, no image of our own: git-sync pulls the CI-built `deploy` branch and nginx serves it. Public via a Cloudflare tunnel (outbound-only) as well as the usual DuckDNS ingress. | [web/kelsey-green/README](web/kelsey-green/README.md) |
+| [`web/old-diemer-codes/`](web/old-diemer-codes/) → **submodule** | old.diemer.codes — the 2019 Create React App personal site, kept exactly as it was. Inverts the usual submodule shape: the app repo is a frozen archive we don't modify, so the chart + Dockerfile live here and the source is the submodule under `site/`. Public via the shared Cloudflare tunnel. | [web/old-diemer-codes/README](web/old-diemer-codes/README.md) |
 | [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. Reusable for more domains. | [infra/cloudflared/README](infra/cloudflared/README.md) |
 
 ## Conventions
@@ -49,3 +50,12 @@ repo stays the full index of what runs on the cluster. Clone with
   Work in the app's own checkout and deploy from there — only that checkout needs
   the `values.local.yaml` secrets. Afterwards record what shipped with
   `git submodule update --remote games/<name>` and commit the moved pin.
+
+  The one exception is [`web/old-diemer-codes/`](web/old-diemer-codes/), where the
+  app repo is a frozen 2019 archive that is deliberately not being modified: the
+  chart and the Dockerfile live in *this* repo and the app is the submodule
+  underneath, rather than the other way round. The submodule has to sit inside the
+  chart directory because `docker build` cannot COPY from outside its context —
+  which also means npm only ever runs in the build, so the submodule worktree is
+  never dirtied. Everything else — GHCR, `build.sh`, `upgrade.sh`, appVersion
+  tracking `image.tag` — is the same shape.

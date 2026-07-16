@@ -1,0 +1,22 @@
+# Helm packs the WHOLE chart directory into the release secret, which etcd caps
+# at 1 MB. site/ is a full Create React App checkout — a 638 KB package-lock.json
+# on its own, plus a 152 KB favicon and three photos, plus a 4.5 MB .git — and
+# none of it renders the chart: it is baked into the container image by build.sh.
+# Leave it in and `helm upgrade` fails with "Secret ... is invalid: data: Too
+# long". Same reason as games/gamedex/.helmignore.
+#
+# `helm package . -d /tmp && ls -lh` is the check: single-digit KB is right,
+# megabytes means something below stopped matching.
+site/
+overlay/
+
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+nginx.conf
+build.sh
+upgrade.sh
+README.md
+values.local.yaml
+*.tgz

@@ -1,0 +1,24 @@
+# Chart + scripts are not in the image, and editing them must not bust the
+# npm-install layer cache.
+Chart.yaml
+values.yaml
+values.local.yaml
+templates/
+*.sh
+README.md
+.helmignore
+.dockerignore
+
+# nginx.conf is deliberately NOT here — the runtime stage COPYs it in.
+
+# The submodule's local build artefacts. `COPY site/ ./` MERGES into the WORKDIR,
+# so a node_modules left behind by a laptop `npm install` would be layered over
+# the one `npm ci` just built here — wrong tree, possibly wrong platform, and
+# hundreds of MB of context. build/ would be a stale site shipped as if fresh.
+site/node_modules/
+site/build/
+site/coverage/
+site/.git
+site/.gitignore
+site/README.md
+site/LICENSE

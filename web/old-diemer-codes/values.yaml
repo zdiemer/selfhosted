@@ -1,0 +1,69 @@
+# old.diemer.codes — the original personal site, frozen in 2019.
+#
+# This chart INVERTS the repo's usual submodule shape. The README's rule is that
+# apps we write live in their own repo, owning their chart AND their source, and
+# are submodule'd back here. That repo is a deliberately untouched archive, so
+# here the chart + Dockerfile live in THIS repo and the app is the submodule
+# underneath, at site/. Everything else is the normal shape: build.sh pushes to
+# GHCR, upgrade.sh runs helm, Chart.yaml appVersion tracks image.tag.
+#
+# The submodule has to sit inside the chart directory rather than somewhere
+# tidier: docker build cannot COPY from outside its context, and the context is
+# this directory.
+#
+# To ship a change: commit it on `develop` in the site repo, then
+#   git submodule update --remote web/old-diemer-codes/site
+#   # bump image.tag here AND version/appVersion in Chart.yaml
+#   ./build.sh && ./upgrade.sh
+#   git add .gitmodules web/old-diemer-codes/site && git commit   # record what shipped
+
+image:
+  # Built + pushed to GHCR by build.sh; the package is public so every node pulls
+  # it anonymously (the cluster is multi-node, so side-loading doesn't fit).
+  repository: ghcr.io/zdiemer/old-diemer-codes
+  tag: "1.0.0"
+  # IfNotPresent — so NEVER reuse a tag. Rebuilding over an existing tag will not
+  # re-pull and the cluster will keep serving the old bytes.
+  pullPolicy: IfNotPresent
+
+# The entire site is baked into the image and the pod stores nothing, so — like
+# web/kelsey-green and unlike the PVC-bound charts here — this scales out freely
+# and rolls with zero unavailable. Two means a node drain is invisible.
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: traefik
+  host: old.zachd.duckdns.org
+  # Additional hosts published via the SHARED Cloudflare tunnel (infra/cloudflared),
+  # not a per-chart connector — kelsey-green runs its own only because kelsey.green
+  # is a separate zone. TLS for these is terminated at Cloudflare's edge, so they
+  # are intentionally absent from the ACME cert list below.
+  #
+  # The tunnel's hostname -> origin map lives in the Cloudflare DASHBOARD, not
+  # here: old.diemer.codes must point at
+  # https://traefik.kube-system.svc.cluster.local:443, No TLS Verify on, Host
+  # header blank. That side was ALREADY DONE before this chart existed —
+  # old.diemer.codes reached Traefik and got a 404, which is exactly what a
+  # missing Ingress rule looks like. This chart is the piece that was missing.
+  cloudflareHosts:
+    - old.diemer.codes
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account top-level, so sub-subdomain certs
+    # ride the wildcard SAN. Mirrors every other service in this repo.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+# nginx serving ~2 MB of static files to approximately nobody.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

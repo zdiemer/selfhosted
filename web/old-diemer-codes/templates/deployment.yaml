@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "old-diemer-codes.fullname" . }}
+  labels:
+    {{- include "old-diemer-codes.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # No PVC and no per-pod state — the site is inside the image — so this rolls
+  # rather than recreates, and never drops below full capacity.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "old-diemer-codes.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "old-diemer-codes.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread the two replicas so a single node going away doesn't take the
+      # site with it. Preferred, not required: a 10-node cluster will honour it,
+      # and a one-node emergency should still schedule.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "old-diemer-codes.selectorLabels" . | nindent 20 }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            # uid/gid of the nginx-unprivileged base image.
+            runAsUser: 101
+            runAsGroup: 101
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          # Both probes hit the static /healthz. Unlike kelsey-green there is no
+          # sidecar that has to produce content first: if nginx has bound the
+          # port, the site is there, because the site IS the image. The failure
+          # mode a probe CANNOT catch here — a build that shipped without
+          # site.css — is caught at docker build time instead (see Dockerfile).
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          volumeMounts:
+            # readOnlyRootFilesystem is on. nginx writes its pid to /tmp and
+            # keeps client_body/proxy/fastcgi temp paths under /var/cache/nginx;
+            # without both of these it exits at startup. Same pair as
+            # web/kelsey-green, which is the proof this works on this base image.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: nginx-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

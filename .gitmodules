@@ -2,3 +2,7 @@
 	path = games/gamedex
 	url = git@github.com:zdiemer/gamedex.git
 	branch = main
+[submodule "web/old-diemer-codes/site"]
+	path = web/old-diemer-codes/site
+	url = git@github.com:zdiemer/diemer.codes.git
+	branch = develop
