@@ -780,5 +780,34 @@ def refresh(user: dict = Depends(require_admin)):
     return {"changed": changed, "meta": meta}
 
 
+class RevalidatingStatic(StaticFiles):
+    """The shell, served with `Cache-Control: no-cache`.
+
+    Starlette's StaticFiles sends ETag + Last-Modified but no Cache-Control,
+    which leaves any CDN in front of us free to invent a TTL. Cloudflare does
+    exactly that on *.diemer.codes: it treats .js/.css as cacheable static and
+    holds them at the edge for 4h by default. A deploy was therefore invisible
+    there for hours — /api/* stayed fresh (never edge-cached) while app.js did
+    not, which looks exactly like a half-applied release and is not something
+    incognito or the service worker can clear, because the staleness lives at
+    the edge rather than on the device.
+
+    `no-cache` does not mean "don't store" — it means "revalidate before every
+    reuse". Paired with the ETag above, that costs one 304 and makes a deploy
+    land immediately on every host. The service worker, not the edge, is what
+    makes this app fast offline, so letting Cloudflare hold the shell buys
+    nothing. sw.js especially must never be edge-stale: it is the one file that
+    bootstraps every future update.
+
+    Long-lived assets keep their own immutable headers set at the /api/img and
+    /api/manual handlers, which are unaffected by this.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # Static UI last so /api/* wins. html=True serves index.html at "/".
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+app.mount("/", RevalidatingStatic(directory=str(STATIC_DIR), html=True), name="static")
