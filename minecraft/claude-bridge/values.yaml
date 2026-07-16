@@ -34,12 +34,19 @@
 #   ./minecraft/claude-bridge/upgrade.sh
 # ============================================================================
 
-# Built locally via build.sh and side-loaded into k3s containerd —
-# imagePullPolicy: Never because there's no registry.
+# Built + pushed to GHCR by build.sh; the package is public so the node pulls
+# it anonymously. Previously this was side-loaded into containerd with
+# pullPolicy: Never, which cannot survive kubelet image GC: once the pod is
+# down (e.g. a reboot) the image is unreferenced and gets reclaimed, and with
+# no registry to pull from it can never start again.
+#
+# pullPolicy: Always (not IfNotPresent) because the tag is static — build.sh
+# rebuilds and pushes 0.1.0 in place, and IfNotPresent would keep serving the
+# node's cached copy, so a rebuild would silently roll nothing.
 image:
-  repository: claude-bridge
+  repository: ghcr.io/zdiemer/claude-bridge
   tag: "0.1.0"
-  pullPolicy: Never
+  pullPolicy: Always
 
 # ----------------------------------------------------------------------------
 # Where the bridge points: which Minecraft pod's logs to follow + which RCON
