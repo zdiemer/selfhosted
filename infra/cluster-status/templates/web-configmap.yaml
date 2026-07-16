@@ -1,0 +1,492 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cluster-status.fullname" . }}-web
+  labels:
+    {{- include "cluster-status.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      listen {{ .Values.web.port }};
+      server_name _;
+      root /usr/share/nginx/html;
+      index index.html;
+
+      # The collector's output lives on the shared emptyDir, not in the web root.
+      # no-store because it changes every {{ .Values.collector.intervalSeconds }}s and
+      # Cloudflare would otherwise happily serve a cached copy for ages.
+      location = /status.json {
+        alias /data/status.json;
+        add_header Cache-Control "no-store, must-revalidate" always;
+        add_header Content-Type "application/json" always;
+      }
+
+      location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+      }
+
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+    }
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Cluster Status</title>
+    <style>
+      :root {
+        --bg: #ffffff; --fg: #0a0a0a; --muted: #71717a; --muted-bg: #f4f4f5;
+        --border: #e4e4e7; --card: #ffffff; --destructive: #dc2626;
+        --pods: #10b981; --k3s: #0ea5e9; --system: #f59e0b;
+        --ok: #10b981; --warn: #eab308; --info: #3b82f6;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #09090b; --fg: #fafafa; --muted: #a1a1aa; --muted-bg: #27272a;
+          --border: #27272a; --card: #101012; --destructive: #f87171;
+          --ok: #34d399; --warn: #facc15; --info: #60a5fa;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--fg);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .wrap { max-width: 1200px; margin: 0 auto; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      h1 { font-size: 1.25rem; margin: 0; font-weight: 600; }
+      h2 { font-size: 1rem; margin: 1.5rem 0 .75rem; font-weight: 500; }
+      .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+      .sub { color: var(--muted); font-size: 12px; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: .75rem; }
+      .card-h { padding: .75rem 1rem .5rem; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center; }
+      .card-t { font-weight: 600; font-size: .9rem; }
+      .card-c { padding: 0 1rem 1rem; }
+      .grid { display: grid; gap: 1rem; }
+      .g4 { grid-template-columns: repeat(2, 1fr); }
+      .g3 { grid-template-columns: 1fr; }
+      .g2 { grid-template-columns: 1fr; }
+      @media (min-width: 640px) { .g4 { grid-template-columns: repeat(4, 1fr); } }
+      @media (min-width: 1024px) { .g3 { grid-template-columns: repeat(3, 1fr); } .g2 { grid-template-columns: repeat(2, 1fr); } }
+      .stat-l { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+      .stat-v { font-size: 1.05rem; font-weight: 600; word-break: break-word; }
+      .stat-s { font-size: 11px; color: var(--muted); }
+      .bar { position: relative; display: flex; height: 12px; width: 100%; overflow: hidden; border-radius: 3px; background: var(--muted-bg); }
+      .bar > i { height: 100%; display: block; }
+      .marker { position: absolute; top: 0; height: 100%; width: 2px; background: var(--fg); opacity: .7; }
+      .barlbl { display: flex; justify-content: space-between; gap: .5rem; font-size: 11px; color: var(--muted); margin-top: 3px; flex-wrap: wrap; }
+      .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-size: 11px; color: var(--muted); }
+      .legend span { display: inline-flex; align-items: center; gap: .375rem; }
+      .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+      .pill { display: inline-flex; align-items: center; gap: .375rem; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 500; }
+      .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); font-size: 11px; }
+      td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+      tr:last-child td { border-bottom: 0; }
+      .r { text-align: right; }
+      .c { text-align: center; }
+      .scroll { overflow-x: auto; }
+      .node-btn { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: .75rem 1rem; display: flex; flex-direction: column; gap: .75rem; border-radius: 8px; }
+      .node-btn:hover { background: var(--muted-bg); }
+      @media (min-width: 900px) { .node-btn { flex-direction: row; align-items: center; justify-content: space-between; } .node-bars { max-width: 40rem; flex-shrink: 0; } }
+      .node-bars { display: grid; grid-template-columns: 1fr; gap: .75rem; width: 100%; }
+      @media (min-width: 640px) { .node-bars { grid-template-columns: repeat(3, 1fr); } }
+      .node-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11px; color: var(--muted); margin-top: 3px; }
+      .chev { display: inline-block; width: 12px; color: var(--muted); }
+      .detail { border-top: 1px solid var(--border); padding: 1rem; }
+      .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: .375rem; }
+      .ev { border-bottom: 1px solid var(--border); padding: .5rem 0; }
+      .ev:last-child { border-bottom: 0; }
+      .ev-h { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+      .ev-m { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 2px; }
+      .err { border: 1px solid var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); padding: .75rem; border-radius: 6px; }
+      .tile-l { font-size: 10px; text-transform: uppercase; color: var(--muted); }
+      @media (min-width: 640px) { .tile-l { display: none; } }
+      ol { margin: 0; padding-left: 1.25rem; }
+      li { margin: 2px 0; }
+      .between { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; }
+      .trunc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    </style>
+    </head>
+    <body>
+    <div class="wrap">
+      <div class="head">
+        <div>
+          <h1>Cluster Status</h1>
+          <div class="sub" id="meta">Loading…</div>
+        </div>
+        <div class="legend">
+          <span><i class="sw" style="background:var(--pods)"></i>Pods (workload)</span>
+          <span><i class="sw" style="background:var(--k3s)"></i>k3s (kubelet + runtime)</span>
+          <span><i class="sw" style="background:var(--system)"></i>System (non-k3s)</span>
+          <span><i class="sw" style="background:var(--muted-bg);border:1px solid var(--border)"></i>Idle / free</span>
+          <span><i class="sw" style="width:2px;height:12px;background:var(--fg);opacity:.7"></i>Requested</span>
+        </div>
+      </div>
+      <div id="root"></div>
+    </div>
+    <script>
+    (function () {
+      'use strict';
+      // Matches the collector's scrape interval: polling faster than it collects
+      // just re-fetches the same file.
+      var POLL_MS = {{ mul .Values.collector.intervalSeconds 1000 }};
+      var expanded = {};
+
+      function esc(s) {
+        // Event messages are arbitrary text straight from Kubernetes and this
+        // page is public — nothing reaches innerHTML unescaped.
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+      function fmtBytes(n) {
+        n = Number(n);
+        if (!isFinite(n) || n <= 0) return '0 B';
+        var u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'], i = 0;
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return n.toFixed(1) + ' ' + u[i];
+      }
+      function fmtRate(bps) {
+        if (bps == null || !isFinite(bps)) return null;
+        if (bps < 1024) return bps.toFixed(0) + ' B/s';
+        return fmtBytes(bps) + '/s';
+      }
+      function fmtCores(n) {
+        n = Number(n);
+        if (!isFinite(n) || n <= 0) return '0';
+        if (n < 0.1) return n.toFixed(2);
+        return n < 10 ? n.toFixed(2) : n.toFixed(1);
+      }
+      function fmtUptime(iso) {
+        if (!iso) return null;
+        var t = Date.parse(iso);
+        if (isNaN(t)) return null;
+        var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+        var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+        if (d > 0) return d + 'd ' + h + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+      }
+      function fmtRel(iso) {
+        if (!iso) return '';
+        var t = Date.parse(iso);
+        if (isNaN(t)) return '';
+        var s = Math.floor((Date.now() - t) / 1000);
+        if (s < 0) return 'now';
+        if (s < 60) return s + 's ago';
+        var m = Math.floor(s / 60);
+        if (m < 60) return m + 'm ago';
+        var h = Math.floor(m / 60);
+        if (h < 24) return h + 'h ago';
+        return Math.floor(h / 24) + 'd ago';
+      }
+      function pctColor(v) {
+        if (v == null) return 'var(--muted)';
+        if (v >= 90) return 'var(--destructive)';
+        if (v >= 70) return 'var(--warn)';
+        return 'var(--ok)';
+      }
+      function pct(v) {
+        if (v == null) return '<span style="color:var(--muted)">N/A</span>';
+        var w = v >= 90 ? 'font-weight:600;' : '';
+        return '<span style="' + w + 'color:' + pctColor(v) + '">' + v.toFixed(1) + '%</span>';
+      }
+      function podStatusColor(s) {
+        s = String(s || '').toLowerCase();
+        if (['failed', 'terminating', 'evicted', 'crashloopbackoff'].indexOf(s) >= 0) return 'var(--destructive)';
+        if (['pending', 'containercreating'].indexOf(s) >= 0) return 'var(--warn)';
+        if (s === 'completed' || s === 'succeeded') return 'var(--info)';
+        return 'var(--ok)';
+      }
+
+      // fmt formats every segment including the idle remainder, which is why it's
+      // a function rather than a per-segment string: idle is computed here, so
+      // only here knows how to render it.
+      function bar(segments, capacity, markerVal, fmt) {
+        var used = segments.reduce(function (s, x) { return s + Math.max(0, x.value); }, 0);
+        var denom = capacity > 0 ? capacity : used;
+        var pieces = segments.slice();
+        pieces.push({ label: 'idle', value: Math.max(denom - used, 0), color: 'transparent' });
+        var title = pieces.filter(function (p) { return p.value > 0; })
+          .map(function (p) { return p.label + ': ' + fmt(p.value); }).join(' · ');
+        var html = '<div class="bar" title="' + esc(title) + '">';
+        pieces.forEach(function (p) {
+          if (p.value <= 0) return;
+          var w = Math.min(100, denom > 0 ? (p.value / denom) * 100 : 0);
+          html += '<i style="width:' + w + '%;background:' + p.color + '"></i>';
+        });
+        if (markerVal && denom > 0 && markerVal > 0) {
+          html += '<div class="marker" style="left:' + Math.min(100, (markerVal / denom) * 100) + '%"></div>';
+        }
+        return html + '</div>';
+      }
+
+      function cpuBar(cpu, reqCores) {
+        if (!cpu) return '<div class="sub">N/A</div>';
+        var used = cpu.pods + cpu.k3s + cpu.system;
+        var p = cpu.capacity > 0 ? (used / cpu.capacity) * 100 : 0;
+        var segs = [
+          { label: 'pods', value: cpu.pods, color: 'var(--pods)' },
+          { label: 'k3s', value: cpu.k3s, color: 'var(--k3s)' },
+          { label: 'system', value: cpu.system, color: 'var(--system)' }
+        ];
+        return bar(segs, cpu.capacity, reqCores, fmtCores) +
+          '<div class="barlbl"><span class="mono">' + fmtCores(used) + ' / ' + fmtCores(cpu.capacity) + ' cores' +
+          (reqCores > 0 ? ' · req ' + fmtCores(reqCores) : '') + '</span><span>' + pct(p) + '</span></div>';
+      }
+
+      function ramBar(ram, reqBytes) {
+        if (!ram) return '<div class="sub">N/A</div>';
+        var used = Number(ram.podsBytes) + Number(ram.k3sBytes) + Number(ram.systemBytes);
+        var cap = Number(ram.capacityBytes);
+        var p = cap > 0 ? (used / cap) * 100 : 0;
+        var segs = [
+          { label: 'pods', value: Number(ram.podsBytes), color: 'var(--pods)' },
+          { label: 'k3s', value: Number(ram.k3sBytes), color: 'var(--k3s)' },
+          { label: 'system', value: Number(ram.systemBytes), color: 'var(--system)' }
+        ];
+        return bar(segs, cap, reqBytes, fmtBytes) +
+          '<div class="barlbl"><span class="mono">' + fmtBytes(used) + ' / ' + fmtBytes(cap) +
+          (reqBytes > 0 ? ' · req ' + fmtBytes(reqBytes) : '') + '</span><span>' + pct(p) + '</span></div>';
+      }
+
+      function diskBar(disk) {
+        if (!disk) return '<div class="sub">N/A</div>';
+        var used = Number(disk.usedBytes), cap = Number(disk.capacityBytes);
+        var p = cap > 0 ? (used / cap) * 100 : 0;
+        var color = p >= 90 ? 'var(--destructive)' : p >= 70 ? 'var(--system)' : 'var(--pods)';
+        return bar([{ label: 'used', value: used, color: color }], cap, 0, fmtBytes) +
+          '<div class="barlbl"><span class="mono">' + fmtBytes(used) + ' / ' + fmtBytes(cap) + '</span><span>' + pct(p) + '</span></div>';
+      }
+
+      function diskMini(disks) {
+        if (!disks || !disks.length) return '<div class="sub">No disks</div>';
+        var worst = disks.reduce(function (a, d) { return (d.percent || 0) > (a.percent || 0) ? d : a; });
+        var p = worst.percent || 0;
+        var color = p >= 90 ? 'var(--destructive)' : p >= 70 ? 'var(--system)' : 'var(--pods)';
+        var title = disks.map(function (d) { return d.label + ': ' + d.used + ' / ' + d.total; }).join(' · ');
+        return '<div class="bar" title="' + esc(title) + '"><i style="width:' + Math.min(100, p) + '%;background:' + color + '"></i></div>' +
+          '<div class="barlbl"><span class="mono trunc" title="' + esc(worst.label) + '">' +
+          esc(disks.length === 1 ? worst.label : disks.length + ' disks') + '</span><span>' + pct(worst.percent) + '</span></div>';
+      }
+
+      function stat(label, value, sub) {
+        return '<div><div class="stat-l">' + esc(label) + '</div><div class="stat-v mono">' + esc(value) + '</div>' +
+          (sub ? '<div class="stat-s">' + esc(sub) + '</div>' : '') + '</div>';
+      }
+
+      function podStatusPills(s) {
+        if (!s) return '';
+        var tiles = [
+          { l: 'Running', n: s.running, c: 'var(--ok)' },
+          { l: 'Pending', n: s.pending, c: 'var(--warn)' },
+          { l: 'CrashLoop', n: s.crashLooping, c: 'var(--destructive)' },
+          { l: 'Failed', n: s.failed, c: 'var(--destructive)' },
+          { l: 'Succeeded', n: s.succeeded, c: 'var(--info)' },
+          { l: 'Unknown', n: s.unknown, c: 'var(--muted)' }
+        ];
+        return '<div class="pills">' + tiles.filter(function (t) { return t.n > 0 || t.l === 'Running'; })
+          .map(function (t) {
+            return '<span class="pill" style="color:' + t.c + ';background:color-mix(in srgb,' + t.c + ' 15%, transparent)">' +
+              '<b class="mono">' + t.n + '</b>' + t.l + '</span>';
+          }).join('') + '</div>';
+      }
+
+      function conditionBadges(c) {
+        if (!c) return '';
+        var flags = [
+          { l: 'MemPressure', on: c.memoryPressure }, { l: 'DiskPressure', on: c.diskPressure },
+          { l: 'PIDPressure', on: c.pidPressure }, { l: 'NetUnavailable', on: c.networkUnavailable }
+        ].filter(function (f) { return f.on; });
+        return flags.map(function (f) {
+          return '<span class="pill" style="color:var(--destructive);background:color-mix(in srgb,var(--destructive) 20%,transparent)">⚠ ' + f.l + '</span>';
+        }).join('');
+      }
+
+      function summary(t) {
+        var cpuUsed = t.cpu ? t.cpu.pods + t.cpu.k3s + t.cpu.system : 0;
+        var ramUsed = t.ram ? Number(t.ram.podsBytes) + Number(t.ram.k3sBytes) + Number(t.ram.systemBytes) : 0;
+        var ramCap = t.ram ? Number(t.ram.capacityBytes) : 0;
+        var dUsed = t.disk ? Number(t.disk.usedBytes) : 0, dCap = t.disk ? Number(t.disk.capacityBytes) : 0;
+        return '<div class="card"><div class="card-h"><span class="card-t">Cluster Summary</span></div><div class="card-c">' +
+          '<div class="grid g4">' +
+          stat('Nodes', t.readyNodeCount + ' / ' + t.nodeCount, 'ready') +
+          stat('Pods', String(t.podCount), 'running across cluster') +
+          stat('CPU', fmtCores(cpuUsed) + ' / ' + fmtCores(t.cpu ? t.cpu.capacity : 0), 'cores') +
+          stat('RAM', fmtBytes(ramUsed) + ' / ' + fmtBytes(ramCap), t.ram ? fmtBytes(t.ram.availableBytes) + ' available' : '') +
+          '</div>' + podStatusPills(t.podStatus) +
+          '<div class="grid g3">' +
+          '<div><div class="lbl">CPU</div>' + cpuBar(t.cpu, t.requests ? t.requests.cpuCores : 0) + '</div>' +
+          '<div><div class="lbl">RAM</div>' + ramBar(t.ram, t.requests ? Number(t.requests.ramBytes) : 0) + '</div>' +
+          '<div><div class="lbl">Disk (' + fmtBytes(dUsed) + ' of ' + fmtBytes(dCap) + ')</div>' + diskBar(t.disk) + '</div>' +
+          '</div></div></div>';
+      }
+
+      function nodeRow(n) {
+        var open = !!expanded[n.name];
+        var cores = n.cpu ? n.cpu.capacity : 0;
+        var ramCap = n.ram ? Number(n.ram.capacityBytes) : 0;
+        var up = fmtUptime(n.startedAt);
+        var net = n.network ? [fmtRate(n.network.rxBytesPerSec), fmtRate(n.network.txBytesPerSec)] : null;
+        var meta = [];
+        if (cores > 0) meta.push(fmtCores(cores) + ' cores');
+        if (ramCap > 0) meta.push(fmtBytes(ramCap) + ' RAM');
+        if (n.podCount != null) meta.push(n.podCount + ' pods');
+        if (up) meta.push('up ' + up);
+        if (net && (net[0] || net[1])) meta.push('↓' + (net[0] || '—') + ' ↑' + (net[1] || '—'));
+        if (n.osImage) meta.push(n.osImage);
+
+        var h = '<div class="card"><button class="node-btn" data-node="' + esc(n.name) + '">' +
+          '<div style="min-width:0;flex:1"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px">' +
+          '<span class="chev">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="mono" style="font-weight:500">' + esc(n.name) + '</span>' +
+          '<span class="pill" style="color:' + (n.ready ? 'var(--ok)' : 'var(--destructive)') +
+          ';background:color-mix(in srgb,' + (n.ready ? 'var(--ok)' : 'var(--destructive)') + ' 15%,transparent)">' +
+          (n.ready ? 'Ready' : 'NotReady') + '</span>' + conditionBadges(n.conditions) + '</div>' +
+          '<div class="node-meta">' + meta.map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('') + '</div></div>' +
+          '<div class="node-bars">' +
+          '<div><div class="tile-l">CPU</div>' + cpuBar(n.cpu, n.requests ? n.requests.cpuCores : 0) + '</div>' +
+          '<div><div class="tile-l">RAM</div>' + ramBar(n.ram, n.requests ? Number(n.requests.ramBytes) : 0) + '</div>' +
+          '<div><div class="tile-l">Disk</div>' + diskMini(n.disks) + '</div>' +
+          '</div></button>';
+
+        if (open) {
+          h += '<div class="detail">';
+          if (n.disks && n.disks.length) {
+            h += '<div class="lbl">Disks</div><div class="scroll"><table><thead><tr><th>Mount</th><th class="r">Used</th>' +
+              '<th class="r">Total</th><th class="r">Free</th><th class="r">%</th></tr></thead><tbody>' +
+              n.disks.map(function (d) {
+                return '<tr><td class="mono">' + esc(d.label) + '</td><td class="r">' + esc(d.used) + '</td><td class="r">' +
+                  esc(d.total) + '</td><td class="r">' + esc(d.free) + '</td><td class="r">' + pct(d.percent) + '</td></tr>';
+              }).join('') + '</tbody></table></div>';
+          }
+          if (n.pods && n.pods.length) {
+            h += '<div class="lbl" style="margin-top:1rem">Pods (' + n.pods.length + ')</div><div class="scroll"><table><thead><tr>' +
+              '<th>Pod</th><th>Namespace</th><th class="c">Status</th><th class="r">Restarts</th>' +
+              '<th class="r">Last Restart</th><th class="r">CPU</th><th class="r">RAM</th></tr></thead><tbody>' +
+              n.pods.map(function (p) {
+                return '<tr><td class="mono" style="font-size:12px">' + esc(p.name) + '</td>' +
+                  '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.namespace || '-') + '</td>' +
+                  '<td class="c" style="color:' + podStatusColor(p.status) + ';text-transform:capitalize">' + esc(p.status || 'N/A') + '</td>' +
+                  '<td class="r">' + (p.restarts || 0) + '</td>' +
+                  '<td class="r" style="font-size:11px;color:var(--muted)">' +
+                  esc(p.lastRestartTime ? new Date(p.lastRestartTime).toLocaleString() : 'Never') + '</td>' +
+                  '<td class="r">' + pct(p.cpuPercent) + '</td>' +
+                  '<td class="r">' + esc(p.ramUsage || '') + ' (' + pct(p.ramPercent) + ')</td></tr>';
+              }).join('') + '</tbody></table></div>';
+          }
+          h += '</div>';
+        }
+        return h + '</div>';
+      }
+
+      function topPods(title, pods, metric) {
+        if (!pods || !pods.length) return '';
+        return '<div class="card"><div class="card-h"><span class="card-t">' + esc(title) + '</span></div><div class="card-c"><ol>' +
+          pods.map(function (p) {
+            var v = metric === 'cpu' ? (p.cpuCores ? fmtCores(p.cpuCores) + ' cores' : '') : (p.ramBytes ? fmtBytes(p.ramBytes) : '');
+            return '<li><div class="between"><span class="mono trunc">' + esc(p.name) +
+              '<span style="font-size:11px;color:var(--muted)"> · ' + esc(p.namespace) + ' · ' + esc(p.node) + '</span></span>' +
+              '<span class="mono" style="font-size:11px;flex-shrink:0">' + esc(v) + '</span></div></li>';
+          }).join('') + '</ol></div></div>';
+      }
+
+      function deployments(ds) {
+        if (!ds || !ds.length) return '';
+        function color(c) {
+          if (c === 'Failure') return 'var(--destructive)';
+          if (c === 'Progressing') return 'var(--warn)';
+          return 'var(--ok)';
+        }
+        return '<div class="card"><div class="card-h"><span class="card-t">Deployments (' + ds.length + ')</span></div>' +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th><th class="r">Ready</th>' +
+          '<th class="r">Available</th><th class="r">Updated</th><th class="c">Status</th></tr></thead><tbody>' +
+          ds.map(function (d) {
+            return '<tr><td class="mono" style="font-size:12px"' + (d.message ? ' title="' + esc(d.message) + '"' : '') + '>' +
+              esc(d.name) + '</td><td class="mono" style="font-size:12px;color:var(--muted)">' + esc(d.namespace) + '</td>' +
+              '<td class="r mono" style="font-size:12px">' + d.ready + ' / ' + d.desired + '</td>' +
+              '<td class="r mono" style="font-size:12px">' + d.available + '</td>' +
+              '<td class="r mono" style="font-size:12px">' + d.updated + '</td>' +
+              '<td class="c"><span class="pill" style="color:' + color(d.condition) +
+              ';background:color-mix(in srgb,' + color(d.condition) + ' 15%,transparent)">' + esc(d.condition) + '</span></td></tr>';
+          }).join('') + '</tbody></table></div></div></div>';
+      }
+
+      function events(evs) {
+        if (!evs) return '';
+        if (!evs.length) {
+          return '<div class="card"><div class="card-h"><span class="card-t">Recent Warnings</span></div>' +
+            '<div class="card-c"><div class="sub">No recent warnings.</div></div></div>';
+        }
+        return '<div class="card"><div class="card-h"><span class="card-t">Recent Warnings (' + evs.length + ')</span></div><div class="card-c">' +
+          evs.map(function (e) {
+            return '<div class="ev"><div class="ev-h">' +
+              '<b style="color:var(--destructive)">' + esc(e.reason) + '</b>' +
+              '<span class="mono" style="font-size:11px;color:var(--muted)">' + esc(e.involvedKind) + '/' + esc(e.involvedName) + '</span>' +
+              (e.namespace ? '<span class="mono" style="font-size:11px;color:var(--muted)">in ' + esc(e.namespace) + '</span>' : '') +
+              (e.count > 1 ? '<span class="pill" style="background:var(--muted-bg)">×' + e.count + '</span>' : '') +
+              '<span style="margin-left:auto;font-size:11px;color:var(--muted)" title="' + esc(e.lastSeen || '') + '">' + esc(fmtRel(e.lastSeen)) + '</span>' +
+              '</div><div class="ev-m">' + esc(e.message) + '</div></div>';
+          }).join('') + '</div></div>';
+      }
+
+      function render(d) {
+        var h = '';
+        if (d.totals) h += summary(d.totals);
+        h += '<h2>Nodes (' + d.nodeDisks.length + ')</h2>';
+        if (!d.nodeDisks.length) h += '<div class="sub">No node data available.</div>';
+        h += d.nodeDisks.map(nodeRow).join('');
+        if (d.totals && d.totals.topCpuPods && d.totals.topCpuPods.length) {
+          h += '<div class="grid g2">' + topPods('Top CPU consumers', d.totals.topCpuPods, 'cpu') +
+            topPods('Top RAM consumers', d.totals.topRamPods, 'ram') + '</div>';
+        }
+        h += deployments(d.deployments);
+        h += events(d.recentEvents);
+        document.getElementById('root').innerHTML = h;
+
+        Array.prototype.forEach.call(document.querySelectorAll('[data-node]'), function (b) {
+          b.addEventListener('click', function () {
+            var k = b.getAttribute('data-node');
+            expanded[k] = !expanded[k];
+            render(d);
+          });
+        });
+      }
+
+      function setMeta(d, err) {
+        var el = document.getElementById('meta');
+        if (err) { el.innerHTML = '<span style="color:var(--destructive)">' + esc(err) + '</span>'; return; }
+        // Data is collected on a fixed schedule, so say how old it is rather than
+        // implying it's live.
+        var age = fmtRel(d.generatedAt);
+        el.textContent = 'Collected ' + (age || 'just now') + ' · refreshes every ' + Math.round(POLL_MS / 1000) + 's';
+      }
+
+      var last = null;
+      function tick() {
+        fetch('status.json?t=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(function (d) { last = d; render(d); setMeta(d); })
+          .catch(function (e) {
+            if (!last) document.getElementById('root').innerHTML = '<div class="err">Failed to load cluster status.</div>';
+            setMeta(null, 'Failed to refresh: ' + e.message);
+          });
+      }
+      tick();
+      setInterval(tick, POLL_MS);
+      // Keep the relative "collected Xs ago" honest between polls.
+      setInterval(function () { if (last) setMeta(last); }, 1000);
+    })();
+    </script>
+    </body>
+    </html>

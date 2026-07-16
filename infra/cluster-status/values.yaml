@@ -1,0 +1,86 @@
+# cluster-status — the public cluster dashboard at status.diemer.codes.
+#
+# Ported from talaria's authed /admin/cluster page. That page's collector was
+# already fully generic (no talaria names, no filters); its only coupling was
+# plumbing — talaria's Handler framework, its k8s client, and protobuf. Here the
+# same logic runs as a plain stdlib-only script emitting JSON.
+#
+#   collector sidecar ──reads k8s API──▶ /data/status.json (emptyDir)
+#                                              │
+#                             nginx ───serves──┘  index.html + status.json
+#                                              │
+#                                    Ingress ──┴──▶ status.diemer.codes (tunnel)
+#                                                   status.zachd.duckdns.org
+#
+# WHY A SIDECAR AND NOT A CRONJOB: network rates are computed by diffing
+# kubelet's cumulative rx/tx counters against the previous sample held in
+# memory. A CronJob starts fresh every run, so it would never have a previous
+# sample and every rate would be null forever. The collector has to be a
+# long-lived process.
+#
+# WHY NOT SERVE FROM AN API: this page is PUBLIC. nginx only ever serves two
+# files off local disk, so public traffic never reaches the Kubernetes API. An
+# always-on API querying k8s per request would hand anyone on the internet a way
+# to hammer the API server and every kubelet's /stats/summary, unauthenticated.
+# The collector is the only thing that talks to k8s, on its own fixed schedule,
+# no matter how much traffic the page gets.
+
+replicaCount: 2
+
+collector:
+  image: python:3.12-alpine
+  # Seconds between scrapes. Also the page's poll interval. Each scrape is
+  # 1 nodes + 1 pods + 1 deployments + 1 events call, plus one /stats/summary
+  # per node — so ~14 calls per cycle on a 10-node cluster, per replica.
+  intervalSeconds: 15
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 192Mi
+
+web:
+  image: nginxinc/nginx-unprivileged:1.27-alpine
+  # The unprivileged image listens high and runs as non-root out of the box,
+  # which is what we want for anything internet-facing.
+  port: 8080
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# What the collector is allowed to write into status.json. Everything here is
+# public the moment it's collected, so this is the redaction point — not the
+# page, not the ingress. Both default on: the page publishes everything.
+#
+#   events        — Kubernetes Warning event messages. Benign on a healthy
+#                   cluster (container started, job completed), but the text is
+#                   unbounded and on a bad day routinely names Secrets, images,
+#                   registries and paths: `secret "x" not found`, `Failed to
+#                   pull image ghcr.io/... unauthorized`. Which is to say it's
+#                   least safe exactly when the page is most useful.
+#   nodeVersions  — kernelVersion and osImage. Publishing exact kernel versions
+#                   tells anyone which CVEs apply to these nodes.
+#
+# Flip either to false and the collector never writes the field at all, so it
+# can't leak even if the page or ingress is later misconfigured.
+publish:
+  events: true
+  nodeVersions: true
+
+ingress:
+  enabled: true
+  className: traefik
+  host: status.zachd.duckdns.org
+  # Served over the shared Cloudflare tunnel. TLS for these terminates at
+  # Cloudflare, so they're deliberately absent from the ACME cert list.
+  cloudflareHosts:
+    - status.diemer.codes
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"

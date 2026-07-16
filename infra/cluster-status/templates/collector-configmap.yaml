@@ -1,0 +1,631 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cluster-status.fullname" . }}-collector
+  labels:
+    {{- include "cluster-status.labels" . | nindent 4 }}
+data:
+  collect.py: |
+    # Cluster status collector.
+    #
+    # A port of talaria's src/api/admin/get_cluster_info.py. That code was already
+    # fully generic — this drops its four couplings (the Handler framework, its
+    # httpx k8s client, protobuf types, structlog) and emits plain JSON instead.
+    # The measurement logic below is otherwise the same, deliberately: it is the
+    # valuable part and it was already correct.
+    #
+    # Stdlib only, so this runs on a stock python image with nothing to build.
+    # Loops forever writing /data/status.json; nginx serves that file.
+
+    import json
+    import os
+    import ssl
+    import sys
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+    API = "https://kubernetes.default.svc"
+    OUT = "/data/status.json"
+
+    INTERVAL = float(os.environ.get("INTERVAL_SECONDS", "15"))
+    PUBLISH_EVENTS = os.environ.get("PUBLISH_EVENTS", "true") == "true"
+    PUBLISH_NODE_VERSIONS = os.environ.get("PUBLISH_NODE_VERSIONS", "true") == "true"
+    TOP_N = 5
+
+
+    def log(msg, **kw):
+        extra = " ".join(f"{k}={v}" for k, v in kw.items())
+        print(f"{msg} {extra}".strip(), file=sys.stderr, flush=True)
+
+
+    with open(f"{SA}/token") as f:
+        TOKEN = f.read().strip()
+    CTX = ssl.create_default_context(cafile=f"{SA}/ca.crt")
+
+
+    def api_get(path, params=None):
+        url = f"{API}{path}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}"})
+        with urllib.request.urlopen(req, context=CTX, timeout=15) as r:
+            return json.load(r)
+
+
+    def fmt_bytes(n):
+        n = float(n)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if n < 1024:
+                return f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{n:.1f} PB"
+
+
+    def parse_cpu(val):
+        val = str(val)
+        if val.endswith("m"):
+            return float(val[:-1]) / 1000.0
+        if val.endswith("n"):
+            return float(val[:-1]) / 1e9
+        if val.endswith("u"):
+            return float(val[:-1]) / 1e6
+        return float(val)
+
+
+    def parse_memory(val):
+        val = str(val)
+        suffixes = {
+            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+            "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4,
+        }
+        for suf, mult in suffixes.items():
+            if val.endswith(suf):
+                return int(float(val[: -len(suf)]) * mult)
+        return int(float(val))
+
+
+    def make_disk(label, total, used):
+        pct = (used / total * 100) if total > 0 else 0.0
+        return {
+            "label": label,
+            "total": fmt_bytes(total),
+            "used": fmt_bytes(used),
+            "free": fmt_bytes(max(total - used, 0)),
+            "percent": pct,
+        }
+
+
+    # Disks whose capacity lands in the same 64MiB bucket are treated as the same
+    # underlying device — kubelet reports the node fs and imagefs separately even
+    # when they're one filesystem, and every PVC on local-path shares it too.
+    BUCKET = 64 * 1024 * 1024
+
+
+    def bucket(n):
+        return n // BUCKET
+
+
+    def summarize_pvcs(pvc_refs):
+        names = [name for _, name in pvc_refs if name]
+        if not names:
+            return "PVC storage"
+        head = ", ".join(sorted(set(names))[:3])
+        extra = len(set(names)) - 3
+        return f"{head}{f' (+{extra} more)' if extra > 0 else ''}"
+
+
+    def collect_disks(node_stat, pods):
+        disks = []
+        fs = node_stat.get("fs") or {}
+        primary_total = int(fs.get("capacityBytes") or 0)
+        primary_used = int(fs.get("usedBytes") or 0)
+        primary_bucket = None
+        if primary_total > 0:
+            disks.append(make_disk("/ (kubelet)", primary_total, primary_used))
+            primary_bucket = bucket(primary_total)
+
+        image_fs = (node_stat.get("runtime") or {}).get("imageFs") or {}
+        image_total = int(image_fs.get("capacityBytes") or 0)
+        image_used = int(image_fs.get("usedBytes") or 0)
+        if image_total > 0 and (primary_bucket is None or bucket(image_total) != primary_bucket):
+            disks.append(make_disk("imagefs (containers)", image_total, image_used))
+
+        grouped = {}
+        for pod in pods:
+            for vol in pod.get("volume", []) or []:
+                pvc_ref = vol.get("pvcRef") or {}
+                ns = pvc_ref.get("namespace")
+                name = pvc_ref.get("name")
+                if not ns or not name:
+                    continue
+                cap = int(vol.get("capacityBytes") or 0)
+                used = int(vol.get("usedBytes") or 0)
+                if cap <= 0:
+                    continue
+                key = (bucket(cap), bucket(used))
+                entry = grouped.setdefault(key, {"capacity": cap, "used": used, "pvcs": []})
+                entry["pvcs"].append((ns, name))
+
+        seen = {bucket(t) for t in (primary_total, image_total) if t}
+        for (cap_bucket, _used_bucket), entry in grouped.items():
+            if cap_bucket in seen:
+                continue
+            seen.add(cap_bucket)
+            disks.append(make_disk(summarize_pvcs(entry["pvcs"]), entry["capacity"], entry["used"]))
+        return disks
+
+
+    # k3s itself runs in the "kubelet" and "runtime" cgroups; pods aggregate as
+    # "pods". The kubelet does not, by default, report a "system" cgroup for
+    # non-k8s processes (sshd, systemd, tailscale, the kernel, ...) — that requires
+    # --system-cgroups, which k3s doesn't set. So system is the residual:
+    # node_total - (k3s + pods).
+    K3S_CONTAINERS = {"kubelet", "runtime"}
+    PODS_CONTAINERS = {"pods", "kubepods"}
+
+
+    def build_node_breakdowns(node_stat, cpu_capacity, ram_capacity):
+        pods_cpu = k3s_cpu = 0.0
+        pods_ram = k3s_ram = 0
+        for c in node_stat.get("systemContainers") or []:
+            name = (c.get("name") or "").lower()
+            cpu = (c.get("cpu") or {}).get("usageNanoCores", 0) / 1e9
+            ram = int((c.get("memory") or {}).get("workingSetBytes", 0))
+            if name in PODS_CONTAINERS:
+                pods_cpu += cpu
+                pods_ram += ram
+            elif name in K3S_CONTAINERS:
+                k3s_cpu += cpu
+                k3s_ram += ram
+
+        node_cpu_total = (node_stat.get("cpu") or {}).get("usageNanoCores", 0) / 1e9
+        node_ram_total = int((node_stat.get("memory") or {}).get("workingSetBytes", 0))
+        system_cpu = max(node_cpu_total - pods_cpu - k3s_cpu, 0.0)
+        system_ram = max(node_ram_total - pods_ram - k3s_ram, 0)
+        available = int((node_stat.get("memory") or {}).get("availableBytes", 0))
+
+        return (
+            {"pods": pods_cpu, "k3s": k3s_cpu, "system": system_cpu, "capacity": cpu_capacity},
+            {
+                "podsBytes": pods_ram, "k3sBytes": k3s_ram, "systemBytes": system_ram,
+                "capacityBytes": ram_capacity, "availableBytes": available,
+            },
+        )
+
+
+    def is_node_ready(node):
+        for cond in node.get("status", {}).get("conditions", []) or []:
+            if cond.get("type") == "Ready":
+                return cond.get("status") == "True"
+        return False
+
+
+    # Note: "True" on these means the node is *unhealthy* in that dimension.
+    # NetworkUnavailable is the same sense — True means no usable network.
+    def parse_node_conditions(node):
+        flags = {"MemoryPressure": False, "DiskPressure": False,
+                 "PIDPressure": False, "NetworkUnavailable": False}
+        for cond in node.get("status", {}).get("conditions", []) or []:
+            t = cond.get("type")
+            if t in flags:
+                flags[t] = cond.get("status") == "True"
+        return {
+            "memoryPressure": flags["MemoryPressure"],
+            "diskPressure": flags["DiskPressure"],
+            "pidPressure": flags["PIDPressure"],
+            "networkUnavailable": flags["NetworkUnavailable"],
+        }
+
+
+    def node_storage_bytes(node_stat):
+        fs = node_stat.get("fs") or {}
+        primary_total = int(fs.get("capacityBytes") or 0)
+        primary_used = int(fs.get("usedBytes") or 0)
+        image_fs = (node_stat.get("runtime") or {}).get("imageFs") or {}
+        image_total = int(image_fs.get("capacityBytes") or 0)
+        image_used = int(image_fs.get("usedBytes") or 0)
+        if image_total > 0 and bucket(image_total) != bucket(primary_total):
+            return primary_total + image_total, primary_used + image_used
+        return primary_total, primary_used
+
+
+    def pod_requests(pod):
+        cpu_total = 0.0
+        ram_total = 0
+        for c in pod.get("spec", {}).get("containers", []) or []:
+            req = ((c.get("resources") or {}).get("requests") or {}) if c else {}
+            if req.get("cpu"):
+                cpu_total += parse_cpu(req["cpu"])
+            if req.get("memory"):
+                ram_total += parse_memory(req["memory"])
+        return cpu_total, ram_total
+
+
+    def pod_status_label(pod):
+        # kubelet still reports phase=Running for pods that are flapping, so
+        # CrashLoopBackOff is detected by walking containerStatuses and overriding.
+        status = pod.get("status", {})
+        phase = (status.get("phase") or "Unknown").lower()
+        for cs in status.get("containerStatuses", []) or []:
+            waiting = (cs.get("state") or {}).get("waiting") or {}
+            if waiting.get("reason") == "CrashLoopBackOff":
+                return "crash_looping"
+        if phase in {"running", "pending", "succeeded", "failed"}:
+            return phase
+        return "unknown"
+
+
+    LAST_NETWORK_SAMPLE = {}
+
+    # Interfaces that carry a copy of traffic already counted on the uplink.
+    # flannel/cni/veth are the pod overlay; tailscale is a tunnel riding the NIC.
+    # Counting any of them alongside the uplink would double-count.
+    _VIRTUAL_IFACES = ("flannel", "cni", "veth", "docker", "tailscale", "kube", "br-")
+
+
+    def iface_counters(net):
+        # kubelet embeds the default interface's counters at the top level — but
+        # only when it can identify one. On this cluster it can't (it reports
+        # name: "" with no rxBytes/txBytes), so the top level is empty and only
+        # the per-interface list is populated.
+        #
+        # NOTE: talaria's original read only the top-level counters and gave up
+        # when they were absent, which is why its network column has always been
+        # blank. Fall back to the busiest physical interface instead.
+        rx, tx = net.get("rxBytes"), net.get("txBytes")
+        if rx is not None and tx is not None:
+            return int(rx), int(tx)
+        best = None
+        for i in net.get("interfaces") or []:
+            name = i.get("name") or ""
+            if name == "lo" or name.startswith(_VIRTUAL_IFACES):
+                continue
+            r, t = i.get("rxBytes"), i.get("txBytes")
+            if r is None or t is None:
+                continue
+            if best is None or int(r) > best[0]:
+                best = (int(r), int(t))
+        return best
+
+
+    def network_rate(node_name, node_stat):
+        # rx/tx bytes/sec by diffing kubelet's cumulative counters against the
+        # previous scrape. This is why the collector is a long-lived process and
+        # not a CronJob: the first scrape after start has no prior sample and
+        # returns None, so a fresh-every-run job would never report a rate.
+        counters = iface_counters(node_stat.get("network") or {})
+        if counters is None:
+            return None
+        rx_i, tx_i = counters
+        now = time.monotonic()
+        prev = LAST_NETWORK_SAMPLE.get(node_name)
+        LAST_NETWORK_SAMPLE[node_name] = (now, rx_i, tx_i)
+        if prev is None:
+            return None
+        prev_t, prev_rx, prev_tx = prev
+        dt = now - prev_t
+        if dt <= 0:
+            return None
+        # Counter reset (reboot, ifupdown) — wait for the next sample.
+        if rx_i < prev_rx or tx_i < prev_tx:
+            return None
+        return {
+            "rxBytesPerSec": (rx_i - prev_rx) / dt,
+            "txBytesPerSec": (tx_i - prev_tx) / dt,
+        }
+
+
+    def parse_deployments(items):
+        out = []
+        for d in items:
+            meta = d.get("metadata", {})
+            spec = d.get("spec", {})
+            st = d.get("status", {})
+            desired = int(spec.get("replicas", st.get("replicas", 0)) or 0)
+            ready = int(st.get("readyReplicas", 0) or 0)
+            available = int(st.get("availableReplicas", 0) or 0)
+            updated = int(st.get("updatedReplicas", 0) or 0)
+
+            condition = "Available"
+            message = None
+            for c in st.get("conditions", []) or []:
+                ctype = c.get("type")
+                cstatus = c.get("status")
+                if ctype == "Available" and cstatus != "True":
+                    condition = "Failure" if available == 0 else "Progressing"
+                    message = c.get("message")
+                elif (ctype == "Progressing" and cstatus == "False"
+                      and c.get("reason") == "ProgressDeadlineExceeded"):
+                    condition = "Failure"
+                    message = c.get("message")
+            if ready < desired and condition == "Available":
+                condition = "Progressing"
+
+            out.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "desired": desired,
+                "ready": ready,
+                "available": available,
+                "updated": updated,
+                "condition": condition,
+                "message": message,
+            })
+        out.sort(key=lambda x: (x["condition"] != "Failure",
+                                x["condition"] != "Progressing", x["name"]))
+        return out
+
+
+    def parse_events(items, limit=25):
+        out = []
+        for e in items:
+            if e.get("type") != "Warning":
+                continue
+            meta = e.get("metadata", {})
+            involved = e.get("involvedObject", {})
+            last_seen = e.get("lastTimestamp") or e.get("eventTime") or ""
+            out.append({
+                "namespace": meta.get("namespace", ""),
+                "reason": e.get("reason", ""),
+                "message": e.get("message", ""),
+                "involvedKind": involved.get("kind", ""),
+                "involvedName": involved.get("name", ""),
+                "lastSeen": last_seen or None,
+                "count": int(e.get("count") or 1),
+            })
+        # Most recent first; events without a timestamp sink to the bottom.
+        out.sort(key=lambda x: x["lastSeen"] or "", reverse=True)
+        return out[:limit]
+
+
+    class Totals:
+        def __init__(self):
+            self.pods_cpu = self.k3s_cpu = self.system_cpu = self.cpu_cap = 0.0
+            self.pods_ram = self.k3s_ram = self.system_ram = 0
+            self.ram_cap = self.ram_available = 0
+            self.disk_used = self.disk_cap = 0
+            self.pod_count = self.ready = 0
+            self.req_cpu = 0.0
+            self.req_ram = 0
+            self.observed = []
+            self.pod_status = None
+
+        def add(self, cpu, ram, storage_total, storage_used, pod_count, ready, requests):
+            self.pods_cpu += cpu["pods"]
+            self.k3s_cpu += cpu["k3s"]
+            self.system_cpu += cpu["system"]
+            self.cpu_cap += cpu["capacity"]
+            self.pods_ram += ram["podsBytes"]
+            self.k3s_ram += ram["k3sBytes"]
+            self.system_ram += ram["systemBytes"]
+            self.ram_cap += ram["capacityBytes"]
+            self.ram_available += ram["availableBytes"]
+            self.disk_cap += storage_total
+            self.disk_used += storage_used
+            self.pod_count += pod_count
+            if ready:
+                self.ready += 1
+            self.req_cpu += requests["cpuCores"]
+            self.req_ram += requests["ramBytes"]
+
+        def add_unreachable(self, ready):
+            if ready:
+                self.ready += 1
+
+        def set_pod_status(self, pods):
+            counts = {"running": 0, "pending": 0, "succeeded": 0,
+                      "failed": 0, "unknown": 0, "crash_looping": 0}
+            for p in pods:
+                counts[pod_status_label(p)] += 1
+            self.pod_status = {
+                "running": counts["running"], "pending": counts["pending"],
+                "succeeded": counts["succeeded"], "failed": counts["failed"],
+                "unknown": counts["unknown"], "crashLooping": counts["crash_looping"],
+            }
+
+        def top_pods(self, by_cpu):
+            idx = 3 if by_cpu else 4
+            ranked = sorted(self.observed, key=lambda p: p[idx], reverse=True)[:TOP_N]
+            return [
+                {"namespace": ns, "name": n, "node": node,
+                 "cpuCores": cpu if by_cpu else None,
+                 "ramBytes": ram if not by_cpu else None}
+                for ns, n, node, cpu, ram in ranked
+                if (cpu if by_cpu else ram) > 0
+            ]
+
+        def build(self, node_count):
+            if node_count == 0:
+                return None
+            return {
+                "nodeCount": node_count,
+                "readyNodeCount": self.ready,
+                "podCount": self.pod_count,
+                "cpu": {"pods": self.pods_cpu, "k3s": self.k3s_cpu,
+                        "system": self.system_cpu, "capacity": self.cpu_cap},
+                "ram": {"podsBytes": self.pods_ram, "k3sBytes": self.k3s_ram,
+                        "systemBytes": self.system_ram, "capacityBytes": self.ram_cap,
+                        "availableBytes": self.ram_available},
+                "disk": {"usedBytes": self.disk_used, "capacityBytes": self.disk_cap},
+                "podStatus": self.pod_status,
+                "topCpuPods": self.top_pods(True),
+                "topRamPods": self.top_pods(False),
+                "requests": {"cpuCores": self.req_cpu, "ramBytes": self.req_ram},
+            }
+
+
+    def build_node(node, name, ready, kernel, os_image, all_pods, totals):
+        stats = api_get(f"/api/v1/nodes/{name}/proxy/stats/summary")
+        node_stat = stats.get("node", {})
+        stat_pods = stats.get("pods", []) or []
+
+        disks = collect_disks(node_stat, stat_pods)
+        disk_percent = max((d["percent"] for d in disks), default=0.0) if disks else None
+
+        cpu_usage = node_stat.get("cpu", {}).get("usageNanoCores", 0) / 1e9
+        ram_usage = node_stat.get("memory", {}).get("workingSetBytes", 0)
+
+        capacity = node.get("status", {}).get("capacity", {})
+        cpu_cap = parse_cpu(capacity.get("cpu", "1"))
+        ram_cap = parse_memory(capacity.get("memory", "1Gi"))
+
+        cpu_breakdown, ram_breakdown = build_node_breakdowns(node_stat, cpu_cap, ram_cap)
+        node_pods = [p for p in all_pods if p.get("spec", {}).get("nodeName") == name]
+
+        metrics_by_pod = {
+            (p.get("podRef", {}).get("namespace"), p.get("podRef", {}).get("name")): p
+            for p in stat_pods
+        }
+
+        pods_info = []
+        node_req_cpu = 0.0
+        node_req_ram = 0
+        for p in node_pods:
+            pod_name = p["metadata"]["name"]
+            pod_ns = p["metadata"].get("namespace", "")
+            status = p.get("status", {})
+            container_statuses = status.get("containerStatuses", []) or []
+            restarts = sum(cs.get("restartCount", 0) for cs in container_statuses)
+
+            last_restart = None
+            for cs in container_statuses:
+                terminated = (cs.get("lastState") or {}).get("terminated")
+                if terminated and terminated.get("finishedAt"):
+                    if not last_restart or terminated["finishedAt"] > last_restart:
+                        last_restart = terminated["finishedAt"]
+
+            m = metrics_by_pod.get((pod_ns, pod_name), {})
+            p_cpu = m.get("cpu", {}).get("usageNanoCores", 0) / 1e9
+            p_ram = m.get("memory", {}).get("workingSetBytes", 0)
+
+            pods_info.append({
+                "name": pod_name,
+                "namespace": pod_ns,
+                "cpuPercent": (p_cpu / cpu_cap * 100) if cpu_cap > 0 else 0.0,
+                "ramPercent": (p_ram / ram_cap * 100) if ram_cap > 0 else 0.0,
+                "ramUsage": fmt_bytes(p_ram),
+                "status": status.get("phase", "Unknown"),
+                "restarts": restarts,
+                "lastRestartTime": last_restart,
+            })
+
+            req_cpu, req_ram = pod_requests(p)
+            node_req_cpu += req_cpu
+            node_req_ram += req_ram
+            totals.observed.append((pod_ns, pod_name, name, p_cpu, p_ram))
+
+        storage_total, storage_used = node_storage_bytes(node_stat)
+        requests = {"cpuCores": node_req_cpu, "ramBytes": node_req_ram}
+        totals.add(cpu_breakdown, ram_breakdown, storage_total, storage_used,
+                   len(node_pods), ready, requests)
+
+        out = {
+            "name": name,
+            "disks": disks,
+            "diskPercent": disk_percent,
+            "cpuPercent": (cpu_usage / cpu_cap * 100) if cpu_cap > 0 else 0.0,
+            "ramPercent": (ram_usage / ram_cap * 100) if ram_cap > 0 else 0.0,
+            "ramUsage": fmt_bytes(ram_usage),
+            "pods": pods_info,
+            "cpu": cpu_breakdown,
+            "ram": ram_breakdown,
+            "podCount": len(node_pods),
+            "ready": ready,
+            "startedAt": node_stat.get("startTime") or "",
+            "conditions": parse_node_conditions(node),
+            "requests": requests,
+            "network": network_rate(name, node_stat),
+        }
+        if PUBLISH_NODE_VERSIONS:
+            out["kernelVersion"] = kernel
+            out["osImage"] = os_image
+        return out
+
+
+    def collect():
+        nodes = api_get("/api/v1/nodes")["items"]
+
+        all_pods = []
+        try:
+            all_pods = api_get("/api/v1/pods")["items"]
+        except Exception as e:
+            log("k8s_pods_api_error", error=e)
+
+        deployments = []
+        try:
+            deployments = parse_deployments(api_get("/apis/apps/v1/deployments").get("items", []))
+        except Exception as e:
+            log("k8s_deployments_api_error", error=e)
+
+        events = []
+        if PUBLISH_EVENTS:
+            try:
+                events = parse_events(
+                    api_get("/api/v1/events",
+                            {"fieldSelector": "type=Warning", "limit": "200"}).get("items", [])
+                )
+            except Exception as e:
+                log("k8s_events_api_error", error=e)
+
+        result = []
+        totals = Totals()
+        for node in nodes:
+            name = node["metadata"]["name"]
+            ready = is_node_ready(node)
+            node_info = node.get("status", {}).get("nodeInfo", {})
+            kernel = node_info.get("kernelVersion") or ""
+            os_image = node_info.get("osImage") or ""
+            try:
+                result.append(build_node(node, name, ready, kernel, os_image, all_pods, totals))
+            except Exception as e:
+                # A node whose kubelet won't answer still belongs on the page —
+                # showing it as NotReady-with-no-stats beats dropping it silently.
+                log("k8s_node_stats_error", node=name, error=e)
+                fallback = {
+                    "name": name, "ready": ready, "disks": [], "pods": [],
+                    "conditions": parse_node_conditions(node),
+                }
+                if PUBLISH_NODE_VERSIONS:
+                    fallback["kernelVersion"] = kernel
+                    fallback["osImage"] = os_image
+                result.append(fallback)
+                totals.add_unreachable(ready)
+
+        # Pod-status counts walk the full pod list, not the union of per-node
+        # lists, so unscheduled Pending/Failed pods are still counted.
+        totals.set_pod_status(all_pods)
+        return {
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "nodeDisks": result,
+            "totals": totals.build(len(result)),
+            "deployments": deployments,
+            "recentEvents": events,
+        }
+
+
+    def write(payload):
+        # Write-then-rename: nginx must never see a half-written file.
+        tmp = OUT + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        os.replace(tmp, OUT)
+
+
+    def main():
+        while True:
+            started = time.monotonic()
+            try:
+                write(collect())
+            except Exception as e:
+                log("collect_failed", error=e)
+                # Leave the previous status.json in place: stale data with a
+                # visible timestamp is more useful than an error page.
+            elapsed = time.monotonic() - started
+            time.sleep(max(1.0, INTERVAL - elapsed))
+
+
+    if __name__ == "__main__":
+        main()

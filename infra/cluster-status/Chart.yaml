@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cluster-status
+description: Public cluster status page — a read-only collector sidecar plus nginx serving a static dashboard
+type: application
+version: 1.0.0
+# No image of our own: stock python collects, stock nginx serves, and both the
+# collector script and the page ship as ConfigMaps. appVersion tracks the page,
+# which is ported from talaria's /admin/cluster.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd
