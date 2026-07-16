@@ -1,6 +1,6 @@
 image:
   repository: rommapp/romm
-  tag: "4.9.2"
+  tag: "5.0.0"
   pullPolicy: IfNotPresent
 
 # RomM requires MariaDB. There is no SQLite option: ROMM_DB_DRIVER defaults to
