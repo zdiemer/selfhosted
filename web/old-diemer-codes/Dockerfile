@@ -57,8 +57,9 @@ RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 COPY site/ ./
 
-# Drops the dead Google Analytics tag and actually loads Fira Code. Lands after
-# `COPY site/` so it wins. See overlay/index.html for the full reasoning.
+# Drops the dead Google Analytics tag, actually loads Fira Code, and adds the
+# archive banner. Lands after `COPY site/` so it wins. See overlay/index.html for
+# the full reasoning.
 COPY overlay/index.html ./public/index.html
 
 # Site.jsx declares 22 styled-components and renders only some of them, so
@@ -89,6 +90,12 @@ RUN npm run build
 #   grep site.css in the html  -> index.html still points at it after CRA's
 #                                 html-minifier pass
 #   grep -v gtag               -> the overlay landed and GA is really gone
+#   grep archive-banner        -> both halves of the banner survived that same
+#                                 pass. CRA minifies index.html with
+#                                 removeComments + minifyCSS, so the markup and
+#                                 its <style> are the two things it could eat,
+#                                 and a page that quietly stops saying it is an
+#                                 archive is the failure this guards.
 RUN set -eux; \
     test -s build/index.html; \
     test -s build/site.css; \
@@ -97,6 +104,8 @@ RUN set -eux; \
     grep -q 'about-me-body' build/site.css; \
     grep -q 'site\.css' build/index.html; \
     grep -q 'Fira+Code' build/index.html; \
+    grep -q 'archived copy' build/index.html; \
+    grep -q '\.archive-banner' build/index.html; \
     ! grep -q 'gtag' build/index.html
 
 # -------------------------------------------------------------- runtime stage

@@ -110,6 +110,13 @@ go in the site repo:
   The overlay adds a Google Fonts `<link>`; the existing `font-family` rules pick
   it up. Weights 300/400/700, matching the old rawgit bundle (`site.less` asks
   for `font-weight: 100`, which has no Fira Code equivalent and snaps to 300).
+- **The archive banner.** A sticky bar saying the page is a 2019 copy kept for
+  posterity. The page asserts its author *currently* works at Google and prints a
+  2019 phone number, so it needs to date itself out loud. It is static markup in
+  the shell, not a component, because `Site.jsx` belongs to the frozen repo —
+  which also means it renders before the React bundle and survives `<noscript>`.
+  Styling notes (the opaque background and the `z-index` are both load-bearing)
+  are in the overlay next to the CSS.
 
 ## Usage
 
