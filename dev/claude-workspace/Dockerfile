@@ -17,6 +17,10 @@ ARG TAILSCALE_VERSION=1.88.1
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
 ARG BUILDKIT_VERSION=v0.24.0
+# sops for repos that keep secrets encrypted in-git (talaria's
+# secrets.prod.yaml); age support is built in, no age binary needed.
+# Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
+ARG SOPS_VERSION=v3.10.2
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
@@ -40,6 +44,9 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
     | tar xz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
  && curl -fsSL "https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-amd64.tar.gz" \
     | tar xz -C /usr/local/bin --strip-components=1 bin/buildctl \
+ && curl -fsSL -o /usr/local/bin/sops \
+        "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64" \
+ && chmod 0755 /usr/local/bin/sops \
  && curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \
     | tar xz -C /usr/local/bin --strip-components=1 \
         "tailscale_${TAILSCALE_VERSION}_amd64/tailscale" \

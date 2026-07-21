@@ -120,6 +120,16 @@ internet and cluster-admin + root-on-every-node. Never disable
 4. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
    does not exist. If one ever lands on the PVC it silently takes precedence
    and everything breaks confusingly — `rm ~/.kube/config` is the fix.
+5. **Other repos' secrets** (sync-local-values.sh only covers this repo):
+   - gamedex (standalone clone): copy its values from the laptop —
+     `tar czf - -C ~/Code/gamedex values.local.yaml | kubectl -n claude exec -i deploy/claude-workspace -c term -- tar xzf - -C /home/node/code/gamedex`
+   - talaria keeps secrets sops-encrypted in-git; the image ships `sops`
+     (age support built in), but the age private key must be copied to the
+     pod at `~/.config/sops/age/keys.txt` (chmod 700 dir / 600 file) —
+     sops' default search path, so it works in every shell and script with
+     no env var (a `SOPS_AGE_KEY_FILE` export in `~/.bashrc` only reaches
+     interactive shells). ⚠️ That key decrypts every talaria secret —
+     copying it makes Authelia the only thing guarding them.
 
 ### Self-upgrade
 
