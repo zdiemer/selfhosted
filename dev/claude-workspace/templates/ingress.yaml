@@ -1,0 +1,68 @@
+{{/*
+Two paths per host: /term → ttyd (which serves itself under --base-path
+/term, so no StripPrefix middleware and the websocket endpoint passes through
+Traefik and the Cloudflare tunnel untouched), everything else → CloudCLI at
+root. Traefik orders Prefix routes longest-first, so /term wins.
+*/}}
+{{- define "claude-workspace.paths" -}}
+- path: /term
+  pathType: Prefix
+  backend:
+    service:
+      name: {{ include "claude-workspace.fullname" . }}
+      port:
+        number: {{ .Values.service.termPort }}
+- path: /
+  pathType: Prefix
+  backend:
+    service:
+      name: {{ include "claude-workspace.fullname" . }}
+      port:
+        number: {{ .Values.service.uiPort }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
+    # DuckDNS API can only set TXT at the account's top-level subdomain, so
+    # per-host certs for sub-subdomains fail the ACME challenge. We ride a
+    # wildcard SAN instead — one cert covers every sub-subdomain.
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
+    {{- if .Values.auth.forwardAuth.enabled }}
+    # Gate the whole host behind Authelia (see templates/middleware-forwardauth.yaml).
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "claude-workspace.fullname" . }}-forwardauth@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          {{- include "claude-workspace.paths" . | nindent 10 }}
+    {{- /*
+      Extra hosts served over the Cloudflare tunnel: TLS is terminated at
+      Cloudflare's edge, so these are deliberately absent from the ACME cert
+      list below. Traefik routes them by Host header and applies the same
+      Authelia forward-auth middleware as the DuckDNS host; the tunnel dials
+      in with No TLS Verify. See infra/cloudflared.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          {{- include "claude-workspace.paths" $ | nindent 10 }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

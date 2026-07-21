@@ -1,0 +1,29 @@
+{{- if and .Values.ingress.enabled .Values.auth.forwardAuth.enabled }}
+{{/*
+Traefik Middleware that bounces every request through Authelia before it
+reaches the workspace. Rendered into THIS chart's namespace (rather than
+reusing the one the Authelia chart ships in `auth`) so the Ingress can
+reference it without Traefik's allowCrossNamespace — the cross-namespace hop
+is just the plain HTTP `address` URL below, which is always allowed.
+
+Authelia 4.38+ uses /api/authz/forward-auth (the legacy /api/verify endpoint
+is gone). authResponseHeaders surface the authenticated identity to upstream.
+
+apiVersion is traefik.io/v1alpha1 (Traefik v3, ships with current k3s).
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-forwardauth
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: http://{{ .Values.auth.forwardAuth.autheliaService }}.{{ .Values.auth.forwardAuth.autheliaNamespace }}.svc.cluster.local:{{ .Values.auth.forwardAuth.autheliaPort }}{{ .Values.auth.forwardAuth.autheliaPath }}
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email
+{{- end }}

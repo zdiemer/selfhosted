@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "claude-workspace.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.uiPort }}
+      targetPort: ui
+      protocol: TCP
+    - name: term
+      port: {{ .Values.service.termPort }}
+      targetPort: term
+      protocol: TCP

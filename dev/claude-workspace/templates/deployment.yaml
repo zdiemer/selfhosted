@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  # Single replica — one RWO home PVC and one tmux server; two pods would
+  # split-brain both.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "claude-workspace.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "claude-workspace.labels" . | nindent 8 }}
+    spec:
+      # The workspace has no business talking to the kube API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000          # `node` user from the base image
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Bootstrap the home PVC on first boot: the standard dirs claude,
+        # CloudCLI, and ssh expect, with the right perms. Idempotent.
+        - name: init-home
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /home/node/.claude /home/node/.cloudcli /home/node/code
+              mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
+              echo "home initialized"
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+      containers:
+        # CloudCLI (claudecodeui): mobile-friendly session browser + chat UI.
+        # Reads/writes the same ~/.claude the terminal's claude does, so
+        # sessions started in either surface resume in the other.
+        - name: ui
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command: ["cloudcli"]
+          env:
+            - name: HOME
+              value: /home/node
+            - name: SERVER_PORT
+              value: {{ .Values.service.uiPort | quote }}
+            - name: HOST
+              value: "0.0.0.0"
+            # Its auth/settings sqlite must live on the PVC, not in the
+            # (read-only) npm package dir.
+            - name: DATABASE_PATH
+              value: /home/node/.cloudcli/auth.db
+            {{- range $k, $v := .Values.cloudcli.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - name: ui
+              containerPort: {{ .Values.service.uiPort }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: ui
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: ui
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.ui | nindent 12 }}
+        # ttyd: the real Claude Code TUI in the browser. `tmux new -A -s main`
+        # attaches every browser connection to the same session, so closing
+        # Safari (or iOS suspending it) leaves claude running; reopening
+        # /term lands back in the live session.
+        - name: term
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          # -W: writable (ttyd ≥1.7 defaults to read-only). --base-path lets
+          # the ingress route /term here with no StripPrefix middleware, so
+          # the websocket URL survives Traefik and the Cloudflare tunnel
+          # unchanged.
+          command:
+            - ttyd
+            - -W
+            - -p
+            - {{ .Values.service.termPort | quote }}
+            - --base-path
+            - /term
+            - tmux
+            - new
+            - -A
+            - -s
+            - main
+          env:
+            - name: HOME
+              value: /home/node
+          ports:
+            - name: term
+              containerPort: {{ .Values.service.termPort }}
+          # TCP probes: ttyd's HTTP surface under --base-path is an
+          # implementation detail; the listener itself is the health signal.
+          readinessProbe:
+            tcpSocket:
+              port: term
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: term
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.term | nindent 12 }}
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: {{ include "claude-workspace.fullname" . }}-home
+        # Shared tmpfs — tmux sockets (/tmp/tmux-1000), npm/npx caches, git
+        # temp objects. Ephemeral by design; roomier than the bridge's since
+        # interactive dev leans on /tmp harder.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi

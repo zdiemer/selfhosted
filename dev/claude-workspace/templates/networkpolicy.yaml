@@ -1,0 +1,73 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+This pod is a remote shell, so the policy matters more than usual — but it's
+also an interactive dev workspace, so it can't be locked down like the
+minecraft bridge.
+
+Ingress: only Traefik (kube-system) may reach the two web ports. Nothing else
+in the cluster gets to talk to a shell.
+
+Egress:
+  - DNS (kube-dns) on UDP+TCP 53
+  - TCP 443 to public IPs — api.anthropic.com, github.com, npm, apt over
+    https. NetworkPolicy can't match hostnames; except-RFC1918 is the
+    tightest we can do.
+  - TCP 22 to public IPs — git over ssh.
+Deliberately absent: plain-http port 80 (https covers apt/curl needs) and any
+cluster-internal egress — the workspace cannot poke other namespaces, which
+is the point. Widen here deliberately if that ever changes.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "claude-workspace.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: {{ .Values.service.uiPort }}
+          protocol: TCP
+        - port: {{ .Values.service.termPort }}
+          protocol: TCP
+  egress:
+    # DNS resolution for external hostnames.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Outbound HTTPS + git-over-ssh to the public internet only.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 22
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,7 @@
+# Copy to values.local.yaml (gitignored). This chart needs no secrets — the
+# Anthropic OAuth login and the git ssh key both live on the home PVC, created
+# interactively from the web terminal. The only local toggle is the ingress,
+# which stays off until the pod's first boot is verified.
+
+ingress:
+  enabled: true

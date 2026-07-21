@@ -1,0 +1,21 @@
+{{/*
+The pod's entire $HOME. ~/.claude (OAuth creds + conversation jsonl shared by
+CloudCLI and the terminal), ~/.cloudcli (auth sqlite), ~/.ssh, ~/code repos —
+all of it rides this one claim, so a pod delete/reschedule loses nothing but
+the in-memory tmux server.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-home
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.home.accessMode }}
+  {{- with .Values.persistence.home.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.home.size }}

@@ -1,0 +1,86 @@
+image:
+  # Custom image (Dockerfile in this dir): node + claude-code CLI + CloudCLI
+  # (claudecodeui) + ttyd + tmux + dev basics. Built by build.sh, pushed to a
+  # PUBLIC GHCR package so every node can pull it anonymously — see
+  # minecraft/claude-bridge/build.sh for why we never side-load images.
+  repository: "ghcr.io/zdiemer/claude-workspace"
+  tag: "v1"
+  # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  # CloudCLI web UI (Express API + WebSocket + SPA).
+  uiPort: 3001
+  # ttyd web terminal (served under /term, see ingress).
+  termPort: 7681
+
+persistence:
+  # One PVC = the pod's entire $HOME (/home/node). Holds ~/.claude (OAuth
+  # creds + conversation jsonl), ~/.cloudcli (CloudCLI's sqlite), ~/.ssh,
+  # and all repo checkouts under ~/code. Everything that matters survives
+  # pod restarts and reschedules; nothing is node-pinned.
+  home:
+    size: 20Gi
+    storageClass: ""              # "" → cluster default StorageClass (k3s local-path)
+    accessMode: ReadWriteOnce
+
+security:
+  # Escape hatch: CloudCLI is only *expected* to write under $HOME (its
+  # DATABASE_PATH is pointed there). If a future version insists on writing
+  # into its package dir, flip this off in values.local.yaml.
+  readOnlyRootFilesystem: true
+
+networkPolicy:
+  enabled: true
+
+auth:
+  # Gate both web surfaces at the Traefik ingress with Authelia forward-auth
+  # (same pattern as docs/stirling-pdf). Neither CloudCLI nor ttyd is safe to
+  # expose bare: together they are a remote shell on the cluster.
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia     # Authelia release/service name
+    autheliaNamespace: auth       # namespace Authelia runs in
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+ingress:
+  # Disabled for first boot. Flip on (in values.local.yaml) after the pod is
+  # Ready and a port-forward smoke test passes — see README.
+  enabled: false
+  className: traefik
+  host: claude.zachd.duckdns.org
+  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared).
+  # TLS for these terminates at Cloudflare, so they are NOT in the ACME cert
+  # list. Requires a one-time Public Hostname entry in the CF dashboard.
+  cloudflareHosts:
+    - claude.diemer.codes
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
+    # certs must ride a wildcard SAN. See infra/duckdns.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+cloudcli:
+  # Extra env for the CloudCLI container, e.g. CONTEXT_WINDOW: "200000".
+  extraEnv: {}
+
+resources:
+  # Both containers spawn `claude` subprocesses (CloudCLI for chat sessions,
+  # tmux for TUI sessions), and claude is a hungry Node process — give each a
+  # roomy memory ceiling.
+  ui:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+  term:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 2Gi
