@@ -30,6 +30,11 @@ spec:
         runAsUser: 1000          # `node` user from the base image
         runAsGroup: 1000
         fsGroup: 1000
+        # Without this, fsGroup recursively re-permissions the ENTIRE home PVC
+        # to g+rw on every pod start — which silently breaks ~/.ssh key perms
+        # (ssh refuses 0660 keys). Everything is already owned 1000:1000, so
+        # skip the relabel when the mount root matches.
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       initContainers:
