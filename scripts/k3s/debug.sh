@@ -93,7 +93,7 @@ diagnose_node() {
     local reachable="yes"
     if is_local_node "$hostname"; then
         reachable="yes"
-    elif ! $SSH_CMD "$hostname" "echo ok" >/dev/null
+    elif ! $SSH_CMD "${SSH_USER}@$hostname" "echo ok" >/dev/null
     then
         reachable="no"
     fi

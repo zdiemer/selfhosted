@@ -18,8 +18,14 @@ spec:
       labels:
         {{- include "claude-workspace.labels" . | nindent 8 }}
     spec:
-      # The workspace has no business talking to the kube API.
+      {{- if .Values.rbac.clusterAdmin }}
+      # Cluster ops seat: kubectl/helm in the pod authenticate as this SA
+      # (cluster-admin — see rbac.yaml and the values warning).
+      serviceAccountName: {{ include "claude-workspace.fullname" . }}
+      automountServiceAccountToken: true
+      {{- else }}
       automountServiceAccountToken: false
+      {{- end }}
       securityContext:
         runAsUser: 1000          # `node` user from the base image
         runAsGroup: 1000
@@ -44,6 +50,9 @@ spec:
               set -eu
               mkdir -p /home/node/.claude /home/node/.cloudcli /home/node/code
               mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
+              mkdir -p /home/node/.local/share/tailscale
+              chmod 700 /home/node/.local/share/tailscale
+              mkdir -p /home/node/.docker && chmod 700 /home/node/.docker
               echo "home initialized"
           volumeMounts:
             - name: home
@@ -129,6 +138,11 @@ spec:
           env:
             - name: HOME
               value: /home/node
+            # scripts/k3s/_common.sh: non-sudo node commands ssh as $SSH_USER.
+            # The pod's local user `node` exists on no node, so go root — the
+            # same access run_on_node_sudo already uses.
+            - name: SSH_USER
+              value: root
           ports:
             - name: term
               containerPort: {{ .Values.service.termPort }}
@@ -151,14 +165,56 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.term | nindent 12 }}
+        {{- if .Values.tailscale.enabled }}
+        # tailscaled with userspace networking: outbound dials go through its
+        # in-process netstack, which is all `tailscale ssh root@<node>` needs —
+        # no TUN device, no root, no extra capabilities. The term container's
+        # `tailscale` CLI reaches it over the socket on the shared /tmp.
+        # State (node key, prefs) lives on the home PVC so the one-time
+        # `tailscale up` login survives restarts.
+        - name: tailscaled
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /tmp/tailscale
+              exec tailscaled \
+                --tun=userspace-networking \
+                --statedir=/home/node/.local/share/tailscale \
+                --socket=/tmp/tailscale/tailscaled.sock
+          env:
+            - name: HOME
+              value: /home/node
+          # No probes on purpose: `tailscale status` exits non-zero while
+          # logged out, and a probe would kill the container before the
+          # one-time interactive `tailscale up` could ever happen.
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+        {{- end }}
       volumes:
         - name: home
           persistentVolumeClaim:
             claimName: {{ include "claude-workspace.fullname" . }}-home
-        # Shared tmpfs — tmux sockets (/tmp/tmux-1000), npm/npx caches, git
-        # temp objects. Ephemeral by design; roomier than the bridge's since
-        # interactive dev leans on /tmp harder.
+        # Shared tmpfs — tmux sockets (/tmp/tmux-1000), the tailscaled socket,
+        # npm/npx caches, git temp objects. Ephemeral by design; roomier than
+        # the bridge's since interactive dev leans on /tmp harder.
         - name: tmp
           emptyDir:
             medium: Memory
-            sizeLimit: 256Mi
+            sizeLimit: 512Mi

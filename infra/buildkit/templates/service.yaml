@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Fixed name, NOT the release name: the workspace image bakes
+  # BUILDKIT_HOST=tcp://buildkitd.buildkit.svc.cluster.local:1234
+  # (dev/claude-workspace/Dockerfile). Rename both together or not at all.
+  name: buildkitd
+  labels:
+    {{- include "buildkit.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "buildkit.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: buildkitd
+      port: {{ .Values.service.port }}
+      targetPort: buildkitd
+      protocol: TCP

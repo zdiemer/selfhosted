@@ -1,0 +1,19 @@
+{{- if .Values.cache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "buildkit.fullname" . }}-cache
+  labels:
+    {{- include "buildkit.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.cache.size }}
+  {{- with .Values.cache.storageClass }}
+  # Only rendered when non-empty: an explicit `storageClassName: ""` disables
+  # dynamic provisioning entirely and the PVC sits Pending forever.
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

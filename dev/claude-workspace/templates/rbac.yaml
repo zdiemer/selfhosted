@@ -1,0 +1,34 @@
+{{- if .Values.rbac.clusterAdmin }}
+{{/*
+⚠️ cluster-admin, on purpose (same tradeoff as infra/headlamp): the workspace
+deploys every chart in this repo — including cluster-scoped objects like
+PriorityClasses and other charts' ClusterRoles, and its own chart — and runs
+the scripts/k3s node maintenance (drain/uncordon). A curated ClusterRole would
+have to grow every time any chart adds a resource kind, and granting RBAC via
+helm requires holding those permissions anyway.
+
+The pod fronts a web terminal, so Authelia forward-auth on the ingress is the
+only thing between the internet and this binding. Keep it on.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-cluster-admin
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "claude-workspace.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

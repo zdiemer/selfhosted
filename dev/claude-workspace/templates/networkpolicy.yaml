@@ -13,9 +13,15 @@ Egress:
     https. NetworkPolicy can't match hostnames; except-RFC1918 is the
     tightest we can do.
   - TCP 22 to public IPs — git over ssh.
-Deliberately absent: plain-http port 80 (https covers apt/curl needs) and any
-cluster-internal egress — the workspace cannot poke other namespaces, which
-is the point. Widen here deliberately if that ever changes.
+  - The kube API (both DNAT forms — see the rule comments), because the pod
+    is a cluster ops seat: kubectl/helm as its cluster-admin SA (rbac.yaml).
+  - buildkitd in the buildkit namespace — remote image builds (infra/buildkit).
+  - All UDP — tailscale WireGuard. Peers advertise NAT-dependent random
+    ports, so pinning 3478/41641 would break direct paths to the LAN nodes;
+    without this rule everything still works via DERP relay over the
+    already-allowed TCP 443, just slower. TCP posture is unchanged.
+Deliberately absent: plain-http port 80 (https covers apt/curl needs) and
+TCP to other namespaces/the LAN beyond the three targets above.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -70,4 +76,40 @@ spec:
           protocol: TCP
         - port: 22
           protocol: TCP
+
+    # Kube API, both shapes: whether the pod's packet still carries the
+    # ClusterIP (10.43.0.1:443) or has already been DNAT'd to <node>:6443
+    # when the policy is evaluated depends on the CNI. Each rule alone is
+    # harmless; together they make `kubectl` work regardless.
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.nodeCIDR }}
+      ports:
+        - port: 6443
+          protocol: TCP
+
+    # buildkitd — remote image builds (buildctl streams context and gets the
+    # push done daemon-side). See infra/buildkit.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: buildkit
+      ports:
+        - port: 1234
+          protocol: TCP
+
+    # Tailscale WireGuard + STUN. All-UDP because peer ports are
+    # NAT-dependent and unpredictable; the fallback without this is DERP
+    # relay over TCP 443 (allowed above), which works but is slower.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: UDP
 {{- end }}

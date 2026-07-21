@@ -72,6 +72,72 @@ with **No TLS Verify ON**.
    in `~/.cloudcli/auth.db`; redundant behind Authelia but harmless —
    register once, the browser remembers).
 
+## Cluster powers
+
+Since image v2 the workspace is a full operations seat, not just a dev shell.
+Three capabilities, three mechanisms:
+
+- **Deploy anything with helm/kubectl** — the pod's ServiceAccount is bound to
+  **cluster-admin** (`rbac.clusterAdmin`, see the ⚠️ in values.yaml). kubectl
+  and helm pick up the in-cluster SA token automatically; there is no
+  kubeconfig file anywhere.
+- **Build + push images to GHCR** — `buildctl` against the in-cluster rootless
+  buildkitd ([`infra/buildkit`](../../infra/buildkit/)); every per-chart
+  `build.sh` falls back from docker to buildctl automatically. Push auth comes
+  from `~/.docker/config.json` on the PVC (setup below).
+- **Node maintenance (`scripts/k3s/`)** — a `tailscaled` container (userspace
+  networking, unprivileged) joins the pod to the tailnet so
+  `tailscale ssh root@<node>` works. The `tailscale` CLI in the image is a
+  wrapper pointing at the shared socket in `/tmp/tailscale/`.
+
+⚠️ Together these make Authelia forward-auth the ONLY thing between the
+internet and cluster-admin + root-on-every-node. Never disable
+`auth.forwardAuth` or expose the Service any other way while
+`rbac.clusterAdmin` / `tailscale.enabled` are on.
+
+### One-time setup (from `/term`)
+
+1. **Tailscale**: `tailscale up --ssh=false --hostname=claude-workspace
+   --accept-dns=false`, open the printed URL, authorize. Then in the Tailscale
+   admin console: approve the node (if approval is on) **and make sure the ACL
+   `ssh` rules allow this node as a source for `root@` the k3s nodes** — a
+   healthy `tailscale status` with a failing `tailscale ssh` means ACLs, not
+   the pod. State persists on the PVC.
+2. **GHCR PAT** (classic PAT with `write:packages`; there is no docker CLI in
+   the pod, so write the auth file directly):
+
+   ```sh
+   read -rs GHCR_PAT
+   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' \
+     "$(printf 'zdiemer:%s' "$GHCR_PAT" | base64 -w0)" > ~/.docker/config.json
+   chmod 600 ~/.docker/config.json; unset GHCR_PAT
+   ```
+3. **Repo + local values**: clone this repo to `~/code/selfhosted`, then from
+   the laptop run [`scripts/sync-local-values.sh`](../../scripts/sync-local-values.sh)
+   to copy every gitignored `values.local.yaml` into the pod — without them,
+   deploys from the pod fail on `required` values or silently render secrets
+   empty. Re-run after any local-values change.
+4. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
+   does not exist. If one ever lands on the PVC it silently takes precedence
+   and everything breaks confusingly — `rm ~/.kube/config` is the fix.
+
+### Self-upgrade
+
+`./upgrade.sh` from inside the pod works — helm applies server-side — but the
+`Recreate` strategy then kills this very pod, so **your session dies at the
+"Waiting for rollout" line**. That's expected: reconnect to `/term`,
+`claude --resume`, then check `helm status claude-workspace -n claude` and
+`kubectl -n claude rollout status deploy/claude-workspace`.
+
+If helm was killed in the narrow window before it finished bookkeeping, the
+release is stuck `pending-upgrade` and the next upgrade fails with "another
+operation is in progress". Fix: `helm rollback claude-workspace -n claude`
+and re-run, or delete the stuck revision secret
+`sh.helm.release.v1.claude-workspace.v<N>` in the claude namespace.
+
+Image-only refresh (tag unchanged): `kubectl -n claude rollout restart
+deploy/claude-workspace` — same session-death caveat.
+
 ## Day-2 notes
 
 - **Upgrading claude/CloudCLI**: bump the pin in `Dockerfile`, `./build.sh`,

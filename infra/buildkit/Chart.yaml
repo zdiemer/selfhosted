@@ -1,0 +1,10 @@
+apiVersion: v2
+name: buildkit
+description: In-cluster rootless buildkitd — remote image builds for the claude-workspace pod (and any other buildctl client we allow)
+type: application
+version: 1.0.0
+# Tracks the moby/buildkit release we deploy. Keep in lockstep with
+# BUILDKIT_VERSION in dev/claude-workspace/Dockerfile (the buildctl client).
+appVersion: "v0.24.0"
+maintainers:
+  - name: zachd

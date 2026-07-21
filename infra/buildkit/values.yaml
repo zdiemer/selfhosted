@@ -1,0 +1,33 @@
+image:
+  repository: moby/buildkit
+  # -rootless variant: buildkitd runs as uid 1000 inside a user namespace it
+  # creates itself (rootlesskit). Keep the version in lockstep with
+  # BUILDKIT_VERSION in dev/claude-workspace/Dockerfile — client/daemon are
+  # compatible across a range, but pinning them equal removes doubt.
+  tag: v0.24.0-rootless
+  pullPolicy: IfNotPresent
+
+service:
+  # The workspace image bakes BUILDKIT_HOST=tcp://buildkitd.buildkit.svc.cluster.local:1234,
+  # so the Service is named `buildkitd` (see service.yaml) and this port must
+  # stay 1234 unless both are changed together.
+  port: 1234
+
+cache:
+  # Build cache (layers, snapshots). buildkitd's default GC keeps it bounded;
+  # tune via a buildkitd.toml ConfigMap if this ever fills.
+  enabled: true
+  size: 30Gi
+  storageClass: ""              # "" → cluster default (k3s local-path)
+
+networkPolicy:
+  enabled: true
+  # Only pods in this namespace may reach the (unauthenticated) TCP listener.
+  clientNamespace: claude
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 4Gi

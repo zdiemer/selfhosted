@@ -115,7 +115,7 @@ for i in "${!TARGET_NAMES[@]}"; do
     echo "=== Cleaning $hostname ==="
 
     if ! is_local_node "$hostname" \
-        && ! $SSH_CMD "$hostname" "echo ok" >/dev/null; then
+        && ! $SSH_CMD "${SSH_USER}@$hostname" "echo ok" >/dev/null; then
         echo "[ERROR] $hostname is unreachable, skipping."
         echo ""
         continue

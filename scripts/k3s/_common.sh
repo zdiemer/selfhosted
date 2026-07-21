@@ -5,6 +5,11 @@
 _COMMON_LOADED=true
 
 SSH_CMD="tailscale ssh"
+# User for non-sudo node commands. Bare `tailscale ssh <host>` connects as the
+# invoking user, which works from a laptop (zachd exists on every node) but not
+# from the claude-workspace pod (its user `node` exists nowhere) — the chart
+# sets SSH_USER=root there. Sudo commands always go root@ regardless.
+SSH_USER="${SSH_USER:-$(id -un)}"
 DRAIN_OPTS="--ignore-daemonsets --delete-emptydir-data --timeout=300s"
 NODE_READY_TIMEOUT=300
 
@@ -115,7 +120,7 @@ run_on_node() {
             return 1
         fi
     else
-        if ! $SSH_CMD "$hostname" "$cmd"; then
+        if ! $SSH_CMD "${SSH_USER}@$hostname" "$cmd"; then
             echo "[ERROR] Failed to run command on $hostname" >&2
             return 1
         fi
@@ -179,7 +184,7 @@ wait_for_node_online() {
         local reachable=false
         if is_local_node "$hostname"; then
             reachable=true
-        elif $SSH_CMD "$hostname" "echo ok" >/dev/null; then
+        elif $SSH_CMD "${SSH_USER}@$hostname" "echo ok" >/dev/null; then
             reachable=true
         fi
         if [[ "$reachable" == "true" ]]; then

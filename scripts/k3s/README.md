@@ -27,6 +27,13 @@ chart directory.
 password. So they work from anywhere on the tailnet, and they need `tailscale`
 and `kubectl` on your machine, not on the nodes.
 
+That includes the claude-workspace pod (`dev/claude-workspace`): it carries
+kubectl (in-cluster cluster-admin SA) and a userspace tailscaled, so these
+scripts run from `/term` unmodified. One behavioral note: `_common.sh`'s
+local-node shortcut (`is_local_node`) never matches the pod's hostname, so
+from the pod *every* node — including the one hosting the pod — goes over
+tailscale ssh. Expected and fine.
+
 Anything touching `--all` is slow by nature: it's ten sequential SSH sessions, and
 the drain/uncordon variants wait for pods to move. `debug.sh --all` takes a couple
 of minutes; that's normal.

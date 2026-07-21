@@ -4,7 +4,9 @@ image:
   # PUBLIC GHCR package so every node can pull it anonymously — see
   # minecraft/claude-bridge/build.sh for why we never side-load images.
   repository: "ghcr.io/zdiemer/claude-workspace"
-  tag: "v1"
+  # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
+  # "Cluster powers").
+  tag: "v2"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -31,8 +33,27 @@ security:
   # into its package dir, flip this off in values.local.yaml.
   readOnlyRootFilesystem: true
 
+rbac:
+  # ⚠️ Binds the workspace's ServiceAccount to cluster-admin (same tradeoff as
+  # infra/headlamp): the pod can deploy/delete anything in the cluster,
+  # including its own chart. Authelia forward-auth on the ingress is the ONLY
+  # gate in front of that power — keep auth.forwardAuth.enabled on. Flip this
+  # off to return the pod to zero API access (no SA token mounted at all).
+  clusterAdmin: true
+
+tailscale:
+  # Runs a tailscaled container (userspace networking, no TUN, no root) so the
+  # scripts/k3s maintenance scripts can `tailscale ssh root@<node>` from the
+  # pod. State lives on the home PVC; auth is a one-time interactive
+  # `tailscale up` from the web terminal — see README.
+  enabled: true
+
 networkPolicy:
   enabled: true
+  # LAN subnet the k3s nodes live on. Used for the kube-API egress rule: the
+  # API ClusterIP (10.43.0.1:443) is DNAT'd to <node>:6443, and depending on
+  # where the netpol is evaluated the packet may already carry the node IP.
+  nodeCIDR: "192.168.4.0/24"
 
 auth:
   # Gate both web surfaces at the Traefik ingress with Authelia forward-auth
