@@ -1,12 +1,13 @@
 apiVersion: v2
 name: claude-workspace
-description: Always-on Claude Code workspace pod — CloudCLI web UI + ttyd/tmux terminal sharing one $HOME on a PVC, gated behind Authelia forward-auth. Replaces ephemeral SSH sessions from mobile.
+description: Always-on Claude Code workspace pod — CloudCLI web UI + ttyd/tmux terminal + bakery web harness sharing one $HOME on a PVC, gated behind Authelia forward-auth. Replaces ephemeral SSH sessions from mobile.
 type: application
-version: 0.1.0
+version: 0.2.0
 # appVersion tracks the workspace image tag in values.yaml (image.tag).
-appVersion: "v1"
+appVersion: "v3"
 sources:
   - https://github.com/siteboon/claudecodeui
   - https://github.com/tsl0922/ttyd
+  - https://github.com/seemethere/bakery
 maintainers:
   - name: zachd

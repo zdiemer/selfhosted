@@ -17,3 +17,13 @@ spec:
       port: {{ .Values.service.termPort }}
       targetPort: term
       protocol: TCP
+    {{- if .Values.bakery.enabled }}
+    - name: bakery-api
+      port: {{ .Values.service.bakeryServerPort }}
+      targetPort: bakery-api
+      protocol: TCP
+    - name: bakery-web
+      port: {{ .Values.service.bakeryWebPort }}
+      targetPort: bakery-web
+      protocol: TCP
+    {{- end }}

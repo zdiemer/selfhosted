@@ -21,6 +21,15 @@ ARG BUILDKIT_VERSION=v0.24.0
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
 ARG SOPS_VERSION=v3.10.2
+# Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
+# harness served under /bakery's own subdomain (see README "Bakery surface").
+# It's a Bun monorepo (server + Vite web); there's no published image, so we
+# vendor the source at a pinned ref and `bun install` at build time. Bun is
+# minor-pinned (upstream ships on `oven/bun:1`); BAKERY_REF is pinned to the
+# commit the v3 image was built from (upstream cuts no release tags) — bump
+# deliberately, same as the claude CLI.
+ARG BUN_VERSION=1.2
+ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
@@ -62,9 +71,21 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
 # unmodified.
 
 # claude-code tracks latest (bump = rebuild, same as claude-bridge); CloudCLI
-# is pinned — it's the web-facing surface, upgrade it deliberately.
-RUN npm install -g @anthropic-ai/claude-code@latest @cloudcli-ai/cloudcli@1.36.3 \
+# is pinned — it's the web-facing surface, upgrade it deliberately. Bun is the
+# runtime bakery needs (its server + Vite web both run under `bun`).
+RUN npm install -g @anthropic-ai/claude-code@latest @cloudcli-ai/cloudcli@1.36.3 "bun@${BUN_VERSION}" \
  && npm cache clean --force
+
+# Vendor bakery at a pinned ref and install its deps at build time. The pod's
+# rootfs is read-only for the other surfaces, but the bakery containers run
+# with readOnlyRootFilesystem:false (bun/vite write transpile caches into the
+# tree), so /opt/bakery must be owned by uid 1000. bun install runs the repo's
+# postinstall hook; egress 80/443 is open on buildkitd (infra/buildkit).
+RUN git clone --filter=blob:none https://github.com/seemethere/bakery /opt/bakery \
+ && git -C /opt/bakery checkout "${BAKERY_REF}" \
+ && ( cd /opt/bakery && HOME=/root bun install ) \
+ && chown -R 1000:1000 /opt/bakery \
+ && rm -rf /root/.bun/install/cache
 
 # UTF-8 so the claude TUI's box-drawing renders in tmux/ttyd.
 # BUILDKIT_HOST points buildctl at the in-cluster buildkitd (infra/buildkit) so

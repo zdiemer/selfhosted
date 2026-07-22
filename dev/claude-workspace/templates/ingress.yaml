@@ -20,6 +20,28 @@ root. Traefik orders Prefix routes longest-first, so /term wins.
       port:
         number: {{ .Values.service.uiPort }}
 {{- end }}
+{{/*
+Bakery's own host: /api (REST + the /api/sessions/<id>/ws WebSocket) → the Bun
+server, everything else → the Vite web UI. Same longest-prefix ordering as
+/term, and same-origin so the client's baked apiBase, the Authelia cookie, and
+Vite's Host check all line up.
+*/}}
+{{- define "claude-workspace.bakeryPaths" -}}
+- path: /api
+  pathType: Prefix
+  backend:
+    service:
+      name: {{ include "claude-workspace.fullname" . }}
+      port:
+        number: {{ .Values.service.bakeryServerPort }}
+- path: /
+  pathType: Prefix
+  backend:
+    service:
+      name: {{ include "claude-workspace.fullname" . }}
+      port:
+        number: {{ .Values.service.bakeryWebPort }}
+{{- end }}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -60,9 +82,22 @@ spec:
         paths:
           {{- include "claude-workspace.paths" $ | nindent 10 }}
     {{- end }}
+    {{- /*
+      Bakery: a single duckdns host (no Cloudflare host — see values bakery.host).
+      Rides the same wildcard cert and Authelia middleware as the host above.
+    */}}
+    {{- if .Values.bakery.enabled }}
+    - host: {{ .Values.bakery.host | quote }}
+      http:
+        paths:
+          {{- include "claude-workspace.bakeryPaths" $ | nindent 10 }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
+        {{- if .Values.bakery.enabled }}
+        - {{ .Values.bakery.host }}
+        {{- end }}
   {{- end }}
 {{- end }}
