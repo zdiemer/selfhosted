@@ -58,6 +58,12 @@ spec:
               mkdir -p /home/node/.local/share/tailscale
               chmod 700 /home/node/.local/share/tailscale
               mkdir -p /home/node/.docker && chmod 700 /home/node/.docker
+              {{- if .Values.bakery.enabled }}
+              # Bakery state (sessions/artifacts DB) + its agent's creds (~/.pi,
+              # a one-time interactive login).
+              mkdir -p {{ .Values.bakery.dataDir }} /home/node/.pi
+              chmod 700 /home/node/.pi
+              {{- end }}
               echo "home initialized"
           volumeMounts:
             - name: home
@@ -129,6 +135,114 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.term | nindent 12 }}
+        {{- if .Values.bakery.enabled }}
+        # Bakery server: the Bun API + WebSocket backend (routes under /api/*).
+        # The browser reaches it directly through the ingress path-split, so it
+        # binds 0.0.0.0; Authelia is the only gate (no PI_WEB_AUTH_TOKEN unless
+        # bakery.authToken is set). State lives on the PVC under dataDir.
+        - name: bakery-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.bakery.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command: ["bash", "-lc", "cd /opt/bakery && exec bun run start"]
+          env:
+            - name: HOME
+              value: /home/node
+            - name: PI_WEB_HOST
+              value: "0.0.0.0"
+            - name: PI_WEB_PORT
+              value: {{ .Values.service.bakeryServerPort | quote }}
+            - name: PI_WEB_WORKSPACE_ROOT
+              value: {{ .Values.bakery.workspaceRoot | quote }}
+            - name: PI_WEB_DATA_DIR
+              value: {{ .Values.bakery.dataDir | quote }}
+            # Same-origin as the web UI, so this is the only allowed CORS/WS origin.
+            - name: PI_WEB_ALLOWED_ORIGINS
+              value: {{ .Values.bakery.apiBase | quote }}
+            {{- if .Values.bakery.authToken }}
+            - name: PI_WEB_AUTH_TOKEN
+              value: {{ .Values.bakery.authToken | quote }}
+            {{- end }}
+            {{- range $k, $v := .Values.bakery.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - name: bakery-api
+              containerPort: {{ .Values.service.bakeryServerPort }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: bakery-api
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: bakery-api
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.bakeryServer | nindent 12 }}
+        # Bakery web: the Vite dev server (the SPA). VITE_PI_WEB_API_BASE bakes
+        # the absolute origin the client uses for REST + WS, so the browser
+        # never sees the :3141 default. PI_WEB_ALLOWED_HOSTS is Vite's own
+        # Host-header allowlist — the ingress host must be in it or Vite 403s.
+        - name: bakery-web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.bakery.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command: ["bash", "-lc", "cd /opt/bakery && exec bun run dev:web:lan"]
+          env:
+            - name: HOME
+              value: /home/node
+            - name: PI_WEB_ALLOWED_HOSTS
+              value: {{ .Values.bakery.host | quote }}
+            - name: VITE_PI_WEB_API_BASE
+              value: {{ .Values.bakery.apiBase | quote }}
+            {{- if .Values.bakery.authToken }}
+            # Baked so the browser authenticates automatically (defense-in-depth
+            # behind Authelia; the token still rides in the client bundle).
+            - name: VITE_PI_WEB_AUTH_TOKEN
+              value: {{ .Values.bakery.authToken | quote }}
+            {{- end }}
+          ports:
+            - name: bakery-web
+              containerPort: {{ .Values.service.bakeryWebPort }}
+          # TCP probe: Vite's allowedHosts rejects an httpGet with a pod-IP Host
+          # header (403), so the listener itself is the health signal — same
+          # reasoning as ttyd's probes above.
+          readinessProbe:
+            tcpSocket:
+              port: bakery-web
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: bakery-web
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.bakeryWeb | nindent 12 }}
+        {{- end }}
         {{- if .Values.tailscale.enabled }}
         # tailscaled with userspace networking: outbound dials go through its
         # in-process netstack, which is all `tailscale ssh root@<node>` needs —

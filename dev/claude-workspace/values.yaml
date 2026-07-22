@@ -1,15 +1,18 @@
 image:
   # Custom image (Dockerfile in this dir): node + claude-code CLI + happy CLI
-  # (mobile remote control via dev/happy-server) + ttyd + tmux + dev basics.
-  # Built by build.sh, pushed to a PUBLIC GHCR package so every node can pull
-  # it anonymously — see minecraft/claude-bridge/build.sh for why we never
-  # side-load images.
+  # (mobile remote control via dev/happy-server) + bakery (bun) + ttyd + tmux
+  # + dev basics. Built by build.sh, pushed to a PUBLIC GHCR package so every
+  # node can pull it anonymously — see minecraft/claude-bridge/build.sh for
+  # why we never side-load images.
   repository: "ghcr.io/zdiemer/claude-workspace"
+  # v4: merges the happy swap with the bakery surface (built pod-side as an
+  #     unpushed v3; that tag was later overwritten by the happy build — v4
+  #     is the first tag containing both).
   # v3: swaps CloudCLI (claudecodeui) for the happy CLI — the mobile surface
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
-  tag: "v3"
+  tag: "v4"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -17,6 +20,12 @@ service:
   type: ClusterIP
   # ttyd web terminal (served under /term, see ingress).
   termPort: 7681
+  # Bakery is two processes: the Bun API/WebSocket server and the Vite web UI.
+  # The browser talks to BOTH directly (there is no Vite→server proxy), so the
+  # ingress path-splits one host: /api → server, everything else → web. Ports
+  # match bakery's own defaults (PI_WEB_PORT / vite --port).
+  bakeryServerPort: 3141
+  bakeryWebPort: 5173
 
 persistence:
   # One PVC = the pod's entire $HOME (/home/node). Holds ~/.claude (OAuth
@@ -97,6 +106,43 @@ happy:
   # via a scanned URL.
   serverUrl: "https://happy.zachd.duckdns.org"
 
+bakery:
+  # The bakery web harness (github.com/seemethere/bakery), vendored into the
+  # image (image.tag v4+). Two containers — the Bun server and the Vite web —
+  # share the same $HOME PVC as the rest of the workspace.
+  enabled: true
+  # Bakery's web client bakes ONE absolute API origin at serve time
+  # (VITE_PI_WEB_API_BASE below), so bakery is reachable on exactly this host —
+  # NOT over the diemer.codes Cloudflare tunnel like the / and /term surfaces.
+  # Serving it on a second domain would need a second build (a fork we avoided).
+  # This host rides the *.zachd.duckdns.org wildcard cert and Authelia's
+  # zachd.duckdns.org SSO cookie (auth/authelia sessionDomain), so no extra
+  # cert or access-control rule is needed — default_policy two_factor covers it.
+  host: bakery.zachd.duckdns.org
+  # Absolute origin the web client uses for REST + WebSocket. Must equal the
+  # host above (same-origin → the Authelia cookie and CORS both just work; the
+  # ingress routes /api on this origin to the Bun server). Leaving the default
+  # :3141 in the client would force a second public port — this avoids it.
+  apiBase: "https://bakery.zachd.duckdns.org"
+  # Directories bakery agent sessions may touch (comma-separated allowlist).
+  # The workspace repos, same as everything else on this pod.
+  workspaceRoot: /home/node/code
+  # Bakery's own state (metadata sqlite, sessions, artifacts, worktrees). On the
+  # PVC so it survives restarts. Its coding agent's credentials live in ~/.pi
+  # (a one-time interactive login — see README "Bakery surface").
+  dataDir: /home/node/.pi-web-agent
+  # Bakery requires no token of its own: Authelia forward-auth is the gate, same
+  # as the / and /term surfaces. Set a token here only for defense-in-depth —
+  # it is passed to the server AND baked into the web client, so the browser
+  # authenticates automatically with no Settings-dialog entry.
+  authToken: ""
+  # bun/vite dev servers write transpile caches into /opt/bakery, so this
+  # container can't take the read-only rootfs the other surfaces use.
+  readOnlyRootFilesystem: false
+  # Extra env for the bakery SERVER container (e.g. PI_WEB_DEFAULT_MODEL,
+  # PI_WEB_ALLOWED_MODELS, PI_WEB_FAKE_AGENT).
+  extraEnv: {}
+
 resources:
   # tmux spawns `claude` (and `happy`, which wraps another claude) — hungry
   # Node processes, so a roomy memory ceiling.
@@ -106,3 +152,17 @@ resources:
       memory: 128Mi
     limits:
       memory: 3Gi
+  # Bakery server runs the coding agent (a hungry process); the Vite web is a
+  # lighter dev server.
+  bakeryServer:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+  bakeryWeb:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

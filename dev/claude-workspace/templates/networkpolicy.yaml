@@ -49,6 +49,12 @@ spec:
       ports:
         - port: {{ .Values.service.termPort }}
           protocol: TCP
+        {{- if .Values.bakery.enabled }}
+        - port: {{ .Values.service.bakeryServerPort }}
+          protocol: TCP
+        - port: {{ .Values.service.bakeryWebPort }}
+          protocol: TCP
+        {{- end }}
   egress:
     # DNS resolution for external hostnames.
     - to:

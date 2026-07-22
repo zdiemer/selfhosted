@@ -1,12 +1,13 @@
 apiVersion: v2
 name: claude-workspace
-description: Always-on Claude Code workspace pod — ttyd/tmux web terminal on a $HOME PVC, gated behind Authelia forward-auth, with the happy CLI for mobile remote control via the dev/happy-server relay.
+description: Always-on Claude Code workspace pod — ttyd/tmux web terminal + bakery web harness on a $HOME PVC, gated behind Authelia forward-auth, with the happy CLI for mobile remote control via the dev/happy-server relay.
 type: application
-version: 0.2.0
+version: 0.3.0
 # appVersion tracks the workspace image tag in values.yaml (image.tag).
-appVersion: "v3"
+appVersion: "v4"
 sources:
   - https://github.com/slopus/happy
   - https://github.com/tsl0922/ttyd
+  - https://github.com/seemethere/bakery
 maintainers:
   - name: zachd
