@@ -1,0 +1,69 @@
+image:
+  # Built from the slopus/happy monorepo's Dockerfile.server by build.sh
+  # (there is no upstream-published server image), pushed to a PUBLIC GHCR
+  # package so every node can pull it anonymously — see
+  # minecraft/claude-bridge/build.sh for why we never side-load images.
+  repository: "ghcr.io/zdiemer/happy-server"
+  # v1 = monorepo tag cli-1.1.10 (the HAPPY_REF pin in build.sh). Bump both
+  # together, deliberately — this is an internet-facing surface.
+  tag: "v1"
+  # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  # Upstream default port per packages/happy-server docs. The Dockerfile's
+  # EXPOSE says 3000, so we set PORT explicitly in the deployment and treat
+  # this value as the single source of truth.
+  port: 3005
+
+# Master secret for the server's auth/token signing (HANDY_MASTER_SECRET).
+# REQUIRED, set in values.local.yaml (gitignored) — generate once with
+#   openssl rand -base64 48
+# and never rotate casually: existing client sessions are bound to it.
+masterSecret: ""
+
+persistence:
+  # /data holds everything: the embedded PGlite database and blob files
+  # (<data>/files/). No external Postgres/Redis/S3 — the standalone image
+  # runs self-contained. Message payloads are E2E-encrypted by the clients
+  # before they land here.
+  data:
+    size: 5Gi
+    storageClass: ""              # "" → cluster default StorageClass (k3s local-path)
+    accessMode: ReadWriteOnce
+
+security:
+  # The server only writes under /data (PVC) and /tmp (emptyDir); flip this
+  # off in values.local.yaml if an upstream bump starts writing into the app
+  # dir, and note the version in the README.
+  readOnlyRootFilesystem: true
+
+networkPolicy:
+  enabled: true
+
+ingress:
+  # Disabled for first boot. Flip on (in values.local.yaml) after the pod is
+  # Ready and a port-forward smoke test passes — see README.
+  enabled: false
+  className: traefik
+  host: happy.zachd.duckdns.org
+  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared).
+  # TLS for these terminates at Cloudflare, so they are NOT in the ACME cert
+  # list. Requires a one-time Public Hostname entry in the CF dashboard.
+  cloudflareHosts:
+    - happy.diemer.codes
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
+    # certs must ride a wildcard SAN. See infra/duckdns.
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

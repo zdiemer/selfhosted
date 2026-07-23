@@ -1,7 +1,7 @@
-# Workspace image: Claude Code CLI + CloudCLI (claudecodeui) web UI + ttyd web
-# terminal + tmux, on the same node base as minecraft/claude-bridge. One image
-# serves both pod containers — they differ only in `command:` (cloudcli vs
-# ttyd), which keeps the two surfaces version-locked to the same claude CLI.
+# Workspace image: Claude Code CLI + happy CLI (mobile remote control, see
+# dev/happy-server) + ttyd web terminal + tmux, on the same node base as
+# minecraft/claude-bridge. One image serves every pod container (term,
+# tailscaled, init) — they differ only in `command:`.
 FROM node:22-bookworm-slim
 
 # ttyd isn't packaged in bookworm; ship the static release binary. Pinned so
@@ -61,9 +61,11 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
 # shared /tmp emptyDir keeps scripts/k3s/_common.sh's `tailscale ssh` working
 # unmodified.
 
-# claude-code tracks latest (bump = rebuild, same as claude-bridge); CloudCLI
-# is pinned — it's the web-facing surface, upgrade it deliberately.
-RUN npm install -g @anthropic-ai/claude-code@latest @cloudcli-ai/cloudcli@1.36.3 \
+# claude-code tracks latest (bump = rebuild, same as claude-bridge); happy is
+# pinned — it must track the self-hosted relay (dev/happy-server, HAPPY_REF in
+# its build.sh), so upgrade the pair deliberately. Run `happy` instead of
+# `claude` in tmux to get phone remote control; plain `claude` still works.
+RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.0 \
  && npm cache clean --force
 
 # UTF-8 so the claude TUI's box-drawing renders in tmux/ttyd.

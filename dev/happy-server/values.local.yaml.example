@@ -1,0 +1,10 @@
+# Copy to values.local.yaml (gitignored). Two things live here: the master
+# secret (the chart refuses to render without it) and the ingress toggle,
+# which stays off until the pod's first boot is verified.
+
+# Generate once: openssl rand -base64 48
+# Don't rotate casually — existing device pairings are bound to it.
+masterSecret: ""
+
+ingress:
+  enabled: true

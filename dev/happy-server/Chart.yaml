@@ -1,0 +1,11 @@
+apiVersion: v2
+name: happy-server
+description: Self-hosted Happy relay server — end-to-end encrypted sync backend for the happy CLI (dev/claude-workspace) and the Happy iOS/Android/web clients. Exposed WITHOUT Authelia by design; E2E encryption is the auth.
+type: application
+version: 0.1.0
+# appVersion tracks the server image tag in values.yaml (image.tag).
+appVersion: "v1"
+sources:
+  - https://github.com/slopus/happy
+maintainers:
+  - name: zachd

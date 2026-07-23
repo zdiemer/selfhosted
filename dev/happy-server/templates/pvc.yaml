@@ -1,0 +1,20 @@
+{{/*
+The server's entire state: embedded PGlite database + blob files. Everything
+in here is E2E-encrypted by the clients before upload, but losing it still
+unpairs every device — treat it like any other stateful PVC.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "happy-server.fullname" . }}-data
+  labels:
+    {{- include "happy-server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

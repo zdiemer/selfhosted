@@ -1,0 +1,65 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Ingress: Traefik (kube-system) for the internet-facing API, plus the claude
+namespace so the workspace pod's happy CLI can skip the public-URL hairpin
+and dial the Service directly if that ever becomes necessary (see
+dev/claude-workspace values: happy.serverUrl).
+
+Egress: DNS, plus TCP 443 to public IPs only — the server calls out to the
+Expo push API to deliver permission-prompt notifications to the phone.
+Everything else (LAN, other namespaces) is closed.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "happy-server.fullname" . }}
+  labels:
+    {{- include "happy-server.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "happy-server.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+  egress:
+    # DNS resolution for the push-notification endpoints.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Expo push API (exp.host) over HTTPS. NetworkPolicy can't match
+    # hostnames; except-RFC1918 is the tightest we can do.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+{{- end }}

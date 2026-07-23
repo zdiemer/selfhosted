@@ -4,7 +4,7 @@ This pod is a remote shell, so the policy matters more than usual — but it's
 also an interactive dev workspace, so it can't be locked down like the
 minecraft bridge.
 
-Ingress: only Traefik (kube-system) may reach the two web ports. Nothing else
+Ingress: only Traefik (kube-system) may reach the web terminal. Nothing else
 in the cluster gets to talk to a shell.
 
 Egress:
@@ -16,12 +16,14 @@ Egress:
   - The kube API (both DNAT forms — see the rule comments), because the pod
     is a cluster ops seat: kubectl/helm as its cluster-admin SA (rbac.yaml).
   - buildkitd in the buildkit namespace — remote image builds (infra/buildkit).
+  - happy-server in the happy namespace — cluster-local fallback for the
+    happy CLI's relay connection (the default path is the public URL).
   - All UDP — tailscale WireGuard. Peers advertise NAT-dependent random
     ports, so pinning 3478/41641 would break direct paths to the LAN nodes;
     without this rule everything still works via DERP relay over the
     already-allowed TCP 443, just slower. TCP posture is unchanged.
 Deliberately absent: plain-http port 80 (https covers apt/curl needs) and
-TCP to other namespaces/the LAN beyond the three targets above.
+TCP to other namespaces/the LAN beyond the targets above.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -45,8 +47,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: traefik
       ports:
-        - port: {{ .Values.service.uiPort }}
-          protocol: TCP
         - port: {{ .Values.service.termPort }}
           protocol: TCP
   egress:
@@ -102,6 +102,17 @@ spec:
               kubernetes.io/metadata.name: buildkit
       ports:
         - port: 1234
+          protocol: TCP
+
+    # happy-server (dev/happy-server) — cluster-local fallback for the happy
+    # CLI if the public-URL hairpin path ever breaks. The default
+    # happy.serverUrl rides the TCP-443-to-public rule above instead.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: happy
+      ports:
+        - port: 3005
           protocol: TCP
 
     # Tailscale WireGuard + STUN. All-UDP because peer ports are

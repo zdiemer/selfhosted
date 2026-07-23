@@ -1,25 +1,26 @@
 image:
-  # Custom image (Dockerfile in this dir): node + claude-code CLI + CloudCLI
-  # (claudecodeui) + ttyd + tmux + dev basics. Built by build.sh, pushed to a
-  # PUBLIC GHCR package so every node can pull it anonymously — see
-  # minecraft/claude-bridge/build.sh for why we never side-load images.
+  # Custom image (Dockerfile in this dir): node + claude-code CLI + happy CLI
+  # (mobile remote control via dev/happy-server) + ttyd + tmux + dev basics.
+  # Built by build.sh, pushed to a PUBLIC GHCR package so every node can pull
+  # it anonymously — see minecraft/claude-bridge/build.sh for why we never
+  # side-load images.
   repository: "ghcr.io/zdiemer/claude-workspace"
+  # v3: swaps CloudCLI (claudecodeui) for the happy CLI — the mobile surface
+  # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
-  tag: "v2"
+  tag: "v3"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
 service:
   type: ClusterIP
-  # CloudCLI web UI (Express API + WebSocket + SPA).
-  uiPort: 3001
   # ttyd web terminal (served under /term, see ingress).
   termPort: 7681
 
 persistence:
   # One PVC = the pod's entire $HOME (/home/node). Holds ~/.claude (OAuth
-  # creds + conversation jsonl), ~/.cloudcli (CloudCLI's sqlite), ~/.ssh,
+  # creds + conversation jsonl), ~/.happy (happy CLI pairing keys), ~/.ssh,
   # and all repo checkouts under ~/code. Everything that matters survives
   # pod restarts and reschedules; nothing is node-pinned.
   home:
@@ -28,9 +29,9 @@ persistence:
     accessMode: ReadWriteOnce
 
 security:
-  # Escape hatch: CloudCLI is only *expected* to write under $HOME (its
-  # DATABASE_PATH is pointed there). If a future version insists on writing
-  # into its package dir, flip this off in values.local.yaml.
+  # Everything in the pod (claude, happy, tmux) writes under $HOME or /tmp.
+  # Escape hatch: if a tool update insists on writing into its npm package
+  # dir, flip this off in values.local.yaml.
   readOnlyRootFilesystem: true
 
 rbac:
@@ -56,9 +57,9 @@ networkPolicy:
   nodeCIDR: "192.168.4.0/24"
 
 auth:
-  # Gate both web surfaces at the Traefik ingress with Authelia forward-auth
-  # (same pattern as docs/stirling-pdf). Neither CloudCLI nor ttyd is safe to
-  # expose bare: together they are a remote shell on the cluster.
+  # Gate the web terminal at the Traefik ingress with Authelia forward-auth
+  # (same pattern as docs/stirling-pdf). ttyd is never safe to expose bare:
+  # it is a remote shell on the cluster.
   forwardAuth:
     enabled: true
     autheliaService: authelia     # Authelia release/service name
@@ -85,23 +86,23 @@ ingress:
     domain: zachd.duckdns.org
     wildcardSan: "*.zachd.duckdns.org"
 
-cloudcli:
-  # Extra env for the CloudCLI container, e.g. CONTEXT_WINDOW: "200000".
-  extraEnv: {}
+happy:
+  # Relay URL for the happy CLI (HAPPY_SERVER_URL on the term container).
+  # Public URL on purpose — the QR pairing flow may embed it, and the phone
+  # can only reach the public host; pod egress rides the 443-to-public rule
+  # via hairpin NAT. If hairpin ever breaks, switch to the cluster-local
+  # Service (the netpol already allows it):
+  #   serverUrl: "http://happy-server.happy.svc.cluster.local:3005"
+  # — but then the app must be pointed at the public host manually, never
+  # via a scanned URL.
+  serverUrl: "https://happy.zachd.duckdns.org"
 
 resources:
-  # Both containers spawn `claude` subprocesses (CloudCLI for chat sessions,
-  # tmux for TUI sessions), and claude is a hungry Node process — give each a
-  # roomy memory ceiling.
-  ui:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      memory: 2Gi
+  # tmux spawns `claude` (and `happy`, which wraps another claude) — hungry
+  # Node processes, so a roomy memory ceiling.
   term:
     requests:
       cpu: 50m
       memory: 128Mi
     limits:
-      memory: 2Gi
+      memory: 3Gi

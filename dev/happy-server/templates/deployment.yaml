@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "happy-server.fullname" . }}
+  labels:
+    {{- include "happy-server.labels" . | nindent 4 }}
+spec:
+  # Single replica — one RWO data PVC and an embedded (in-process) database;
+  # two pods would corrupt PGlite.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "happy-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "happy-server.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the secret changes — env-injected secrets don't
+        # propagate to running containers on their own.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000          # `node` user from the upstream base image
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # The image EXPOSEs 3000 but upstream docs default to 3005; pin it
+            # explicitly so the Service/ingress never drift from the listener.
+            - name: PORT
+              value: {{ .Values.service.port | quote }}
+            - name: DATA_DIR
+              value: /data
+            # Base URL the server embeds in file links — must be the
+            # public host the phone app actually reaches.
+            - name: PUBLIC_URL
+              value: "https://{{ .Values.ingress.host }}"
+            - name: HANDY_MASTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "happy-server.fullname" . }}
+                  key: HANDY_MASTER_SECRET
+            # pnpm (the image entrypoint) wants a writable $HOME for its
+            # config probe; the rootfs is read-only, so park it on /tmp.
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          # TCP probes: upstream documents no health endpoint; the listener
+          # itself is the health signal.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "happy-server.fullname" . }}-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

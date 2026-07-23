@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         # Bootstrap the home PVC on first boot: the standard dirs claude,
-        # CloudCLI, and ssh expect, with the right perms. Idempotent.
+        # happy, and ssh expect, with the right perms. Idempotent.
         - name: init-home
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -53,7 +53,7 @@ spec:
             - -c
             - |
               set -eu
-              mkdir -p /home/node/.claude /home/node/.cloudcli /home/node/code
+              mkdir -p /home/node/.claude /home/node/.happy /home/node/code
               mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
               mkdir -p /home/node/.local/share/tailscale
               chmod 700 /home/node/.local/share/tailscale
@@ -63,55 +63,6 @@ spec:
             - name: home
               mountPath: /home/node
       containers:
-        # CloudCLI (claudecodeui): mobile-friendly session browser + chat UI.
-        # Reads/writes the same ~/.claude the terminal's claude does, so
-        # sessions started in either surface resume in the other.
-        - name: ui
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
-            capabilities:
-              drop: ["ALL"]
-          command: ["cloudcli"]
-          env:
-            - name: HOME
-              value: /home/node
-            - name: SERVER_PORT
-              value: {{ .Values.service.uiPort | quote }}
-            - name: HOST
-              value: "0.0.0.0"
-            # Its auth/settings sqlite must live on the PVC, not in the
-            # (read-only) npm package dir.
-            - name: DATABASE_PATH
-              value: /home/node/.cloudcli/auth.db
-            {{- range $k, $v := .Values.cloudcli.extraEnv }}
-            - name: {{ $k }}
-              value: {{ $v | quote }}
-            {{- end }}
-          ports:
-            - name: ui
-              containerPort: {{ .Values.service.uiPort }}
-          readinessProbe:
-            httpGet:
-              path: /
-              port: ui
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /
-              port: ui
-            initialDelaySeconds: 30
-            periodSeconds: 30
-          volumeMounts:
-            - name: home
-              mountPath: /home/node
-            - name: tmp
-              mountPath: /tmp
-          resources:
-            {{- toYaml .Values.resources.ui | nindent 12 }}
         # ttyd: the real Claude Code TUI in the browser. `tmux new -A -s main`
         # attaches every browser connection to the same session, so closing
         # Safari (or iOS suspending it) leaves claude running; reopening
@@ -148,6 +99,14 @@ spec:
             # same access run_on_node_sudo already uses.
             - name: SSH_USER
               value: root
+            # Point the happy CLI (mobile remote control) at the self-hosted
+            # relay (dev/happy-server). Public URL on purpose: the QR pairing
+            # flow may embed it, and the phone can only reach the public host.
+            # Egress rides the existing TCP-443-to-public rule (hairpin NAT);
+            # if hairpin ever breaks, the netpol also allows the cluster-local
+            # fallback — see happy.serverUrl in values.yaml.
+            - name: HAPPY_SERVER_URL
+              value: {{ .Values.happy.serverUrl | quote }}
           ports:
             - name: term
               containerPort: {{ .Values.service.termPort }}

@@ -1,25 +1,20 @@
 {{/*
-One path per host: /term → ttyd, which serves itself under --base-path /term,
-so no StripPrefix middleware and the websocket endpoint passes through Traefik
-and the Cloudflare tunnel untouched. Nothing serves / anymore — the mobile
-surface moved to the Happy app + dev/happy-server relay.
+⚠️ Deliberately NO Authelia forward-auth here — the only chart in this repo's
+web tier without it. The Happy iOS/Android/web apps talk REST + WebSocket
+straight to this API and cannot complete an interactive forward-auth flow.
+The security model is Happy's own: clients generate keypairs locally, pair via
+QR code, and end-to-end encrypt every payload before it reaches this server —
+the relay (and anyone who breaches it) sees only ciphertext. Do NOT attach
+the shared forward-auth middleware "for safety"; it just breaks the app while
+protecting nothing the E2E crypto doesn't already cover.
 */}}
-{{- define "claude-workspace.paths" -}}
-- path: /term
-  pathType: Prefix
-  backend:
-    service:
-      name: {{ include "claude-workspace.fullname" . }}
-      port:
-        number: {{ .Values.service.termPort }}
-{{- end }}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "claude-workspace.fullname" . }}
+  name: {{ include "happy-server.fullname" . }}
   labels:
-    {{- include "claude-workspace.labels" . | nindent 4 }}
+    {{- include "happy-server.labels" . | nindent 4 }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
@@ -29,29 +24,35 @@ metadata:
     # wildcard SAN instead — one cert covers every sub-subdomain.
     traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
     traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
-    {{- if .Values.auth.forwardAuth.enabled }}
-    # Gate the whole host behind Authelia (see templates/middleware-forwardauth.yaml).
-    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "claude-workspace.fullname" . }}-forwardauth@kubernetescrd
-    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
-          {{- include "claude-workspace.paths" . | nindent 10 }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "happy-server.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
     {{- /*
       Extra hosts served over the Cloudflare tunnel: TLS is terminated at
       Cloudflare's edge, so these are deliberately absent from the ACME cert
-      list below. Traefik routes them by Host header and applies the same
-      Authelia forward-auth middleware as the DuckDNS host; the tunnel dials
-      in with No TLS Verify. See infra/cloudflared.
+      list below. The tunnel dials in with No TLS Verify. See infra/cloudflared.
     */}}
     {{- range .Values.ingress.cloudflareHosts }}
     - host: {{ . | quote }}
       http:
         paths:
-          {{- include "claude-workspace.paths" $ | nindent 10 }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "happy-server.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
     {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:

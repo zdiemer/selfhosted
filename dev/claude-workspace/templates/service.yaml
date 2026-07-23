@@ -9,10 +9,6 @@ spec:
   selector:
     {{- include "claude-workspace.selectorLabels" . | nindent 4 }}
   ports:
-    - name: http
-      port: {{ .Values.service.uiPort }}
-      targetPort: ui
-      protocol: TCP
     - name: term
       port: {{ .Values.service.termPort }}
       targetPort: term
