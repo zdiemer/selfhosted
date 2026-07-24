@@ -39,6 +39,17 @@ spec:
             readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
             capabilities:
               drop: ["ALL"]
+          # Override the image's broken entrypoint (upstream bug at cli-1.1.10):
+          # its `pnpm --filter happy-server start` names a package that was
+          # renamed to happy-server-self-host, and `start` (main.ts) is the
+          # external-Postgres mode that dies without DATABASE_URL anyway. The
+          # PGlite standalone mode is a separate entrypoint with subcommands —
+          # migrate is idempotent, so run it every boot, then serve.
+          command: ["sh", "-c"]
+          args:
+            - >-
+              pnpm --filter happy-server-self-host standalone migrate &&
+              exec pnpm --filter happy-server-self-host standalone serve
           env:
             # The image EXPOSEs 3000 but upstream docs default to 3005; pin it
             # explicitly so the Service/ingress never drift from the listener.
@@ -69,10 +80,12 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          # Roomy initial delay: first boot runs corepack's pnpm fetch + the
+          # PGlite migration before the listener opens.
           livenessProbe:
             tcpSocket:
               port: http
-            initialDelaySeconds: 30
+            initialDelaySeconds: 90
             periodSeconds: 30
           volumeMounts:
             - name: data
