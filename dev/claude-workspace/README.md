@@ -232,10 +232,22 @@ artifacts, and metadata live under `bakery.dataDir`
   If a tool upgrade starts writing into its npm package dir, flip
   `security.readOnlyRootFilesystem: false` in
   values.local.yaml and note the version here.
-- **happy daemon**: `happy daemon start` (from `/term` or the phone) lets the
-  Happy app spawn NEW sessions in any `~/code` directory, not just attach to
-  ones started in tmux. Like tmux, the daemon dies on pod restart — restart
-  it with the same command; pairing keys on the PVC survive.
+- **happy daemon**: the daemon is what lets the Happy app spawn NEW sessions in
+  any `~/code` directory, not just attach to ones started in tmux. It now runs
+  as its own always-on `happy-daemon` container (`happy.daemon.enabled`,
+  `happy daemon start-sync`), so it comes back with the pod — no manual
+  `happy daemon start` after a restart. Notes:
+  - Phone-spawned sessions are **children of the `happy-daemon` container**, not
+    the `term` one; `kubectl -n claude logs deploy/claude-workspace -c
+    happy-daemon` and the daemon's own logs under `~/.happy/logs/` are where
+    they surface (start-sync writes little to stdout).
+  - It shares `~/.happy` with the interactive `happy` in `/term`; the singleton
+    lock (`~/.happy/daemon.state.json.lock`) keeps them from fighting, and
+    interactive `happy` defers to the running daemon. This holds only while
+    every container runs the same happy version (they share one image) — a
+    mismatch makes them kill and replace each other.
+  - Turn it off with `happy.daemon.enabled: false` (drops the container); the
+    old manual `happy daemon start` from `/term` still works if you do.
 - The chart holds no secrets at all, so `values.local.yaml` is just the
   ingress toggle. (The relay's master secret lives in `dev/happy-server`'s
   values.local.yaml, not here.)

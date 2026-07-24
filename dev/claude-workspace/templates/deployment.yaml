@@ -135,6 +135,60 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.term | nindent 12 }}
+        {{- if .Values.happy.daemon.enabled }}
+        # happy daemon: an always-on supervised sidecar so the Happy app can
+        # spawn NEW sessions the moment the pod is Ready — no manual
+        # `happy daemon start` from /term after every restart. `start-sync` is
+        # the daemon's foreground entrypoint (plain `start` forks and exits, no
+        # good as a container process); it installs SIGTERM handlers, so k8s
+        # stops/restarts it cleanly. It shares ~/.happy on the PVC (pairing keys
+        # + the daemon.state.json.lock singleton) with the interactive `happy`
+        # in /term; because both run the same image = same happy version, the
+        # interactive one detects this daemon and defers instead of starting a
+        # rival (a version skew would make them kill each other — see the
+        # happy.daemon note in values.yaml). Phone-spawned sessions run as
+        # CHILDREN of this container, so it carries claude-sized resources.
+        - name: happy-daemon
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          # Loop rather than a bare `exec`: on a restart where the interactive
+          # path already spawned a same-version daemon, start-sync finds the
+          # lock held, prints "already running", and exits 0 — the loop retries
+          # after a pause instead of the container flapping into CrashLoopBackOff.
+          # In the normal case (fresh pod, this is the first happy process)
+          # start-sync wins the lock and blocks in the foreground until SIGTERM.
+          command: ["sh", "-c"]
+          args:
+            - |
+              while true; do
+                happy daemon start-sync || true
+                sleep 10
+              done
+          env:
+            - name: HOME
+              value: /home/node
+            # Same relay the term container's happy CLI uses; the daemon reads
+            # HAPPY_SERVER_URL with highest precedence over ~/.happy/settings.json.
+            - name: HAPPY_SERVER_URL
+              value: {{ .Values.happy.serverUrl | quote }}
+          # No probes: the daemon's only health surface is an HTTP control
+          # server on a 127.0.0.1 EPHEMERAL port recorded in
+          # ~/.happy/daemon.state.json (`happy daemon status` always exits 0 and
+          # is useless as a probe). Not worth an exec-probe that parses the
+          # state file — same "no probes on purpose" stance as tailscaled below.
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.happyDaemon | nindent 12 }}
+        {{- end }}
         {{- if .Values.bakery.enabled }}
         # Bakery server: the Bun API + WebSocket backend (routes under /api/*).
         # The browser reaches it directly through the ingress path-split, so it

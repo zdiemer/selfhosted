@@ -105,6 +105,26 @@ happy:
   # — but then the app must be pointed at the public host manually, never
   # via a scanned URL.
   serverUrl: "https://happy.zachd.duckdns.org"
+  daemon:
+    # Run `happy daemon` as an always-on supervised sidecar so the Happy app
+    # can spawn NEW sessions in any ~/code dir the moment the pod is up — no
+    # more opening /term to run `happy daemon start` by hand after every
+    # restart (the daemon, like tmux, otherwise dies with the pod). The
+    # container's process is `happy daemon start-sync`, the daemon's FOREGROUND
+    # entrypoint (plain `start` forks off and exits — useless for a container);
+    # k8s then restarts it like any other container.
+    #
+    # It shares ~/.happy (pairing keys + the daemon.state.json.lock singleton)
+    # with the interactive `happy` run in /term. That's safe BECAUSE every
+    # container is the same image = the same happy version: interactive `happy`
+    # only auto-spawns a daemon when none of a MATCHING version is already
+    # running, so it defers to this one. A version mismatch would make one kill
+    # and replace the other — never pin happy differently across containers.
+    #
+    # NOTE: the phone's spawned sessions run as CHILD PROCESSES of this
+    # container, so it needs claude-sized memory headroom (resources.happyDaemon
+    # below), not just the daemon's own tiny footprint.
+    enabled: true
 
 bakery:
   # The bakery web harness (github.com/seemethere/bakery), vendored into the
@@ -147,6 +167,16 @@ resources:
   # tmux spawns `claude` (and `happy`, which wraps another claude) — hungry
   # Node processes, so a roomy memory ceiling.
   term:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 3Gi
+  # The happy daemon process is tiny, but it HOSTS the claude sessions the phone
+  # spawns (they are its children) — so give it the same roomy ceiling as the
+  # term container's tmux-hosted sessions, with a low request (idle when no
+  # phone session is running).
+  happyDaemon:
     requests:
       cpu: 50m
       memory: 128Mi
