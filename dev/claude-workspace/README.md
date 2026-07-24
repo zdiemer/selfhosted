@@ -232,6 +232,10 @@ artifacts, and metadata live under `bakery.dataDir`
   If a tool upgrade starts writing into its npm package dir, flip
   `security.readOnlyRootFilesystem: false` in
   values.local.yaml and note the version here.
+- **happy daemon**: `happy daemon start` (from `/term` or the phone) lets the
+  Happy app spawn NEW sessions in any `~/code` directory, not just attach to
+  ones started in tmux. Like tmux, the daemon dies on pod restart — restart
+  it with the same command; pairing keys on the PVC survive.
 - The chart holds no secrets at all, so `values.local.yaml` is just the
   ingress toggle. (The relay's master secret lives in `dev/happy-server`'s
   values.local.yaml, not here.)
