@@ -6,6 +6,17 @@ metadata:
     {{- include "cluster-status.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
+  # Each replica runs its own collector against its own emptyDir, so the two
+  # status.json files differ (independent generatedAt, independent in-memory
+  # network baselines). Round-robining between them makes the "collected Xs ago"
+  # line and the network rates jitter between polls. Pin a client to one backend
+  # so a viewer sees one consistent collector.
+  #
+  # Behind the ingress the source IP kube-proxy sees is Traefik's, not the real
+  # client's — so this pins per-Traefik-pod rather than per-viewer. That's still
+  # enough to stop the flip-flop, and for a static page there's nothing to gain
+  # from spreading load anyway.
+  sessionAffinity: ClientIP
   selector:
     {{- include "cluster-status.selectorLabels" . | nindent 4 }}
   ports:

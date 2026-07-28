@@ -354,9 +354,120 @@ data:
                 "condition": condition,
                 "message": message,
             })
+        return _sort_workloads(out)
+
+
+    # Deployments carry Available/Progressing conditions; StatefulSets and
+    # DaemonSets don't, so their health is derived from the replica counts the
+    # same way. Same output shape as parse_deployments so the page renders all
+    # three tables through one function.
+    def _count_condition(desired, ready, available):
+        if desired == 0:
+            return "Available"
+        if ready == 0:
+            return "Failure"
+        if ready < desired or available < desired:
+            return "Progressing"
+        return "Available"
+
+
+    def _sort_workloads(out):
+        # Failures first, then Progressing, then the rest alphabetically — the
+        # things that need attention float to the top of the table.
         out.sort(key=lambda x: (x["condition"] != "Failure",
                                 x["condition"] != "Progressing", x["name"]))
         return out
+
+
+    def parse_statefulsets(items):
+        out = []
+        for d in items:
+            meta = d.get("metadata", {})
+            spec = d.get("spec", {})
+            st = d.get("status", {})
+            desired = int(spec.get("replicas", 0) or 0)
+            ready = int(st.get("readyReplicas", 0) or 0)
+            # availableReplicas needs minReadySeconds to be meaningful; fall back
+            # to ready so a StatefulSet without it doesn't read as unavailable.
+            available = int(st.get("availableReplicas", ready) or 0)
+            updated = int(st.get("updatedReplicas", 0) or 0)
+            out.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "desired": desired, "ready": ready, "available": available,
+                "updated": updated,
+                "condition": _count_condition(desired, ready, available),
+                "message": None,
+            })
+        return _sort_workloads(out)
+
+
+    def parse_daemonsets(items):
+        out = []
+        for d in items:
+            meta = d.get("metadata", {})
+            st = d.get("status", {})
+            desired = int(st.get("desiredNumberScheduled", 0) or 0)
+            ready = int(st.get("numberReady", 0) or 0)
+            available = int(st.get("numberAvailable", ready) or 0)
+            updated = int(st.get("updatedNumberScheduled", 0) or 0)
+            out.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "desired": desired, "ready": ready, "available": available,
+                "updated": updated,
+                "condition": _count_condition(desired, ready, available),
+                "message": None,
+            })
+        return _sort_workloads(out)
+
+
+    # A pod is a "problem" when its effective status is anything other than
+    # Running or Succeeded — the same classification the summary pills count, but
+    # here we keep the identities so the page can name them. Walks the full pod
+    # list, so unscheduled Pending pods (which belong to no node and never appear
+    # in a per-node table) are included.
+    _PROBLEM_ORDER = {"crash_looping": 0, "failed": 1, "unknown": 2, "pending": 3}
+    _STATUS_DISPLAY = {
+        "crash_looping": "CrashLoopBackOff", "failed": "Failed",
+        "unknown": "Unknown", "pending": "Pending",
+    }
+
+
+    def parse_problem_pods(pods, limit=50):
+        rows = []
+        for p in pods:
+            label = pod_status_label(p)
+            if label in ("running", "succeeded"):
+                continue
+            meta = p.get("metadata", {})
+            status = p.get("status", {})
+            # Pod-level reason first (e.g. "Evicted"), else the first container's
+            # waiting/terminated reason (ImagePullBackOff, OOMKilled, Error, ...).
+            reason = status.get("reason") or ""
+            if not reason:
+                for cs in status.get("containerStatuses", []) or []:
+                    state = cs.get("state") or {}
+                    waiting = state.get("waiting") or {}
+                    terminated = state.get("terminated") or {}
+                    if waiting.get("reason"):
+                        reason = waiting["reason"]
+                        break
+                    if terminated.get("reason"):
+                        reason = terminated["reason"]
+                        break
+            restarts = sum(cs.get("restartCount", 0)
+                           for cs in status.get("containerStatuses", []) or [])
+            rows.append((_PROBLEM_ORDER.get(label, 9), {
+                "namespace": meta.get("namespace", ""),
+                "name": meta.get("name", ""),
+                "node": p.get("spec", {}).get("nodeName") or "",
+                "status": _STATUS_DISPLAY.get(label, label),
+                "reason": reason,
+                "restarts": restarts,
+            }))
+        rows.sort(key=lambda r: (r[0], r[1]["namespace"], r[1]["name"]))
+        return [r[1] for r in rows[:limit]]
 
 
     def parse_events(items, limit=25):
@@ -560,6 +671,18 @@ data:
         except Exception as e:
             log("k8s_deployments_api_error", error=e)
 
+        statefulsets = []
+        try:
+            statefulsets = parse_statefulsets(api_get("/apis/apps/v1/statefulsets").get("items", []))
+        except Exception as e:
+            log("k8s_statefulsets_api_error", error=e)
+
+        daemonsets = []
+        try:
+            daemonsets = parse_daemonsets(api_get("/apis/apps/v1/daemonsets").get("items", []))
+        except Exception as e:
+            log("k8s_daemonsets_api_error", error=e)
+
         events = []
         if PUBLISH_EVENTS:
             try:
@@ -601,7 +724,10 @@ data:
             "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "nodeDisks": result,
             "totals": totals.build(len(result)),
+            "problemPods": parse_problem_pods(all_pods),
             "deployments": deployments,
+            "statefulSets": statefulsets,
+            "daemonSets": daemonsets,
             "recentEvents": events,
         }
 

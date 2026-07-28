@@ -1,8 +1,9 @@
 # cluster-status — public cluster dashboard
 
 Live at **<https://status.diemer.codes>** (and `status.zachd.duckdns.org`). Node
-CPU/RAM/disk with a pods-vs-k3s-vs-system breakdown, per-node pod tables,
-deployment health, top consumers, and recent warnings.
+CPU/RAM/disk with a pods-vs-k3s-vs-system breakdown, per-node pod tables, a
+problem-pods roll-up, Deployment/StatefulSet/DaemonSet health, top consumers, and
+recent warnings.
 
 Ported from talaria's authed `/admin/cluster` page. That page's collector was
 already fully generic — no talaria names, no filters — and its only coupling was
@@ -66,7 +67,8 @@ that was meant to be off is visible at deploy time.
 
 Read-only, and narrower than talaria's backend role this came from (that one also
 carries `pods/log`, `jobs` and `cronjobs` for other handlers): `nodes` list,
-`nodes/proxy` + `nodes/stats` get, `pods` list, `events` list, `deployments` list.
+`nodes/proxy` + `nodes/stats` get, `pods` list, `events` list, and
+`deployments`/`statefulsets`/`daemonsets` list.
 
 `nodes/proxy` is the powerful one — it's what reaches kubelet's `/stats/summary`
 for the CPU/RAM/disk/network numbers, and it's why no metrics-server is needed.

@@ -398,14 +398,33 @@ data:
           }).join('') + '</ol></div></div>';
       }
 
-      function deployments(ds) {
+      function problemPods(pods) {
+        // Only rendered when something is actually wrong — the summary pills
+        // already report "all running" on a healthy cluster. This card names the
+        // pods behind a non-zero Pending/Failed/CrashLoop/Unknown count, including
+        // unscheduled ones that appear in no node's table.
+        if (!pods || !pods.length) return '';
+        return '<div class="card"><div class="card-h"><span class="card-t" style="color:var(--destructive)">Problem pods (' + pods.length + ')</span></div>' +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Pod</th><th>Namespace</th>' +
+          '<th class="c">Status</th><th>Reason</th><th>Node</th><th class="r">Restarts</th></tr></thead><tbody>' +
+          pods.map(function (p) {
+            return '<tr><td class="mono" style="font-size:12px">' + esc(p.name) + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.namespace || '-') + '</td>' +
+              '<td class="c" style="color:' + podStatusColor(p.status) + '">' + esc(p.status || 'N/A') + '</td>' +
+              '<td class="mono" style="font-size:12px">' + esc(p.reason || '') + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.node || '—') + '</td>' +
+              '<td class="r">' + (p.restarts || 0) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div></div>';
+      }
+
+      function workloads(title, ds) {
         if (!ds || !ds.length) return '';
         function color(c) {
           if (c === 'Failure') return 'var(--destructive)';
           if (c === 'Progressing') return 'var(--warn)';
           return 'var(--ok)';
         }
-        return '<div class="card"><div class="card-h"><span class="card-t">Deployments (' + ds.length + ')</span></div>' +
+        return '<div class="card"><div class="card-h"><span class="card-t">' + esc(title) + ' (' + ds.length + ')</span></div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th><th class="r">Ready</th>' +
           '<th class="r">Available</th><th class="r">Updated</th><th class="c">Status</th></tr></thead><tbody>' +
           ds.map(function (d) {
@@ -440,6 +459,9 @@ data:
       function render(d) {
         var h = '';
         if (d.totals) h += summary(d.totals);
+        // Surfaced high, right under the summary: if anything is wrong it should
+        // be the first thing you see, not buried below the node list.
+        h += problemPods(d.problemPods);
         h += '<h2>Nodes (' + d.nodeDisks.length + ')</h2>';
         if (!d.nodeDisks.length) h += '<div class="sub">No node data available.</div>';
         h += d.nodeDisks.map(nodeRow).join('');
@@ -447,7 +469,9 @@ data:
           h += '<div class="grid g2">' + topPods('Top CPU consumers', d.totals.topCpuPods, 'cpu') +
             topPods('Top RAM consumers', d.totals.topRamPods, 'ram') + '</div>';
         }
-        h += deployments(d.deployments);
+        h += workloads('Deployments', d.deployments);
+        h += workloads('StatefulSets', d.statefulSets);
+        h += workloads('DaemonSets', d.daemonSets);
         h += events(d.recentEvents);
         document.getElementById('root').innerHTML = h;
 
@@ -466,7 +490,17 @@ data:
         // Data is collected on a fixed schedule, so say how old it is rather than
         // implying it's live.
         var age = fmtRel(d.generatedAt);
-        el.textContent = 'Collected ' + (age || 'just now') + ' · refreshes every ' + Math.round(POLL_MS / 1000) + 's';
+        var every = Math.round(POLL_MS / 1000);
+        // The page's own liveness check: nginx keeps serving the last status.json
+        // even if the collector has died, so a timestamp that keeps aging is the
+        // only signal the data has gone stale. Past 3 intervals, say so loudly.
+        var ageSec = Math.max(0, Math.floor((Date.now() - Date.parse(d.generatedAt)) / 1000));
+        if (isFinite(ageSec) && ageSec > every * 3) {
+          el.innerHTML = '<span style="color:var(--destructive);font-weight:600">Stale — last collected ' +
+            esc(age) + '; the collector may be down</span> · expected every ' + every + 's';
+          return;
+        }
+        el.textContent = 'Collected ' + (age || 'just now') + ' · refreshes every ' + every + 's';
       }
 
       var last = null;

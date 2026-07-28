@@ -51,12 +51,14 @@ import json
 d = json.load(open("/data/status.json"))
 t = d.get("totals") or {}
 n = (d.get("nodeDisks") or [{}])[0]
-print("    collected:   %s" % d.get("generatedAt"))
-print("    nodes:       %s/%s ready" % (t.get("readyNodeCount"), t.get("nodeCount")))
-print("    pods:        %s" % t.get("podCount"))
-print("    deployments: %d" % len(d.get("deployments") or []))
-print("    events:      %d warning(s)" % len(d.get("recentEvents") or []))
-print("    node fields: %s" % ", ".join(sorted(n.keys())))
+print("    collected:    %s" % d.get("generatedAt"))
+print("    nodes:        %s/%s ready" % (t.get("readyNodeCount"), t.get("nodeCount")))
+print("    pods:         %s (%d problem)" % (t.get("podCount"), len(d.get("problemPods") or [])))
+print("    workloads:    %d deploy / %d sts / %d ds" % (
+    len(d.get("deployments") or []), len(d.get("statefulSets") or []),
+    len(d.get("daemonSets") or [])))
+print("    events:       %d warning(s)" % len(d.get("recentEvents") or []))
+print("    node fields:  %s" % ", ".join(sorted(n.keys())))
 print("")
 print("    PUBLIC - anyone can read all of the above at the URLs below.")
 '
