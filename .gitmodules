@@ -6,3 +6,7 @@
 	path = web/old-diemer-codes/site
 	url = git@github.com:zdiemer/diemer.codes.git
 	branch = develop
+[submodule "finance/money"]
+	path = finance/money
+	url = git@github.com:zdiemer/money.git
+	branch = main

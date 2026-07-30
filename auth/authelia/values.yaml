@@ -58,6 +58,11 @@ accessControl:
     # Basic auth (see ../keepass/).
     - domain: "keepass.zachd.duckdns.org"
       policy: "two_factor"
+    # money — personal FI dashboard (finance/money). Single user, DuckDNS-only
+    # (deliberately not on the diemer.codes tunnel). Explicit for parity;
+    # default_policy already gates it.
+    - domain: "money.zachd.duckdns.org"
+      policy: "two_factor"
     # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
     # already two_factor, so these are explicit-for-parity rather than strictly
     # required; keeping them mirrors the duckdns hosts as those get retired.
