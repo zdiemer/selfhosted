@@ -98,6 +98,12 @@ Three capabilities, three mechanisms:
   buildkitd ([`infra/buildkit`](../../infra/buildkit/)); every per-chart
   `build.sh` falls back from docker to buildctl automatically. Push auth comes
   from `~/.docker/config.json` on the PVC (setup below).
+- **Create repos + open PRs with `gh`** — the GitHub CLI is baked into the
+  image (since v5). A one-time `gh auth login` (device flow) persists under
+  `~/.config/gh` on the PVC, so Claude can scaffold and push new app repos
+  (e.g. `finance/money`) without leaving the workspace. This is a **separate**
+  credential from the GHCR PAT below (that one is packages-only): `gh` needs a
+  token with `repo` + `read:org` scope.
 - **Node maintenance (`scripts/k3s/`)** — a `tailscaled` container (userspace
   networking, unprivileged) joins the pod to the tailnet so
   `tailscale ssh root@<node>` works. The `tailscale` CLI in the image is a
@@ -125,15 +131,20 @@ internet and cluster-admin + root-on-every-node. Never disable
      "$(printf 'zdiemer:%s' "$GHCR_PAT" | base64 -w0)" > ~/.docker/config.json
    chmod 600 ~/.docker/config.json; unset GHCR_PAT
    ```
-3. **Repo + local values**: clone this repo to `~/code/selfhosted`, then from
+3. **GitHub CLI** (`gh`, for creating repos / pushing from the pod): run
+   `gh auth login` (choose GitHub.com → HTTPS → login with a web browser) and
+   authorize the device code. Use a token/login with `repo` + `read:org` scope
+   — the GHCR PAT above is packages-only and `gh` will reject it. Auth persists
+   on the PVC at `~/.config/gh`.
+4. **Repo + local values**: clone this repo to `~/code/selfhosted`, then from
    the laptop run [`scripts/sync-local-values.sh`](../../scripts/sync-local-values.sh)
    to copy every gitignored `values.local.yaml` into the pod — without them,
    deploys from the pod fail on `required` values or silently render secrets
    empty. Re-run after any local-values change.
-4. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
+5. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
    does not exist. If one ever lands on the PVC it silently takes precedence
    and everything breaks confusingly — `rm ~/.kube/config` is the fix.
-5. **Other repos' secrets** (sync-local-values.sh only covers this repo):
+6. **Other repos' secrets** (sync-local-values.sh only covers this repo):
    - gamedex (standalone clone): copy its values from the laptop —
      `tar czf - -C ~/Code/gamedex values.local.yaml | kubectl -n claude exec -i deploy/claude-workspace -c term -- tar xzf - -C /home/node/code/gamedex`
    - talaria keeps secrets sops-encrypted in-git; the image ships `sops`

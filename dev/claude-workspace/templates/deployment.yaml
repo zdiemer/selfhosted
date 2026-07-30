@@ -58,6 +58,8 @@ spec:
               mkdir -p /home/node/.local/share/tailscale
               chmod 700 /home/node/.local/share/tailscale
               mkdir -p /home/node/.docker && chmod 700 /home/node/.docker
+              # gh CLI auth (one-time `gh auth login`) persists here on the PVC.
+              mkdir -p /home/node/.config/gh && chmod 700 /home/node/.config/gh
               {{- if .Values.bakery.enabled }}
               # Bakery state (sessions/artifacts DB) + its agent's creds (~/.pi,
               # a one-time interactive login).

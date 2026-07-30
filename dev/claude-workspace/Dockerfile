@@ -21,6 +21,11 @@ ARG BUILDKIT_VERSION=v0.24.0
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
 ARG SOPS_VERSION=v3.10.2
+# GitHub CLI — create repos, open PRs, and push from the workspace (Claude
+# scaffolds new app repos here). Auth is a one-time `gh auth login` persisted on
+# the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
+# the tailscale/docker/happy logins — no token is baked into the image.
+ARG GH_VERSION=2.96.0
 # Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
 # harness served under /bakery's own subdomain (see README "Bakery surface").
 # It's a Bun monorepo (server + Vite web); there's no published image, so we
@@ -56,6 +61,8 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
  && curl -fsSL -o /usr/local/bin/sops \
         "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64" \
  && chmod 0755 /usr/local/bin/sops \
+ && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh" \
  && curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \
     | tar xz -C /usr/local/bin --strip-components=1 \
         "tailscale_${TAILSCALE_VERSION}_amd64/tailscale" \
