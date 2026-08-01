@@ -63,6 +63,13 @@ accessControl:
     # default_policy already gates it.
     - domain: "money.zachd.duckdns.org"
       policy: "two_factor"
+    # sms-relay — the cluster's SMS gateway (infra/sms-relay). Explicit for
+    # parity; default_policy already gates it. Note the handset's inbound
+    # webhook does NOT pass through here: that path has its own Ingress with no
+    # forward-auth middleware, and is authenticated by an HMAC signature
+    # instead, because a phone cannot complete an interactive login.
+    - domain: "sms-relay.zachd.duckdns.org"
+      policy: "two_factor"
     # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
     # already two_factor, so these are explicit-for-parity rather than strictly
     # required; keeping them mirrors the duckdns hosts as those get retired.

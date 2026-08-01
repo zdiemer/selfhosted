@@ -10,3 +10,7 @@
 	path = finance/money
 	url = git@github.com:zdiemer/money.git
 	branch = main
+[submodule "infra/sms-relay"]
+	path = infra/sms-relay
+	url = git@github.com:zdiemer/sms-relay.git
+	branch = main
