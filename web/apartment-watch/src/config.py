@@ -62,6 +62,7 @@ class ParkingRule:
 class Alerts:
     to: str
     max_listings_per_digest: int
+    max_messages_per_run: int
     quiet_on_zero_matches: bool
     health_alert_after_stale_runs: int
     health_alert_cooldown_days: int
@@ -160,6 +161,7 @@ def load(path: str) -> Criteria:
     alerts = Alerts(
         to=to,
         max_listings_per_digest=int(alerts_raw.get("max_listings_per_digest", 5)),
+        max_messages_per_run=max(1, int(alerts_raw.get("max_messages_per_run", 3))),
         quiet_on_zero_matches=bool(alerts_raw.get("quiet_on_zero_matches", True)),
         health_alert_after_stale_runs=int(alerts_raw.get("health_alert_after_stale_runs", 3)),
         health_alert_cooldown_days=int(alerts_raw.get("health_alert_cooldown_days", 3)),

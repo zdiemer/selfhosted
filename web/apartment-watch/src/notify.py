@@ -120,44 +120,70 @@ def _parking_note(row) -> str:
     return f" +{label}"
 
 
-def format_digest(rows, total: int, max_listings: int, date_label: str, warnings: list[str]) -> str:
-    """One SMS. Newest/cheapest first, capped, with an explicit overflow line.
+def _listing_line(row) -> str:
+    price = _money(row["effective_price"] or row["price"])
+    if row["parking_fee"]:
+        # Effective price folds in parking; show the base too so the number in
+        # the text matches the number on the listing page.
+        price = f"{price} ({_money(row['price'])}+{_money(row['parking_fee'])})"
+    hood = row["neighborhood"] or "SF"
+    return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)} {row['url']}"
 
-    Truncation is stated rather than silent — "+4 more" tells you to go look,
-    where a quietly cut list reads as the complete set of what matched.
+
+def build_digest(rows, max_listings: int, max_messages: int, date_label: str, warnings: list[str]):
+    """Return [(body, rows_in_that_body), ...] — one entry per SMS to send.
+
+    Two rules make this correct rather than merely tidy:
+
+    * **Only listings whose URL is actually in a body may be marked notified.**
+      The first version put "+35 more" at the bottom and then retired all 40,
+      so 35 listings you were never shown were never mentioned again. Returning
+      the rows alongside each body is what lets the caller mark exactly what it
+      sent.
+    * **Overflow rolls forward.** Anything past the cap stays un-notified and
+      leads the next run's digest, so "+N more" is a promise rather than a
+      dead end — there is no UI to go and look at.
+
+    Spilling into a few messages rather than one keeps a busy day readable
+    without turning the first run, where every listing on the market is new,
+    into a hundred-segment wall of text.
     """
-    shown = rows[:max_listings]
-    header = f"apartment-watch {date_label} — {total} new"
-    lines = [header]
+    total = len(rows)
+    chunks: list[tuple[str, list]] = []
+    remaining = list(rows)
 
-    for row in shown:
-        price = _money(row["effective_price"] or row["price"])
-        if row["parking_fee"]:
-            # Effective price folds in parking; show the base too so the number
-            # in the text matches the number on the listing page.
-            price = f"{price} ({_money(row['price'])}+{_money(row['parking_fee'])})"
-        hood = row["neighborhood"] or "SF"
-        lines.append(f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)} {row['url']}")
+    while remaining and len(chunks) < max_messages:
+        batch, body = [], ""
+        part = len(chunks) + 1
+        for row in remaining[:max_listings]:
+            trial = batch + [row]
+            head = f"apartment-watch {date_label}"
+            if max_messages > 1 and (total > max_listings):
+                head += f" ({part})"
+            head += f" — {total} new"
+            candidate = "\n".join([head] + [_listing_line(r) for r in trial])
+            if len(candidate) > MAX_BODY and batch:
+                break
+            batch, body = trial, candidate
+        if not batch:
+            break
+        remaining = remaining[len(batch):]
+        chunks.append((body, batch))
 
-    if total > len(shown):
-        lines.append(f"+{total - len(shown)} more")
-    lines.extend(warnings)
+    if not chunks:
+        return []
 
-    body = "\n".join(lines)
-    if len(body) > MAX_BODY:
-        # Drop listings from the end until it fits, keeping the header and the
-        # overflow count honest.
-        while len(shown) > 1 and len("\n".join(lines)) > MAX_BODY:
-            shown = shown[:-1]
-            lines = [header]
-            for row in shown:
-                price = _money(row["effective_price"] or row["price"])
-                hood = row["neighborhood"] or "SF"
-                lines.append(f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)} {row['url']}")
-            lines.append(f"+{total - len(shown)} more")
-            lines.extend(warnings)
-        body = "\n".join(lines)[:MAX_BODY]
-    return body
+    # Trailer goes on the last message only.
+    left = len(remaining)
+    body, batch = chunks[-1]
+    tail = []
+    if left:
+        tail.append(f"+{left} more, in the next run")
+    tail.extend(warnings)
+    if tail:
+        body = "\n".join([body] + tail)[:MAX_BODY]
+        chunks[-1] = (body, batch)
+    return chunks
 
 
 def format_health_alert(problems: list[str], date_label: str) -> str:

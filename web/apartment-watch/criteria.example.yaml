@@ -115,7 +115,12 @@ request_delay_seconds: [1.5, 4.0]
 
 alerts:
   to: "+15555550123"        # REPLACE — the number that gets the digest
+  # Per message, and how many messages one run may send. Anything past
+  # max_listings_per_digest * max_messages_per_run is NOT discarded — it keeps
+  # notified_at NULL and leads the next run's digest. There's no UI to go and
+  # look at, so "+N more" has to be a promise, not a dead end.
   max_listings_per_digest: 5
+  max_messages_per_run: 3
   # No matches => no text. Silence means "nothing qualified", which is why the
   # source-health check below exists.
   quiet_on_zero_matches: true

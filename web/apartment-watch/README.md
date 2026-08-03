@@ -193,6 +193,13 @@ it survives an uninstall unless you go delete it on purpose.
   read-only here. It does nothing for scraping.
 - **3Gi memory limit.** `money` had its sync OOM-killed (exit 137) at 1Gi
   rendering Zillow in the same browser.
+- **Only listings whose URL actually went out are marked notified.** A digest
+  spills across up to `max_messages_per_run` texts of
+  `max_listings_per_digest` each; anything past that keeps `notified_at` NULL
+  and leads the *next* run's digest. The first version put "+35 more" at the
+  bottom and then retired all 40, so 35 listings you were never shown were
+  never mentioned again. There is no UI to go and look at, so the overflow
+  line has to be a promise rather than a dead end.
 - **The SMS idempotency key is scoped by date *and* listing set.** sms-relay
   dedupes on `(service, idempotency_key)`. With a date-only key, the first send
   of the day wins and every later one returns 202 with the original message id

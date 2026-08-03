@@ -26,7 +26,7 @@ import geo
 import scam
 import sources
 from fetch import Fetcher
-from notify import SmsRelay, digest_key, format_digest, format_health_alert
+from notify import SmsRelay, build_digest, digest_key, format_health_alert
 from store import Store
 
 logger = logging.getLogger("apartment-watch")
@@ -226,20 +226,40 @@ def main(argv=None) -> int:
         relay = SmsRelay(dry_run=args.dry_run)
         sent = False
         health_alerted = False
+        delivered = 0
 
         if pending:
-            body = format_digest(
-                pending, total_new, criteria.alerts.max_listings_per_digest,
-                date_label, problems,
+            chunks = build_digest(
+                pending,
+                criteria.alerts.max_listings_per_digest,
+                criteria.alerts.max_messages_per_run,
+                date_label,
+                problems,
             )
-            sent = relay.send(
-                criteria.alerts.to,
-                body,
-                digest_key("apartment-watch", date.today().isoformat(), pending),
-            )
-            if sent:
-                store.mark_notified(pending)
+            day = date.today().isoformat()
+            delivered = 0
+            for body, rows in chunks:
+                # Key by the rows in THIS message, so each part is independently
+                # retry-safe and no part can suppress another.
+                if not relay.send(
+                    criteria.alerts.to, body, digest_key("apartment-watch", day, rows)
+                ):
+                    # Stop on the first failure: the rest stay un-notified and
+                    # lead tomorrow's digest rather than being lost.
+                    break
+                # Mark only what actually went out. Anything past the cap keeps
+                # notified_at NULL and comes back in the next run.
+                store.mark_notified(rows)
                 store.commit()
+                delivered += len(rows)
+                sent = True
+            held = total_new - delivered
+            if held > 0:
+                logger.info(
+                    "%d match(es) held for the next run (cap: %d listings x %d message(s))",
+                    held, criteria.alerts.max_listings_per_digest,
+                    criteria.alerts.max_messages_per_run,
+                )
         elif args.force_digest:
             sent = relay.send(
                 criteria.alerts.to,
