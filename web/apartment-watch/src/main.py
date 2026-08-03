@@ -19,11 +19,13 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import date
 
 import config
 import geo
 import market
+import rentcontrol
 import scam
 import sources
 from fetch import Fetcher
@@ -37,7 +39,7 @@ DEFAULT_CRITERIA = os.path.join(os.path.dirname(HERE), "criteria.yaml")
 DEFAULT_DB = os.environ.get("APARTMENT_WATCH_DB", "/data/apartment-watch.db")
 
 
-def evaluate(listing, criteria, market_rent) -> tuple[bool, str | None]:
+def evaluate(listing, criteria, market_rent, trusted: bool = False) -> tuple[bool, str | None]:
     """Does this listing qualify? Returns (matched, reject_reason).
 
     Rules are checked cheapest-first and the *first* failure is what gets
@@ -82,7 +84,12 @@ def evaluate(listing, criteria, market_rent) -> tuple[bool, str | None]:
     if not (criteria.search.min_bedrooms <= listing.bedrooms <= criteria.search.max_bedrooms):
         return False, f"{listing.bedrooms}br outside range"
 
-    if criteria.laundry.required:
+    # A trusted source is a government portal, not a classifieds board: its
+    # rents are below market by design (so the scam price rules would reject
+    # every unit) and it publishes no amenities (so the laundry rule would
+    # reject the rest). Neither check means anything here; rent, bedrooms and
+    # neighbourhood still do.
+    if criteria.laundry.required and not trusted:
         if listing.laundry in criteria.laundry.reject:
             return False, f"laundry: {listing.laundry}"
         if listing.laundry not in criteria.laundry.accept:
@@ -102,7 +109,7 @@ def evaluate(listing, criteria, market_rent) -> tuple[bool, str | None]:
         if keyword in haystack:
             return False, f"keyword: {keyword}"
 
-    if criteria.scam.enabled:
+    if criteria.scam.enabled and not trusted:
         # Separate from the scam score: a co-living room isn't fraud, it just
         # isn't an apartment, and it reads as "1br" to every bedroom check.
         if scam.is_room_share(listing):
@@ -128,6 +135,7 @@ def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tu
     except KeyError as exc:
         return 0, 0, str(exc)
 
+    trusted = bool(getattr(source, "trusted", False))
     seen_ids = store.seen_ids(name)
     count = matched = 0
     try:
@@ -139,7 +147,14 @@ def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tu
             # would reject it as "laundry: unknown" and then overwrite the good
             # row with the empty one.
             store.hydrate(listing)
-            ok, reason = evaluate(listing, criteria, market_rent)
+            ok, reason = evaluate(listing, criteria, market_rent, trusted)
+            if ok and criteria.rent_control:
+                # Only for matches: one assessor call per building, cached
+                # forever, and there's no point spending it on a reject.
+                info = rentcontrol.lookup(store, listing)
+                if info:
+                    listing.rent_controlled = 1 if info["controlled"] else 0
+                    listing.year_built = info["year_built"]
             if ok:
                 matched += 1
                 logger.info(
@@ -262,7 +277,13 @@ def main(argv=None) -> int:
             )
             day = date.today().isoformat()
             delivered = 0
-            for body, rows in chunks:
+            for index, (body, rows) in enumerate(chunks):
+                # A small gap between parts. SMS ordering isn't guaranteed and
+                # each part is several concatenated segments, so this only
+                # reduces the odds of interleaving — the "(i/n)" in the header
+                # is what actually makes an out-of-order arrival readable.
+                if index:
+                    time.sleep(2)
                 # Key by the rows in THIS message, so each part is independently
                 # retry-safe and no part can suppress another.
                 if not relay.send(

@@ -99,7 +99,30 @@ scam_filter:
   # price_floors:
   #   0: 1700
 
+# Flag likely rent-controlled buildings (SF: certificate of occupancy before
+# 13 June 1979, excluding single-family homes and condos per Costa-Hawkins).
+# One cached assessor lookup per matched building. Shows as "RC?" in the text —
+# a heuristic on public data, not a legal determination.
+rent_control: true
+
 sources:
+  # SF's official Below Market Rate portal. THE source on a tight budget:
+  # income-restricted units far under market that never appear anywhere else,
+  # allocated by lottery rather than by who emails first.
+  #
+  # BMR has an income FLOOR as well as a ceiling — earning too much
+  # disqualifies you exactly like earning too little — so set the range
+  # honestly. A unit qualifies if the ranges overlap; borderline cases are
+  # flagged "check" in the text rather than silently dropped.
+  #
+  # This source is trusted: it skips the scam filter (its rents are below
+  # market by design) and the laundry rule (it publishes no amenities). Rent,
+  # bedrooms and excluded neighbourhoods still apply.
+  dahlia:
+    enabled: true
+    annual_income_min: 90000     # REPLACE — gross annual household income
+    annual_income_max: 110000    # REPLACE — a range is fine; it's a guess either way
+
   # Craigslist is the load-bearing source: it serves a no-JS result list that
   # honours the query string, so it needs no browser at all, and its detail
   # pages carry structured laundry/parking codes plus coordinates.

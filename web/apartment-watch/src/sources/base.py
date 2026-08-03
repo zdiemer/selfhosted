@@ -29,12 +29,20 @@ class Listing:
     parking_fee: int | None = None
     lat: float | None = None
     lon: float | None = None
+    # A street address, and a poster-supplied NEIGHBOURHOOD label. Keep these
+    # apart: feeding an address into the neighbourhood matcher makes a unit on
+    # "Bayview Ave" look like it's in the Bayview and get excluded.
+    address: str | None = None
     stated_neighborhood: str | None = None
     body: str = ""
+    # Short, source-specific text that must survive into the SMS (BMR deadlines).
+    note: str = ""
 
     # Filled in by main.py during evaluation.
     neighborhood: str | None = None
     effective_price: int | None = None
+    rent_controlled: int | None = None
+    year_built: int | None = None
 
 
 class Source(Protocol):

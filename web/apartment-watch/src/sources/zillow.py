@@ -121,7 +121,7 @@ class Zillow:
                 bedrooms=beds,
                 lat=lat,
                 lon=lon,
-                stated_neighborhood=str(first(card, "address", "addressStreet", default="") or "") or None,
+                address=str(first(card, "address", "addressStreet", default="") or "") or None,
             )
 
             # Cheap pre-filter: don't spend a browser navigation on a listing

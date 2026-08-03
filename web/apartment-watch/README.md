@@ -45,12 +45,20 @@ Verified against the live sites in August 2026, from a residential IP:
 
 | Source | Wall | Status |
 |---|---|---|
+| **DAHLIA (BMR)** | none | SF's official Below Market Rate portal, a public JSON API. Income-restricted units far under market that appear nowhere else. Marked `trusted`: skips the scam filter (below-market is the point) and the laundry rule (no amenities published). **Not neighbourhood-filtered** — it publishes no coordinates — which is a deliberate accept, since BMR inventory is small and worth seeing regardless. |
 | **Craigslist** | none | Serves a no-JS result list that honours the query string. No browser at all. Detail pages carry structured `laundry=`/`parking=` codes and lat/lon. **The load-bearing source.** |
 | **Zumper** | F5 "Client Challenge" | Camoufox clears it. Ships laundry, bedrooms, and address inline as schema.org JSON-LD — zero detail fetches. |
 | **Apartments.com** | Akamai Bot Manager | Camoufox clears it **only with a warm-up**: a cold request gets a 2.5KB challenge shell every time, but loading the homepage, waiting ~12s, then navigating in-site returns the real 800KB page. See `Fetcher.warm_up`. |
 | **Zillow** | PerimeterX | Search page: cleared. **Detail pages: still 403**, and laundry only exists there. Combined with a list that skews to $3,500+ new-builds, a live run produced 41 cards and 0 matches. Left enabled because it costs ~20s and no successful detail fetches, but expect nothing from it. |
 | **HotPads** | PerimeterX | **Blocked** even from a warmed browser session. Not implemented: it's Zillow-owned, so its inventory is already covered. |
 | **PadMapper** | F5 | Renders, but its listings come from a map XHR with nothing parseable in the HTML. Not implemented: it's Zumper's own site with Zumper's own inventory. |
+
+A note on DAHLIA's deadlines: of 57 rentals in a live pull, 55 were past their
+application due date — but 46 of those are "Lease Up" (lottery already run,
+filling from the existing list) and 9 are still "Active" with units available
+and an open waitlist. Only the former are dropped; the latter are surfaced
+marked `BMR waitlist?`. Treating a passed deadline as closed threw away most of
+the source.
 
 Measured on one live run each: **Craigslist 198 results → 4 matches**,
 **Apartments.com 35 → 7**, **Zumper 25 → 1**, **Zillow 41 → 0**. Craigslist and

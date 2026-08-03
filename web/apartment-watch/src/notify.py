@@ -127,7 +127,9 @@ def _listing_line(row) -> str:
         # the text matches the number on the listing page.
         price = f"{price} ({_money(row['price'])}+{_money(row['parking_fee'])})"
     hood = row["neighborhood"] or "SF"
-    return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)} {row['url']}"
+    rc = " RC?" if row["rent_controlled"] else ""
+    note = f" {row['note']}" if row["note"] else ""
+    return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)}{rc}{note} {row['url']}"
 
 
 def build_digest(rows, max_listings: int, max_messages: int, date_label: str, warnings: list[str]):
@@ -149,26 +151,36 @@ def build_digest(rows, max_listings: int, max_messages: int, date_label: str, wa
     into a hundred-segment wall of text.
     """
     total = len(rows)
-    chunks: list[tuple[str, list]] = []
+    parts: list[list] = []
     remaining = list(rows)
 
-    while remaining and len(chunks) < max_messages:
-        batch, body = [], ""
-        part = len(chunks) + 1
+    # Pass 1: decide the split, so headers can say "1/3" rather than just "1".
+    # SMS has no delivery-ordering guarantee — a multi-part digest routinely
+    # arrives (2), (3), (1), and each part here is several concatenated
+    # segments racing independently — so the count has to be in every header
+    # for an out-of-order arrival to still be readable.
+    while remaining and len(parts) < max_messages:
+        batch = []
         for row in remaining[:max_listings]:
             trial = batch + [row]
-            head = f"apartment-watch {date_label}"
-            if max_messages > 1 and (total > max_listings):
-                head += f" ({part})"
-            head += f" — {total} new"
-            candidate = "\n".join([head] + [_listing_line(r) for r in trial])
+            candidate = "\n".join([f"apartment-watch {date_label} (9/9) — {total} new"]
+                                   + [_listing_line(r) for r in trial])
             if len(candidate) > MAX_BODY and batch:
                 break
-            batch, body = trial, candidate
+            batch = trial
         if not batch:
             break
         remaining = remaining[len(batch):]
-        chunks.append((body, batch))
+        parts.append(batch)
+
+    n = len(parts)
+    chunks: list[tuple[str, list]] = []
+    for i, batch in enumerate(parts, start=1):
+        head = f"apartment-watch {date_label}"
+        if n > 1:
+            head += f" ({i}/{n})"
+        head += f" — {total} new"
+        chunks.append(("\n".join([head] + [_listing_line(r) for r in batch]), batch))
 
     if not chunks:
         return []

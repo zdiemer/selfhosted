@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from .apartments_com import ApartmentsCom
 from .craigslist import Craigslist
+from .dahlia import Dahlia
 from .zillow import Zillow
 from .zumper import Zumper
 
 REGISTRY = {
     Craigslist.name: Craigslist,
+    Dahlia.name: Dahlia,
     Zumper.name: Zumper,
     ApartmentsCom.name: ApartmentsCom,
     Zillow.name: Zillow,

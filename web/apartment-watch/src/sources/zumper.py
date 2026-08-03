@@ -96,6 +96,7 @@ class Zumper:
                 parking_fee=parse_parking_fee(blob),
                 lat=float(row["lat"]) if isinstance(row.get("lat"), (int, float)) else None,
                 lon=float(row["lng"]) if isinstance(row.get("lng"), (int, float)) else None,
+                address=str(row.get("address") or "") or None,
                 stated_neighborhood=str(row.get("neighborhood_name") or "") or None,
                 body=blob,
             )

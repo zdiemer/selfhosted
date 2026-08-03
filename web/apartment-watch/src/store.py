@@ -16,6 +16,7 @@ is what lets the run tell those two apart.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -38,6 +39,9 @@ CREATE TABLE IF NOT EXISTS listings (
     lat             REAL,
     lon             REAL,
     neighborhood    TEXT,
+    note            TEXT,
+    rent_controlled INTEGER,
+    year_built      INTEGER,
     matched         INTEGER NOT NULL DEFAULT 0,
     reject_reason   TEXT,
     first_seen      TEXT NOT NULL,
@@ -56,6 +60,15 @@ CREATE TABLE IF NOT EXISTS source_health (
     last_error        TEXT,
     listings_seen     INTEGER NOT NULL DEFAULT 0,
     consecutive_empty INTEGER NOT NULL DEFAULT 0
+);
+
+-- Assessor lookups, keyed by address or rounded lat/lon. Buildings do not
+-- change their year of construction, so these are cached forever — including
+-- misses, so a parcel with no record isn't re-queried every run.
+CREATE TABLE IF NOT EXISTS building_info (
+    key        TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS market_rent (
@@ -169,9 +182,10 @@ class Store:
             """
             INSERT INTO listings (
                 source, external_id, url, title, price, effective_price, bedrooms,
-                laundry, parking, parking_fee, lat, lon, neighborhood,
+                laundry, parking, parking_fee, lat, lon, neighborhood, note,
+                rent_controlled, year_built,
                 matched, reject_reason, first_seen, last_seen
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source, external_id) DO UPDATE SET
                 url             = excluded.url,
                 title           = excluded.title,
@@ -184,6 +198,9 @@ class Store:
                 lat             = excluded.lat,
                 lon             = excluded.lon,
                 neighborhood    = excluded.neighborhood,
+                note            = excluded.note,
+                rent_controlled = excluded.rent_controlled,
+                year_built      = excluded.year_built,
                 matched         = excluded.matched,
                 reject_reason   = excluded.reject_reason,
                 last_seen       = excluded.last_seen
@@ -193,6 +210,9 @@ class Store:
                 listing.price, listing.effective_price, listing.bedrooms,
                 listing.laundry, listing.parking, listing.parking_fee,
                 listing.lat, listing.lon, listing.neighborhood,
+                getattr(listing, "note", ""),
+                getattr(listing, "rent_controlled", None),
+                getattr(listing, "year_built", None),
                 1 if matched else 0, reject_reason, now, now,
             ),
         )
@@ -248,6 +268,32 @@ class Store:
                 (source, now, last_success, error, count, consecutive_empty),
             )
         return SourceHealth(source, last_success, consecutive_empty, error)
+
+    # -- building info ----------------------------------------------------
+
+    def building_info(self, key: str):
+        """Cached assessor answer. {} means "looked up, found nothing"; None
+        means "never looked up"."""
+        row = self.db.execute(
+            "SELECT payload FROM building_info WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except (ValueError, TypeError):
+            return None
+
+    def save_building_info(self, key: str, info: dict) -> None:
+        if self.read_only:
+            return
+        self.db.execute(
+            """INSERT INTO building_info (key, payload, fetched_at) VALUES (?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                   payload = excluded.payload, fetched_at = excluded.fetched_at""",
+            (key, json.dumps(info), utcnow()),
+        )
+        self.commit()
 
     # -- market rent ------------------------------------------------------
 

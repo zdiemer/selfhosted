@@ -116,6 +116,6 @@ class ApartmentsCom:
                 parking_fee=parse_parking_fee(blob),
                 lat=lat,
                 lon=lon,
-                stated_neighborhood=str(address.get("streetAddress") or "") or None,
+                address=str(address.get("streetAddress") or "") or None,
                 body=blob,
             )
