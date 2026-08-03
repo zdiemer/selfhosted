@@ -1,0 +1,67 @@
+# apartment-watch — a CronJob, a PVC, a ConfigMap, and a Secret. No Service and
+# no Ingress: nothing ever connects *to* this, it only reaches out.
+
+image:
+  repository: ghcr.io/zdiemer/apartment-watch
+  tag: "v1"
+  # Static tags, so the node must re-pull to see a rebuilt v1. IfNotPresent
+  # would serve a stale layer forever; Always costs one registry round-trip a
+  # day, which is nothing against a ~1.3GB image it already has cached.
+  pullPolicy: Always
+
+# Set imageCredentials.pat in values.local.yaml only if the GHCR package is
+# private. The convention in this repo is a public package (the cluster is
+# multi-node and every node pulls anonymously).
+imageCredentials:
+  registry: ghcr.io
+  username: zdiemer
+  pat: ""
+
+imagePullSecrets: []
+
+schedule:
+  # 09:00 Pacific. Listings post through the day; morning catches the previous
+  # evening's batch before anything good is gone.
+  cron: "0 9 * * *"
+  # Without this the schedule is UTC and drifts an hour twice a year.
+  timeZone: America/Los_Angeles
+  # One SQLite writer, ever.
+  concurrencyPolicy: Forbid
+  # Four sources through a humanized browser is minutes, not seconds. The retry
+  # that matters is tomorrow's run, not a second attempt at a wall.
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+
+smsRelay:
+  # In-cluster, so this bypasses the ingress and Authelia entirely.
+  url: http://sms-relay.infra.svc.cluster.local:8000
+
+persistence:
+  data:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    # "" => cluster default StorageClass (k3s local-path). Must render as an
+    # ABSENT field, never as an empty string — storageClassName: "" means "no
+    # class at all" and leaves the PVC Pending forever.
+    storageClass: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    # Camoufox is a real Firefox. `money` had its valuation sync OOM-killed
+    # (exit 137) at 1Gi rendering Zillow; 3Gi is the number that stopped it.
+    memory: 3Gi
+
+# Extra env for the job container, e.g. APARTMENT_WATCH_FORCE_DIGEST.
+extraEnv: {}
+
+secrets:
+  # Per-service API key from sms-relay's SMS_RELAY_API_KEYS map. Set in
+  # values.local.yaml — never here.
+  smsApiKey: ""

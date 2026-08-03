@@ -1,0 +1,25 @@
+# Copy to values.local.yaml (gitignored) and fill in.
+#
+# Note that this chart has a SECOND local file: criteria.yaml, copied from
+# criteria.example.yaml. That one holds the search stipulations and the phone
+# number; this one holds the credential.
+
+secrets:
+  # REQUIRED. The apartment-watch entry from sms-relay's SMS_RELAY_API_KEYS.
+  #
+  # sms-relay maps API key -> service name, and an unknown key is a flat 401.
+  # To mint one, in the sms-relay checkout (infra/sms-relay, a submodule):
+  #
+  #   openssl rand -hex 32
+  #   # merge into the EXISTING json in secrets.apiKeys — don't overwrite it,
+  #   # talaria's key is in there:
+  #   #   apiKeys: '{"talaria":"...","apartment-watch":"<new>"}'
+  #   ./infra/sms-relay/upgrade.sh
+  #
+  # Then paste the same value here.
+  smsApiKey: "REPLACE_ME"
+
+# Only if the GHCR package is private. The convention in this repo is a public
+# package, so normally leave this alone.
+# imageCredentials:
+#   pat: "github_pat_xxx"

@@ -1,0 +1,125 @@
+# apartment-watch stipulations.
+#
+# This file is the whole tuning surface. It is mounted into the CronJob as a
+# ConfigMap, so editing it and running ./upgrade.sh is the entire loop — no
+# rebuild, no image push.
+#
+# No secrets here. The sms-relay API key lives in values.local.yaml.
+
+search:
+  city: san-francisco
+  min_bedrooms: 0            # 0 == studio
+  max_bedrooms: 1
+  # The budget. Compared against *effective* rent: base rent plus any stated
+  # monthly parking fee (see rules.parking below).
+  max_effective_rent: 3000
+  min_rent: 0
+
+rules:
+  laundry:
+    # Hard requirement. 'unknown' does NOT pass — a listing that never mentions
+    # laundry is far more often a unit without it than a unit with it, and a
+    # false match costs a text about somewhere you can't wash clothes.
+    required: true
+    accept: [in_unit, in_building, on_site]
+    reject: [hookups_only, none]
+
+  parking:
+    # Desired, not required. Parking never gates a match; matches that have it
+    # are flagged in the SMS.
+    required: false
+    accept: [garage, carport, off_street, valet]
+    # What to do when a listing HAS parking but never says what it costs:
+    #   included     — assume it's in the rent (add $0)
+    #   assume:<n>   — add $n to the rent before the budget test (conservative)
+    #   exclude      — drop the listing rather than guess
+    unknown_fee: included
+
+# Point-in-polygon against data/sf-neighborhoods.geojson (DataSF "SF Find
+# Neighborhoods", gfpk-269f — 117 polygons). Names must match that file exactly.
+# Coordinates decide; a poster-supplied neighborhood string is only consulted
+# when a listing has no lat/lon, because posters mislabel these constantly.
+exclude_neighborhoods:
+  - Tenderloin
+  - Bayview
+  - Hunters Point
+  - Potrero Hill
+# Neighbours of the above you may or may not also want to exclude — they're
+# separate polygons in the same area, so add them here if you do:
+#   India Basin, Silver Terrace, Bret Harte, Candlestick Point SRA, Little Hollywood
+
+# Substring match against title + body. Case-insensitive.
+exclude_keywords: []
+#   - SRO
+#   - shared room
+#   - sublet
+
+scam_filter:
+  # Scored, not a keyword blacklist: several tells have to agree before a
+  # listing is discarded, so one unlucky phrase can't kill a real deal. See
+  # src/scam.py for the rules and what each is worth.
+  enabled: true
+  threshold: 4
+  # Rent below these is bait, not a bargain — keyed by bedroom count, and a
+  # listing under its floor is dropped on that alone.
+  #
+  # This is the one filter that can hide a real find (a genuine rent-controlled
+  # unit can land under these), so it's the first thing to lower if the digest
+  # feels too thin. Calibrated against a live August 2026 pull that turned up a
+  # cluster of $1,275 "studios" and $1,500 Mission 1BRs in one identical
+  # marketing voice — a posting farm, not a market.
+  price_floors:
+    0: 1600
+    1: 1950
+    2: 2600
+
+sources:
+  # Craigslist is the load-bearing source: it serves a no-JS result list that
+  # honours the query string, so it needs no browser at all, and its detail
+  # pages carry structured laundry/parking codes plus coordinates.
+  craigslist:
+    enabled: true
+    max_detail_fetches: 150
+
+  # Needs the stealth browser (F5 "Client Challenge"). Ships laundry and
+  # bedrooms inline as schema.org JSON-LD, so no detail fetches at all.
+  zumper:
+    enabled: true
+
+  # Needs the stealth browser AND a warm-up navigation — a cold request gets an
+  # Akamai challenge shell every time. See fetch.Fetcher.warm_up.
+  apartments_com:
+    enabled: true
+
+  # The most expensive source: its result cards carry price and location but
+  # not laundry, so every candidate costs a full browser navigation. Budget is
+  # deliberately small; Craigslist is doing the heavy lifting.
+  zillow:
+    enabled: true
+    max_detail_fetches: 12
+
+  # Not implemented, on purpose:
+  #   hotpads   — PerimeterX refuses it even from a warmed browser session, and
+  #               it's Zillow-owned, so its inventory is already covered above.
+  #   padmapper — Zumper's own site and Zumper's own inventory. Renders its
+  #               listings from a map XHR with nothing parseable in the HTML.
+
+# Applies to every source: how many *unseen* listings may have their detail page
+# fetched in one run. Already-seen listings never cost a request, so this only
+# bites on the first run or after a flood of new postings. When it trims, the
+# run says so in the log rather than quietly returning a short list.
+max_detail_fetches: 60
+
+# Jittered pause between requests, in seconds.
+request_delay_seconds: [1.5, 4.0]
+
+alerts:
+  to: "+15555550123"        # REPLACE — the number that gets the digest
+  max_listings_per_digest: 5
+  # No matches => no text. Silence means "nothing qualified", which is why the
+  # source-health check below exists.
+  quiet_on_zero_matches: true
+  # If a source returns zero listings this many runs in a row, say so — a
+  # broken parser and a quiet market look identical otherwise.
+  health_alert_after_stale_runs: 3
+  health_alert_cooldown_days: 3

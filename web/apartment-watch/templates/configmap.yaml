@@ -1,0 +1,19 @@
+{{/*
+criteria.yaml is gitignored (it carries the alert phone number and a personal
+shortlist of neighbourhoods), so a fresh clone won't have it. Fail loudly here
+rather than mounting an empty file and running a search with no criteria —
+config.load() would reject it anyway, but the error is much clearer from here.
+*/}}
+{{- $criteria := .Files.Get "criteria.yaml" }}
+{{- if not $criteria }}
+{{- fail "criteria.yaml not found. Copy criteria.example.yaml to criteria.yaml and fill it in (it is gitignored on purpose)." }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}-criteria
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+data:
+  criteria.yaml: |
+{{ $criteria | indent 4 }}

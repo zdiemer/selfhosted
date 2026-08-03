@@ -1,0 +1,13 @@
+.venv/
+**/__pycache__/
+**/*.pyc
+templates/
+Chart.yaml
+values.yaml
+values.local.yaml
+values.local.yaml.example
+criteria.yaml
+criteria.example.yaml
+*.md
+*.sh
+.helmignore

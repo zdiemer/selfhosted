@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}-data
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+  annotations:
+    # The dedup history is the whole reason this tool doesn't text you the same
+    # listing every morning. Losing it means one very noisy day.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

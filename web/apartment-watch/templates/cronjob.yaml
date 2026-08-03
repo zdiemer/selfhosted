@@ -1,0 +1,124 @@
+{{/*
+A self-contained CronJob, not the `money` pattern of a curl pod poking a
+long-lived Deployment. There's no UI and no API here, so a resident pod would
+exist only to be poked once a day — the job pod IS the app.
+
+Manual run:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "apartment-watch.fullname" . }} aw-manual-1
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule.cron | quote }}
+  {{- with .Values.schedule.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: {{ .Values.schedule.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ .Values.schedule.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.schedule.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.schedule.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.schedule.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.schedule.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "apartment-watch.selectorLabels" . | nindent 12 }}
+          annotations:
+            # Roll the next run onto edited criteria / a rotated key without a
+            # rebuild.
+            checksum/criteria: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+            checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        spec:
+          restartPolicy: Never
+          {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
+          imagePullSecrets:
+            {{- with .Values.imagePullSecrets }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.imageCredentials.pat }}
+            - name: {{ include "apartment-watch.fullname" . }}-ghcr
+            {{- end }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: watch
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              {{/*
+                extraEnv must *override* these, not be appended alongside them.
+                Emitting the same name twice is legal YAML and kubelet takes the
+                last one, so it looks like it works — but on the next upgrade
+                Helm's strategic merge patch keys env by name, can't reconcile
+                the duplicate, and silently drops the base entry entirely.
+              */}}
+              {{- $extra := .Values.extraEnv | default dict }}
+              env:
+                {{- if not (hasKey $extra "APARTMENT_WATCH_CRITERIA") }}
+                - name: APARTMENT_WATCH_CRITERIA
+                  value: /config/criteria.yaml
+                {{- end }}
+                {{- if not (hasKey $extra "APARTMENT_WATCH_DB") }}
+                - name: APARTMENT_WATCH_DB
+                  value: /data/apartment-watch.db
+                {{- end }}
+                {{- if not (hasKey $extra "APARTMENT_WATCH_SMS_URL") }}
+                - name: APARTMENT_WATCH_SMS_URL
+                  value: {{ .Values.smsRelay.url | quote }}
+                {{- end }}
+                - name: APARTMENT_WATCH_SMS_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "apartment-watch.fullname" . }}
+                      key: APARTMENT_WATCH_SMS_API_KEY
+                # Camoufox resolves its browser through platformdirs'
+                # user_cache_dir. HOME is /tmp (an emptyDir), so without this
+                # the 660MB browser looks missing on every start.
+                - name: XDG_CACHE_HOME
+                  value: /opt/cache
+                - name: HOME
+                  value: /tmp
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                {{- range $k, $v := .Values.extraEnv }}
+                - name: {{ $k }}
+                  value: {{ $v | quote }}
+                {{- end }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                # readOnlyRootFilesystem means Firefox needs somewhere real to
+                # write its profile, and Xvfb needs /tmp/.X11-unix.
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "apartment-watch.fullname" . }}-data
+            - name: config
+              configMap:
+                name: {{ include "apartment-watch.fullname" . }}-criteria
+            - name: tmp
+              emptyDir:
+                # Firefox profile + Xvfb socket + any page cache. 1Gi is plenty
+                # and stops a runaway from filling the node's disk.
+                sizeLimit: 1Gi

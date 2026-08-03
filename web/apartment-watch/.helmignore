@@ -1,0 +1,14 @@
+.venv/
+src/
+data/
+Dockerfile
+.dockerignore
+build.sh
+upgrade.sh
+*.md
+values.local.yaml
+criteria.example.yaml
+__pycache__/
+*.pyc
+# NOT criteria.yaml — templates/configmap.yaml reads it with .Files.Get, and
+# anything listed here is invisible to that.
