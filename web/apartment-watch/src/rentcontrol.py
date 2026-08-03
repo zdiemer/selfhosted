@@ -41,7 +41,7 @@ _EXEMPT_USE = re.compile(r"single\s*family|condominium|condo\b", re.I)
 
 def _query(where: str, limit: int = 5) -> list[dict]:
     params = {
-        "$select": "property_location,year_property_built,use_definition,number_of_units,closed_roll_year",
+        "$select": "property_location,year_property_built,use_definition,number_of_units,closed_roll_year,the_geom",
         "$where": where,
         "$order": "closed_roll_year DESC",
         "$limit": str(limit),
@@ -71,7 +71,22 @@ def _verdict(row: dict) -> dict | None:
 
     exempt = bool(_EXEMPT_USE.search(use)) or units == 1
     controlled = year < CUTOFF_YEAR and not exempt
+    # Parcel coordinates: the assessor knows where an address actually is,
+    # which posters frequently do not.
+    lat = lon = None
+    geom = row.get("the_geom") or {}
+    coords = geom.get("coordinates")
+    while isinstance(coords, list) and coords and isinstance(coords[0], list):
+        coords = coords[0]
+    if isinstance(coords, list) and len(coords) == 2:
+        try:
+            lon, lat = float(coords[0]), float(coords[1])
+        except (TypeError, ValueError):
+            lat = lon = None
+
     return {
+        "lat": lat,
+        "lon": lon,
         "year_built": year,
         "units": units,
         "use": use,
@@ -91,11 +106,20 @@ def _by_address(address: str) -> dict | None:
     number, street = m.group(1), m.group(2).upper()
     # Drop unit designators and the street type; the assessor stores its own.
     street = re.split(r"\b(?:APT|UNIT|STE|#)\b", street)[0]
-    street = re.sub(r"\b(ST|STREET|AVE|AVENUE|BLVD|BOULEVARD|RD|ROAD|DR|DRIVE|WAY|PL|PLACE|CT|TER|TERRACE|LN|LANE)\b\.?", "", street)
-    street = re.sub(r"[^A-Z0-9 ]", " ", street).strip()
-    if not street:
+    street = re.sub(
+        r"\b(ST|STREET|AVE|AVENUE|BLVD|BOULEVARD|RD|ROAD|DR|DRIVE|WAY|PL|PLACE|CT|TER|TERRACE|LN|LANE)\b\.?",
+        "", street)
+    # Keep apostrophes. Stripping them turned O'FARRELL into "O" + "FARRELL",
+    # and matching on the first token alone made `0755 O` match `0755 OCEAN
+    # AVE` — geocoding a Tenderloin listing into Oceanview, four miles away.
+    street = re.sub(r"[^A-Z0-9' ]", " ", street).strip()
+    tokens = [tok for tok in street.split() if tok]
+    if not tokens or len(tokens[0]) < 2:
+        # Too little to identify a street; a one-character prefix matches
+        # hundreds of unrelated parcels.
         return None
-    needle = f"{int(number):04d} {street.split()[0]}"
+    # SoQL string literals are single-quoted, so an apostrophe has to be doubled.
+    needle = f"{int(number):04d} {tokens[0]}".replace("'", "''")
     rows = _query(f"property_location like '%{needle}%'")
     for row in rows:
         v = _verdict(row)
@@ -141,6 +165,27 @@ def lookup(store, listing) -> dict | None:
     # on every run forever.
     store.save_building_info(key, info or {})
     return info
+
+
+def geocode(store, address: str) -> tuple[float | None, float | None]:
+    """Where the assessor says this address is, or (None, None).
+
+    Craigslist pins are placed by the poster and are routinely wrong — a
+    listing at 755 O'Farrell (Tenderloin) carried a pin 800m north in Nob Hill,
+    which is the difference between excluded and texted. When a listing states
+    a street address, the parcel record beats the pin.
+
+    Shares building_info's cache with the rent-control lookup, so an address
+    costs at most one request ever.
+    """
+    if not address or not re.match(r"\s*\d+\s+\S", address):
+        return None, None
+    key = f"addr:{address.upper()[:120]}"
+    info = store.building_info(key)
+    if info is None:
+        info = _by_address(address) or {}
+        store.save_building_info(key, info)
+    return info.get("lat"), info.get("lon")
 
 
 def label(info: dict | None) -> str:

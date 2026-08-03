@@ -88,6 +88,14 @@ _STUDIO_RE = re.compile(r'<span class="attr important">\s*(?:0\s*BR|studio)', re
 # nothing and every listing comes back laundry=unknown.
 _ATTR_LINK_RE = re.compile(r'(?:[?&]|&amp;)(laundry|parking)=([0-9])"[^>]*>\s*([^<]+?)\s*<')
 _BODY_RE = re.compile(r'id="postingbody".*?</section>', re.S)
+# Craigslist has no address field, but posters put one in the title often
+# enough to be worth reading: "755 O'Farrell Street #44", "1386 Page St".
+# An address beats the poster-placed map pin, which is frequently wrong.
+_ADDRESS_RE = re.compile(
+    r"\b(\d{1,5}\s+[A-Za-z0-9'\.\-]+(?:\s+[A-Za-z0-9'\.\-]+){0,3}?\s+"
+    r"(?:St|Street|Ave|Avenue|Blvd|Boulevard|Rd|Road|Dr|Drive|Way|Pl|Place|Ct|Ter|Terrace|Ln|Lane)\b)",
+    re.I,
+)
 
 
 def _text(raw: str) -> str:
@@ -252,11 +260,14 @@ class Craigslist:
             price_m = _PRICE_RE.search(block)
             loc_m = _LOCATION_RE.search(block)
 
+            title_text = _text(title_m.group(1)) if title_m else ""
+            addr_m = _ADDRESS_RE.search(title_text)
             listing = Listing(
                 source=NAME,
                 external_id=external_id,
                 url=href,
-                title=_text(title_m.group(1)) if title_m else "",
+                address=addr_m.group(1) if addr_m else None,
+                title=title_text,
                 price=int(price_m.group(1).replace(",", "")) if price_m else None,
                 stated_neighborhood=_text(loc_m.group(1)) if loc_m else None,
                 image_url=photos.get(_slug(href)),

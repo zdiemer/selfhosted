@@ -132,11 +132,22 @@ it and running `./upgrade.sh` needs no rebuild.
   unstated one is assumed included (configurable).
 - **In-building laundry** is a hard requirement. `unknown` does *not* pass — a
   listing that never mentions laundry usually doesn't have it.
-- **Neighborhoods** are excluded by point-in-polygon on the listing's lat/lon
-  against `data/sf-neighborhoods.geojson` (DataSF "SF Find Neighborhoods",
-  `gfpk-269f`, 117 polygons). Coordinates decide. A poster-supplied neighborhood
-  string is consulted *only* when there's no lat/lon, because posters mislabel
-  constantly — "Potrero Hill" reads better than "Bayview".
+- **Neighborhoods** are excluded by point-in-polygon against
+  `data/sf-neighborhoods.geojson` (DataSF "SF Find Neighborhoods", `gfpk-269f`,
+  117 polygons), in this order:
+
+  1. **The street address**, when the listing states one, geocoded against the
+     SF assessor's parcel records. Craigslist has no address field, so it's
+     lifted from the title ("755 O'Farrell Street #44").
+  2. **The map pin**, when there's no address.
+  3. **The poster's neighborhood label**, only when there's neither — posters
+     mislabel constantly, since "Potrero Hill" reads better than "Bayview".
+
+  The address outranks the pin because posters place pins by hand and get them
+  wrong: a listing at 755 O'Farrell, squarely in the Tenderloin, carried a pin
+  800m north in Nob Hill and so escaped the exclusion entirely. Lookups are
+  cached forever per address and share the rent-control cache, so an address
+  costs at most one request ever.
 - **Studio or 1br.**
 - **Scam filter** (`src/scam.py`): scored, not a keyword blacklist. Payment-rail
   tells (wire, gift cards, crypto), absentee-landlord narratives, screening

@@ -42,13 +42,22 @@ DEFAULT_CRITERIA = os.path.join(os.path.dirname(HERE), "criteria.yaml")
 DEFAULT_DB = os.environ.get("APARTMENT_WATCH_DB", "/data/apartment-watch.db")
 
 
-def evaluate(listing, criteria, market_rent, trusted: bool = False) -> tuple[bool, str | None]:
+def evaluate(listing, criteria, market_rent, trusted: bool = False, store=None) -> tuple[bool, str | None]:
     """Does this listing qualify? Returns (matched, reject_reason).
 
     Rules are checked cheapest-first and the *first* failure is what gets
     recorded, so the reject reason in the DB reads as the single most relevant
     thing wrong with a listing rather than a list.
     """
+    # A stated street address outranks the map pin. Posters place pins by hand
+    # and get them wrong: a listing at 755 O'Farrell — squarely Tenderloin —
+    # carried a pin 800m north in Nob Hill, which is the difference between
+    # excluded and texted. The assessor knows where an address actually is.
+    if store is not None and listing.address and criteria.geocode_addresses:
+        lat, lon = rentcontrol.geocode(store, listing.address)
+        if lat is not None and lon is not None:
+            listing.lat, listing.lon = lat, lon
+
     # Neighborhood, resolved before anything else because it's also what the
     # digest prints.
     hood, how = geo.resolve(listing.lat, listing.lon, listing.stated_neighborhood)
@@ -170,7 +179,7 @@ def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tu
             # would reject it as "laundry: unknown" and then overwrite the good
             # row with the empty one.
             store.hydrate(listing)
-            ok, reason = evaluate(listing, criteria, market_rent, trusted)
+            ok, reason = evaluate(listing, criteria, market_rent, trusted, store)
             if ok and criteria.rent_control:
                 # Only for matches: one assessor call per building, cached
                 # forever, and there's no point spending it on a reject.

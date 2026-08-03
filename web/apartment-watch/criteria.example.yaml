@@ -103,6 +103,13 @@ scam_filter:
 # 13 June 1979, excluding single-family homes and condos per Costa-Hawkins).
 # One cached assessor lookup per matched building. Shows as "RC?" in the text —
 # a heuristic on public data, not a legal determination.
+# When a listing states a street address, look it up in the SF assessor's
+# parcel records and use THAT location instead of the map pin. Posters place
+# pins by hand and get them wrong — a 755 O'Farrell listing (Tenderloin)
+# carried a pin 800m north in Nob Hill and so escaped the neighbourhood
+# exclusion. Cached forever per address, shared with the rent-control lookup.
+geocode_addresses: true
+
 rent_control: true
 
 sources:

@@ -100,6 +100,7 @@ class Criteria:
     alerts: Alerts
     daily_source_hour: int = 9
     rent_control: bool = True
+    geocode_addresses: bool = True
     max_detail_fetches: int = 40
     request_delay_seconds: tuple[float, float] = (1.5, 4.0)
 
@@ -236,6 +237,7 @@ def load(path: str) -> Criteria:
         alerts=alerts,
         daily_source_hour=int(raw.get("daily_source_hour", (alerts.send_hours or [9])[0])),
         rent_control=bool(raw.get("rent_control", True)),
+        geocode_addresses=bool(raw.get("geocode_addresses", True)),
         max_detail_fetches=int(raw.get("max_detail_fetches", 40)),
         request_delay_seconds=(float(delay[0]), float(delay[1])),
     )
