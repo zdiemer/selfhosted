@@ -70,6 +70,7 @@ class Alerts:
     send_hours: tuple[int, ...]
     timezone: str
     seconds_between_messages: int
+    web_base_url: str
     quiet_on_zero_matches: bool
     health_alert_after_stale_runs: int
     health_alert_cooldown_days: int
@@ -179,6 +180,7 @@ def load(path: str) -> Criteria:
         send_hours=tuple(sorted({int(h) for h in (alerts_raw.get("send_hours") or [])})),
         timezone=str(alerts_raw.get("timezone", "America/Los_Angeles")),
         seconds_between_messages=max(0, int(alerts_raw.get("seconds_between_messages", 20))),
+        web_base_url=str(alerts_raw.get("web_base_url", "https://homes.diemer.codes")).rstrip("/"),
         quiet_on_zero_matches=bool(alerts_raw.get("quiet_on_zero_matches", True)),
         health_alert_after_stale_runs=int(alerts_raw.get("health_alert_after_stale_runs", 3)),
         health_alert_cooldown_days=int(alerts_raw.get("health_alert_cooldown_days", 3)),

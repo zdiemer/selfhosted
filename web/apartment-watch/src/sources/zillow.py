@@ -122,6 +122,7 @@ class Zillow:
                 lat=lat,
                 lon=lon,
                 address=str(first(card, "address", "addressStreet", default="") or "") or None,
+                image_url=str(first(card, "imgSrc", default="") or "") or None,
             )
 
             # Cheap pre-filter: don't spend a browser navigation on a listing

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import secrets
 import sys
 import time
 from datetime import date, datetime
@@ -30,7 +31,7 @@ import rentcontrol
 import scam
 import sources
 from fetch import Fetcher
-from notify import SmsRelay, build_digest, digest_key, format_health_alert
+from notify import SmsRelay, build_link_digest, digest_key, format_health_alert
 from store import Store
 
 logger = logging.getLogger("apartment-watch")
@@ -324,42 +325,28 @@ def main(argv=None) -> int:
                 ", ".join(f"{h:02d}:00" for h in criteria.alerts.send_hours),
             )
         elif pending:
-            chunks = build_digest(
-                pending,
-                criteria.alerts.max_listings_per_digest,
-                criteria.alerts.max_messages_per_run,
-                date_label,
-                problems,
+            # One token per send, stamped on exactly the listings in this text,
+            # so /r/<token> is a permanent record of this run rather than a live
+            # feed that changes after you've been told to look at it.
+            token = secrets.token_urlsafe(8)
+            shown = pending[: criteria.alerts.max_listings_per_digest]
+            body = build_link_digest(
+                shown, date_label, criteria.alerts.web_base_url, token, problems
             )
             day = date.today().isoformat()
             delivered = 0
-            for index, (body, rows) in enumerate(chunks):
-                # A small gap between parts. SMS ordering isn't guaranteed and
-                # each part is several concatenated segments, so this only
-                # reduces the odds of interleaving — the "(i/n)" in the header
-                # is what actually makes an out-of-order arrival readable.
-                if index:
-                    time.sleep(criteria.alerts.seconds_between_messages)
-                # Key by the rows in THIS message, so each part is independently
-                # retry-safe and no part can suppress another.
-                if not relay.send(
-                    criteria.alerts.to, body, digest_key("apartment-watch", day, rows)
-                ):
-                    # Stop on the first failure: the rest stay un-notified and
-                    # lead tomorrow's digest rather than being lost.
-                    break
-                # Mark only what actually went out. Anything past the cap keeps
-                # notified_at NULL and comes back in the next run.
-                store.mark_notified(rows)
+            if relay.send(criteria.alerts.to, body, digest_key("apartment-watch", day, shown)):
+                store.set_run_token(started, token)
+                store.mark_notified(shown, token)
                 store.commit()
-                delivered += len(rows)
+                delivered = len(shown)
                 sent = True
+                logger.info("run page: %s/r/%s", criteria.alerts.web_base_url.rstrip("/"), token)
             held = total_new - delivered
             if held > 0:
                 logger.info(
-                    "%d match(es) held for the next run (cap: %d listings x %d message(s))",
+                    "%d match(es) held for the next run (page cap: %d)",
                     held, criteria.alerts.max_listings_per_digest,
-                    criteria.alerts.max_messages_per_run,
                 )
         elif args.force_digest:
             sent = relay.send(

@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS listings (
     lon             REAL,
     neighborhood    TEXT,
     note            TEXT,
+    image_url       TEXT,
+    notified_run    TEXT,
     rent_controlled INTEGER,
     year_built      INTEGER,
     matched         INTEGER NOT NULL DEFAULT 0,
@@ -79,6 +81,7 @@ CREATE TABLE IF NOT EXISTS market_rent (
 
 CREATE TABLE IF NOT EXISTS runs (
     started_at   TEXT PRIMARY KEY,
+    token        TEXT,
     finished_at  TEXT,
     matches      INTEGER NOT NULL DEFAULT 0,
     notified     INTEGER NOT NULL DEFAULT 0,
@@ -110,8 +113,11 @@ class SourceHealth:
 # once. Anything added to `listings` from now on belongs here too.
 MIGRATIONS = [
     ("listings", "note", "TEXT"),
+    ("listings", "image_url", "TEXT"),
+    ("listings", "notified_run", "TEXT"),
     ("listings", "rent_controlled", "INTEGER"),
     ("listings", "year_built", "INTEGER"),
+    ("runs", "token", "TEXT"),
 ]
 
 
@@ -121,6 +127,8 @@ class Store:
         self.read_only = read_only
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        # WAL: the web process reads this file while a run writes it.
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         self._migrate()
         self.db.commit()
@@ -206,10 +214,10 @@ class Store:
             """
             INSERT INTO listings (
                 source, external_id, url, title, price, effective_price, bedrooms,
-                laundry, parking, parking_fee, lat, lon, neighborhood, note,
+                laundry, parking, parking_fee, lat, lon, neighborhood, note, image_url,
                 rent_controlled, year_built,
                 matched, reject_reason, first_seen, last_seen
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source, external_id) DO UPDATE SET
                 url             = excluded.url,
                 title           = excluded.title,
@@ -223,6 +231,7 @@ class Store:
                 lon             = excluded.lon,
                 neighborhood    = excluded.neighborhood,
                 note            = excluded.note,
+                image_url       = COALESCE(excluded.image_url, listings.image_url),
                 rent_controlled = excluded.rent_controlled,
                 year_built      = excluded.year_built,
                 matched         = excluded.matched,
@@ -235,6 +244,7 @@ class Store:
                 listing.laundry, listing.parking, listing.parking_fee,
                 listing.lat, listing.lon, listing.neighborhood,
                 getattr(listing, "note", ""),
+                getattr(listing, "image_url", None),
                 getattr(listing, "rent_controlled", None),
                 getattr(listing, "year_built", None),
                 1 if matched else 0, reject_reason, now, now,
@@ -251,14 +261,31 @@ class Store:
             """
         ).fetchall()
 
-    def mark_notified(self, rows) -> None:
+    def mark_notified(self, rows, run_token: str | None = None) -> None:
+        """Stamp the send, and which run page these listings appear on.
+
+        The token is what the SMS links to: a page shows exactly the listings
+        from one run, so the text can be a single short link instead of a wall
+        of URLs.
+        """
         if self.read_only:
             return
         now = utcnow()
         self.db.executemany(
-            "UPDATE listings SET notified_at = ? WHERE source = ? AND external_id = ?",
-            [(now, r["source"], r["external_id"]) for r in rows],
+            "UPDATE listings SET notified_at = ?, notified_run = ? WHERE source = ? AND external_id = ?",
+            [(now, run_token, r["source"], r["external_id"]) for r in rows],
         )
+
+    def listings_for_run(self, token: str) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM listings WHERE notified_run = ? ORDER BY effective_price ASC, first_seen ASC",
+            (token,),
+        ).fetchall()
+
+    def run_meta(self, token: str):
+        return self.db.execute(
+            "SELECT * FROM runs WHERE token = ?", (token,)
+        ).fetchone()
 
     # -- source health ----------------------------------------------------
 
@@ -378,6 +405,12 @@ class Store:
             )
             self.db.commit()
         return started
+
+    def set_run_token(self, started: str, token: str) -> None:
+        if self.read_only:
+            return
+        self.db.execute("UPDATE runs SET token = ? WHERE started_at = ?", (token, started))
+        self.commit()
 
     def finish_run(self, started: str, matches: int, notified: int, health_alert: bool) -> None:
         if self.read_only:

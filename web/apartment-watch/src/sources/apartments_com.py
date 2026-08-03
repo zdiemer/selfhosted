@@ -58,10 +58,16 @@ def _dom_cards(html: str) -> dict[str, dict]:
         text = re.sub(r"<[^>]+>", " ", window)
         text = re.sub(r"\s+", " ", text)
         price = re.search(r"\$\s*([0-9][0-9,]{2,6})", text)
+        # The photo is only in the markup — the JSON-LD ApartmentComplex has no
+        # `image` key on any of the 40 results in a live pull. These URLs also
+        # refuse hot-linking (403), so they're served through /img/ rather than
+        # straight from the card.
+        photo = re.search(r'https://images\d*\.apartments\.com/[^"\'\s\\]+', window)
         out[lid] = {
             "price": int(price.group(1).replace(",", "")) if price else None,
             "beds": parse_bedrooms(text),
             "text": text[:1500],
+            "image": photo.group(0) if photo else None,
         }
     return out
 
@@ -103,6 +109,11 @@ class ApartmentsCom:
             amenities = _amenity_text(c)
             blob = f"{amenities} ; {card.get('text', '')}"
             lat, lon = coords(c)
+            img = first(c, "image", "photo", "logo")
+            if isinstance(img, list):
+                img = img[0] if img else None
+            if isinstance(img, dict):
+                img = img.get("url") or img.get("contentUrl")
 
             yield Listing(
                 source=NAME,
@@ -118,4 +129,5 @@ class ApartmentsCom:
                 lon=lon,
                 address=str(address.get("streetAddress") or "") or None,
                 body=blob,
+                image_url=card.get("image") or (img if isinstance(img, str) else None),
             )

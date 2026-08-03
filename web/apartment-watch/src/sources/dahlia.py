@@ -238,6 +238,7 @@ class Dahlia:
                     address=row.get("Building_Street_Address") or None,
                     body=f"BMR / below market rate. {row.get('Name') or ''}",
                     note=note,
+                    image_url=row.get("imageURL") or None,
                 )
 
         logger.info("[%s] %d qualifying unit type(s)", NAME, emitted)

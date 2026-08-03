@@ -137,6 +137,29 @@ def _listing_line(row) -> str:
     return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)}{rc}{note} {row['url']}"
 
 
+def build_link_digest(rows, date_label: str, base_url: str, token: str, warnings: list[str]) -> str:
+    """One short SMS: the headline numbers and a link to the run page.
+
+    Every listing URL is ~90 characters, so a four-listing text was four
+    concatenated segments — and carriers score that volume as spam and start
+    dropping messages, which is exactly what happened. This is one segment and
+    carries more than the long version did, because the page has photos and the
+    full set rather than the first few.
+    """
+    n = len(rows)
+    prices = [r["effective_price"] or r["price"] for r in rows]
+    prices = [p for p in prices if p]
+    span = ""
+    if prices:
+        lo, hi = min(prices), max(prices)
+        span = f", {_money(lo)}" if lo == hi else f", {_money(lo)}-{_money(hi)}"
+    head = f"apartment-watch {date_label} - {n} new{span}"
+    body = f"{head}\n{base_url.rstrip('/')}/r/{token}"
+    if warnings:
+        body += "\n" + "; ".join(warnings)
+    return body[:MAX_BODY]
+
+
 def build_digest(rows, max_listings: int, max_messages: int, date_label: str, warnings: list[str]):
     """Return [(body, rows_in_that_body), ...] — one entry per SMS to send.
 

@@ -1,0 +1,162 @@
+{{- if .Values.web.enabled }}
+{{/*
+The run-page view. Same image as the CronJob — it's the same code reading the
+same database — just a different entrypoint, so there's nothing extra to build
+or keep in sync.
+
+It mounts the SAME PVC as the CronJob. That's ReadWriteOnce, which permits
+several pods so long as they're on one node, and local-path pins them there by
+node affinity anyway. The web process opens SQLite read-only (`mode=ro`) and
+the store runs in WAL, so a reader alongside the single writer is safe; a stray
+write from here could corrupt the dedup history that stops duplicate alerts.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}-web
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two pods would both want the RWO volume, and
+  # the new one blocks until the old one lets go.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "apartment-watch.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "apartment-watch.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
+      imagePullSecrets:
+        {{- with .Values.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.imageCredentials.pat }}
+        - name: {{ include "apartment-watch.fullname" . }}-ghcr
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["uvicorn", "web:app", "--app-dir", "/app/src", "--host", "0.0.0.0", "--port", "8080"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: APARTMENT_WATCH_DB
+              value: /data/apartment-watch.db
+            - name: APARTMENT_WATCH_TZ
+              value: {{ .Values.schedule.timeZone | quote }}
+            - name: HOME
+              value: /tmp
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "apartment-watch.fullname" . }}-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}-web
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.web.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "apartment-watch.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "apartment-watch.fullname" . }}-web
+  labels:
+    {{- include "apartment-watch.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
+    # DuckDNS can only set TXT at the account's top-level subdomain, so
+    # per-host certs for sub-subdomains fail ACME. Ride the wildcard SAN.
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "apartment-watch.fullname" . }}-web
+                port:
+                  number: {{ .Values.web.service.port }}
+    {{- /*
+      Hosts served over the Cloudflare tunnel. TLS terminates at Cloudflare's
+      edge, so these are deliberately ABSENT from the ACME cert list above —
+      asking the duckdns resolver for a diemer.codes cert fails DNS-01, and a
+      failing domain can take the whole order down including the wildcard.
+      Traefik routes them by Host header; the tunnel dials in with No TLS
+      Verify. See infra/cloudflared.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "apartment-watch.fullname" $ }}-web
+                port:
+                  number: {{ $.Values.web.service.port }}
+    {{- end }}
+{{- end }}
+{{- end }}

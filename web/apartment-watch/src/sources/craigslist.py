@@ -17,6 +17,7 @@ pages we never request.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Iterator
@@ -58,6 +59,19 @@ CL_PARKING = {
 # `sfc` is the San Francisco *city* subarea of the sfbay site — the Peninsula
 # and East Bay are different subareas and never appear here.
 SEARCH_URL = "https://sfbay.craigslist.org/search/sfc/apa"
+
+# Craigslist's own search API, the one its React front-end calls. The static
+# HTML carries no photos at all — only an `imageConfig` naming the CDN — but
+# SAPI returns an image reference per result, so ONE extra call photographs the
+# whole run without a single browser render. Discovered via the sibling talaria
+# repo, which uses this endpoint wholesale.
+#
+# `searchPath=sfc/apa` is the part that matters: the default batch spans all of
+# sfbay and returned 9 San Francisco posts out of 360, while this returns the
+# complete SF set (263 of 263) in one page.
+SAPI_URL = "https://sapi.craigslist.org/web/v8/postings/search/full"
+SAPI_SEARCH_PATH = "sfc/apa"
+SAPI_BATCH = "1-0-360-0-0"
 
 _RESULT_RE = re.compile(r'<li class="cl-static-search-result"[^>]*>(.*?)</li>', re.S)
 _HREF_RE = re.compile(r'<a href="([^"]+)"')
@@ -104,6 +118,61 @@ def _search_url(criteria) -> str:
     return f"{SEARCH_URL}?{urlencode(params)}"
 
 
+def _slug(href: str) -> str:
+    """`.../view/d/<slug>/<id>` -> `<slug>`. The join key between the static
+    result list and SAPI, which returns the same slug per posting."""
+    parts = href.rstrip("/").split("/")
+    return parts[-2] if len(parts) >= 2 else ""
+
+
+def image_index(fetcher, criteria) -> dict[str, str]:
+    """slug -> photo URL, from one SAPI call. Empty dict on any failure.
+
+    Photos are a nice-to-have: a broken index must cost the pictures, never the
+    listings, so everything here is best-effort and returns {} rather than
+    raising.
+    """
+    params = {
+        "batch": SAPI_BATCH,
+        "searchPath": SAPI_SEARCH_PATH,
+        "lang": "en",
+        "cc": "us",
+        "min_bedrooms": str(criteria.search.min_bedrooms),
+        "max_bedrooms": str(criteria.search.max_bedrooms),
+        "max_price": str(criteria.search.max_effective_rent),
+    }
+    raw = fetcher.get(f"{SAPI_URL}?{urlencode(params)}")
+    if not raw:
+        logger.info("[%s] SAPI unavailable — cards will have no photos", NAME)
+        return {}
+    try:
+        items = json.loads(raw)["data"]["items"]
+    except (ValueError, KeyError, TypeError) as exc:
+        logger.info("[%s] SAPI payload changed (%s) — no photos this run", NAME, exc)
+        return {}
+
+    out: dict[str, str] = {}
+    for item in items:
+        try:
+            # Positional array. [7] is [photoCount, ref, ...]; [8] is
+            # [_, urlSlug]. Layout documented in talaria's
+            # scraper/types/craigslist/listing.py.
+            refs = item[7] if len(item) > 7 else None
+            slug = item[8][1] if len(item) > 8 and len(item[8]) > 1 else None
+            if not slug or not isinstance(refs, list) or len(refs) < 2:
+                continue
+            ref = refs[1]
+            if not isinstance(ref, str) or ref in ("", "0"):
+                continue
+            # Refs come prefixed with a size-set id, e.g. "3:00808_abc_0dI099".
+            ref = ref.split(":", 1)[1] if ":" in ref else ref
+            out[slug] = f"https://images.craigslist.org/{ref}_600x450.jpg"
+        except (IndexError, TypeError):
+            continue
+    logger.info("[%s] %d photos indexed from SAPI", NAME, len(out))
+    return out
+
+
 def _parse_detail(html: str, listing: Listing) -> Listing:
     """Fill in bedrooms, laundry, parking, and coordinates from a post page."""
     m = _LAT_RE.search(html)
@@ -127,6 +196,13 @@ def _parse_detail(html: str, listing: Listing) -> Listing:
         elif kind == "parking":
             listing.parking = CL_PARKING.get(code, listing.parking)
 
+    # No photo, deliberately. Craigslist's detail HTML carries only an
+    # `imageConfig` (CDN host + sizes) — the photo IDs arrive over XHR, so the
+    # only way to get one is a browser render per listing. At ~150 detail
+    # fetches a run that costs more than the photo is worth, and the cheap
+    # plain-HTTP path is the reason this source is affordable at all. The run
+    # page renders these cards compactly rather than reserving empty space.
+
     m = _BODY_RE.search(html)
     body = _text(m.group(0)) if m else ""
     listing.body = body
@@ -147,6 +223,7 @@ class Craigslist:
 
         blocks = _RESULT_RE.findall(html)
         logger.info("[%s] %d results on the search page", NAME, len(blocks))
+        photos = image_index(fetcher, criteria)
 
         cfg = criteria.sources.get(NAME, {})
         budget = int(cfg.get("max_detail_fetches", criteria.max_detail_fetches))
@@ -182,6 +259,7 @@ class Craigslist:
                 title=_text(title_m.group(1)) if title_m else "",
                 price=int(price_m.group(1).replace(",", "")) if price_m else None,
                 stated_neighborhood=_text(loc_m.group(1)) if loc_m else None,
+                image_url=photos.get(_slug(href)),
             )
 
             # Already in the DB: re-yield with the fresh price so a price drop

@@ -187,25 +187,17 @@ request_delay_seconds: [1.5, 4.0]
 
 alerts:
   to: "+15555550123"        # REPLACE — the number that gets the digest
-  # Per message, and how many messages one run may send. Anything past
-  # max_listings_per_digest * max_messages_per_run is NOT discarded — it keeps
-  # notified_at NULL and leads the next run's digest. There's no UI to go and
-  # look at, so "+N more" has to be a promise, not a dead end.
-  # Kept small on purpose: Android counts every concatenated SMS segment
-  # against its per-app rate limit, so a few short messages are safer than a
-  # few long ones. Overflow rolls into the next window either way.
-  # ONE message per window, deliberately. This runs on a personal handset,
-  # and carriers score bursts from a consumer number to a single destination
-  # as A2P spam and start silently dropping — the sender still shows
-  # "delivered". ~27 segments in 70 minutes did exactly that here, and it also
-  # tripped Android's own per-app segment cap.
+  # The text is now a single LINK, so listings live on the run page instead of
+  # in the message — one SMS segment no matter how many matched. That's what
+  # fixed the carrier dropping messages: ~27 segments in 70 minutes read as
+  # A2P spam.
   #
-  # 3 windows x 1 message x <=2 segments is ~6 segments a day. Overflow is not
-  # lost; it leads the next window's digest.
-  max_listings_per_digest: 3
+  # This caps how many listings go on one run page; anything beyond keeps
+  # notified_at NULL and leads the next window's page.
+  max_listings_per_digest: 25
   max_messages_per_run: 1
-  # Gap between parts of one digest, for the same reason.
-  seconds_between_messages: 20
+  # Where run pages are served. Must match the chart's ingress host.
+  web_base_url: https://homes.diemer.codes
   # Local hours at which a digest may go out. The CronJob scrapes hourly, but
   # only these runs text — checking often finds listings sooner without texting
   # more, because dedup means each listing is sent once, ever. Anything found

@@ -93,6 +93,33 @@ one-shot warm-and-retry *if* a cold fetch comes back blocked — so a site that
 starts demanding a warm session gets one automatically, without paying for it
 daily.
 
+## Photos
+
+Every source now has one, and none of them are hot-linked.
+
+| Source | How |
+|---|---|
+| **Craigslist** | `sapi.craigslist.org` — the search API its own front-end calls. The static HTML has no photos at all, only an `imageConfig` naming the CDN, but SAPI returns an image ref per result: **one extra call photographs the whole run**, no browser. `searchPath=sfc/apa` is what scopes it — the default batch spans all of sfbay and yielded 9 SF posts out of 360, against 263 of 263 with it. Joined to the static results by URL slug, ~80% hit rate. Found by reading the sibling `talaria` repo, which uses this endpoint wholesale. |
+| Zumper | `image_ids` on the result object |
+| Zillow | `imgSrc` on the result card |
+| DAHLIA | `imageURL`, on ~90 of 122 listings |
+| Apartments.com | In the card markup, not the JSON-LD |
+
+**Photos are re-hosted through `/img/{source}/{external_id}`.** Apartments.com
+returns 403 to a foreign referrer, so its photos never render when hot-linked;
+fetched server-side with a browser User-Agent and the listing page as Referer,
+the same URL returns 200. Routing every source through one path also means one
+policy instead of four.
+
+That endpoint looks up the URL **in the database** by source and id — it never
+accepts a URL from the query string. An open `?url=` proxy would let anyone use
+this pod to fetch arbitrary internal addresses. Responses are cached in-process
+(bounded, this pod has a 256Mi limit) and sent with a one-day `Cache-Control`.
+
+A card with no photo renders compactly rather than reserving an empty 16:10
+block. A photo that *fails* still holds its space, which avoids layout shift
+after paint.
+
 ## The rules
 
 `criteria.yaml` is the entire tuning surface, and it's a **ConfigMap** — editing

@@ -38,6 +38,40 @@ schedule:
   failedJobsHistoryLimit: 3
   startingDeadlineSeconds: 600
 
+# The run-page view: one URL per digest, so the SMS is a single short link
+# instead of a wall of listing URLs. Same image as the CronJob, different
+# entrypoint, sharing the same PVC read-only.
+web:
+  enabled: true
+  service:
+    port: 8080
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# No auth, by design: the token in the URL is unguessable, the contents are
+# public rental listings, and a login prompt on a link you tap from a text is
+# the fastest way to make it go unused.
+ingress:
+  enabled: true
+  className: traefik
+  host: homes.zachd.duckdns.org
+  # Served over the shared Cloudflare tunnel too. Add the hostname in the
+  # Cloudflare dashboard (Zero Trust -> Networks -> Tunnels -> Public
+  # Hostnames) pointing at https://traefik.kube-system.svc.cluster.local:443
+  # with No TLS Verify ON; that auto-creates the proxied DNS record.
+  cloudflareHosts:
+    - homes.diemer.codes
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
 smsRelay:
   # In-cluster, so this bypasses the ingress and Authelia entirely.
   url: http://sms-relay.infra.svc.cluster.local:8000

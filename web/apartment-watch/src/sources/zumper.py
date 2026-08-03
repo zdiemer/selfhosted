@@ -74,6 +74,8 @@ class Zumper:
             if not path:
                 continue
 
+            images = row.get("image_ids") or []
+            image = f"https://img.zumpercdn.com/{images[0]}/1280x960" if images else None
             tags = list(row.get("amenity_tags") or []) + list(row.get("building_amenity_tags") or [])
             amenities = " ; ".join(str(t) for t in tags)
             title = str(row.get("title") or row.get("building_name") or "")
@@ -99,4 +101,5 @@ class Zumper:
                 address=str(row.get("address") or "") or None,
                 stated_neighborhood=str(row.get("neighborhood_name") or "") or None,
                 body=blob,
+                image_url=image,
             )

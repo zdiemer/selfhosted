@@ -37,6 +37,8 @@ class Listing:
     body: str = ""
     # Short, source-specific text that must survive into the SMS (BMR deadlines).
     note: str = ""
+    # First photo, hot-linked by the web view. Optional everywhere.
+    image_url: str | None = None
 
     # Filled in by main.py during evaluation.
     neighborhood: str | None = None
