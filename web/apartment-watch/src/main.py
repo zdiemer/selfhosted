@@ -23,6 +23,7 @@ from datetime import date
 
 import config
 import geo
+import market
 import scam
 import sources
 from fetch import Fetcher
@@ -36,7 +37,7 @@ DEFAULT_CRITERIA = os.path.join(os.path.dirname(HERE), "criteria.yaml")
 DEFAULT_DB = os.environ.get("APARTMENT_WATCH_DB", "/data/apartment-watch.db")
 
 
-def evaluate(listing, criteria) -> tuple[bool, str | None]:
+def evaluate(listing, criteria, market_rent) -> tuple[bool, str | None]:
     """Does this listing qualify? Returns (matched, reject_reason).
 
     Rules are checked cheapest-first and the *first* failure is what gets
@@ -109,7 +110,7 @@ def evaluate(listing, criteria) -> tuple[bool, str | None]:
         verdict = scam.evaluate(
             listing,
             threshold=criteria.scam.threshold,
-            market_rent=criteria.scam.market_rent,
+            market_rent=market_rent,
             bait_ratio=criteria.scam.bait_ratio,
             premium_ratio=criteria.scam.premium_ratio,
             floors=criteria.scam.price_floors,
@@ -120,7 +121,7 @@ def evaluate(listing, criteria) -> tuple[bool, str | None]:
     return True, None
 
 
-def run_source(name, fetcher, criteria, store, dry_run: bool) -> tuple[int, int, str | None]:
+def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tuple[int, int, str | None]:
     """Scrape one source. Returns (seen, matched, error)."""
     try:
         source = sources.build(name)
@@ -138,7 +139,7 @@ def run_source(name, fetcher, criteria, store, dry_run: bool) -> tuple[int, int,
             # would reject it as "laundry: unknown" and then overwrite the good
             # row with the empty one.
             store.hydrate(listing)
-            ok, reason = evaluate(listing, criteria)
+            ok, reason = evaluate(listing, criteria, market_rent)
             if ok:
                 matched += 1
                 logger.info(
@@ -214,8 +215,22 @@ def main(argv=None) -> int:
         started = store.start_run()
         logger.info("sources: %s", ", ".join(wanted))
 
+        # Resolve market rent before any source runs: every price rejection is
+        # a fraction of it, so a run has to know which numbers it's using and
+        # say so.
+        market_rent, origin = market.resolve(
+            store, fetcher, criteria.scam.market_rent,
+            criteria.scam.market_refresh_days, criteria.scam.live_market,
+        )
+        logger.info(
+            "market rent (%s): %s", origin,
+            ", ".join(f"{b}br=${v}" for b, v in sorted(market_rent.items())),
+        )
+
         for name in wanted:
-            count, matched, error = run_source(name, fetcher, criteria, store, args.dry_run)
+            count, matched, error = run_source(
+                name, fetcher, criteria, store, market_rent, args.dry_run
+            )
             health = store.record_source(name, count, error)
             store.commit()
 

@@ -75,6 +75,8 @@ class ScamFilter:
     market_rent: dict
     bait_ratio: float
     premium_ratio: float
+    live_market: bool
+    market_refresh_days: int
     price_floors: dict | None
 
 
@@ -195,6 +197,8 @@ def load(path: str) -> Criteria:
         ),
         bait_ratio=bait,
         premium_ratio=premium,
+        live_market=bool((scam_raw.get("market_rent_live") or {}).get("enabled", True)),
+        market_refresh_days=max(1, int((scam_raw.get("market_rent_live") or {}).get("refresh_days", 30))),
         price_floors=(
             scam_mod.int_map_from_config(scam_raw.get("price_floors"), {})
             if scam_raw.get("price_floors") else None

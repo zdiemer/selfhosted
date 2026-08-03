@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS source_health (
     consecutive_empty INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS market_rent (
+    beds       INTEGER PRIMARY KEY,
+    amount     INTEGER NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     started_at   TEXT PRIMARY KEY,
     finished_at  TEXT,
@@ -242,6 +248,33 @@ class Store:
                 (source, now, last_success, error, count, consecutive_empty),
             )
         return SourceHealth(source, last_success, consecutive_empty, error)
+
+    # -- market rent ------------------------------------------------------
+
+    def market_rent(self) -> tuple[dict[int, int] | None, int | None]:
+        """(rents, age_in_days) for the cached market figures, or (None, None)."""
+        rows = self.db.execute("SELECT beds, amount, fetched_at FROM market_rent").fetchall()
+        if not rows:
+            return None, None
+        rents = {int(r["beds"]): int(r["amount"]) for r in rows}
+        newest = max(r["fetched_at"] for r in rows)
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(newest)).days
+        except ValueError:
+            age = None
+        return rents, age
+
+    def save_market_rent(self, rents: dict[int, int]) -> None:
+        if self.read_only:
+            return
+        now = utcnow()
+        self.db.executemany(
+            """INSERT INTO market_rent (beds, amount, fetched_at) VALUES (?,?,?)
+               ON CONFLICT(beds) DO UPDATE SET
+                   amount = excluded.amount, fetched_at = excluded.fetched_at""",
+            [(b, a, now) for b, a in rents.items()],
+        )
+        self.commit()
 
     # -- runs -------------------------------------------------------------
 

@@ -60,9 +60,20 @@ scam_filter:
   # src/scam.py for the rules and what each is worth.
   enabled: true
   threshold: 4
-  # SF average asking rent by bedroom count. Everything price-related is
-  # derived from these, so re-tuning means updating four real numbers rather
-  # than guessing at thresholds. Refresh annually.
+  # Refresh market_rent below from apartments.com's rent-market-trends page.
+  # Monthly, because average asking rent moves by single-digit dollars week to
+  # week and this costs a warmed browser navigation through Akamai.
+  #
+  # A failed lookup NEVER changes matching: it falls back to the cache, then to
+  # the static numbers below, and every run logs which one it used.
+  market_rent_live:
+    enabled: true
+    refresh_days: 30
+
+  # SF average asking rent by bedroom count — the fallback when the live lookup
+  # is off or has never succeeded. Everything price-related is derived from
+  # these, so re-tuning means updating real numbers rather than guessing at
+  # thresholds.
   market_rent:
     0: 2698     # studio
     1: 3563     # 1br
