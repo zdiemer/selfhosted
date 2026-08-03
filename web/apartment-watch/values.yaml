@@ -20,9 +20,12 @@ imageCredentials:
 imagePullSecrets: []
 
 schedule:
-  # 09:00 Pacific. Listings post through the day; morning catches the previous
-  # evening's batch before anything good is gone.
-  cron: "0 9 * * *"
+  # Hourly, 07:00-22:00 Pacific. Cheap listings go within hours, so the value
+  # is in finding them fast — but scraping often is NOT texting often: which
+  # sources run on a given tick is `every_hours` in criteria.yaml, and a digest
+  # only goes out during `alerts.send_hours`. Overnight ticks are skipped
+  # because nothing posts then and every browser poll is IP exposure.
+  cron: "0 7-22 * * *"
   # Without this the schedule is UTC and drifts an hour twice a year.
   timeZone: America/Los_Angeles
   # One SQLite writer, ever.

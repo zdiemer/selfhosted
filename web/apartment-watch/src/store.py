@@ -103,6 +103,18 @@ class SourceHealth:
         return self.consecutive_empty > 0
 
 
+# Columns added after the first release. `CREATE TABLE IF NOT EXISTS` is a
+# no-op against an existing table, so a new column in SCHEMA reaches a fresh
+# database and silently misses every deployed one — which surfaces as
+# "table listings has no column named X" on the next run, for every source at
+# once. Anything added to `listings` from now on belongs here too.
+MIGRATIONS = [
+    ("listings", "note", "TEXT"),
+    ("listings", "rent_controlled", "INTEGER"),
+    ("listings", "year_built", "INTEGER"),
+]
+
+
 class Store:
     def __init__(self, path: str, read_only: bool = False):
         self.path = path
@@ -110,7 +122,19 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self._migrate()
         self.db.commit()
+
+    def _migrate(self) -> None:
+        """Add any columns missing from an older database."""
+        for table, column, coltype in MIGRATIONS:
+            existing = {
+                r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")
+            }
+            if not existing or column in existing:
+                continue
+            logger.info("migrating: adding %s.%s", table, column)
+            self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
 
     def close(self) -> None:
         with contextlib.suppress(Exception):

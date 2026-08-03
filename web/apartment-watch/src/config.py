@@ -63,6 +63,12 @@ class Alerts:
     to: str
     max_listings_per_digest: int
     max_messages_per_run: int
+    # Local hours at which a digest may be sent. Scraping runs far more often
+    # than this: polling hourly finds a listing sooner, it does not create more
+    # matches (dedup means each texts once, ever), so the two cadences are
+    # deliberately separate. Empty list = send on every run.
+    send_hours: tuple[int, ...]
+    timezone: str
     quiet_on_zero_matches: bool
     health_alert_after_stale_runs: int
     health_alert_cooldown_days: int
@@ -90,6 +96,7 @@ class Criteria:
     exclude_keywords: tuple[str, ...]
     sources: dict[str, dict[str, Any]]
     alerts: Alerts
+    daily_source_hour: int = 9
     rent_control: bool = True
     max_detail_fetches: int = 40
     request_delay_seconds: tuple[float, float] = (1.5, 4.0)
@@ -168,6 +175,8 @@ def load(path: str) -> Criteria:
         to=to,
         max_listings_per_digest=int(alerts_raw.get("max_listings_per_digest", 5)),
         max_messages_per_run=max(1, int(alerts_raw.get("max_messages_per_run", 3))),
+        send_hours=tuple(sorted({int(h) for h in (alerts_raw.get("send_hours") or [])})),
+        timezone=str(alerts_raw.get("timezone", "America/Los_Angeles")),
         quiet_on_zero_matches=bool(alerts_raw.get("quiet_on_zero_matches", True)),
         health_alert_after_stale_runs=int(alerts_raw.get("health_alert_after_stale_runs", 3)),
         health_alert_cooldown_days=int(alerts_raw.get("health_alert_cooldown_days", 3)),
@@ -176,6 +185,10 @@ def load(path: str) -> Criteria:
     sources = raw.get("sources", {})
     if not isinstance(sources, dict) or not sources:
         raise ConfigError("sources: at least one source must be configured")
+
+    for h in alerts.send_hours:
+        if not 0 <= h <= 23:
+            raise ConfigError(f"alerts.send_hours: {h} is not an hour of the day")
 
     delay = raw.get("request_delay_seconds", [1.5, 4.0])
     if not (isinstance(delay, list) and len(delay) == 2 and delay[0] <= delay[1]):
@@ -217,6 +230,7 @@ def load(path: str) -> Criteria:
         ),
         sources=sources,
         alerts=alerts,
+        daily_source_hour=int(raw.get("daily_source_hour", (alerts.send_hours or [9])[0])),
         rent_control=bool(raw.get("rent_control", True)),
         max_detail_fetches=int(raw.get("max_detail_fetches", 40)),
         request_delay_seconds=(float(delay[0]), float(delay[1])),

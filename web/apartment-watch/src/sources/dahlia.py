@@ -122,7 +122,18 @@ class Dahlia:
                     # borderline cases are surfaced rather than silently dropped.
                     if income_max < lo_year or income_min > hi_year:
                         continue
-                    borderline = income_min < lo_year or income_max > hi_year
+                    # Flag near-misses as well as overlaps. BMR limits are on
+                    # gross HOUSEHOLD income and the portal's definition may not
+                    # match the number here, so sitting within 5% of either
+                    # bound is worth checking before applying rather than
+                    # trusting.
+                    margin = 0.05
+                    borderline = (
+                        income_min < lo_year
+                        or income_max > hi_year
+                        or income_min < lo_year * (1 + margin)
+                        or income_max > hi_year * (1 - margin)
+                    )
                 else:
                     lo_year = hi_year = None
                     borderline = False

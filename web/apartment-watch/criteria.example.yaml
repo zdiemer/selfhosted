@@ -120,31 +120,44 @@ sources:
   # bedrooms and excluded neighbourhoods still apply.
   dahlia:
     enabled: true
-    annual_income_min: 90000     # REPLACE — gross annual household income
-    annual_income_max: 110000    # REPLACE — a range is fine; it's a guess either way
+    every_hours: 1        # one small JSON API call
+    annual_income_min: 93000     # REPLACE — gross annual household income
+    annual_income_max: 93000     # REPLACE
 
   # Craigslist is the load-bearing source: it serves a no-JS result list that
   # honours the query string, so it needs no browser at all, and its detail
   # pages carry structured laundry/parking codes plus coordinates.
   craigslist:
     enabled: true
+    every_hours: 1        # no browser, so polling every hour is nearly free
     max_detail_fetches: 150
 
   # Needs the stealth browser (F5 "Client Challenge"). Ships laundry and
   # bedrooms inline as schema.org JSON-LD, so no detail fetches at all.
   zumper:
     enabled: true
+    # Browser sources stay daily: a poll here is a full stealth-browser
+    # navigation, and doing that 16x a day from one residential IP is how the
+    # IP gets flagged — which loses the source outright, not just one run.
+    every_hours: 24
 
   # Needs the stealth browser AND a warm-up navigation — a cold request gets an
   # Akamai challenge shell every time. See fetch.Fetcher.warm_up.
   apartments_com:
     enabled: true
+    # Daily, for the same reason as zumper — and more so: this one needs a
+    # warmed navigation through Akamai, the most detection-sensitive path here.
+    every_hours: 24
 
   # The most expensive source: its result cards carry price and location but
   # not laundry, so every candidate costs a full browser navigation. Budget is
   # deliberately small; Craigslist is doing the heavy lifting.
   zillow:
     enabled: true
+    # Daily. It has also produced zero matches in every live run — detail pages
+    # still 403 and its list skews to $3,500+ — so there's no case for polling
+    # it harder.
+    every_hours: 24
     max_detail_fetches: 12
 
   # Not implemented, on purpose:
@@ -170,6 +183,13 @@ alerts:
   # look at, so "+N more" has to be a promise, not a dead end.
   max_listings_per_digest: 5
   max_messages_per_run: 3
+  # Local hours at which a digest may go out. The CronJob scrapes hourly, but
+  # only these runs text — checking often finds listings sooner without texting
+  # more, because dedup means each listing is sent once, ever. Anything found
+  # between windows waits for the next one.
+  # Empty list => send on every run.
+  send_hours: [9, 13, 18]
+  timezone: America/Los_Angeles
   # No matches => no text. Silence means "nothing qualified", which is why the
   # source-health check below exists.
   quiet_on_zero_matches: true

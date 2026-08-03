@@ -1,23 +1,41 @@
-# apartment-watch — daily SF rental scraper → SMS
+# apartment-watch — SF rental scraper → SMS
 
-A CronJob that scrapes SF studio/1br listings once a day, filters them against
+A CronJob that scrapes SF studio/1br listings, filters them against
 `criteria.yaml`, and texts a digest of anything new that matches. No frontend,
 no API, no Service, no Ingress — nothing ever connects *to* it.
 
 ```
-09:00 PT  CronJob
-             │
-             ├─ craigslist ──── plain httpx (no browser needed)
-             ├─ zumper ───────┐
-             ├─ apartments.com├─ Camoufox (hardened Firefox, Xvfb)
-             └─ zillow ───────┘
-             │
-             ▼
-      evaluate vs criteria.yaml ──▶ SQLite on a PVC (dedup + price history)
-             │
-             ▼  only listings that newly match
-      POST /api/v1/messages ──▶ sms-relay.infra ──▶ Android handset ──▶ you
+hourly 07:00-22:00 PT          once a day, 09:00 PT
+   ├─ dahlia (BMR, JSON API)      ├─ zumper ───────┐
+   └─ craigslist (plain httpx)    ├─ apartments.com├─ Camoufox (Firefox, Xvfb)
+                                  └─ zillow ───────┘
+                    │
+                    ▼
+     evaluate vs criteria.yaml ──▶ SQLite on a PVC (dedup + price history)
+                    │
+                    ▼   only listings that newly match, and only at 09/13/18
+     POST /api/v1/messages ──▶ sms-relay.infra ──▶ Android handset ──▶ you
 ```
+
+## Scraping often is not texting often
+
+These are separate cadences on purpose, and conflating them is the obvious way
+to make this tool annoying enough to ignore.
+
+**Polling frequently doesn't create more matches** — dedup means a listing is
+texted once, ever — it just finds them sooner, which is the whole game on
+cheap listings. So the cheap sources run hourly (`every_hours: 1`) and a
+digest only goes out during `alerts.send_hours`. Anything found in between
+keeps `notified_at` NULL and leads the next window's digest.
+
+The browser sources stay daily (`every_hours: 24`). Not for compute: a poll
+there is a full stealth-browser navigation, and doing that sixteen times a day
+from one residential IP is how the IP gets flagged — which loses the source
+outright rather than just one run. `every_hours` is per-source so that trade is
+visible and adjustable.
+
+After the first run an hourly tick costs about three seconds, because detail
+pages are only fetched for listings not already in the database.
 
 ## Why it's in this repo
 

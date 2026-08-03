@@ -20,7 +20,8 @@ import logging
 import os
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import config
 import geo
@@ -128,6 +129,26 @@ def evaluate(listing, criteria, market_rent, trusted: bool = False) -> tuple[boo
     return True, None
 
 
+def _due(source_cfg: dict, hour: int, daily_hour: int) -> bool:
+    """Should this source run on this hour's tick?
+
+    `every_hours: 1` runs every tick, `N` runs when the hour divides by N, and
+    24 (the default) runs once a day at `daily_source_hour`.
+
+    Per-source because the sources differ enormously in what a poll costs. A
+    Craigslist poll is one plain GET; an Apartments.com poll is a warmed
+    browser navigation through Akamai, and doing that every hour from one
+    residential IP is the way to get that IP flagged — which loses the source
+    outright, not just this run. That's the trade `every_hours` exposes.
+    """
+    every = int(source_cfg.get("every_hours", 24) or 24)
+    if every <= 1:
+        return True
+    if every >= 24:
+        return hour == daily_hour
+    return hour % every == daily_hour % every
+
+
 def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tuple[int, int, str | None]:
     """Scrape one source. Returns (seen, matched, error)."""
     try:
@@ -206,10 +227,36 @@ def main(argv=None) -> int:
         logger.error("criteria: %s", exc)
         return 2
 
-    wanted = args.source or criteria.enabled_sources
+    try:
+        now_local = datetime.now(ZoneInfo(criteria.alerts.timezone))
+    except Exception:
+        logger.warning("unknown timezone %r — falling back to UTC", criteria.alerts.timezone)
+        now_local = datetime.now()
+
+    # Scraping and sending run on separate cadences. The CronJob fires hourly;
+    # cheap sources run every time so a listing is found within the hour, the
+    # browser sources run once a day, and a digest only goes out in a send
+    # window. Polling often does NOT mean texting often — dedup means every
+    # listing is sent exactly once whenever it's found.
+    if args.source:
+        wanted = args.source
+    else:
+        wanted = [
+            name for name in criteria.enabled_sources
+            if _due(criteria.sources[name], now_local.hour, criteria.daily_source_hour)
+        ]
     if not wanted:
-        logger.error("no sources enabled in %s", args.criteria)
-        return 2
+        logger.info(
+            "nothing to run at %02d:00 %s (daily sources run at %02d:00)",
+            now_local.hour, criteria.alerts.timezone, criteria.daily_source_hour,
+        )
+        return 0
+
+    may_send = (
+        args.force_digest
+        or not criteria.alerts.send_hours
+        or now_local.hour in criteria.alerts.send_hours
+    )
 
     if args.dry_run:
         # ":memory:" keeps a dry run from touching real state, which also means
@@ -267,7 +314,16 @@ def main(argv=None) -> int:
         health_alerted = False
         delivered = 0
 
-        if pending:
+        if pending and not may_send:
+            # Found something outside a send window: keep it. notified_at stays
+            # NULL, so it leads the next window's digest rather than arriving
+            # now.
+            logger.info(
+                "%d match(es) waiting for the next send window (%s local)",
+                len(pending),
+                ", ".join(f"{h:02d}:00" for h in criteria.alerts.send_hours),
+            )
+        elif pending:
             chunks = build_digest(
                 pending,
                 criteria.alerts.max_listings_per_digest,
@@ -312,7 +368,7 @@ def main(argv=None) -> int:
                 f"Sources: {', '.join(wanted)}.",
                 f"apartment-watch:smoke:{date.today().isoformat()}",
             )
-        elif problems and store.health_alert_allowed(criteria.alerts.health_alert_cooldown_days):
+        elif problems and may_send and store.health_alert_allowed(criteria.alerts.health_alert_cooldown_days):
             # Zero matches *and* something looks broken. This is the only case
             # where we break silence without a listing to show for it.
             logger.warning("no matches and sources look unhealthy: %s", problems)
