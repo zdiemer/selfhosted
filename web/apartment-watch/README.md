@@ -158,6 +158,20 @@ it and running `./upgrade.sh` needs no rebuild.
   aren't fraud, they just aren't apartments — and a private room reads as "1br"
   to every bedroom check.
 
+**Removed posts are dropped before they're texted about.** Craigslist answers
+HTTP 410 for a post its author deleted or the community flagged down, and bait
+gets flagged fast. Nothing else in the pipeline notices — a listing is scraped
+once and `Store.hydrate` re-matches its stored detail on every later run — so
+without this a post that died on Monday would still be in Thursday's digest.
+Checked at send time, over `pending` and over the last week of already-sent
+listings so existing run pages mark them "No longer listed" rather than sending
+you to a dead page.
+
+Only **404 and 410** count. A 403 is a bot wall and a timeout is the network;
+treating either as "gone" would quietly delete good listings. For the same
+reason only Craigslist is probed — the browser-walled sources answer 403 to a
+plain request, which says nothing about whether the listing still exists.
+
 Price drops come free: every listing is stored and **re-evaluated every run**, so
 a unit that was $3200 in June and re-lists at $2950 matches then, and texts then.
 

@@ -226,6 +226,11 @@ h1{
   border:1px solid transparent
 }
 .chip.flag{background:var(--flag-soft);color:var(--flag)}
+.chip.dead{background:transparent;color:var(--fog);border-color:var(--line)}
+/* Removed posts stay on the page — the link is permanent — but read as
+   spent rather than competing with the live ones. */
+.card.dead{opacity:.55}
+.card.dead .price{color:var(--fog)}
 
 .src{
   margin:.8rem 0 0;padding-top:.7rem;border-top:1px solid var(--line);
@@ -244,6 +249,10 @@ footer p{margin:.35rem 0}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 """
+
+
+def _is_removed(row) -> bool:
+    return str(row["reject_reason"] or "").startswith("removed")
 
 
 def _card(row) -> str:
@@ -275,6 +284,11 @@ def _card(row) -> str:
         f'<span class="chip{" flag" if kind == "flag" else ""}">{html.escape(label)}</span>'
         for label, kind in _chips(row)
     )
+    # A run page is a permanent link, so posts die under it. Say so plainly
+    # rather than sending someone to a "flagged for removal" page.
+    gone = _is_removed(row)
+    if gone:
+        chips = '<span class="chip dead">No longer listed</span>' + chips
 
     # Show the base rent only when parking changed the number, so the figure
     # here can be reconciled with the one on the listing page.
@@ -282,7 +296,7 @@ def _card(row) -> str:
     if row["parking_fee"] and row["price"]:
         base = f'<p class="base">{_money(row["price"])} rent + {_money(row["parking_fee"])} parking</p>'
 
-    return f"""<a class="card" href="{url}" target="_blank" rel="noopener noreferrer">
+    return f"""<a class="card{' dead' if gone else ''}" href="{url}" target="_blank" rel="noopener noreferrer">
   {shot}
   <div class="body">
     <div class="priceline"><span class="price">{price}</span><span class="spec">/mo · {beds}</span></div>

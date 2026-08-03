@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 import config
 import geo
+import liveness
 import market
 import rentcontrol
 import scam
@@ -308,6 +309,20 @@ def main(argv=None) -> int:
         logger.info("fetch stats: %s", fetcher.stats)
 
         pending = store.pending_notifications()
+        if may_send:
+            # Just before sending, not at scrape time: a post flagged down
+            # after we scraped it would otherwise sit in the digest forever,
+            # because hydrate keeps re-matching its stored detail. Craigslist
+            # only — the browser-walled sources answer 403 to a plain request,
+            # which says nothing about whether the listing still exists.
+            if pending:
+                pending = liveness.prune_dead(store, pending, sources={"craigslist"})
+            # Independent of `pending`: run pages are permanent links, so posts
+            # die under pages that were minted days ago. This has to run on
+            # quiet days too, which is exactly when it was skipped before.
+            liveness.prune_dead(
+                store, store.recently_notified(days=7), sources={"craigslist"}
+            )
         total_new = len(pending)
         date_label = date.today().strftime("%-m/%-d")
         relay = SmsRelay(dry_run=args.dry_run)

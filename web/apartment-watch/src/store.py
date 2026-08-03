@@ -251,6 +251,22 @@ class Store:
             ),
         )
 
+    def mark_dead(self, source: str, external_id: str, reason: str) -> None:
+        """Retire a listing that no longer exists.
+
+        matched=0 keeps it out of `pending_notifications`, and notified_at is
+        stamped so it can't come back if the URL starts answering again — a
+        removed post that reappears is a repost, and reposts arrive with their
+        own id anyway.
+        """
+        if self.read_only:
+            return
+        self.db.execute(
+            "UPDATE listings SET matched = 0, reject_reason = ?, notified_at = COALESCE(notified_at, ?) "
+            "WHERE source = ? AND external_id = ?",
+            (reason, utcnow(), source, external_id),
+        )
+
     def pending_notifications(self) -> list[sqlite3.Row]:
         """Matches we haven't texted about yet, cheapest first."""
         return self.db.execute(
@@ -259,6 +275,20 @@ class Store:
             WHERE matched = 1 AND notified_at IS NULL
             ORDER BY effective_price ASC, first_seen ASC
             """
+        ).fetchall()
+
+    def recently_notified(self, days: int = 7) -> list[sqlite3.Row]:
+        """Rows already texted about in the last `days`, for a liveness sweep.
+
+        Run pages are permanent links, so a post removed after its page was
+        minted would keep sending you to a dead listing. Re-checking the recent
+        ones each send lets the page mark them instead.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        return self.db.execute(
+            "SELECT * FROM listings WHERE notified_at IS NOT NULL AND notified_at >= ? "
+            "AND (reject_reason IS NULL OR reject_reason NOT LIKE 'removed%')",
+            (cutoff,),
         ).fetchall()
 
     def mark_notified(self, rows, run_token: str | None = None) -> None:
