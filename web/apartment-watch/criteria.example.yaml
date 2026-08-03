@@ -125,11 +125,12 @@ sources:
     # A listing whose deadline passed longer ago than this is dropped even if
     # the portal still marks it Active. Some sit "Active" for months.
     stale_days: 60
-    # Surface units she's slightly OVER the income cap for rather than dropping
-    # them. The cap depends on household size and the portal's own definition
-    # of gross household income, so a couple of percent is worth a phone call
-    # on a unit hundreds a month under market. The text says how far over.
-    income_overage_tolerance: 0.10
+    # Strict: only units she actually qualifies for. 0 means a listing over
+    # the income ceiling is dropped, not surfaced with a "worth asking" note.
+    # Raise this (e.g. 0.10) to also see near-misses — the ceiling depends on
+    # the portal's own definition of gross household income, so a couple of
+    # percent over is sometimes still worth a call.
+    income_overage_tolerance: 0
     annual_income_min: 93000     # REPLACE — gross annual household income
     annual_income_max: 93000     # REPLACE
 
@@ -193,8 +194,16 @@ alerts:
   # Kept small on purpose: Android counts every concatenated SMS segment
   # against its per-app rate limit, so a few short messages are safer than a
   # few long ones. Overflow rolls into the next window either way.
+  # ONE message per window, deliberately. This runs on a personal handset,
+  # and carriers score bursts from a consumer number to a single destination
+  # as A2P spam and start silently dropping — the sender still shows
+  # "delivered". ~27 segments in 70 minutes did exactly that here, and it also
+  # tripped Android's own per-app segment cap.
+  #
+  # 3 windows x 1 message x <=2 segments is ~6 segments a day. Overflow is not
+  # lost; it leads the next window's digest.
   max_listings_per_digest: 3
-  max_messages_per_run: 3
+  max_messages_per_run: 1
   # Gap between parts of one digest, for the same reason.
   seconds_between_messages: 20
   # Local hours at which a digest may go out. The CronJob scrapes hourly, but
