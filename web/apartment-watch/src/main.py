@@ -129,6 +129,12 @@ def run_source(name, fetcher, criteria, store, dry_run: bool) -> tuple[int, int,
     try:
         for listing in source.search(fetcher, criteria, seen_ids):
             count += 1
+            # Merge in anything we already learned about this listing. Sources
+            # only fetch a detail page once, so a re-observed listing arrives
+            # with just the search-page fields; evaluating that sparse view
+            # would reject it as "laundry: unknown" and then overwrite the good
+            # row with the empty one.
+            store.hydrate(listing)
             ok, reason = evaluate(listing, criteria)
             if ok:
                 matched += 1

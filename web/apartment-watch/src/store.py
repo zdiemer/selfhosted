@@ -116,6 +116,39 @@ class Store:
         ).fetchall()
         return {r["external_id"] for r in rows}
 
+    def hydrate(self, listing) -> None:
+        """Fill blanks on a re-observed listing from what we already know.
+
+        Sources only pay for a detail page once — after that a listing comes
+        back with just what the *search* page shows: price, title, maybe a
+        neighbourhood string. Evaluating that sparse view would reject it for
+        "laundry: unknown" and then overwrite the good row with the empty one,
+        so a listing that matched on Monday silently stops matching on Tuesday
+        and can never recover, because it's in `seen` and never re-fetched.
+
+        Merging the stored detail back in before evaluation is what makes
+        re-evaluation safe — and it's re-evaluation that gets price drops for
+        free, so this is load-bearing for that too. The fresh price always
+        wins; only genuinely-missing fields are backfilled.
+        """
+        row = self.db.execute(
+            "SELECT * FROM listings WHERE source = ? AND external_id = ?",
+            (listing.source, listing.external_id),
+        ).fetchone()
+        if row is None:
+            return
+        for field in ("bedrooms", "parking_fee", "lat", "lon"):
+            if getattr(listing, field, None) is None and row[field] is not None:
+                setattr(listing, field, row[field])
+        for field in ("laundry", "parking"):
+            if getattr(listing, field, "unknown") == "unknown" and row[field]:
+                setattr(listing, field, row[field])
+        if not listing.body and row["title"]:
+            # Keep the scam/keyword text around; it lives only on the detail page.
+            listing.body = row["title"]
+        if listing.price is None and row["price"] is not None:
+            listing.price = row["price"]
+
     def upsert(self, listing, matched: bool, reject_reason: str | None) -> None:
         """Insert or refresh a listing, preserving first_seen and notified_at.
 

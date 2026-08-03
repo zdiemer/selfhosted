@@ -113,6 +113,16 @@ TERMS_RULES = [
 # Push to an off-platform contact — the point at which the relay stops
 # protecting you.
 CONTACT_RULES = [
+    # The loudest tell in practice. A real landlord invites you to a showing;
+    # harvesting your number and a personal pitch *before* you've seen anything
+    # is either lead resale or the opening move of an advance-fee scam. Caught a
+    # $1,800 "studio near Lafayette Park" that cleared every other rule.
+    _r("lead_harvest", 4,
+       r"leave\s+your\s+(?:phone\s+)?(?:number|#|digits)"
+       r"|please\s+(?:leave|provide|send|include)\s+(?:me\s+|us\s+)?your\s+(?:phone|number|contact|cell)"
+       r"|tell\s+(?:me|us)\s+(?:a\s+little\s+)?about\s+your\s?self"
+       r"|send\s+(?:me|us)\s+your\s+(?:phone\s+)?number",
+       "asks for your number instead of offering a showing"),
     _r("offsite_email", 2,
        r"(?:e-?mail|contact|reach)\s+(?:me|us)\s+(?:at|on|directly)?[^.\n]{0,20}"
        r"[a-z0-9._%+-]+@(?:gmail|yahoo|hotmail|outlook|aol|proton)\.",
@@ -178,6 +188,22 @@ def evaluate(
         if floor and listing.price < floor:
             score += 4
             reasons.append(f"${listing.price} is below the ${floor} floor for {listing.bedrooms}br")
+        elif floor and listing.price < floor * 1.3:
+            # Just above the floor, but carrying amenities that don't come
+            # cheap. Real bargains in this city are rent-controlled and
+            # *under*-amenitied; a pre-war studio advertising in-unit laundry
+            # AND parking at well under market is describing a unit that isn't
+            # there. Only 3 points — it needs corroboration, because an
+            # under-priced good unit is exactly what we're hunting for.
+            premium = listing.laundry == "in_unit" and listing.parking in (
+                "garage", "carport", "off_street", "valet"
+            )
+            if premium:
+                score += 3
+                reasons.append(
+                    f"${listing.price} with in-unit laundry + parking is under market "
+                    f"for {listing.bedrooms}br"
+                )
 
     return Verdict(is_scam=score >= threshold, score=score, reasons=reasons)
 
