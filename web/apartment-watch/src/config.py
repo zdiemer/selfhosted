@@ -72,7 +72,10 @@ class Alerts:
 class ScamFilter:
     enabled: bool
     threshold: int
-    price_floors: dict
+    market_rent: dict
+    bait_ratio: float
+    premium_ratio: float
+    price_floors: dict | None
 
 
 @dataclass(frozen=True)
@@ -178,10 +181,24 @@ def load(path: str) -> Criteria:
     import scam as scam_mod
 
     scam_raw = raw.get("scam_filter", {}) or {}
+    bait = float(scam_raw.get("bait_ratio", scam_mod.DEFAULT_BAIT_RATIO))
+    premium = float(scam_raw.get("premium_ratio", scam_mod.DEFAULT_PREMIUM_RATIO))
+    if not 0 < bait <= 1:
+        raise ConfigError("scam_filter.bait_ratio must be between 0 and 1")
+    if not bait <= premium <= 1:
+        raise ConfigError("scam_filter.premium_ratio must be between bait_ratio and 1")
     scam_cfg = ScamFilter(
         enabled=bool(scam_raw.get("enabled", True)),
         threshold=int(scam_raw.get("threshold", scam_mod.DEFAULT_THRESHOLD)),
-        price_floors=scam_mod.floors_from_config(scam_raw.get("price_floors")),
+        market_rent=scam_mod.int_map_from_config(
+            scam_raw.get("market_rent"), scam_mod.DEFAULT_MARKET_RENT
+        ),
+        bait_ratio=bait,
+        premium_ratio=premium,
+        price_floors=(
+            scam_mod.int_map_from_config(scam_raw.get("price_floors"), {})
+            if scam_raw.get("price_floors") else None
+        ),
     )
 
     return Criteria(

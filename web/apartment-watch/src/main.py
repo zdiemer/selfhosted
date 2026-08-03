@@ -109,6 +109,9 @@ def evaluate(listing, criteria) -> tuple[bool, str | None]:
         verdict = scam.evaluate(
             listing,
             threshold=criteria.scam.threshold,
+            market_rent=criteria.scam.market_rent,
+            bait_ratio=criteria.scam.bait_ratio,
+            premium_ratio=criteria.scam.premium_ratio,
             floors=criteria.scam.price_floors,
         )
         if verdict.is_scam:

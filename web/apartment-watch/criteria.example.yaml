@@ -60,18 +60,33 @@ scam_filter:
   # src/scam.py for the rules and what each is worth.
   enabled: true
   threshold: 4
-  # Rent below these is bait, not a bargain — keyed by bedroom count, and a
-  # listing under its floor is dropped on that alone.
+  # SF average asking rent by bedroom count. Everything price-related is
+  # derived from these, so re-tuning means updating four real numbers rather
+  # than guessing at thresholds. Refresh annually.
+  market_rent:
+    0: 2698     # studio
+    1: 3563     # 1br
+    2: 4979     # 2br
+    3: 6043     # 3br
+
+  # Below bait_ratio x market, a listing is dropped on that alone. At 60% that
+  # is $1,619 for a studio and $2,138 for a 1br — prices that don't exist here.
   #
-  # This is the one filter that can hide a real find (a genuine rent-controlled
-  # unit can land under these), so it's the first thing to lower if the digest
-  # feels too thin. Calibrated against a live August 2026 pull that turned up a
-  # cluster of $1,275 "studios" and $1,500 Mission 1BRs in one identical
-  # marketing voice — a posting farm, not a market.
-  price_floors:
-    0: 1600
-    1: 1950
-    2: 2600
+  # This is the one filter that can hide a real find, since a genuine
+  # rent-controlled unit can land under it. It's the first knob to loosen if
+  # the digest feels thin.
+  bait_ratio: 0.60
+
+  # Between bait_ratio and premium_ratio a listing is cheap but not impossible,
+  # and only suspicious if it ALSO claims amenities that don't come cheap
+  # (in-unit laundry plus parking). Worth points, never decisive alone — an
+  # under-priced good unit is the whole point of this tool.
+  premium_ratio: 0.75
+
+  # Optional: hard-code the bait threshold per bedroom count instead of
+  # deriving it from market_rent x bait_ratio.
+  # price_floors:
+  #   0: 1700
 
 sources:
   # Craigslist is the load-bearing source: it serves a no-JS result list that

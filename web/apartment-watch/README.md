@@ -87,10 +87,23 @@ it and running `./upgrade.sh` needs no rebuild.
 - **Studio or 1br.**
 - **Scam filter** (`src/scam.py`): scored, not a keyword blacklist. Payment-rail
   tells (wire, gift cards, crypto), absentee-landlord narratives, screening
-  waivers, off-platform contact pushes, and rent below a plausible floor each
-  add points; several have to agree before a listing is dropped. Single weak
-  signals can't kill a real bargain, which matters when finding bargains is the
-  whole job. Rejections record which rules fired.
+  waivers, lead-harvesting ("leave your phone number and tell me about
+  yourself" — the loudest tell in practice, since a real landlord offers a
+  showing), and price each add points; several have to agree before a listing
+  is dropped. Single weak signals can't kill a real bargain, which matters when
+  finding bargains is the whole job. Rejections record which rules fired.
+
+  Price thresholds are **derived from real market rent**, not hand-picked, so
+  re-tuning means updating four numbers in `scam_filter.market_rent` rather
+  than guessing. Below `bait_ratio` (60%) of market a listing is dropped on
+  that alone. Between 60% and `premium_ratio` (75%) it's only suspicious if it
+  *also* claims in-unit laundry plus parking — cheap and over-amenitied is a
+  unit that isn't there, but it's worth 3 points rather than being decisive,
+  because an under-priced good unit is the entire point of this tool.
+
+  Room shares (co-living, SROs, "private room") are rejected separately. They
+  aren't fraud, they just aren't apartments — and a private room reads as "1br"
+  to every bedroom check.
 
 Price drops come free: every listing is stored and **re-evaluated every run**, so
 a unit that was $3200 in June and re-lists at $2950 matches then, and texts then.

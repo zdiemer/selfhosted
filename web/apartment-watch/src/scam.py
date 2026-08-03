@@ -22,19 +22,28 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Rent below this is not a deal, it's bait.
+# SF average asking rent by bedroom count, August 2026. Thresholds are derived
+# from these rather than hand-picked, so re-tuning is a matter of updating four
+# real numbers in criteria.yaml once a year instead of guessing at floors.
+DEFAULT_MARKET_RENT = {0: 2698, 1: 3563, 2: 4979, 3: 6043}
+
+# Below `bait_ratio` x market, a listing is discarded on that alone. 60% of
+# market is a price that does not exist here: the live pull that motivated this
+# turned up $1,275 studios by Golden Gate Park and $1,500 Mission 1BRs with
+# in-unit laundry, all in one identical marketing voice — a posting farm, not a
+# market.
 #
-# Calibrated against a live SF pull in August 2026, which surfaced a cluster of
-# listings in one identical marketing voice ("Enjoy comfortable city living in
-# this charming studio...") at $1,275 for a studio by Golden Gate Park and
-# $1,500 for a Mission 1BR with in-unit laundry. Those prices do not exist in
-# this city; they're a posting farm harvesting replies.
-#
-# This is the one filter with real false-negative risk — a genuine
-# rent-controlled unit can land under these. They're deliberately set below
-# market rather than at it, and they're the first thing to lower in
-# criteria.yaml if the digest feels too thin.
-DEFAULT_FLOORS = {0: 1600, 1: 1950, 2: 2600, 3: 3200}
+# This is the one filter with real false-negative risk, since a genuine
+# rent-controlled unit can land under it. Hence 60% rather than something
+# closer to market, and hence it being the first knob to loosen if the digest
+# feels thin.
+DEFAULT_BAIT_RATIO = 0.60
+
+# Between bait_ratio and premium_ratio, a listing is cheap but not impossible —
+# suspicious only if it also claims amenities that don't come cheap. Worth
+# points, never decisive on its own: an under-priced good unit is exactly what
+# this tool exists to find.
+DEFAULT_PREMIUM_RATIO = 0.75
 
 # Rooms in a shared flat, co-living beds, and SROs, all routinely posted under
 # "apts/housing". They aren't apartments and no bedroom-count check catches
@@ -162,16 +171,18 @@ def evaluate(
     listing,
     *,
     threshold: int = DEFAULT_THRESHOLD,
+    market_rent: dict[int, int] | None = None,
+    bait_ratio: float = DEFAULT_BAIT_RATIO,
+    premium_ratio: float = DEFAULT_PREMIUM_RATIO,
     floors: dict[int, int] | None = None,
-    underpriced_ratio: float = 0.55,
 ) -> Verdict:
     """Score a listing for fraud tells.
 
-    `underpriced_ratio` is applied against the *budget*, not against market
-    rent — we have no market-rent feed, and the budget is the best available
-    proxy for what a real unit of this size costs around here.
+    Price thresholds are a fraction of real market rent for that bedroom
+    count. `floors` overrides the derived bait threshold outright, for when a
+    specific number is wanted instead of a ratio.
     """
-    floors = floors or DEFAULT_FLOORS
+    market_rent = market_rent or DEFAULT_MARKET_RENT
     text = f"{listing.title or ''}\n{listing.body or ''}"
     score = 0
     reasons: list[str] = []
@@ -181,41 +192,46 @@ def evaluate(
             score += rule.points
             reasons.append(rule.why)
 
-    # The strongest single signal: rent far under any plausible floor for that
-    # bedroom count. Applied only when we actually know both numbers.
+    # The strongest single signal: rent far under market for that bedroom
+    # count. Applied only when we actually know both numbers.
     if listing.price is not None and listing.bedrooms is not None:
-        floor = floors.get(listing.bedrooms)
+        market = market_rent.get(listing.bedrooms)
+        floor = (floors or {}).get(listing.bedrooms)
+        if floor is None and market:
+            floor = int(market * bait_ratio)
+
         if floor and listing.price < floor:
             score += 4
-            reasons.append(f"${listing.price} is below the ${floor} floor for {listing.bedrooms}br")
-        elif floor and listing.price < floor * 1.3:
-            # Just above the floor, but carrying amenities that don't come
-            # cheap. Real bargains in this city are rent-controlled and
-            # *under*-amenitied; a pre-war studio advertising in-unit laundry
-            # AND parking at well under market is describing a unit that isn't
-            # there. Only 3 points — it needs corroboration, because an
-            # under-priced good unit is exactly what we're hunting for.
+            pct = f" ({listing.price / market:.0%} of market)" if market else ""
+            reasons.append(f"${listing.price} is below the ${floor} floor for {listing.bedrooms}br{pct}")
+        elif market and listing.price < market * premium_ratio:
+            # Cheap but not impossible — suspicious only if it also claims
+            # amenities that don't come cheap. Real bargains here are
+            # rent-controlled and *under*-amenitied; a pre-war studio
+            # advertising in-unit laundry AND parking at well under market is
+            # describing a unit that isn't there. Three points, deliberately
+            # not decisive: an under-priced good unit is the whole point.
             premium = listing.laundry == "in_unit" and listing.parking in (
                 "garage", "carport", "off_street", "valet"
             )
             if premium:
                 score += 3
                 reasons.append(
-                    f"${listing.price} with in-unit laundry + parking is under market "
-                    f"for {listing.bedrooms}br"
+                    f"${listing.price} ({listing.price / market:.0%} of market) with "
+                    f"in-unit laundry + parking for a {listing.bedrooms}br"
                 )
 
     return Verdict(is_scam=score >= threshold, score=score, reasons=reasons)
 
 
-def floors_from_config(raw) -> dict[int, int]:
-    """Parse the optional `scam_filter.price_floors` mapping."""
+def int_map_from_config(raw, defaults) -> dict[int, int]:
+    """Parse a `{bedrooms: dollars}` mapping from criteria.yaml."""
     if not raw:
-        return dict(DEFAULT_FLOORS)
-    out = dict(DEFAULT_FLOORS)
+        return dict(defaults)
+    out = dict(defaults)
     for key, value in raw.items():
         try:
             out[int(key)] = int(value)
         except (TypeError, ValueError):
-            logger.warning("scam_filter.price_floors: ignoring %r: %r", key, value)
+            logger.warning("scam_filter: ignoring %r: %r", key, value)
     return out
