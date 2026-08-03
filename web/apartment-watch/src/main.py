@@ -26,7 +26,7 @@ import geo
 import scam
 import sources
 from fetch import Fetcher
-from notify import SmsRelay, format_digest, format_health_alert
+from notify import SmsRelay, digest_key, format_digest, format_health_alert
 from store import Store
 
 logger = logging.getLogger("apartment-watch")
@@ -232,7 +232,11 @@ def main(argv=None) -> int:
                 pending, total_new, criteria.alerts.max_listings_per_digest,
                 date_label, problems,
             )
-            sent = relay.send(criteria.alerts.to, body, f"apartment-watch:{date.today().isoformat()}")
+            sent = relay.send(
+                criteria.alerts.to,
+                body,
+                digest_key("apartment-watch", date.today().isoformat(), pending),
+            )
             if sent:
                 store.mark_notified(pending)
                 store.commit()

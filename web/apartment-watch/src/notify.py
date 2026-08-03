@@ -4,13 +4,21 @@ sms-relay (infra/sms-relay, a submodule) is a durable queue in front of an
 Android handset. It answers 202 — "accepted", not "delivered" — and retries the
 handset on its own schedule, so nothing here blocks on or retries the send.
 
-Every message carries a date-scoped idempotency key. sms-relay dedupes on
-(service, idempotency_key), so a job that is retried after a partial failure
-cannot text you the same digest twice.
+Every message carries an idempotency key. sms-relay dedupes on
+(service, idempotency_key), so a job retried after a partial failure cannot text
+you the same digest twice.
+
+That key is scoped by **date *and* content**, and the content half is not
+optional. With a date-only key, the first send of the day wins and every later
+one comes back as an "idempotent replay" — a 202 with the original message id,
+having sent nothing. The caller sees success, marks its listings notified, and
+they are never mentioned again. Hashing the listing set means a genuine retry
+still dedupes while a different set of listings actually goes out.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -52,8 +60,15 @@ class SmsRelay:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read() or b"{}")
-                ids = [m.get("id") for m in data.get("messages", [])]
-                logger.info("queued sms %s (HTTP %d)", ids, resp.status)
+                msgs = data.get("messages", [])
+                # Log status and created_at too: a replay comes back 202 with a
+                # pre-existing message, which is indistinguishable from a fresh
+                # send unless you look.
+                for m in msgs:
+                    logger.info(
+                        "queued sms %s status=%s created=%s (HTTP %d)",
+                        m.get("id"), m.get("status"), m.get("created_at"), resp.status,
+                    )
                 return True
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:300]
@@ -61,6 +76,17 @@ class SmsRelay:
         except Exception as exc:
             logger.error("sms-relay unreachable: %s", exc)
         return False
+
+
+def digest_key(prefix: str, day: str, rows) -> str:
+    """`apartment-watch:<day>:<hash of the listings>`.
+
+    Same listings on a retry -> same key -> sms-relay dedupes. A different set
+    -> a different key -> it actually sends.
+    """
+    ids = sorted(f"{r['source']}/{r['external_id']}" for r in rows)
+    digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()[:12]
+    return f"{prefix}:{day}:{digest}"
 
 
 def _money(n) -> str:

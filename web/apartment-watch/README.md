@@ -193,6 +193,18 @@ it survives an uninstall unless you go delete it on purpose.
   read-only here. It does nothing for scraping.
 - **3Gi memory limit.** `money` had its sync OOM-killed (exit 137) at 1Gi
   rendering Zillow in the same browser.
+- **The SMS idempotency key is scoped by date *and* listing set.** sms-relay
+  dedupes on `(service, idempotency_key)`. With a date-only key, the first send
+  of the day wins and every later one returns 202 with the original message id
+  having sent nothing — and the caller, seeing success, marks those listings
+  notified so they're never mentioned again. Hashing the listing ids into the
+  key keeps genuine retries deduped while letting a different set actually go
+  out. This bit for real during the first deploy: a smoke run burned the day's
+  key and the 40-match run that followed was silently swallowed.
+- **`extraEnv` overrides the built-in env vars rather than appending.**
+  Emitting the same name twice is legal and kubelet takes one of them, so it
+  looks fine — but the next `helm upgrade` can't reconcile the duplicate in its
+  strategic merge patch and drops the base entry entirely.
 - **Politeness is enforced in code**: one search request per source per run,
   detail pages fetched only for listings not already in the DB, per-source
   fetch caps, and a jittered delay between requests. When a cap trims work the
