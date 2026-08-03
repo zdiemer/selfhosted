@@ -50,7 +50,11 @@ repo stays the full index of what runs on the cluster. Clone with
   once before `helm install`; never managed by a chart.
 - **Secrets never hit git.** Tokens, passwords, and any user-identifying
   config live only in `values.local.yaml`. The `.gitignore` glob
-  `**/values.local.yaml` covers every project.
+  `**/values.local.yaml` covers every project. Watch out for the neighbouring
+  `*-secret.yaml` glob: it is meant for rendered manifests, but it also
+  swallows chart *templates* named that way, silently and without an error
+  (`templates/ghcr-secret.yaml` never gets added). Name pull-secret templates
+  something else — see `web/apartment-watch/templates/imagepullsecret.yaml`.
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.
