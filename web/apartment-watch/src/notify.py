@@ -29,9 +29,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_URL = "http://sms-relay.infra.svc.cluster.local:8000"
 
-# The handset splits anything long into segments. Keeping the whole digest under
-# this is a deliberate ceiling on how many segments one run can cost.
-MAX_BODY = 1200
+# Android caps how many SMS an app may send in a rolling window, and **each
+# concatenated segment counts against it** — a 520-char body is four. Three of
+# those in one run is twelve, which is enough to trip the OS prompt and silently
+# drop a message (it dropped part 3 of 3 once, already accepted by the gateway
+# and never delivered). Keeping bodies near two segments is what stops that.
+MAX_BODY = 460
 
 
 class SmsRelay:
@@ -127,8 +130,10 @@ def _listing_line(row) -> str:
         # the text matches the number on the listing page.
         price = f"{price} ({_money(row['price'])}+{_money(row['parking_fee'])})"
     hood = row["neighborhood"] or "SF"
-    rc = " RC?" if row["rent_controlled"] else ""
-    note = f" {row['note']}" if row["note"] else ""
+    # Spelled out, not abbreviated. Whoever reads this shouldn't have to know
+    # what "RC?" means, and "?" alone doesn't convey that it's an inference.
+    rc = " (likely rent-controlled)" if row["rent_controlled"] else ""
+    note = f" — {row['note']}" if row["note"] else ""
     return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)}{rc}{note} {row['url']}"
 
 

@@ -34,6 +34,15 @@ from .base import Listing
 logger = logging.getLogger(__name__)
 
 NAME = "dahlia"
+
+# HUD household-size adjustments, as a share of the 4-person income limit.
+# The API's absoluteMaxIncome is the limit for the unit's MAXIMUM occupancy,
+# not for the person reading the text: a 1BR that sleeps 3 reports the
+# 3-person ceiling. Rescaling by these is what turns it into her ceiling.
+# Verified against the portal: a 50% AMI 1BR reporting $7,879 (3-person)
+# rescales to 7879 * 0.70/0.90 = $6,129, which is exactly the 1-person limit
+# the site displays.
+HOUSEHOLD_FACTOR = {1: 0.70, 2: 0.80, 3: 0.90, 4: 1.00, 5: 1.08, 6: 1.16, 7: 1.24, 8: 1.32}
 API = "https://housing.sfgov.org/api/v1/listings.json"
 LISTING_URL = "https://housing.sfgov.org/listings/{id}"
 
@@ -52,14 +61,18 @@ def _is_rental(listing: dict) -> bool:
     return "rental" in str(listing.get("Tenure") or "").lower()
 
 
-def _days_left(raw: str | None) -> int | None:
+def _due_date(raw: str | None):
     if not raw:
         return None
     try:
-        due = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return (due - datetime.now(timezone.utc)).days
+
+
+def _days_left(raw: str | None) -> int | None:
+    due = _due_date(raw)
+    return None if due is None else (due - datetime.now(timezone.utc)).days
 
 
 class Dahlia:
@@ -70,6 +83,9 @@ class Dahlia:
         cfg = criteria.sources.get(NAME, {})
         # Annual income, as a range — it decides qualification in both
         # directions, so a guess that's too precise is worse than a range.
+        household = max(1, int(cfg.get("household_size", 1) or 1))
+        stale_days = int(cfg.get("stale_days", 60) or 60)
+        overage_tolerance = float(cfg.get("income_overage_tolerance", 0.10) or 0)
         income_min = float(cfg.get("annual_income_min") or 0)
         income_max = float(cfg.get("annual_income_max") or income_min or 0)
         if not income_max:
@@ -90,6 +106,7 @@ class Dahlia:
         for row in rentals:
             summaries = (row.get("unitSummaries") or {}).get("general") or []
             due_in = _days_left(row.get("Application_Due_Date"))
+            due = _due_date(row.get("Application_Due_Date"))
             status = str(row.get("Status") or "")
 
             # A passed deadline does NOT mean closed here, and treating it that
@@ -100,6 +117,12 @@ class Dahlia:
             # the latter and say the deadline has passed.
             stale = due_in is not None and due_in < 0
             if stale and status.lower() != "active":
+                continue
+            # "Active" with a passed deadline is a live waitlist for a few
+            # weeks; it is not one seven months later. A live pull had entries
+            # 186 and 305 days past due still marked Active, and texting those
+            # wastes a trip.
+            if stale and -due_in > stale_days:
                 continue
 
             for unit in summaries:
@@ -113,14 +136,42 @@ class Dahlia:
                 if not isinstance(rent, (int, float)) or rent <= 0:
                     continue
 
+                # Occupancy: a unit with a minimum occupancy above the
+                # household size isn't available to that household at all.
+                min_occ = unit.get("minOccupancy")
+                if isinstance(min_occ, (int, float)) and household > min_occ:
+                    pass  # larger household than the minimum is fine
+                elif isinstance(min_occ, (int, float)) and household < min_occ:
+                    continue
+
                 # Income limits are MONTHLY in this API.
                 lo = unit.get("absoluteMinIncome")
                 hi = unit.get("absoluteMaxIncome")
+                if isinstance(hi, (int, float)):
+                    # Rescale the ceiling from the unit's max occupancy to this
+                    # household. Without this the ceiling is too generous and
+                    # units she cannot qualify for get texted — which is worse
+                    # than missing one, because it wastes the trip.
+                    max_occ = unit.get("maxOccupancy")
+                    f_unit = HOUSEHOLD_FACTOR.get(int(max_occ)) if isinstance(max_occ, (int, float)) else None
+                    f_hh = HOUSEHOLD_FACTOR.get(household)
+                    if f_unit and f_hh:
+                        hi = hi * f_hh / f_unit
+
                 if income_max and isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
                     lo_year, hi_year = lo * 12, hi * 12
                     # Qualify if her income range overlaps the unit's band at all;
                     # borderline cases are surfaced rather than silently dropped.
-                    if income_max < lo_year or income_min > hi_year:
+                    if income_max < lo_year:
+                        continue
+                    # Just over the ceiling is worth a phone call, not a silent
+                    # drop. BMR limits are on gross HOUSEHOLD income under the
+                    # portal's own definition, which may not match the figure
+                    # configured here, and the gap is often a couple of percent
+                    # on a unit hundreds a month below market. Anything beyond
+                    # the tolerance is genuinely out of reach and is dropped.
+                    over = income_min > hi_year
+                    if over and income_min > hi_year * (1 + overage_tolerance):
                         continue
                     # Flag near-misses as well as overlaps. BMR limits are on
                     # gross HOUSEHOLD income and the portal's definition may not
@@ -129,8 +180,7 @@ class Dahlia:
                     # trusting.
                     margin = 0.05
                     borderline = (
-                        income_min < lo_year
-                        or income_max > hi_year
+                        over
                         or income_min < lo_year * (1 + margin)
                         or income_max > hi_year * (1 - margin)
                     )
@@ -150,16 +200,28 @@ class Dahlia:
                 if row.get("hasWaitlist"):
                     bits.append("waitlist")
 
+                # Plain English, and the dollar income limits rather than an
+                # AMI percentage. "50% AMI" is meaningless without a lookup
+                # table; "income $42k-$94k" tells you in one glance whether
+                # it's worth clicking. Whoever reads this text should not need
+                # to know what BMR, AMI or a lottery is.
+                parts = ["city affordable unit"]
                 if stale:
-                    note = "BMR waitlist?"
+                    parts.append("waitlist open")
+                elif due_in is not None and due_in <= 0:
+                    parts.append("apply TODAY")
                 elif due_in is not None:
-                    note = f"BMR apply {due_in}d" if due_in else "BMR apply TODAY"
-                else:
-                    note = "BMR"
-                if unit.get("maxQualifyingAMI"):
-                    note += f" {unit['maxQualifyingAMI']:.0f}%AMI"
-                if borderline:
-                    note += " check-income"
+                    due_on = due.strftime("%-m/%-d") if due else None
+                    parts.append(f"apply by {due_on}" if due_on else f"apply within {due_in}d")
+                if lo_year and hi_year:
+                    parts.append(f"income {lo_year/1000:.0f}-{hi_year/1000:.0f}k")
+                if lo_year and hi_year and income_min > hi_year:
+                    parts.append(
+                        f"you're ~{(income_min / hi_year - 1) * 100:.0f}% over the income cap - worth asking"
+                    )
+                elif borderline:
+                    parts.append("you're near the income limit, check")
+                note = ", ".join(parts)
 
                 emitted += 1
                 yield Listing(

@@ -339,7 +339,7 @@ def main(argv=None) -> int:
                 # reduces the odds of interleaving — the "(i/n)" in the header
                 # is what actually makes an out-of-order arrival readable.
                 if index:
-                    time.sleep(2)
+                    time.sleep(criteria.alerts.seconds_between_messages)
                 # Key by the rows in THIS message, so each part is independently
                 # retry-safe and no part can suppress another.
                 if not relay.send(

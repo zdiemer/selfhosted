@@ -69,6 +69,7 @@ class Alerts:
     # deliberately separate. Empty list = send on every run.
     send_hours: tuple[int, ...]
     timezone: str
+    seconds_between_messages: int
     quiet_on_zero_matches: bool
     health_alert_after_stale_runs: int
     health_alert_cooldown_days: int
@@ -177,6 +178,7 @@ def load(path: str) -> Criteria:
         max_messages_per_run=max(1, int(alerts_raw.get("max_messages_per_run", 3))),
         send_hours=tuple(sorted({int(h) for h in (alerts_raw.get("send_hours") or [])})),
         timezone=str(alerts_raw.get("timezone", "America/Los_Angeles")),
+        seconds_between_messages=max(0, int(alerts_raw.get("seconds_between_messages", 20))),
         quiet_on_zero_matches=bool(alerts_raw.get("quiet_on_zero_matches", True)),
         health_alert_after_stale_runs=int(alerts_raw.get("health_alert_after_stale_runs", 3)),
         health_alert_cooldown_days=int(alerts_raw.get("health_alert_cooldown_days", 3)),
