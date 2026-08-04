@@ -184,11 +184,16 @@ def evaluate(listing, criteria, market_rent, trusted: bool = False, store=None) 
         if keyword in haystack:
             return False, f"keyword: {keyword}"
 
+    # Not a scam rule, and so not gated on the scam filter or on `trusted`: a
+    # co-living room isn't fraud, it just isn't a place of your own, and it
+    # reads as "1br" to every bedroom check. Trusted sources need this most —
+    # DAHLIA publishes SRO units, which are a room with a shared bathroom and
+    # which its own unit-type field calls "SRO" while the bedroom count says
+    # studio.
+    if scam.is_room_share(listing):
+        return False, "room share, not a unit"
+
     if criteria.scam.enabled and not trusted:
-        # Separate from the scam score: a co-living room isn't fraud, it just
-        # isn't an apartment, and it reads as "1br" to every bedroom check.
-        if scam.is_room_share(listing):
-            return False, "room share, not a unit"
         verdict = scam.evaluate(
             listing,
             threshold=criteria.scam.threshold,

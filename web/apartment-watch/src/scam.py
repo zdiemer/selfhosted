@@ -47,20 +47,52 @@ DEFAULT_PREMIUM_RATIO = 0.75
 
 # Rooms in a shared flat, co-living beds, and SROs, all routinely posted under
 # "apts/housing". They aren't apartments and no bedroom-count check catches
-# them — a private room reads as "1br" everywhere.
+# them — a private room reads as "1br" everywhere. The brief is a place of
+# one's own, so this is a hard reject rather than a scam score.
 _ROOM_SHARE_RE = re.compile(
     r"shared\s+living|co-?living|communal\s+(?:kitchen|bath|living)"
     r"|shared\s+(?:kitchen|bathroom|bath\b|house|apartment|apt\b|flat\b|unit\b)"
     r"|private\s+room|room\s+for\s+rent|rooms?\s+available|furnished\s+room"
     r"|roommates?\b|\bsro\b|single\s+room\s+occupancy|room\s+in\s+a\s+"
-    r"|per\s+room\b|bed\s+in\s+a\b",
+    r"|per\s+room\b|bed\s+in\s+a\b"
+    # Craigslist's own bathroom attr: "1BR / sharedBa" (or splitBa, which is a
+    # jack-and-jill between two bedrooms — same situation). Structured, and
+    # nothing with its own front door reports it.
+    r"|shared\s*ba\b|shared\s*bath|split\s*ba\b"
+    # How these ads actually read once you drop the listing voice for the
+    # first person: "Your room is a good sized second bedroom", "we're looking
+    # for someone", "the room is available".
+    r"|your\s+room\b|the\s+room\s+is\b|\bhousemates?\b|room\s+rental"
+    r"|(?:looking|searching)\s+for\s+a?\s*(?:new\s+)?(?:roommate|housemate|flatmate|third|fourth)"
+    r"|\bflatmates?\b|\broom\s+sublet\b|renting\s+(?:out\s+)?(?:my|a)\s+room",
+    re.I,
+)
+
+
+# Listings that mention these things in order to say they DON'T have them.
+# "No roommates", "roommate-free" and "private bath, not shared" all describe
+# exactly the place we're looking for, and matching the noun inside the denial
+# would reject it for being what it advertises.
+_NEGATED_RE = re.compile(
+    r"\bno\s+(?:roommates?|housemates?|flatmates?|shared\s+\w+|room\s+shares?)"
+    r"|(?:roommate|housemate|flatmate)[-\s]free"
+    r"|without\s+(?:roommates?|housemates?)"
+    r"|not\s+(?:a\s+)?shared\b|never\s+shared\b",
     re.I,
 )
 
 
 def is_room_share(listing) -> bool:
-    """A room in someone else's home, not a unit of your own."""
-    return bool(_ROOM_SHARE_RE.search(f"{listing.title or ''}\n{listing.body or ''}"))
+    """A room in someone else's home, not a unit of your own.
+
+    Reads the body, which is only true of a listing whose detail page has been
+    fetched *or* whose body was stored — see Store.hydrate. A room share that
+    is judged on its title alone will pass, because these ads are titled like
+    apartments: "Center North Beach w/stunning views - fully furnished" was a
+    bedroom in a two-bed flat with a shared bathroom.
+    """
+    text = f"{listing.title or ''}\n{listing.body or ''}"
+    return bool(_ROOM_SHARE_RE.search(_NEGATED_RE.sub(" ", text)))
 
 
 @dataclass(frozen=True)

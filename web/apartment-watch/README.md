@@ -216,9 +216,34 @@ it and running `./upgrade.sh` needs no rebuild.
   unit that isn't there, but it's worth 3 points rather than being decisive,
   because an under-priced good unit is the entire point of this tool.
 
-  Room shares (co-living, SROs, "private room") are rejected separately. They
-  aren't fraud, they just aren't apartments — and a private room reads as "1br"
-  to every bedroom check.
+- **Room shares are rejected outright** — co-living, SROs, "private room", a
+  bedroom in someone's flat. The brief is a place of your own. This is not part
+  of the scam score and is not gated on `trusted`, because these aren't fraud
+  and the trusted source is the one that needs it most: DAHLIA publishes SRO
+  units, and an SRO is a room with a shared bathroom that reports itself as a
+  studio to every bedroom check. Craigslist's own `sharedBa` / `splitBa`
+  bathroom attribute is the most reliable tell there is — nothing with its own
+  front door reports a shared bathroom — so the attr line is folded into the
+  body text the rules read. Negations are stripped first: "no roommates" and
+  "roommate-free" describe the thing we want.
+
+  These ads are titled like apartments. `Center North Beach w/stunning views -
+  fully furnished` was a bedroom in a two-bed Edwardian with a shared bath, and
+  it only says so in the body — which is why the body is **stored**:
+
+**Every rule must read the same text on every run.** A listing's detail page is
+fetched exactly once; after that it comes back with only what the *search* page
+shows, and `Store.hydrate` merges the stored detail back in before evaluation.
+The posting body was the one field never persisted — hydrate substituted the
+**title** — so every body rule (room share, the entire scam filter,
+`exclude_keywords`) went blind on the second observation and could flip its
+verdict. That is not theoretical: the room share above was correctly rejected
+at 12:00 on the run that read its body, then passed at 13:00 and was texted.
+
+So `listings.body` is a column, `hydrate` restores it, and `seen_ids` only
+counts rows that actually have one — a row with no stored body was never really
+parsed, and letting it cost one more detail fetch, once, is cheap and
+self-limiting.
 
 **Removed posts are dropped before they're texted about.** Craigslist answers
 HTTP 410 for a post its author deleted or the community flagged down, and bait

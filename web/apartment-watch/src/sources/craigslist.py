@@ -86,6 +86,11 @@ _LAT_RE = re.compile(r'data-latitude="(-?[0-9.]+)"')
 _LON_RE = re.compile(r'data-longitude="(-?[0-9.]+)"')
 _BR_RE = re.compile(r'<span class="attr important">\s*([0-9]+)\s*BR', re.I)
 _STUDIO_RE = re.compile(r'<span class="attr important">\s*(?:0\s*BR|studio)', re.I)
+# The whole housing attr line — "1BR / sharedBa", "available sep 1". It carries
+# the bathroom, which is structured data and the one unambiguous tell that a
+# "1BR" is a room in someone's flat: a place of your own does not have a shared
+# bathroom. Folded into the body so the room-share rules see it.
+_ATTR_SPAN_RE = re.compile(r'<span class="attr[^"]*">(.*?)</span>', re.S)
 # The separator must allow `&amp;` — these are hrefs in HTML, so every query
 # separator after the first is escaped. Matching only `[?&]` silently finds
 # nothing and every listing comes back laundry=unknown.
@@ -216,7 +221,10 @@ def _parse_detail(html: str, listing: Listing) -> Listing:
 
     m = _BODY_RE.search(html)
     body = _text(m.group(0)) if m else ""
-    listing.body = body
+    attrs = " ; ".join(
+        t for t in (_text(a) for a in _ATTR_SPAN_RE.findall(html)) if t
+    )
+    listing.body = f"{attrs}\n{body}" if attrs else body
     # A parking fee is never structured — it's always buried in the prose.
     listing.parking_fee = parse_parking_fee(f"{listing.title} {body}")
     return listing

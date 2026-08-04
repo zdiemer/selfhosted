@@ -24,6 +24,10 @@ from datetime import date, datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+# Postings run long and we only ever pattern-match them. This is well past the
+# point where a rule would fire and keeps the SQLite file on the PVC small.
+BODY_LIMIT = 4000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS listings (
     source          TEXT NOT NULL,
@@ -39,6 +43,11 @@ CREATE TABLE IF NOT EXISTS listings (
     lat             REAL,
     lon             REAL,
     neighborhood    TEXT,
+    -- The posting text. Stored, not just parsed: every later run re-evaluates
+    -- from the database (see hydrate), and the rules that read this — room
+    -- share, the whole scam filter, exclude_keywords — are the ones that must
+    -- not change their verdict between run one and run two.
+    body            TEXT,
     note            TEXT,
     image_url       TEXT,
     notified_run    TEXT,
@@ -119,6 +128,7 @@ MIGRATIONS = [
     ("listings", "rent_controlled", "INTEGER"),
     ("listings", "year_built", "INTEGER"),
     ("listings", "distance_mi", "REAL"),
+    ("listings", "body", "TEXT"),
     ("runs", "token", "TEXT"),
 ]
 
@@ -159,13 +169,21 @@ class Store:
     # -- listings ---------------------------------------------------------
 
     def seen_ids(self, source: str) -> set[str]:
-        """Every external_id we already have for a source.
+        """Every external_id we already have *and have read the body of*.
 
         Used to skip detail-page fetches for listings we've already parsed —
         the single biggest lever on how much traffic a run generates.
+
+        The body condition is what makes this honest. A row with no stored body
+        was never really parsed (or was stored before there was a column to put
+        it in), and re-evaluating it forever against its title alone is exactly
+        the blindness that texted a room share. Letting those rows cost one
+        more detail fetch, once, is cheap and self-limiting.
         """
         rows = self.db.execute(
-            "SELECT external_id FROM listings WHERE source = ?", (source,)
+            "SELECT external_id FROM listings "
+            "WHERE source = ? AND body IS NOT NULL AND body != ''",
+            (source,),
         ).fetchall()
         return {r["external_id"] for r in rows}
 
@@ -196,9 +214,15 @@ class Store:
         for field in ("laundry", "parking"):
             if getattr(listing, field, "unknown") == "unknown" and row[field]:
                 setattr(listing, field, row[field])
-        if not listing.body and row["title"]:
-            # Keep the scam/keyword text around; it lives only on the detail page.
-            listing.body = row["title"]
+        if not listing.body:
+            # The posting text, which lives only on the detail page and is only
+            # fetched once. Falling back to the *title* here (as this did) is
+            # how a room share got texted: it was correctly rejected on the run
+            # that read its body — "Room available in a bright 2-bed" — and
+            # then passed an hour later, when the only text left to judge was
+            # "Center North Beach w/stunning views". Every body rule flipped,
+            # silently, including the entire scam filter.
+            listing.body = row["body"] or row["title"] or ""
         if listing.price is None and row["price"] is not None:
             listing.price = row["price"]
 
@@ -216,10 +240,10 @@ class Store:
             """
             INSERT INTO listings (
                 source, external_id, url, title, price, effective_price, bedrooms,
-                laundry, parking, parking_fee, lat, lon, neighborhood, note, image_url,
+                laundry, parking, parking_fee, lat, lon, neighborhood, body, note, image_url,
                 rent_controlled, year_built, distance_mi,
                 matched, reject_reason, first_seen, last_seen
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source, external_id) DO UPDATE SET
                 url             = excluded.url,
                 title           = excluded.title,
@@ -232,6 +256,9 @@ class Store:
                 lat             = excluded.lat,
                 lon             = excluded.lon,
                 neighborhood    = excluded.neighborhood,
+                -- COALESCE, so a re-observation that arrives without a detail
+                -- page can't erase the text we already paid a fetch for.
+                body            = COALESCE(excluded.body, listings.body),
                 note            = excluded.note,
                 image_url       = COALESCE(excluded.image_url, listings.image_url),
                 rent_controlled = excluded.rent_controlled,
@@ -246,6 +273,7 @@ class Store:
                 listing.price, listing.effective_price, listing.bedrooms,
                 listing.laundry, listing.parking, listing.parking_fee,
                 listing.lat, listing.lon, listing.neighborhood,
+                (getattr(listing, "body", "") or "")[:BODY_LIMIT] or None,
                 getattr(listing, "note", ""),
                 getattr(listing, "image_url", None),
                 getattr(listing, "rent_controlled", None),

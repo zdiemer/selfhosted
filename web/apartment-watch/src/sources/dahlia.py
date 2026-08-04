@@ -236,7 +236,14 @@ class Dahlia:
                     laundry="unknown",
                     parking="unknown",
                     address=row.get("Building_Street_Address") or None,
-                    body=f"BMR / below market rate. {row.get('Name') or ''}",
+                    # The unit type goes in the body so the room-share rule can
+                    # read it: BMR inventory includes SROs, and an SRO is a
+                    # room with a shared bathroom that reports itself as a
+                    # studio to every bedroom check.
+                    body=(
+                        f"BMR / below market rate. Unit type: "
+                        f"{unit.get('unitType') or '?'}. {row.get('Name') or ''}"
+                    ),
                     note=note,
                     image_url=row.get("imageURL") or None,
                     # San Francisco's own portal — SF by definition, whatever
