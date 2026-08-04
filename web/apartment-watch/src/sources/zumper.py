@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Iterator
 
+import areas as area_registry
+
 from .base import Listing, parse_laundry, parse_parking, parse_parking_fee
 from .embedded import json_blobs, walk
 
@@ -27,9 +29,9 @@ NAME = "zumper"
 ORIGIN = "https://www.zumper.com"
 
 
-def _search_url(criteria) -> str:
+def _search_url(criteria, area) -> str:
     return (
-        f"{ORIGIN}/apartments-for-rent/san-francisco-ca"
+        f"{ORIGIN}/apartments-for-rent/{area.zumper_path}"
         f"?max={criteria.search.max_effective_rent}"
         f"&min-beds={criteria.search.min_bedrooms}"
         f"&max-beds={criteria.search.max_bedrooms}"
@@ -55,19 +57,27 @@ class Zumper:
     name = NAME
 
     def search(self, fetcher, criteria, seen: set[str]) -> Iterator[Listing]:
-        url = _search_url(criteria)
-        logger.info("[%s] search %s", NAME, url)
+        for area in area_registry.for_source(criteria, "zumper_path"):
+            yield from self._search_area(fetcher, criteria, area)
+
+    def _search_area(self, fetcher, criteria, area) -> Iterator[Listing]:
+        url = _search_url(criteria, area)
+        logger.info("[%s/%s] search %s", NAME, area.key, url)
         # The cheap tier is pointless here: plain HTTP always gets the challenge.
         # A cold browser session clears it; `origin` is only the retry path.
         html = fetcher.get(url, stealth_first=True, origin=ORIGIN)
         if not html:
-            raise RuntimeError("search page fetch failed (challenge not cleared)")
+            raise RuntimeError(
+                f"search page fetch failed ({area.key}: challenge not cleared)"
+            )
 
         rows = _listables(html)
-        logger.info("[%s] %d listings in page state", NAME, len(rows))
+        logger.info("[%s/%s] %d listings in page state", NAME, area.key, len(rows))
 
         for row in rows:
-            if str(row.get("city") or "").lower() not in ("san francisco", ""):
+            # Their area pages are wider than the area: the county page carries
+            # Novato, the SF page carries Daly City.
+            if not area_registry.in_area(area, row.get("city")):
                 continue
 
             path = str(row.get("url") or "")
@@ -102,4 +112,5 @@ class Zumper:
                 stated_neighborhood=str(row.get("neighborhood_name") or "") or None,
                 body=blob,
                 image_url=image,
+                area=area.key,
             )

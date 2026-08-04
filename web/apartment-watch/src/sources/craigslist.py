@@ -23,6 +23,8 @@ import re
 from typing import Iterator
 from urllib.parse import urlencode
 
+import areas as area_registry
+
 from .base import Listing, parse_parking_fee
 
 logger = logging.getLogger(__name__)
@@ -56,9 +58,11 @@ CL_PARKING = {
     "7": "none",         # no parking
 }
 
-# `sfc` is the San Francisco *city* subarea of the sfbay site — the Peninsula
-# and East Bay are different subareas and never appear here.
-SEARCH_URL = "https://sfbay.craigslist.org/search/sfc/apa"
+# One search per area, because sfbay's subareas really are separate result sets:
+# `sfc` is the San Francisco city, `nby` the North Bay, `pen` the Peninsula. The
+# subarea narrows it to a region; the per-area city-slug list (areas.py) narrows
+# that region to the towns we actually want, since `nby` is mostly Sonoma.
+SEARCH_URL = "https://sfbay.craigslist.org/search/{subarea}/apa"
 
 # Craigslist's own search API, the one its React front-end calls. The static
 # HTML carries no photos at all — only an `imageConfig` naming the CDN — but
@@ -70,7 +74,6 @@ SEARCH_URL = "https://sfbay.craigslist.org/search/sfc/apa"
 # sfbay and returned 9 San Francisco posts out of 360, while this returns the
 # complete SF set (263 of 263) in one page.
 SAPI_URL = "https://sapi.craigslist.org/web/v8/postings/search/full"
-SAPI_SEARCH_PATH = "sfc/apa"
 SAPI_BATCH = "1-0-360-0-0"
 
 _RESULT_RE = re.compile(r'<li class="cl-static-search-result"[^>]*>(.*?)</li>', re.S)
@@ -106,7 +109,7 @@ def _text(raw: str) -> str:
     return re.sub(r"\s+", " ", out).strip()
 
 
-def _search_url(criteria) -> str:
+def _search_url(criteria, area) -> str:
     params = [
         ("max_price", str(criteria.search.max_effective_rent)),
         ("min_bedrooms", str(criteria.search.min_bedrooms)),
@@ -123,7 +126,7 @@ def _search_url(criteria) -> str:
             code = TOKEN_TO_CL_LAUNDRY.get(token)
             if code:
                 params.append(("laundry", code))
-    return f"{SEARCH_URL}?{urlencode(params)}"
+    return f"{SEARCH_URL.format(subarea=area.cl_subarea)}?{urlencode(params)}"
 
 
 def _slug(href: str) -> str:
@@ -133,7 +136,7 @@ def _slug(href: str) -> str:
     return parts[-2] if len(parts) >= 2 else ""
 
 
-def image_index(fetcher, criteria) -> dict[str, str]:
+def image_index(fetcher, criteria, area) -> dict[str, str]:
     """slug -> photo URL, from one SAPI call. Empty dict on any failure.
 
     Photos are a nice-to-have: a broken index must cost the pictures, never the
@@ -142,7 +145,7 @@ def image_index(fetcher, criteria) -> dict[str, str]:
     """
     params = {
         "batch": SAPI_BATCH,
-        "searchPath": SAPI_SEARCH_PATH,
+        "searchPath": f"{area.cl_subarea}/apa",
         "lang": "en",
         "cc": "us",
         "min_bedrooms": str(criteria.search.min_bedrooms),
@@ -223,19 +226,37 @@ class Craigslist:
     name = NAME
 
     def search(self, fetcher, criteria, seen: set[str]) -> Iterator[Listing]:
-        url = _search_url(criteria)
-        logger.info("[%s] search %s", NAME, url)
+        cfg = criteria.sources.get(NAME, {})
+        # One budget for the whole source, not one per area: the cap exists to
+        # bound how much traffic a run generates, and searching three areas
+        # shouldn't triple that.
+        budget = int(cfg.get("max_detail_fetches", criteria.max_detail_fetches))
+        state = {"fetched": 0, "skipped": 0}
+
+        for area in area_registry.enabled(criteria):
+            yield from self._search_area(fetcher, criteria, seen, area, budget, state)
+
+        if state["skipped"]:
+            # Never let a cap look like "that's everything there was".
+            logger.warning(
+                "[%s] detail-fetch cap of %d reached — %d new listings left "
+                "unexamined this run; they'll be picked up next run",
+                NAME, budget, state["skipped"],
+            )
+        logger.info("[%s] fetched %d detail pages", NAME, state["fetched"])
+
+    def _search_area(self, fetcher, criteria, seen, area, budget, state) -> Iterator[Listing]:
+        url = _search_url(criteria, area)
+        logger.info("[%s/%s] search %s", NAME, area.key, url)
         html = fetcher.get(url)
         if not html:
-            raise RuntimeError("search page fetch failed")
+            raise RuntimeError(f"search page fetch failed ({area.key})")
 
         blocks = _RESULT_RE.findall(html)
-        logger.info("[%s] %d results on the search page", NAME, len(blocks))
-        photos = image_index(fetcher, criteria)
+        logger.info("[%s/%s] %d results on the search page", NAME, area.key, len(blocks))
+        photos = image_index(fetcher, criteria, area)
 
-        cfg = criteria.sources.get(NAME, {})
-        budget = int(cfg.get("max_detail_fetches", criteria.max_detail_fetches))
-        fetched = skipped = offsite = 0
+        offsite = 0
 
         for block in blocks:
             m = _HREF_RE.search(block)
@@ -243,14 +264,16 @@ class Craigslist:
                 continue
             href = m.group(1)
 
-            # The `sfc` subarea does NOT constrain the static result list —
-            # a live SF query came back with Berkeley, Brooklyn and the Bronx
-            # mixed in (70 of 201 results). The universal /view/d/ slug is
-            # prefixed with the post's own city, which is the cheapest reliable
-            # way to drop them before spending a detail fetch. Coordinates are
-            # still the authority once we have them (see main.evaluate).
+            # The subarea does NOT fully constrain the static result list — a
+            # live SF query came back with Berkeley, Brooklyn and the Bronx
+            # mixed in (70 of 201 results) — and where it does hold, the region
+            # is wider than the towns we want: `nby` was 166 Santa Rosa posts
+            # out of 348. The universal /view/d/ slug is prefixed with the
+            # post's own city, which is the cheapest reliable way to drop those
+            # before spending a detail fetch. Coordinates are still the
+            # authority once we have them (see main.evaluate).
             slug = href.rsplit("/view/d/", 1)[-1]
-            if not slug.startswith("san-francisco"):
+            if not area_registry.matches_slug(area, slug):
                 offsite += 1
                 continue
 
@@ -271,6 +294,7 @@ class Craigslist:
                 price=int(price_m.group(1).replace(",", "")) if price_m else None,
                 stated_neighborhood=_text(loc_m.group(1)) if loc_m else None,
                 image_url=photos.get(_slug(href)),
+                area=area.key,
             )
 
             # Already in the DB: re-yield with the fresh price so a price drop
@@ -279,13 +303,13 @@ class Craigslist:
                 yield listing
                 continue
 
-            if fetched >= budget:
-                skipped += 1
+            if state["fetched"] >= budget:
+                state["skipped"] += 1
                 continue
 
             fetcher.sleep()
             detail = fetcher.get(href)
-            fetched += 1
+            state["fetched"] += 1
             if not detail:
                 logger.debug("[%s] detail fetch failed for %s", NAME, href)
                 yield listing
@@ -293,12 +317,7 @@ class Craigslist:
             yield _parse_detail(detail, listing)
 
         if offsite:
-            logger.info("[%s] dropped %d results outside San Francisco", NAME, offsite)
-        if skipped:
-            # Never let a cap look like "that's everything there was".
-            logger.warning(
-                "[%s] detail-fetch cap of %d reached — %d new listings left "
-                "unexamined this run; they'll be picked up next run",
-                NAME, budget, skipped,
+            logger.info(
+                "[%s/%s] dropped %d results from other towns in the subarea",
+                NAME, area.key, offsite,
             )
-        logger.info("[%s] fetched %d detail pages", NAME, fetched)

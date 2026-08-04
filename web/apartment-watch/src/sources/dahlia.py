@@ -239,6 +239,9 @@ class Dahlia:
                     body=f"BMR / below market rate. {row.get('Name') or ''}",
                     note=note,
                     image_url=row.get("imageURL") or None,
+                    # San Francisco's own portal — SF by definition, whatever
+                    # else the search covers.
+                    area="san_francisco",
                 )
 
         logger.info("[%s] %d qualifying unit type(s)", NAME, emitted)

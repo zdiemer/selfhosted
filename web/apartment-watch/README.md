@@ -1,18 +1,20 @@
-# apartment-watch — SF rental scraper → SMS
+# apartment-watch — Bay Area rental scraper → SMS
 
-A CronJob that scrapes SF studio/1br listings, filters them against
-`criteria.yaml`, and texts a digest of anything new that matches. No frontend,
-no API, no Service, no Ingress — nothing ever connects *to* it.
+A CronJob that scrapes studio/1br listings across San Francisco, southern Marin
+and Burlingame, filters them against `criteria.yaml`, and texts a link to
+anything new that matches. The listings themselves live on a run page served by
+a small read-only web pod (`homes.diemer.codes`).
 
 ```
 hourly 07:00-22:00 PT          once a day, 09:00 PT
    ├─ dahlia (BMR, JSON API)      ├─ zumper ───────┐
    └─ craigslist (plain httpx)    ├─ apartments.com├─ Camoufox (Firefox, Xvfb)
-                                  └─ zillow ───────┘
+      × 3 search areas            └─ zillow ───────┘
                     │
                     ▼
      evaluate vs criteria.yaml ──▶ SQLite on a PVC (dedup + price history)
-                    │
+                    │                     │
+                    │                     └──▶ web pod ──▶ homes.diemer.codes/r/<token>
                     ▼   only listings that newly match, and only at 09/13/18
      POST /api/v1/messages ──▶ sms-relay.infra ──▶ Android handset ──▶ you
 ```
@@ -46,16 +48,35 @@ precedent is [`minecraft/claude-bridge/`](../../minecraft/claude-bridge/):
 chart, `Dockerfile`, and `src/` all live here, and the image still ships to
 `ghcr.io/zdiemer/apartment-watch`.
 
+## Two numbers, two audiences
+
+`alerts.to` is whoever is flat-hunting. It receives **listings and nothing
+else** — a headline, a price range, and a link:
+
+```
+apartment-watch 8/4 - 3 new, $2372-$3308
+https://homes.diemer.codes/r/Ab3xY9kQ
+```
+
+No matches, no text. Not a "nothing today" message, not a note about a scraper:
+silence is the signal, and anything else in that thread makes the thread easier
+to ignore. (The digest used to append source-health warnings, which is how a
+text arrived reading `3 new, $2400-$3000 <link> dahlia: 0 listings for 3 runs`
+— information the reader can't act on, attached to the one message they must.)
+
+`alerts.health_to` is whoever maintains this, and only hears the other thing.
+
 ## Silence is a feature, and that's a risk
 
-A run with no matches sends **nothing**. That's the point — the tool is only
-worth having if a text means something. But it makes one failure mode dangerous:
-a parser that silently breaks looks exactly like a quiet market, forever.
+A run with no matches sends nothing, which is the point — but it makes one
+failure mode dangerous: a parser that silently breaks looks exactly like a quiet
+market, forever.
 
 So `source_health` tracks consecutive empty runs per source, and if a source
 goes quiet for `health_alert_after_stale_runs` runs (default 3) or throws, the
-next zero-match run breaks silence with a short health text — rate-limited to
-once every three days so a permanently dead source can't train you to ignore it.
+next zero-match run texts **`alerts.health_to`** — rate-limited to once every
+three days so a permanently dead source can't train you to ignore it. Leave
+`health_to` blank and it's logged instead. It never goes to `alerts.to`.
 
 ## What actually works, and what doesn't
 
@@ -67,7 +88,7 @@ Verified against the live sites in August 2026, from a residential IP:
 | **Craigslist** | none | Serves a no-JS result list that honours the query string. No browser at all. Detail pages carry structured `laundry=`/`parking=` codes and lat/lon. **The load-bearing source.** |
 | **Zumper** | F5 "Client Challenge" | Camoufox clears it. Ships laundry, bedrooms, and address inline as schema.org JSON-LD — zero detail fetches. |
 | **Apartments.com** | Akamai Bot Manager | Camoufox clears it **only with a warm-up**: a cold request gets a 2.5KB challenge shell every time, but loading the homepage, waiting ~12s, then navigating in-site returns the real 800KB page. See `Fetcher.warm_up`. |
-| **Zillow** | PerimeterX | Search page: cleared. **Detail pages: still 403**, and laundry only exists there. Combined with a list that skews to $3,500+ new-builds, a live run produced 41 cards and 0 matches. Left enabled because it costs ~20s and no successful detail fetches, but expect nothing from it. |
+| **Zillow** | PerimeterX | Search page: cleared. **Detail pages: still 403**, and laundry only exists there. Combined with a list that skews to $3,500+ new-builds, a live run produced 41 cards and 0 matches. Left enabled because it costs ~20s and no successful detail fetches, but expect nothing from it — and left **San Francisco only**, since tripling the browser navigations of the least productive source is the worst trade available. |
 | **HotPads** | PerimeterX | **Blocked** even from a warmed browser session. Not implemented: it's Zillow-owned, so its inventory is already covered. |
 | **PadMapper** | F5 | Renders, but its listings come from a map XHR with nothing parseable in the HTML. Not implemented: it's Zumper's own site with Zumper's own inventory. |
 
@@ -99,7 +120,7 @@ Every source now has one, and none of them are hot-linked.
 
 | Source | How |
 |---|---|
-| **Craigslist** | `sapi.craigslist.org` — the search API its own front-end calls. The static HTML has no photos at all, only an `imageConfig` naming the CDN, but SAPI returns an image ref per result: **one extra call photographs the whole run**, no browser. `searchPath=sfc/apa` is what scopes it — the default batch spans all of sfbay and yielded 9 SF posts out of 360, against 263 of 263 with it. Joined to the static results by URL slug, ~80% hit rate. Found by reading the sibling `talaria` repo, which uses this endpoint wholesale. |
+| **Craigslist** | `sapi.craigslist.org` — the search API its own front-end calls. The static HTML has no photos at all, only an `imageConfig` naming the CDN, but SAPI returns an image ref per result: **one extra call photographs the whole run**, no browser. `searchPath=<subarea>/apa` is what scopes it, one call per area — the default batch spans all of sfbay and yielded 9 SF posts out of 360, against 263 of 263 with `sfc/apa`. Joined to the static results by URL slug, ~80% hit rate. Found by reading the sibling `talaria` repo, which uses this endpoint wholesale. |
 | Zumper | `image_ids` on the result object |
 | Zillow | `imgSrc` on the result card |
 | DAHLIA | `imageURL`, on ~90 of 122 listings |
@@ -125,16 +146,46 @@ after paint.
 `criteria.yaml` is the entire tuning surface, and it's a **ConfigMap** — editing
 it and running `./upgrade.sh` needs no rebuild.
 
-- **$3000/mo**, compared against *effective* rent: base plus any stated monthly
-  parking fee.
-- **Parking** is desired, never required. It doesn't gate a match; matches that
-  have it get flagged in the text. A stated fee counts against the budget; an
-  unstated one is assumed included (configurable).
+- **$3800/mo**, compared against *effective* rent: base plus any stated monthly
+  parking fee. Where parking is required, its cost comes out of the budget
+  rather than sitting beside it.
+- **Parking is a distance rule.** Within `required_beyond_miles` (3) of
+  `rules.parking.reference` — 2120 Broadway, the daily destination — it's a
+  perk. Past that it's required, because that's where not having a car stops
+  being a preference. Since `unknown` isn't an accepted parking value, a
+  far-out listing that never mentions parking is dropped too; near work, the
+  same listing sails through. A listing we **can't place** is never gated:
+  unknown distance is not "far", and dropping a coordinate-less SF post over a
+  guess costs more than it saves. The distance shows on every card.
 - **In-building laundry** is a hard requirement. `unknown` does *not* pass — a
   listing that never mentions laundry usually doesn't have it.
-- **Neighborhoods** are excluded by point-in-polygon against
-  `data/sf-neighborhoods.geojson` (DataSF "SF Find Neighborhoods", `gfpk-269f`,
-  117 polygons), in this order:
+- **Where we look** is `search.areas`, resolved by point-in-polygon:
+
+  | Area | Polygons |
+  |---|---|
+  | `san_francisco` | `data/sf-neighborhoods.geojson` — DataSF "SF Find Neighborhoods" (`gfpk-269f`), 117 polygons |
+  | `southern_marin` | `data/search-areas.geojson` — 16 Census places from Sausalito to San Rafael, plus a **fill**: Marin County clipped to the 101 corridor |
+  | `burlingame` | `data/search-areas.geojson` — the city |
+
+  The fill exists because incorporated towns don't tile a county. Greenbrae,
+  Bon Air and the edges of Ross Valley sit in unincorporated gaps, and without
+  it a perfectly good Greenbrae listing resolves to nowhere and is dropped as
+  "outside search area". Places match first, so the fill only ever names
+  somewhere no town claimed. Novato and West Marin fall outside the box.
+
+  Per-site plumbing — Craigslist subarea codes, URL slugs, the city strings
+  each site prints — lives in `src/areas.py`, not in `criteria.yaml`. Each
+  source filters its own results first (cheap, and it saves detail fetches in
+  Santa Rosa), then coordinates decide (authoritative). Craigslist's `nby`
+  subarea is mostly Sonoma: a live pull was 332 results, 288 of them dropped
+  before a single detail fetch.
+
+  **`sf_records` is the sharp edge.** Rent control and the address-beats-pin
+  geocode both query the *San Francisco* assessor, so only `san_francisco` may
+  ask. A Burlingame "1200 Broadway" would otherwise match San Francisco's 1200
+  Broadway and teleport the listing across the bay.
+- **Neighborhoods** are excluded (`exclude_neighborhoods`) by the same
+  point-in-polygon result, in this order:
 
   1. **The street address**, when the listing states one, geocoded against the
      SF assessor's parcel records. Craigslist has no address field, so it's
@@ -241,8 +292,18 @@ kubectl -n web create job --from=cronjob/apartment-watch aw-manual-$(date +%s)
 kubectl -n web logs -f job/aw-manual-...
 ```
 
-Look for per-source listing counts, `MATCH` lines, any detail-fetch cap warning,
-and then either `queued sms <uuid>` or `no new matches — staying quiet`.
+Look for `[<source>/<area>]` counts on each of the three areas, `MATCH` lines,
+any detail-fetch cap warning, and then either `queued sms <uuid>` or
+`no new matches — staying quiet`.
+
+Geography and the distance rule are checkable without any network at all:
+
+```python
+import geo
+geo.resolve(37.9061, -122.5450, None)   # ('Mill Valley', 'southern_marin', 'coords')
+geo.resolve(38.1074, -122.5697, None)   # (None, None, 'unknown')  — Novato is out
+geo.miles_from(37.9061, -122.5450, (37.795073, -122.432554))   # 9.8
+```
 
 To prove the SMS path end to end without waiting for a real match, deploy once
 with deliberately loose criteria (raise `max_effective_rent`, set

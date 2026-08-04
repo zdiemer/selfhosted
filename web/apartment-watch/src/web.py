@@ -217,6 +217,7 @@ h1{
 }
 .spec{color:var(--ink-2);font-size:.95rem}
 .where{margin:.15rem 0 0;font-weight:560;font-size:1.02rem}
+.dist{color:var(--fog);font-weight:420;font-size:.88rem;font-variant-numeric:tabular-nums}
 .base{margin:.3rem 0 0;color:var(--fog);font-size:.84rem;font-variant-numeric:tabular-nums}
 
 .chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.7rem 0 0}
@@ -255,10 +256,24 @@ def _is_removed(row) -> bool:
     return str(row["reject_reason"] or "").startswith("removed")
 
 
+def _distance(row) -> str:
+    """'· 8.1 mi from work', or nothing when we couldn't place the listing.
+
+    Worth its space because it is also the rule: past three miles a place has
+    to come with parking, so the number explains why the digest looks the way
+    it does.
+    """
+    try:
+        miles = float(row["distance_mi"])
+    except (TypeError, ValueError, IndexError):
+        return ""
+    return f' <span class="dist">· {miles:.1f} mi from work</span>'
+
+
 def _card(row) -> str:
     price = _money(row["effective_price"] or row["price"])
     beds = _beds(row["bedrooms"])
-    where = html.escape(row["neighborhood"] or "San Francisco")
+    where = html.escape(row["neighborhood"] or "—")
     url = html.escape(row["url"], quote=True)
     title = html.escape((row["title"] or "").strip())[:120]
 
@@ -300,7 +315,7 @@ def _card(row) -> str:
   {shot}
   <div class="body">
     <div class="priceline"><span class="price">{price}</span><span class="spec">/mo · {beds}</span></div>
-    <p class="where">{where}</p>
+    <p class="where">{where}{_distance(row)}</p>
     {base}
     <div class="chips">{chips}</div>
     <div class="src"><span>{html.escape(_host(row["url"]))}</span><span class="go">Open →</span></div>

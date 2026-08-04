@@ -40,7 +40,8 @@ COPY data/ /app/data/
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HOME=/tmp \
-    APARTMENT_WATCH_GEOJSON=/app/data/sf-neighborhoods.geojson
+    APARTMENT_WATCH_GEOJSON=/app/data/sf-neighborhoods.geojson \
+    APARTMENT_WATCH_AREAS_GEOJSON=/app/data/search-areas.geojson
 
 USER 1000
 WORKDIR /app

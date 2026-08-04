@@ -32,6 +32,9 @@ class Search:
     max_bedrooms: int
     max_effective_rent: int
     min_rent: int = 0
+    # Keys into areas.AREAS. Order is preserved: sources search them in the
+    # order written here.
+    areas: tuple[str, ...] = ("san_francisco",)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,11 @@ class ParkingRule:
     #   assume:<n>    -> add $n, the conservative reading
     #   exclude       -> drop the listing rather than guess
     unknown_fee: str
+    # Parking becomes required past this many miles from `reference`. None
+    # disables the distance rule and leaves `required` to decide on its own.
+    required_beyond_miles: float | None = None
+    reference: tuple[float, float] | None = None
+    reference_label: str = "work"
 
     @property
     def unknown_fee_amount(self) -> int:
@@ -60,7 +68,11 @@ class ParkingRule:
 
 @dataclass(frozen=True)
 class Alerts:
+    # Two audiences, deliberately separate. `to` is whoever is hunting for a
+    # flat and only ever hears about listings; `health_to` is whoever runs this
+    # and hears when a scraper looks broken. Blank health_to = log it only.
     to: str
+    health_to: str
     max_listings_per_digest: int
     max_messages_per_run: int
     # Local hours at which a digest may be sent. Scraping runs far more often
@@ -130,13 +142,23 @@ def load(path: str) -> Criteria:
     with open(path) as fh:
         raw = yaml.safe_load(fh) or {}
 
+    import areas as areas_mod
+
     s = _require(raw, "search", "criteria.yaml")
+    area_keys = tuple(s.get("areas") or [areas_mod.SF])
+    unknown = [k for k in area_keys if k not in areas_mod.AREAS]
+    if unknown:
+        raise ConfigError(
+            f"search.areas: unknown area(s) {unknown}. "
+            f"Known: {sorted(areas_mod.AREAS)}"
+        )
     search = Search(
         city=s.get("city", "san-francisco"),
         min_bedrooms=int(_require(s, "min_bedrooms", "search")),
         max_bedrooms=int(_require(s, "max_bedrooms", "search")),
         max_effective_rent=int(_require(s, "max_effective_rent", "search")),
         min_rent=int(s.get("min_rent", 0)),
+        areas=area_keys,
     )
     if search.min_bedrooms > search.max_bedrooms:
         raise ConfigError("search: min_bedrooms is greater than max_bedrooms")
@@ -164,18 +186,46 @@ def load(path: str) -> Criteria:
                 "rules.parking.unknown_fee must be 'included', 'exclude', or "
                 f"'assume:<dollars>' — got {unknown_fee!r}"
             )
+    beyond = pr.get("required_beyond_miles")
+    ref_raw = pr.get("reference") or {}
+    reference = None
+    if ref_raw:
+        try:
+            reference = (float(ref_raw["lat"]), float(ref_raw["lon"]))
+        except (KeyError, TypeError, ValueError):
+            raise ConfigError("rules.parking.reference needs numeric lat and lon")
+    if beyond is not None:
+        beyond = float(beyond)
+        if beyond <= 0:
+            raise ConfigError("rules.parking.required_beyond_miles must be positive")
+        if reference is None:
+            # Otherwise the rule would silently never fire: distance to nowhere
+            # is None, and an unmeasurable listing is never gated.
+            raise ConfigError(
+                "rules.parking.required_beyond_miles needs rules.parking.reference "
+                "(the lat/lon it is measured from)"
+            )
     parking = ParkingRule(
         required=bool(pr.get("required", False)),
         accept=_tokens(pr.get("accept", []), PARKING_TOKENS, "rules.parking.accept"),
         unknown_fee=unknown_fee,
+        required_beyond_miles=beyond,
+        reference=reference,
+        reference_label=str(ref_raw.get("label") or "work"),
     )
 
     alerts_raw = raw.get("alerts", {})
     to = str(_require(alerts_raw, "to", "alerts"))
     if not re.fullmatch(r"\+?[0-9][0-9\-(). ]{6,}", to):
         raise ConfigError(f"alerts.to does not look like a phone number: {to!r}")
+    health_to = str(alerts_raw.get("health_to") or "")
+    if health_to and not re.fullmatch(r"\+?[0-9][0-9\-(). ]{6,}", health_to):
+        raise ConfigError(
+            f"alerts.health_to does not look like a phone number: {health_to!r}"
+        )
     alerts = Alerts(
         to=to,
+        health_to=health_to,
         max_listings_per_digest=int(alerts_raw.get("max_listings_per_digest", 5)),
         max_messages_per_run=max(1, int(alerts_raw.get("max_messages_per_run", 3))),
         send_hours=tuple(sorted({int(h) for h in (alerts_raw.get("send_hours") or [])})),

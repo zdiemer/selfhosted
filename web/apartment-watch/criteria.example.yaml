@@ -11,9 +11,25 @@ search:
   min_bedrooms: 0            # 0 == studio
   max_bedrooms: 1
   # The budget. Compared against *effective* rent: base rent plus any stated
-  # monthly parking fee (see rules.parking below).
-  max_effective_rent: 3000
+  # monthly parking fee (see rules.parking below) — so where parking is
+  # required, its cost comes out of this number rather than sitting beside it.
+  max_effective_rent: 3800
   min_rent: 0
+
+  # Where to look. Keys from src/areas.py, which holds the per-site plumbing
+  # (Craigslist subarea codes, URL slugs, the city names each site prints):
+  #
+  #   san_francisco   — the city, by neighbourhood polygon
+  #   southern_marin  — Sausalito up to San Rafael, including the unincorporated
+  #                     pockets between the towns. Not Novato, not West Marin.
+  #   burlingame      — the city
+  #
+  # Coordinates decide membership, always. A source's own area filter is a
+  # cheap first pass that keeps us from paying for detail pages in Santa Rosa.
+  areas:
+    - san_francisco
+    - southern_marin
+    - burlingame
 
 rules:
   laundry:
@@ -25,9 +41,22 @@ rules:
     reject: [hookups_only, none]
 
   parking:
-    # Desired, not required. Parking never gates a match; matches that have it
-    # are flagged in the SMS.
+    # Not required everywhere — required where it actually matters. Close to
+    # work a car is optional and parking is a perk; three miles out it's the
+    # difference between a home and a daily problem, and out in Marin or
+    # Burlingame there is no version of this that works without one.
     required: false
+    # Straight-line miles from `reference`. Past this, a listing must have
+    # parking or it's dropped — and since `unknown` is not in `accept`, a
+    # far-out listing that never mentions parking is dropped too. A listing we
+    # can't place at all is NOT gated: unknown distance is not "far".
+    required_beyond_miles: 3
+    reference:
+      label: work
+      # 2120 Broadway, San Francisco, CA 94115 — the parcel's own coordinates
+      # from the SF assessor (data.sfgov.org wv5m-vpq2), not a map pin.
+      lat: 37.795073
+      lon: -122.432554
     accept: [garage, carport, off_street, valet]
     # What to do when a listing HAS parking but never says what it costs:
     #   included     — assume it's in the rent (add $0)
@@ -147,7 +176,10 @@ sources:
   craigslist:
     enabled: true
     every_hours: 1        # no browser, so polling every hour is nearly free
-    max_detail_fetches: 150
+    # One budget across all three areas. At $3800 the SF list alone is ~330
+    # results where it was ~200 at $3000, so this only really bites on the
+    # first run after a widening — the overflow rolls into the next hour.
+    max_detail_fetches: 200
 
   # Needs the stealth browser (F5 "Client Challenge"). Ships laundry and
   # bedrooms inline as schema.org JSON-LD, so no detail fetches at all.
@@ -173,7 +205,8 @@ sources:
     enabled: true
     # Daily. It has also produced zero matches in every live run — detail pages
     # still 403 and its list skews to $3,500+ — so there's no case for polling
-    # it harder.
+    # it harder, and it's the one source left searching San Francisco only
+    # (see zillow_path in src/areas.py).
     every_hours: 24
     max_detail_fetches: 12
 
@@ -193,7 +226,13 @@ max_detail_fetches: 60
 request_delay_seconds: [1.5, 4.0]
 
 alerts:
-  to: "+15555550123"        # REPLACE — the number that gets the digest
+  # Two numbers, two audiences. `to` is whoever is flat-hunting: it only ever
+  # receives listings — a headline and a link, nothing about scrapers. If a run
+  # finds nothing, it hears nothing.
+  to: "+15555550123"        # REPLACE — the number that gets the listings
+  # `health_to` is whoever maintains this, and only hears when a source looks
+  # broken. Leave it blank to log those instead of texting them.
+  health_to: ""             # REPLACE, or leave blank to log instead
   # The text is now a single LINK, so listings live on the run page instead of
   # in the message — one SMS segment no matter how many matched. That's what
   # fixed the carrier dropping messages: ~27 segments in 70 minutes read as
@@ -212,10 +251,11 @@ alerts:
   # Empty list => send on every run.
   send_hours: [9, 13, 18]
   timezone: America/Los_Angeles
-  # No matches => no text. Silence means "nothing qualified", which is why the
-  # source-health check below exists.
+  # No matches => no text to `to`, ever. Silence means "nothing qualified",
+  # which is why the source-health check below exists — it goes to health_to.
   quiet_on_zero_matches: true
   # If a source returns zero listings this many runs in a row, say so — a
-  # broken parser and a quiet market look identical otherwise.
+  # broken parser and a quiet market look identical otherwise. This is the one
+  # message that goes out with no listing behind it, and it goes to health_to.
   health_alert_after_stale_runs: 3
   health_alert_cooldown_days: 3

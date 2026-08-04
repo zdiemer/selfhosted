@@ -24,6 +24,7 @@ import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import areas
 import config
 import geo
 import liveness
@@ -42,6 +43,23 @@ DEFAULT_CRITERIA = os.path.join(os.path.dirname(HERE), "criteria.yaml")
 DEFAULT_DB = os.environ.get("APARTMENT_WATCH_DB", "/data/apartment-watch.db")
 
 
+def _sf_records_ok(listing, region: str | None) -> bool:
+    """May we ask the San Francisco assessor about this listing?
+
+    Both SF-records lookups — the address geocode and the rent-control verdict —
+    query one city's parcel database, and it will happily match a same-named
+    street in another town. Coordinates decide when we have them; otherwise the
+    source's own idea of which area it was searching does; and a listing with
+    neither is allowed through, which is how every San Francisco listing behaved
+    before there was anything else to confuse it with.
+    """
+    if region:
+        return region == areas.SF
+    if listing.area:
+        return listing.area == areas.SF
+    return True
+
+
 def evaluate(listing, criteria, market_rent, trusted: bool = False, store=None) -> tuple[bool, str | None]:
     """Does this listing qualify? Returns (matched, reject_reason).
 
@@ -49,25 +67,53 @@ def evaluate(listing, criteria, market_rent, trusted: bool = False, store=None) 
     recorded, so the reject reason in the DB reads as the single most relevant
     thing wrong with a listing rather than a list.
     """
+    # Where is it? Resolved before anything else because it's what the run page
+    # prints, what the area test needs, and what the distance rule measures.
+    hood, region, how = geo.resolve(
+        listing.lat, listing.lon, listing.stated_neighborhood
+    )
+
     # A stated street address outranks the map pin. Posters place pins by hand
     # and get them wrong: a listing at 755 O'Farrell — squarely Tenderloin —
     # carried a pin 800m north in Nob Hill, which is the difference between
     # excluded and texted. The assessor knows where an address actually is.
-    if store is not None and listing.address and criteria.geocode_addresses:
+    #
+    # San Francisco only, and that guard is load-bearing now that we search
+    # Marin and Burlingame: the parcel database is the SF assessor's, so a
+    # Burlingame "1200 Broadway" matches San Francisco's 1200 Broadway and the
+    # listing teleports across the bay into a neighbourhood it isn't in.
+    if (
+        store is not None
+        and listing.address
+        and criteria.geocode_addresses
+        and _sf_records_ok(listing, region)
+    ):
         lat, lon = rentcontrol.geocode(store, listing.address)
         if lat is not None and lon is not None:
             listing.lat, listing.lon = lat, lon
+            hood, region, how = geo.resolve(lat, lon, listing.stated_neighborhood)
 
-    # Neighborhood, resolved before anything else because it's also what the
-    # digest prints.
-    hood, how = geo.resolve(listing.lat, listing.lon, listing.stated_neighborhood)
     listing.neighborhood = hood
+    if region:
+        # Coordinates beat whatever the source thought.
+        listing.area = region
 
-    # Coordinates are authoritative on whether this is even in the city.
-    # Craigslist's SF subarea search leaks Berkeley and out-of-state results,
-    # and the source-side slug filter is only a cheap first pass.
-    if listing.lat is not None and listing.lon is not None and hood is None:
-        return False, "outside SF"
+    # Coordinates are authoritative on whether this is even somewhere we're
+    # looking. Craigslist's subarea searches leak — its SF list came back with
+    # Berkeley, Brooklyn and the Bronx in it — and the source-side slug filter
+    # is only a cheap first pass.
+    if region is None:
+        if listing.lat is not None and listing.lon is not None:
+            return False, "outside search area"
+    elif region not in criteria.search.areas:
+        return False, f"outside search area: {hood}"
+
+    # Straight-line miles to wherever the parking rule is measured from. Kept
+    # on the listing even when it doesn't gate anything, because the run page
+    # shows it.
+    listing.distance_mi = geo.miles_from(
+        listing.lat, listing.lon, criteria.parking.reference
+    )
 
     # Effective rent: base plus whatever parking costs. Parking never gates a
     # match, but a $250/mo garage does count against the budget.
@@ -110,8 +156,25 @@ def evaluate(listing, criteria, market_rent, trusted: bool = False, store=None) 
             # enforce hardest.
             return False, f"laundry: {listing.laundry}"
 
-    if criteria.parking.required and not has_parking:
-        return False, f"parking: {listing.parking}"
+    # Parking is a distance rule, not a global one: within walking-and-transit
+    # range of where she's going every day it's a nice-to-have, and past that
+    # it's the difference between a home and a commute problem. A listing we
+    # couldn't place is NOT gated — unknown distance means we don't know, and
+    # dropping a coordinate-less SF post over a guess costs more than it saves.
+    far = None
+    if (
+        criteria.parking.required_beyond_miles is not None
+        and listing.distance_mi is not None
+        and listing.distance_mi > criteria.parking.required_beyond_miles
+    ):
+        far = listing.distance_mi
+    if not has_parking:
+        if criteria.parking.required:
+            return False, f"parking: {listing.parking}"
+        if far is not None:
+            return False, (
+                f"no parking, {far:.1f} mi from {criteria.parking.reference_label}"
+            )
 
     if hood and hood in criteria.exclude_neighborhoods:
         return False, f"neighborhood: {hood} ({how})"
@@ -180,9 +243,11 @@ def run_source(name, fetcher, criteria, store, market_rent, dry_run: bool) -> tu
             # row with the empty one.
             store.hydrate(listing)
             ok, reason = evaluate(listing, criteria, market_rent, trusted, store)
-            if ok and criteria.rent_control:
+            if ok and criteria.rent_control and _sf_records_ok(listing, listing.area):
                 # Only for matches: one assessor call per building, cached
-                # forever, and there's no point spending it on a reject.
+                # forever, and there's no point spending it on a reject. SF
+                # only — the ordinance is a San Francisco one, and so is the
+                # parcel database that answers for it.
                 info = rentcontrol.lookup(store, listing)
                 if info:
                     listing.rent_controlled = 1 if info["controlled"] else 0
@@ -355,7 +420,7 @@ def main(argv=None) -> int:
             token = secrets.token_urlsafe(8)
             shown = pending[: criteria.alerts.max_listings_per_digest]
             body = build_link_digest(
-                shown, date_label, criteria.alerts.web_base_url, token, problems
+                shown, date_label, criteria.alerts.web_base_url, token
             )
             day = date.today().isoformat()
             delivered = 0
@@ -380,14 +445,20 @@ def main(argv=None) -> int:
                 f"apartment-watch:smoke:{date.today().isoformat()}",
             )
         elif problems and may_send and store.health_alert_allowed(criteria.alerts.health_alert_cooldown_days):
-            # Zero matches *and* something looks broken. This is the only case
-            # where we break silence without a listing to show for it.
+            # Zero matches *and* something looks broken. This goes to health_to,
+            # never to `to`: the listings number hears about listings and
+            # nothing else, so no text at all is the honest signal there.
             logger.warning("no matches and sources look unhealthy: %s", problems)
-            sent = relay.send(
-                criteria.alerts.to,
-                format_health_alert(problems, date_label),
-                f"apartment-watch:health:{date.today().isoformat()}",
-            )
+            if criteria.alerts.health_to:
+                sent = relay.send(
+                    criteria.alerts.health_to,
+                    format_health_alert(problems, date_label),
+                    f"apartment-watch:health:{date.today().isoformat()}",
+                )
+            else:
+                logger.warning(
+                    "alerts.health_to is unset — logging this instead of texting it"
+                )
             # Only a health alert we actually sent starts the cooldown. Marking
             # the run otherwise would suppress the next three days of alerts
             # over a text that never went out.

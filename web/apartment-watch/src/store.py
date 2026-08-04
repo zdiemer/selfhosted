@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS listings (
     notified_run    TEXT,
     rent_controlled INTEGER,
     year_built      INTEGER,
+    distance_mi     REAL,
     matched         INTEGER NOT NULL DEFAULT 0,
     reject_reason   TEXT,
     first_seen      TEXT NOT NULL,
@@ -117,6 +118,7 @@ MIGRATIONS = [
     ("listings", "notified_run", "TEXT"),
     ("listings", "rent_controlled", "INTEGER"),
     ("listings", "year_built", "INTEGER"),
+    ("listings", "distance_mi", "REAL"),
     ("runs", "token", "TEXT"),
 ]
 
@@ -215,9 +217,9 @@ class Store:
             INSERT INTO listings (
                 source, external_id, url, title, price, effective_price, bedrooms,
                 laundry, parking, parking_fee, lat, lon, neighborhood, note, image_url,
-                rent_controlled, year_built,
+                rent_controlled, year_built, distance_mi,
                 matched, reject_reason, first_seen, last_seen
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source, external_id) DO UPDATE SET
                 url             = excluded.url,
                 title           = excluded.title,
@@ -234,6 +236,7 @@ class Store:
                 image_url       = COALESCE(excluded.image_url, listings.image_url),
                 rent_controlled = excluded.rent_controlled,
                 year_built      = excluded.year_built,
+                distance_mi     = excluded.distance_mi,
                 matched         = excluded.matched,
                 reject_reason   = excluded.reject_reason,
                 last_seen       = excluded.last_seen
@@ -247,6 +250,7 @@ class Store:
                 getattr(listing, "image_url", None),
                 getattr(listing, "rent_controlled", None),
                 getattr(listing, "year_built", None),
+                getattr(listing, "distance_mi", None),
                 1 if matched else 0, reject_reason, now, now,
             ),
         )

@@ -39,12 +39,19 @@ class Listing:
     note: str = ""
     # First photo, hot-linked by the web view. Optional everywhere.
     image_url: str | None = None
+    # Which search area this came from (an areas.AREAS key), when the source
+    # knows — Craigslist knows from the subarea it searched, Zumper and
+    # Apartments.com from the city on the row. main.py overwrites it with what
+    # the coordinates say, and uses it to decide whether San Francisco's parcel
+    # records may be consulted for this listing.
+    area: str | None = None
 
     # Filled in by main.py during evaluation.
     neighborhood: str | None = None
     effective_price: int | None = None
     rent_controlled: int | None = None
     year_built: int | None = None
+    distance_mi: float | None = None
 
 
 class Source(Protocol):

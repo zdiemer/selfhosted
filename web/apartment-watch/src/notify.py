@@ -137,7 +137,7 @@ def _listing_line(row) -> str:
     return f"{price} {_beds(row['bedrooms'])} {hood}{_parking_note(row)}{rc}{note} {row['url']}"
 
 
-def build_link_digest(rows, date_label: str, base_url: str, token: str, warnings: list[str]) -> str:
+def build_link_digest(rows, date_label: str, base_url: str, token: str) -> str:
     """One short SMS: the headline numbers and a link to the run page.
 
     Every listing URL is ~90 characters, so a four-listing text was four
@@ -145,6 +145,12 @@ def build_link_digest(rows, date_label: str, base_url: str, token: str, warnings
     dropping messages, which is exactly what happened. This is one segment and
     carries more than the long version did, because the page has photos and the
     full set rather than the first few.
+
+    **Results only.** This used to append source-health warnings, which is how a
+    digest arrived reading "3 new, $2400-$3000 <link> dahlia: 0 listings for 3
+    runs" — scraper trouble in a message meant for whoever is flat-hunting, who
+    can do nothing about it and shouldn't have to parse it. That belongs in
+    format_health_alert, addressed to alerts.health_to.
     """
     n = len(rows)
     prices = [r["effective_price"] or r["price"] for r in rows]
@@ -154,10 +160,7 @@ def build_link_digest(rows, date_label: str, base_url: str, token: str, warnings
         lo, hi = min(prices), max(prices)
         span = f", {_money(lo)}" if lo == hi else f", {_money(lo)}-{_money(hi)}"
     head = f"apartment-watch {date_label} - {n} new{span}"
-    body = f"{head}\n{base_url.rstrip('/')}/r/{token}"
-    if warnings:
-        body += "\n" + "; ".join(warnings)
-    return body[:MAX_BODY]
+    return f"{head}\n{base_url.rstrip('/')}/r/{token}"[:MAX_BODY]
 
 
 def build_digest(rows, max_listings: int, max_messages: int, date_label: str, warnings: list[str]):
@@ -227,8 +230,14 @@ def build_digest(rows, max_listings: int, max_messages: int, date_label: str, wa
 
 
 def format_health_alert(problems: list[str], date_label: str) -> str:
-    """Sent when zero matches might mean 'broken' rather than 'quiet'."""
+    """Sent when zero matches might mean 'broken' rather than 'quiet'.
+
+    Goes to alerts.health_to — the person who maintains this, not the person
+    reading it in a coffee queue. Naming the source is the whole payload; a
+    command to paste is not, because whoever gets this already knows where the
+    logs are and the one who doesn't can't use it anyway.
+    """
     return "\n".join(
-        [f"apartment-watch {date_label} — no matches, but:"] + problems +
-        ["Check `kubectl -n web logs job/...`"]
-    )
+        [f"apartment-watch {date_label} — no matches, and a source looks broken:"]
+        + problems
+    )[:MAX_BODY]

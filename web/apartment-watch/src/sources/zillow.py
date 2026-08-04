@@ -21,6 +21,8 @@ import logging
 import re
 from typing import Iterator
 
+import areas as area_registry
+
 from .base import Listing, parse_laundry, parse_parking, parse_parking_fee
 from .embedded import as_bedrooms, as_int, coords, first, json_blobs, walk
 
@@ -30,8 +32,8 @@ NAME = "zillow"
 ORIGIN = "https://www.zillow.com"
 
 
-def _search_url(criteria) -> str:
-    return f"{ORIGIN}/san-francisco-ca/rentals/"
+def _search_url(area) -> str:
+    return f"{ORIGIN}/{area.zillow_path}/rentals/"
 
 
 def _cards(html: str) -> list[dict]:
@@ -84,8 +86,12 @@ class Zillow:
     name = NAME
 
     def search(self, fetcher, criteria, seen: set[str]) -> Iterator[Listing]:
-        url = _search_url(criteria)
-        logger.info("[%s] search %s", NAME, url)
+        for area in area_registry.for_source(criteria, "zillow_path"):
+            yield from self._search_area(fetcher, criteria, seen, area)
+
+    def _search_area(self, fetcher, criteria, seen, area) -> Iterator[Listing]:
+        url = _search_url(area)
+        logger.info("[%s/%s] search %s", NAME, area.key, url)
         # Cold browser session is enough; warming this 1.9MB page up front
         # stalls for minutes and buys nothing. `origin` is the retry path.
         html = fetcher.get(url, stealth_first=True, origin=ORIGIN)
@@ -93,7 +99,7 @@ class Zillow:
             raise RuntimeError("search page fetch failed (PerimeterX not cleared)")
 
         cards = _cards(html)
-        logger.info("[%s] %d result cards", NAME, len(cards))
+        logger.info("[%s/%s] %d result cards", NAME, area.key, len(cards))
 
         cfg = criteria.sources.get(NAME, {})
         budget = int(cfg.get("max_detail_fetches", 12))
@@ -123,6 +129,7 @@ class Zillow:
                 lon=lon,
                 address=str(first(card, "address", "addressStreet", default="") or "") or None,
                 image_url=str(first(card, "imgSrc", default="") or "") or None,
+                area=area.key,
             )
 
             # Cheap pre-filter: don't spend a browser navigation on a listing

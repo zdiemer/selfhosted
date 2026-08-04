@@ -18,6 +18,8 @@ import logging
 import re
 from typing import Iterator
 
+import areas as area_registry
+
 from .base import Listing, parse_bedrooms, parse_laundry, parse_parking, parse_parking_fee
 from .embedded import as_int, coords, first, json_blobs, walk
 
@@ -27,13 +29,13 @@ NAME = "apartments_com"
 ORIGIN = "https://www.apartments.com"
 
 
-def _search_url(criteria) -> str:
+def _search_url(criteria, area) -> str:
     beds = "studios" if criteria.search.max_bedrooms == 0 else f"min-{max(criteria.search.min_bedrooms,1)}-bedrooms"
     if criteria.search.min_bedrooms == 0 and criteria.search.max_bedrooms >= 1:
         # Their URL grammar has no "studio OR 1br"; the unfiltered city page
         # plus our own bedroom test covers both without a second request.
-        return f"{ORIGIN}/san-francisco-ca/under-{criteria.search.max_effective_rent}/"
-    return f"{ORIGIN}/san-francisco-ca/{beds}-under-{criteria.search.max_effective_rent}/"
+        return f"{ORIGIN}/{area.apartments_path}/under-{criteria.search.max_effective_rent}/"
+    return f"{ORIGIN}/{area.apartments_path}/{beds}-under-{criteria.search.max_effective_rent}/"
 
 
 def _amenity_text(d: dict) -> str:
@@ -76,13 +78,19 @@ class ApartmentsCom:
     name = NAME
 
     def search(self, fetcher, criteria, seen: set[str]) -> Iterator[Listing]:
-        url = _search_url(criteria)
-        logger.info("[%s] search %s", NAME, url)
+        for area in area_registry.for_source(criteria, "apartments_path"):
+            yield from self._search_area(fetcher, criteria, area)
+
+    def _search_area(self, fetcher, criteria, area) -> Iterator[Listing]:
+        url = _search_url(criteria, area)
+        logger.info("[%s/%s] search %s", NAME, area.key, url)
         # warm_up_first is mandatory here, not a fallback: a cold request
         # returns a 2.5KB Akamai challenge shell 100% of the time.
         html = fetcher.get(url, stealth_first=True, origin=ORIGIN, warm_up_first=True)
         if not html:
-            raise RuntimeError("search page fetch failed (Akamai challenge not cleared)")
+            raise RuntimeError(
+                f"search page fetch failed ({area.key}: Akamai challenge not cleared)"
+            )
 
         cards = _dom_cards(html)
         complexes = [
@@ -90,7 +98,8 @@ class ApartmentsCom:
             if str(d.get("@type")) == "ApartmentComplex" and d.get("@id")
         ]
         logger.info(
-            "[%s] %d complexes in JSON-LD, %d DOM cards", NAME, len(complexes), len(cards)
+            "[%s/%s] %d complexes in JSON-LD, %d DOM cards",
+            NAME, area.key, len(complexes), len(cards),
         )
 
         for c in complexes:
@@ -99,9 +108,9 @@ class ApartmentsCom:
             if not href.startswith("http"):
                 continue
             address = c.get("address") if isinstance(c.get("address"), dict) else {}
-            locality = str(address.get("addressLocality") or "")
-            # The SF page includes Daly City, Brisbane, South SF results.
-            if locality and locality.lower() != "san francisco":
+            # Every area page is wider than its area: the SF page includes Daly
+            # City, Brisbane and South SF; the county page includes Novato.
+            if not area_registry.in_area(area, address.get("addressLocality")):
                 continue
 
             external_id = href.rstrip("/").rsplit("/", 1)[-1]
@@ -130,4 +139,5 @@ class ApartmentsCom:
                 address=str(address.get("streetAddress") or "") or None,
                 body=blob,
                 image_url=card.get("image") or (img if isinstance(img, str) else None),
+                area=area.key,
             )
