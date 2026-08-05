@@ -14,3 +14,7 @@
 	path = infra/sms-relay
 	url = git@github.com:zdiemer/sms-relay.git
 	branch = main
+[submodule "discord/smitele-bot"]
+	path = discord/smitele-bot
+	url = git@github.com:zdiemer/smitele-bot.git
+	branch = main
