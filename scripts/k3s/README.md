@@ -17,7 +17,8 @@ chart directory.
 | [`debug.sh`](debug.sh) | Diagnose node health — tailscale, k3s service, drive/memory health, CPU temp, pending reboots, failed units, resource usage, pods. `--node <name>`, `--all`, `--json` |
 | [`cleanup.sh`](cleanup.sh) | Reclaim disk on nodes. `--report` for a usage report (also flags orphaned local PVs), `--deep` to purge images, containerd snapshots and Docker state |
 | [`restart.sh`](restart.sh) | Restart nodes. `--all` rolls agents first, draining/uncordoning each; `--service-only` restarts k3s rather than rebooting; `--force` skips the drain |
-| [`update.sh`](update.sh) | Rolling OS package updates, agents first. `--reboot` to auto-reboot when required |
+| [`update.sh`](update.sh) | Rolling OS package updates, agents first. `--reboot` to auto-reboot when required. Warns when a reboot would change kernel, and refuses to do it unattended on a node that can't recover from a bad boot |
+| [`kernel.sh`](kernel.sh) | Kernel state per node and boot-failure recovery. `--report` for running vs installed kernels and which nodes are one reboot from changing; `--no-auto-kernel` to stop unattended-upgrades installing kernels; `--protect` for panic auto-reboot and a bounded recordfail wait; `--hold`/`--unhold` |
 | [`k3s-upgrade.sh`](k3s-upgrade.sh) | Rolling k3s version upgrade, agents then server. `--version <ver>`, or latest stable |
 | [`_common.sh`](_common.sh) | Shared helpers. Sourced, not executed |
 
@@ -48,6 +49,23 @@ of minutes; that's normal.
 ./restart.sh --all --service-only  # bounce k3s everywhere, no reboots
 ./k3s-upgrade.sh --version v1.31.4+k3s1
 ```
+
+## Kernels are not upgraded automatically
+
+`unattended-upgrades` installed a 7.0 kernel that one laptop could not boot; it
+panicked on the next restart — days later, for an unrelated reason — and needed
+a physical power cycle. The fleet mixes server hardware with old laptops, and
+the same 7.0.0-28 that runs fine on `zachd-ubuntu` and `zachd-ubuntu-2` is what
+killed the laptop, so no kernel can be called good fleet-wide.
+
+Kernel packages are therefore blacklisted from unattended-upgrades on every
+node, and in [`k3s-cluster/join-cluster.sh`](https://github.com/zdiemer/k3s-cluster)
+for nodes joining later. Kernels change only through `update.sh`, which drains
+one node at a time and waits for it to come back. Everything else still updates
+unattended.
+
+`kernel.sh --report` shows which nodes are one reboot away from a different
+kernel — the moment the risk actually lands, which is otherwise invisible.
 
 Drain-based operations move pods around. Per the root README's convention, don't
 roll nodes hosting the Minecraft server while players are on — use
