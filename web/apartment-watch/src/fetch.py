@@ -26,6 +26,8 @@ import time
 
 import httpx
 
+import egress
+
 logger = logging.getLogger(__name__)
 
 # A boring, current desktop UA. Camoufox generates its own fingerprint; this is
@@ -76,8 +78,16 @@ class Fetcher:
     def __init__(self, delay_range: tuple[float, float] = (1.5, 4.0), use_camoufox: bool = True):
         self.delay_range = delay_range
         self.use_camoufox = use_camoufox
+        # trust_env=False so the proxy is decided by egress.py and nothing else.
+        # httpx would otherwise pick up HTTP_PROXY on its own while Camoufox
+        # below ignored it, and the two tiers would leave from different
+        # addresses — see egress.py.
         self._client = httpx.Client(
-            headers=_HEADERS, follow_redirects=True, timeout=30.0
+            headers=_HEADERS,
+            follow_redirects=True,
+            timeout=30.0,
+            trust_env=False,
+            proxy=egress.httpx_proxy(),
         )
         self._browser = None
         self._browser_ctx = None
@@ -160,10 +170,16 @@ class Fetcher:
             self._browser_failed = True
             return None
         try:
+            # geoip=True derives timezone, locale and lat/long FROM THE EXIT IP,
+            # so it and the proxy have to be set together or the fingerprint
+            # describes somewhere the traffic isn't coming from — which is a
+            # louder signal than either alone. Camoufox resolves the exit itself
+            # when handed a proxy, so passing both stays consistent.
             self._browser_ctx = Camoufox(
                 headless="virtual",
                 geoip=True,
                 humanize=True,
+                proxy=egress.camoufox_proxy(),
                 exclude_addons=[DefaultAddons.UBO],
             )
             self._browser = self._browser_ctx.__enter__()

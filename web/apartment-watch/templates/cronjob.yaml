@@ -29,6 +29,7 @@ spec:
         metadata:
           labels:
             {{- include "apartment-watch.selectorLabels" . | nindent 12 }}
+            {{- include "apartment-watch.egressLabels" . | nindent 12 }}
           annotations:
             # Roll the next run onto edited criteria / a rotated key without a
             # rebuild.
@@ -94,6 +95,7 @@ spec:
                   value: /tmp
                 - name: PYTHONUNBUFFERED
                   value: "1"
+                {{- include "apartment-watch.egressEnv" . | nindent 16 }}
                 {{- range $k, $v := .Values.extraEnv }}
                 - name: {{ $k }}
                   value: {{ $v | quote }}

@@ -114,6 +114,42 @@ one-shot warm-and-retry *if* a cold fetch comes back blocked — so a site that
 starts demanding a warm session gets one automatically, without paying for it
 daily.
 
+## Where the traffic leaves from
+
+The run's outbound scraping goes through the cluster's forward proxy
+([`infra/egress-proxy`](../../infra/egress-proxy/)), on `lane: direct`.
+
+`direct` means the traffic still leaves from the same address it always did.
+What changes is that it is authenticated as `apartment-watch`, counted, and
+logged per destination — the measurement needed before any allowlist can be
+written honestly, with no behavioural risk to weigh against it. Moving to a
+different exit is later, and a one-word change.
+
+**Why it is `mode: explicit` and not `env`.** This run makes external requests
+through three clients that disagree about proxies:
+
+| Client | Used for | Honours `HTTP_PROXY`? |
+|---|---|---|
+| `httpx` | the cheap tier (Craigslist) | yes |
+| `urllib` | the liveness sweep | yes |
+| Camoufox | the browser tier (Zumper, Apartments.com, Zillow) | **no** |
+
+Setting `HTTP_PROXY` would have proxied the first two and left the third — the
+one that actually faces PerimeterX and Akamai — going direct. Not a broken run;
+a *split* one, which for an anti-bot target is worse than either address alone.
+It would also have caught `notify.py`'s post to `sms-relay` inside the cluster.
+
+So nothing sets `HTTP_PROXY`. [`src/egress.py`](src/egress.py) reads
+`EGRESS_PROXY_URL` and hands each client the shape it wants: a URL for httpx, a
+credential-split dict for Camoufox (Playwright rejects inline credentials), an
+opener for urllib. Anything that does not use that module is direct by
+construction rather than by omission — which is exactly what `notify.py` wants.
+
+**`geoip=True` is the thing to remember before changing lanes.** Camoufox derives
+locale, timezone and lat/long from the exit IP. An exit that is not plausibly
+near San Francisco makes the fingerprint describe somewhere the traffic is not
+coming from, which is a louder signal than the current residential address.
+
 ## Photos
 
 Every source now has one, and none of them are hot-linked.

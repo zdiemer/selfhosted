@@ -103,3 +103,40 @@ secrets:
   # Per-service API key from sms-relay's SMS_RELAY_API_KEYS map. Set in
   # values.local.yaml — never here.
   smsApiKey: ""
+
+# ---------------------------------------------------------------------------
+# Egress
+# ---------------------------------------------------------------------------
+# Route this run's outbound scraping through the cluster's forward proxy
+# (infra/egress-proxy) instead of straight out of the house.
+#
+# WHAT THIS BUYS TODAY. On `lane: direct` the traffic still leaves from the same
+# address it always did — what changes is that it is authenticated as
+# apartment-watch, counted, and logged per destination. That is the measurement
+# this needs before any allowlist can be written honestly, and it is a change
+# with no behavioural risk to weigh against it.
+#
+# WHAT MOVING LANES WOULD COST, and why it is not done here yet: src/fetch.py
+# runs Camoufox with geoip=True, which derives locale, timezone and lat/long
+# FROM THE EXIT IP. An exit that is not plausibly near San Francisco makes the
+# fingerprint describe somewhere the traffic is not coming from, which is a
+# louder signal to PerimeterX than the current residential address is. Move this
+# to `vps` only once that exit is known to be US West Coast.
+egress:
+  proxy:
+    enabled: true
+    lane: direct
+
+    # MUST be `explicit` for this chart. See src/egress.py: httpx and urllib
+    # honour HTTP_PROXY and Camoufox does not, so `env` would send the cheap
+    # tier and the liveness sweep through the proxy while the browser tier —
+    # the one facing PerimeterX and Akamai — kept leaving direct. A split egress
+    # is worse than either address on its own. `env` would also catch
+    # notify.py's post to sms-relay inside the cluster.
+    mode: explicit
+
+  # Declared destinations. Empty means "anywhere" at the proxy for now — fill
+  # this from a real measurement (scripts/egress-audit.sh), never from memory,
+  # then tighten. An allowlist written from imagination breaks the run at the
+  # worst possible moment and teaches everyone to widen it back to empty.
+  allowedHosts: []

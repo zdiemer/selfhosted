@@ -65,6 +65,59 @@ The release renders `Secret/egress-proxy-client` into the client's namespace (`u
 
 `NO_PROXY` in `env` mode is a chart constant, not a per-service value. It must always cover `.svc`, `.cluster.local`, `10.42.0.0/16`, `10.43.0.0/16` and `192.168.4.0/24`, or in-cluster calls (`money` → `gamedex.games.svc`, `apartment-watch` → `sms-relay.infra.svc`) route through squid and break.
 
+### Reference implementation
+
+`web/apartment-watch` is the worked example — chart side in `templates/_helpers.tpl` (`egressEnv` / `egressLabels`, the snippet to copy) and application side in `src/egress.py`.
+
+It is worth reading before wiring anything else, because it shows the failure the contract exists to prevent. That one run makes external requests through three clients that disagree about proxies:
+
+| Client | Honours `HTTP_PROXY`? |
+|---|---|
+| `httpx` (cheap tier) | yes |
+| `urllib` (liveness sweep) | yes |
+| Camoufox (browser tier) | **no** |
+
+So `mode: env` there would have routed the cheap tier and the liveness sweep through the proxy while the browser tier — the one that actually faces PerimeterX and Akamai — kept leaving direct. Not a broken run; a *split* one, which for an anti-bot target is worse than either address on its own. It would also have caught `notify.py`'s post to `sms-relay` inside the cluster, which `NO_PROXY` can exclude right up until someone fat-fingers the list.
+
+`src/egress.py` is the fix: one module, `EGRESS_PROXY_URL`, and each client asked in its own dialect (a URL for httpx, a credential-split dict for Playwright, an opener for urllib). Anything that doesn't use it is direct by construction rather than by omission.
+
+### smitele-bot — recipe, not yet applied
+
+Deferred deliberately: it is a submodule with in-flight changes, and bumping the pointer mid-edit would be a mess. It also has an existing, well-reasoned `credentials.egressProxy` that should stay as the manual override.
+
+```yaml
+# values.yaml
+egress:
+  proxy:
+    enabled: true
+    lane: direct     # measured, unchanged; move to vps once one exists
+    mode: explicit   # MANDATORY — see below
+```
+
+```gotemplate
+{{/* templates/_helpers.tpl — extend the existing define */}}
+{{- define "smitele-bot.egressEnv" -}}
+{{- if .Values.credentials.egressProxy }}
+- name: SMITELE_EGRESS_PROXY
+  valueFrom:
+    secretKeyRef: { name: {{ include "smitele-bot.fullname" . }}, key: egressProxy, optional: true }
+{{- else if .Values.egress.proxy.enabled }}
+- name: SMITELE_EGRESS_PROXY
+  valueFrom:
+    secretKeyRef: { name: egress-proxy-client, key: url, optional: true }
+{{- end }}
+{{- end -}}
+```
+
+Then widen the two call-site gates (`deployment.yaml`, `smite2-collector-cronjob.yaml`) from `.Values.credentials.egressProxy` to `(or .Values.credentials.egressProxy .Values.egress.proxy.enabled)`, and stamp `egress.zachd/proxied: "true"` on both pod templates.
+
+**`mode: explicit` is mandatory there, and this is the sharpest instance of the rule.** `tracker_client.new_session()` sets `trust_env=False` on purpose: `curl_cffi` reads `HTTPS_PROXY` on its own and Camoufox does not, so an environment-set proxy sends the crawl through one address while the clearance cookie was minted at another — 403 on every request, twelve solves burned, four-hour breaker armed.
+
+Two things to check rather than assume once applied:
+
+- `egress.identity()` becomes `http://egress-proxy.infra.svc.cluster.local:3128` for **both** the bot and the collector, so they share one clearance bucket — which its own `docs/proxy-setup.md` names as the recommended posture, since it halves solve consumption.
+- `observed_ip()` and the `EgressChanged` guard still work. Validate with the tool that already exists: `collect.py --check-egress`, which must report the same address at resolve, mint and request.
+
 ## What must never be proxied
 
 | Service | Why |

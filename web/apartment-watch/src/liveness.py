@@ -23,6 +23,8 @@ import logging
 import urllib.error
 import urllib.request
 
+import egress
+
 logger = logging.getLogger(__name__)
 
 # Statuses that mean the post itself is gone. Craigslist answers 410 for both
@@ -39,7 +41,11 @@ def _status(url: str, timeout: int = 12) -> int | None:
     """HTTP status for a listing URL, or None if we couldn't tell."""
     req = urllib.request.Request(url, headers={"User-Agent": _UA}, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # Through the shared opener, not the module-level urlopen: this is a
+        # request to a listing site and belongs on the same exit as the rest of
+        # the scrape. notify.py deliberately keeps using plain urlopen, because
+        # sms-relay is inside the cluster.
+        with egress.opener().open(req, timeout=timeout) as resp:
             return resp.status
     except urllib.error.HTTPError as exc:
         return exc.code
