@@ -136,10 +136,21 @@ minecraftServer:
     timeoutEstablished: 3600   # pause after 1h idle
     period: 10
 
-  # BlueMap binds a webserver on 8100 inside the pod. klipper-lb publishes it
-  # on node IPs; the talaria sibling project can front it with DuckDNS+TLS.
-  # Both add-ons need one-time manual config after first boot — see
-  # ADDON_SETUP.md for Discord bot token + BlueMap accept-download steps.
+  # BlueMap binds a webserver on 8100 inside the pod. It reaches the outside
+  # world at map.zachd.duckdns.org through Traefik — see minecraft/bluemap-ingress/,
+  # which owns that Ingress. Both add-ons need one-time manual config after first
+  # boot; see ADDON_SETUP.md for the Discord bot token and BlueMap
+  # accept-download steps.
+  #
+  # ClusterIP, NOT LoadBalancer. This used to be a LoadBalancer, which made
+  # klipper-lb publish BlueMap on port 8100 of EVERY node IP. Anyone on the LAN
+  # reached it without passing through Traefik at all — no TLS, and, once access
+  # logging existed, no record of the request either. The Ingress was always the
+  # intended front door; the LoadBalancer was a second, unguarded one left over
+  # from before it existed.
+  #
+  # An Ingress only needs a Service its own namespace can reach, so ClusterIP is
+  # sufficient. Changing this restarts the server: schedule it for an empty one.
   extraPorts:
     - name: bluemap
       containerPort: 8100
@@ -147,7 +158,7 @@ minecraftServer:
       service:
         enabled: true
         embedded: false
-        type: LoadBalancer
+        type: ClusterIP
         port: 8100
       ingress:
         enabled: false
