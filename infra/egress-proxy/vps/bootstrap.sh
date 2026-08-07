@@ -40,8 +40,8 @@ echo "==> Installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq squid-openssl apt-transport-https ca-certificates \
-  nftables unattended-upgrades openssl dnsutils >/dev/null 2>&1 || \
-  apt-get install -y -qq squid nftables unattended-upgrades openssl dnsutils >/dev/null
+  nftables unattended-upgrades openssl dnsutils curl >/dev/null 2>&1 || \
+  apt-get install -y -qq squid nftables unattended-upgrades openssl dnsutils curl >/dev/null
 # squid-openssl where available; plain squid otherwise. Either is fine — the
 # cluster side was verified working against a GnuTLS build, so this does not
 # depend on which TLS library the distro chose.
