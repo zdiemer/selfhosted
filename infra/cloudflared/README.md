@@ -61,6 +61,7 @@ so the only column that actually varies is the hostname:
 | `old.diemer.codes` | `web/old-diemer-codes` | `old-diemer-codes:80` |
 | `pdf.diemer.codes` | `docs/stirling` | `stirling:8080` |
 | `romm.diemer.codes` | `games/romm` | `romm:8080` |
+| `smite.diemer.codes` | `discord/smitele-bot-web` | `smitele-bot-web:8080` |
 | `status.diemer.codes` | `infra/cluster-status` | `cluster-status:80` |
 | `webdav.diemer.codes` | `auth/keepass-webdav` | `keepass-webdav:80` |
 | `talaria.deals` | `default/talaria-deals` | `talaria-nginx:80` |
