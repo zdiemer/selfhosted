@@ -42,12 +42,12 @@ POD_REPO="${POD_REPO:-/home/node/code/selfhosted}"
 
 # NAS backup. A dedicated share — deliberately NOT the games dataset, which
 # games/romm mounts into the cluster read-only.
-NAS_SHARE="${NAS_SHARE:-//192.168.4.36/backup}"
+NAS_SHARE="${NAS_SHARE:-//192.168.4.36/backups}"
 NAS_DIR="${NAS_DIR:-selfhosted-secrets}"
 NAS_CREDS="${NAS_CREDS:-$HOME/.config/selfhosted/nas-creds}"
 AGE_KEY="${AGE_KEY:-$HOME/.config/selfhosted/backup-age.key}"
-AGE_RECIPIENTS="${ROOT}/scripts/backup-recipients.txt"
-PAPER_MARKER="$HOME/.config/selfhosted/.paper-key-confirmed"
+AGE_RECIPIENTS="${AGE_RECIPIENTS:-${ROOT}/scripts/backup-recipients.txt}"
+PAPER_MARKER="${PAPER_MARKER:-$HOME/.config/selfhosted/.paper-key-confirmed}"
 
 # Secret files that are not values.local.yaml. apartment-watch reads criteria
 # off disk via .Files.Get in templates/configmap.yaml, so it must be present
