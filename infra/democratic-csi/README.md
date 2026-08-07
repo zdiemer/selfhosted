@@ -76,7 +76,7 @@ parents. Missing parents are the single most common cause of a PVC that never
 binds.
 
 ```
-tank/k8s
+vault/k8s
 ├── iscsi/v      zvols, one per RWO volume
 ├── iscsi/s      detached snapshots
 ├── nfs/v        datasets, one per RWX volume
@@ -84,7 +84,7 @@ tank/k8s
 └── restic       k8up repository (see infra/k8up)
 ```
 
-Substitute your real pool name for `tank` and update `datasetParentName` /
+The pool here is `vault`. If that changes, update `datasetParentName` /
 `detachedSnapshotsDatasetParentName` in both overlay files to match.
 
 ### 4. Create an API key

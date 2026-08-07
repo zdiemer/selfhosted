@@ -69,8 +69,8 @@ democratic-csi:
       zfs:
         # Must already exist — democratic-csi creates children, not parents.
         # upgrade.sh pre-flights this via the API.
-        datasetParentName: tank/k8s/nfs/v
-        detachedSnapshotsDatasetParentName: tank/k8s/nfs/s
+        datasetParentName: vault/k8s/nfs/v
+        detachedSnapshotsDatasetParentName: vault/k8s/nfs/s
 
         # Unlike the iSCSI side, quotas here are real and worth having: an NFS
         # dataset with no quota lets one runaway volume consume the whole pool,

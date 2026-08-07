@@ -81,8 +81,8 @@ democratic-csi:
         # Set these to real datasets on your pool before first install. They must
         # exist — democratic-csi creates children, not parents. upgrade.sh
         # pre-flights their existence via the API.
-        datasetParentName: tank/k8s/iscsi/v
-        detachedSnapshotsDatasetParentName: tank/k8s/iscsi/s
+        datasetParentName: vault/k8s/iscsi/v
+        detachedSnapshotsDatasetParentName: vault/k8s/iscsi/s
 
         # Thin provisioning. The cluster's declared sizes have always been
         # nominal (local-path enforced no quota at all), so reserving the full
