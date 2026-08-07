@@ -1,0 +1,11 @@
+apiVersion: v2
+name: traefik
+description: Cluster-wide Traefik configuration — the single ingress choke point, its ACME certresolver, and its access logging
+type: application
+version: 1.0.0
+# We do not install Traefik: k3s does, from its bundled HelmChart. This chart
+# only owns the HelmChartConfig that overlays it, so appVersion tracks the
+# Traefik that k3s currently ships rather than anything we build.
+appVersion: "3.6.10"
+maintainers:
+  - name: zachd

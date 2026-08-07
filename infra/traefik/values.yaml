@@ -1,0 +1,177 @@
+# Traefik: the cluster's single ingress choke point.
+#
+# WHAT THIS CHART IS. k3s ships Traefik as a managed HelmChart and owns the
+# install. We do not. This chart owns exactly one object — a HelmChartConfig
+# named `traefik` in kube-system — which k3s's helm-controller merges into that
+# release. Everything Traefik-wide is set here: the ACME certresolver, the
+# http->https redirect, the ACME storage PVC, the update strategy, and access
+# logging.
+#
+# WHY IT'S SEPARATE FROM infra/duckdns. It used to live there, because the
+# certresolver needs the DuckDNS token and that chart owns the token. But the
+# object is Traefik's whole config overlay, not a DNS concern, and the moment
+# access logging arrived the mismatch stopped being cosmetic. duckdns still
+# owns the token Secret (in both `infra` and `kube-system`); this chart only
+# *references* it by name. That coupling is real:
+#
+#   * Renaming the Secret in infra/duckdns breaks Traefik's certresolver.
+#   * Traefik reads DUCKDNS_TOKEN as an env var at pod start and never
+#     refreshes it. Rotating the token means `kubectl rollout restart
+#     deployment traefik -n kube-system`, or everything looks healthy for ~60
+#     days until a renewal quietly fails.
+#
+# EVERY CHANGE HERE IS A CLUSTER-WIDE INGRESS OUTAGE. helm-controller redeploys
+# Traefik whenever valuesContent changes, and with `updateStrategy: Recreate`
+# (below) that is a real gap, not a rolling one. Issued certs survive — acme.json
+# is on the PVC — so it is downtime, not a re-issue. upgrade.sh diffs the live
+# config against the rendered one and makes you look at it first.
+
+# The k3s-managed Traefik release: chart name + namespace. The HelmChartConfig
+# must match both exactly or helm-controller silently ignores it — no error,
+# no event, it just never applies.
+helmChart:
+  name: traefik
+  namespace: kube-system
+
+# ---------------------------------------------------------------------------
+# TLS / ACME
+# ---------------------------------------------------------------------------
+# The certresolver's name. Every ingress in this repo hardcodes `duckdns` in its
+# `ingress.tls.certResolver`, so renaming this means editing all of them AND
+# forces a full re-issue of every cert. Don't, casually.
+acme:
+  enabled: true
+  certResolver: duckdns
+  email: zach.diemer@gmail.com
+  provider: duckdns
+
+  # The Secret holding the DuckDNS token, created by the infra/duckdns chart
+  # into this namespace (a secretKeyRef cannot cross namespaces, which is why
+  # that chart renders it twice). Change it there, not here.
+  tokenSecret:
+    name: duckdns-token
+    key: token
+
+  # Resolve the TXT record against public resolvers rather than the cluster's
+  # own DNS, which knows nothing about duckdns.org.
+  resolvers:
+    - 1.1.1.1:53
+    - 8.8.8.8:53
+  # DuckDNS propagates fast, but ACME will fail the order outright if it checks
+  # too early — these three knobs buy patience, not speed.
+  delayBeforeCheck: 30s
+  propagationTimeout: 300
+  pollingInterval: 10
+
+# Where Traefik persists acme.json (issued certs + the ACME account key).
+# PVC-backed on purpose: without it every Traefik restart re-registers and
+# re-issues, walking straight into Let's Encrypt rate limits.
+#
+# This is also why replicaCount stays at 1 and why the strategy must be
+# Recreate: the volume is ReadWriteOnce on local-path storage, so two pods can
+# never hold it at once. Scaling Traefik out is a real project — it needs RWX
+# storage or an entirely different cert store.
+acmeStorage:
+  size: 128Mi
+  path: /data
+
+# ---------------------------------------------------------------------------
+# Rollout strategy
+# ---------------------------------------------------------------------------
+# THE KEY IS `updateStrategy`, NOT `deployment.strategy`.
+#
+# This config previously set `deployment.strategy.type: Recreate`, which the
+# Traefik chart does not read — the live Deployment sat on the chart default
+# (RollingUpdate, maxSurge 1, maxUnavailable 0) for as long as that config
+# existed. Nothing looked wrong because a rollout only wedges when the new pod
+# lands on a *different* node than the old one: maxSurge 1 starts the
+# replacement before the original terminates, both want the same ReadWriteOnce
+# local-path volume, and the new pod blocks on FailedAttachVolume until
+# something gives.
+#
+# rollingUpdate is explicitly nulled because the chart default sets it, and
+# Kubernetes rejects a Deployment carrying rollingUpdate alongside Recreate.
+updateStrategy:
+  type: Recreate
+  rollingUpdate: null
+
+# ---------------------------------------------------------------------------
+# Access logging
+# ---------------------------------------------------------------------------
+# Every external HTTP request in this cluster passes through Traefik, so this
+# one log is a complete record of external ingress by construction — no matter
+# which namespace or repo owns the thing being reached. Before this existed the
+# cluster had literally zero request-level visibility: ~2 log lines per day, and
+# no way to answer "is anything scanning me" or "why did that 502".
+#
+# Shipped off-node by infra/alloy. See that chart for retention and volume.
+accessLog:
+  enabled: true
+
+  # JSON so Alloy can parse fields into labels without regex. `common` is the
+  # Apache-style default and is markedly worse to query.
+  format: json
+
+  # Keep every status code. The instinct is to log only 4xx/5xx, but the 2xx
+  # stream is exactly what makes "someone is walking my URL space" visible, and
+  # at home traffic volumes the cost is negligible (~0.3-1 GB/month total).
+  filters:
+    statuscodes: ""
+    retryattempts: true
+    minduration: ""
+
+  # Don't log Traefik's own internal routers (ping, dashboard, the acme
+  # endpoint). They are health noise, not ingress.
+  addInternals: false
+
+  fields:
+    general:
+      defaultmode: keep
+      names:
+        # Redundant with StartUTC, and doubles the timestamp cost per line.
+        StartLocal: drop
+        # Duplicates RequestMethod + RequestPath + RequestProtocol verbatim.
+        RequestLine: drop
+        # Ephemeral source ports; noise, and they wreck label cardinality if
+        # anything downstream ever promotes them.
+        ClientPort: drop
+        RequestPort: drop
+        # Only meaningful with compression middleware, which we don't run.
+        GzipRatio: drop
+        RequestCount: drop
+
+    headers:
+      # THIS LINE IS SECURITY-LOAD-BEARING. `drop` is what keeps session
+      # cookies, Authelia's Remote-* identity headers, and Authorization out of
+      # logs that leave the house. Only add to the allowlist below something you
+      # are certain never carries a credential.
+      defaultmode: drop
+      names:
+        User-Agent: keep
+        Referer: keep
+        # The real client IP: klipper-lb + the Cloudflare tunnel both mean
+        # ClientHost is frequently an internal hop, not the actual origin.
+        X-Forwarded-For: keep
+
+# CAVEAT worth knowing before adding a service: Traefik's `RequestPath` field
+# includes the query string, and these logs go to a third party. Nothing here
+# puts a secret in a query string today — sms-relay's webhook is HMAC-signed in
+# the body, Authelia's `?rd=` is just a redirect target — but a future service
+# that accepts `?token=` would leak it. Drop RequestPath above if that changes.
+
+# ---------------------------------------------------------------------------
+# Entrypoints
+# ---------------------------------------------------------------------------
+# Blanket http->https redirect. Every ingress in this repo pins
+# `router.entrypoints: websecure`; this makes port 80 a redirect rather than a
+# second, unencrypted way in. infra/ingress-policy enforces the pinning.
+httpsRedirect:
+  enabled: true
+
+# NOT configured here, deliberately:
+#   * The dashboard (`--api.dashboard=true` is on, but the `traefik` entrypoint
+#     is absent from the LoadBalancer Service, so it is unreachable from
+#     outside). Leave it that way.
+#   * Prometheus metrics: k3s already passes --metrics.prometheus=true on the
+#     `metrics` entrypoint (:9100). infra/alloy scrapes the pod IP directly, so
+#     that port never needs to reach the Service or the LoadBalancer.

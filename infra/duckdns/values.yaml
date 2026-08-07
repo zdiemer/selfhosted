@@ -1,4 +1,4 @@
-# DuckDNS: the cluster's public DNS + TLS foundation.
+# DuckDNS: the cluster's public DNS, and the credential its TLS rides on.
 #
 # Two jobs, one credential:
 #
@@ -8,12 +8,11 @@
 #             A record, so every sub-subdomain (docs., pdf., map., ...) follows
 #             for free — adding a service needs no change here.
 #
-#   2. TLS  — a HelmChartConfig patches k3s's bundled Traefik with an ACME
-#             DNS-01 certresolver named `duckdns`. Every ingress in this repo
-#             already asks for that resolver by name
-#             (`traefik.ingress.kubernetes.io/router.tls.certresolver: duckdns`),
-#             so this chart is load-bearing for HTTPS cluster-wide, not just
-#             for DNS. There is no cert-manager in this cluster.
+#   2. TOKEN — the same DuckDNS token Traefik needs to answer an ACME DNS-01
+#             challenge, copied into Traefik's namespace. The certresolver
+#             config itself lives in infra/traefik; this chart just owns the
+#             credential it reads. Still load-bearing for HTTPS cluster-wide:
+#             break the Secret and no cert renews. There is no cert-manager.
 #
 # DNS-01 (not HTTP-01) is what makes the wildcard possible and means port 80
 # never has to be open to the internet for a renewal.
@@ -49,43 +48,23 @@ updater:
     limits:
       memory: 32Mi
 
-# The TLS half: teach k3s's bundled Traefik how to answer a DuckDNS DNS-01
-# challenge. This is a HelmChartConfig, which k3s's helm-controller merges into
-# the traefik release it manages — we do not install Traefik ourselves.
+# The TLS half USED TO LIVE HERE. It now lives in infra/traefik, which owns the
+# HelmChartConfig that teaches k3s's bundled Traefik to answer a DuckDNS DNS-01
+# challenge. The split happened because `valuesContent` is Traefik's WHOLE
+# config overlay — the ACME storage PVC, the http->https redirect, the rollout
+# strategy, and now access logging — none of which are DNS concerns. They were
+# only ever here because the certresolver needs this chart's token.
 #
-# HEADS UP: valuesContent is Traefik's WHOLE config overlay, so a few settings
-# here have nothing to do with DuckDNS (the ACME storage PVC, the http->https
-# redirect, the Recreate strategy). They live here because they arrive in the
-# same object, not because they're DuckDNS concerns. Changing any of them
-# redeploys Traefik — a brief cluster-wide ingress blip.
-traefik:
+# What remains is that token. A secretKeyRef cannot cross namespaces, so Traefik
+# needs its own copy of the Secret in its own namespace, and this chart is what
+# puts it there.
+#
+# THE COUPLING IS REAL: infra/traefik references this Secret by name
+# (`acme.tokenSecret.name`). Rename it here and the certresolver breaks there.
+# Rotate the token here and Traefik keeps the old one until it is restarted —
+# see this chart's README.
+traefikSecretCopy:
   enabled: true
-  # The k3s-managed Traefik release: chart name + namespace. The HelmChartConfig
-  # must match both exactly or helm-controller silently ignores it.
-  name: traefik
+  # Where the k3s-managed Traefik runs. Must match infra/traefik's
+  # `helmChart.namespace`.
   namespace: kube-system
-
-  # The certresolver's name. Every ingress in this repo hardcodes `duckdns` in
-  # its `ingress.tls.certResolver`, so renaming this means editing all of them
-  # AND forces a full re-issue of every cert. Don't, casually.
-  certResolver: duckdns
-
-  acme:
-    email: zach.diemer@gmail.com
-    # Resolve the TXT record against public resolvers rather than the cluster's
-    # own DNS, which knows nothing about duckdns.org.
-    resolvers:
-      - 1.1.1.1:53
-      - 8.8.8.8:53
-    # DuckDNS propagates fast, but ACME will fail the order outright if it
-    # checks too early — these three knobs buy patience, not speed.
-    delayBeforeCheck: 30s
-    propagationTimeout: 300
-    pollingInterval: 10
-
-  # Where Traefik persists acme.json (issued certs + the ACME account key).
-  # PVC-backed on purpose: without it every Traefik restart re-registers and
-  # re-issues, which walks straight into Let's Encrypt rate limits.
-  acmeStorage:
-    size: 128Mi
-    path: /data

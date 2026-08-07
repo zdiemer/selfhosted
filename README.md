@@ -2,10 +2,12 @@
 
 Helm charts and install scripts for the services running on my home k3s
 cluster (10 nodes: 3 control-plane, 7 workers). External exposure goes
-through [`infra/duckdns/`](infra/duckdns/): DuckDNS dynamic DNS plus a
-Traefik ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard
-cert (no cert-manager involved). Some services are additionally published
-on `diemer.codes` via [`infra/cloudflared/`](infra/cloudflared/).
+through [`infra/traefik/`](infra/traefik/) — the single ingress choke point,
+its ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard cert
+(no cert-manager involved), and its access log — with the DuckDNS side of
+that credential in [`infra/duckdns/`](infra/duckdns/). Some services are
+additionally published on `diemer.codes` via
+[`infra/cloudflared/`](infra/cloudflared/).
 
 Each subfolder is a standalone project with its own chart, docs, and
 install/upgrade scripts. Per-project secrets live in a gitignored
@@ -40,7 +42,8 @@ repo stays the full index of what runs on the cluster. Clone with
 | [`web/talaria-deals/`](web/talaria-deals/) | talaria.deals — a single Ingress publishing the sibling `talaria` project's existing service through the shared Cloudflare tunnel. Lives here rather than in talaria's chart because that chart is in another repo; additive, so talaria keeps answering on DuckDNS. | [web/talaria-deals/README](web/talaria-deals/README.md) |
 | [`web/apartment-watch/`](web/apartment-watch/) | Daily SF rental scraper → SMS. A CronJob scrapes Craigslist (plain HTTP) plus Zumper/Apartments.com/Zillow (Camoufox, to clear Akamai and PerimeterX), filters on rent/laundry/parking/neighborhood with a scored scam filter, and texts a digest of new matches through `infra/sms-relay`. No frontend and no Ingress. Stipulations live in a gitignored `criteria.yaml`. | [web/apartment-watch/README](web/apartment-watch/README.md) |
 | [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) and `talaria.deals` through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. One tunnel, any number of zones. | [infra/cloudflared/README](infra/cloudflared/README.md) |
-| [`infra/duckdns/`](infra/duckdns/) | **Load-bearing for the whole cluster.** Keeps `zachd.duckdns.org` pointed at the house (updater CronJob) *and* defines the `duckdns` Traefik ACME DNS-01 certresolver every ingress here names, holding the `*.zachd.duckdns.org` wildcard cert. Moved out of the sibling `talaria` project. | [infra/duckdns/README](infra/duckdns/README.md) |
+| [`infra/traefik/`](infra/traefik/) | **Load-bearing for the whole cluster.** The Traefik config overlay: the `duckdns` ACME DNS-01 certresolver every ingress here names, the http→https redirect, the `Recreate` rollout, and JSON access logging. Doesn't install Traefik — k3s does — but every change is a cluster-wide ingress outage. Split out of `infra/duckdns`. | [infra/traefik/README](infra/traefik/README.md) |
+| [`infra/duckdns/`](infra/duckdns/) | **Load-bearing for the whole cluster.** Keeps `zachd.duckdns.org` pointed at the house (updater CronJob) and owns the DuckDNS token that Traefik's certresolver reads — copied into `kube-system` because a `secretKeyRef` can't cross namespaces. Moved out of the sibling `talaria` project. | [infra/duckdns/README](infra/duckdns/README.md) |
 | [`infra/cluster-status/`](infra/cluster-status/) | **Public** dashboard at `status.diemer.codes` — nodes, CPU/RAM/disk broken down pods-vs-k3s-vs-system, pod tables, deployment health, warnings. A read-only collector sidecar writes JSON; nginx serves it as a static page, so public traffic never touches the k8s API. Ported from talaria's authed `/admin/cluster`. | [infra/cluster-status/README](infra/cluster-status/README.md) |
 | [`infra/priority-classes/`](infra/priority-classes/) | **Load-bearing for the whole cluster.** The three cluster-wide scheduling priorities, including the `platform-app` globalDefault that every pod here inherits without naming it. Pure policy, no workload. Moved out of talaria. | [infra/priority-classes/README](infra/priority-classes/README.md) |
 | [`infra/headlamp/`](infra/headlamp/) | Headlamp — Kubernetes dashboard on the LAN at `<node-ip>:30100`. Stock upstream chart, values only. **cluster-admin**: the login token is a full cluster credential, so it's deliberately never published externally. Moved out of talaria. | [infra/headlamp/README](infra/headlamp/README.md) |

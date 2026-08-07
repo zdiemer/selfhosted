@@ -1,13 +1,17 @@
-# duckdns — public DNS + the cluster's TLS foundation
+# duckdns — public DNS + the credential the cluster's TLS rides on
 
-The cluster's dynamic-DNS updater and, less obviously, the thing that issues
-**every HTTPS certificate in this repo**. It does two jobs off one credential:
+The cluster's dynamic-DNS updater and the owner of the token that issues
+**every HTTPS certificate in this repo**. Two jobs, one credential:
 
 - **DNS** — a CronJob tells DuckDNS every 5 minutes what the house's public IP
   is, keeping `zachd.duckdns.org` pointed at home across residential IP changes.
-- **TLS** — a `HelmChartConfig` patches k3s's bundled Traefik with an ACME
-  **DNS-01** certresolver named `duckdns`. Every ingress in this repo names that
-  resolver, so this chart is load-bearing for HTTPS cluster-wide.
+- **TOKEN** — the same DuckDNS token, copied into Traefik's namespace so its
+  ACME **DNS-01** certresolver can answer a challenge. Break that Secret and
+  nothing in the cluster renews.
+
+The Traefik configuration itself — the certresolver, the ACME storage PVC, the
+http→https redirect, access logging — lives in **[`../traefik`](../traefik)**.
+It used to live here; see [History](#history).
 
 There is **no cert-manager** in this cluster; Traefik's own ACME client is the
 whole story.
@@ -15,10 +19,11 @@ whole story.
 ```
                     ┌─ updater CronJob ──▶ duckdns.org/update?ip=   (A record ⇒ home IP)
   duckdns-token ────┤
-   (one secret)     └─ Traefik ──ACME DNS-01──▶ Let's Encrypt       (*.zachd.duckdns.org cert)
-                                                     │
-                                                     ▼
-                                    every ingress: certresolver: duckdns
+   (one secret,     └─ Traefik ──ACME DNS-01──▶ Let's Encrypt       (*.zachd.duckdns.org cert)
+    two copies)         ▲                            │
+                        │                            ▼
+             infra/traefik owns          every ingress: certresolver: duckdns
+             the config that reads it
 ```
 
 ## Why DNS-01, and why a wildcard
@@ -54,10 +59,13 @@ almost always why.
 `kube-system` (for Traefik). A `secretKeyRef` cannot cross namespaces, so each
 reader needs a copy in its own — one token in `values.local.yaml`, two Secrets.
 
-Both live objects predate this chart, from when this config lived in the
+The `kube-system` copy predates this chart, from when this config lived in the
 `talaria` repo. Helm won't touch a resource it didn't create, so `upgrade.sh`
-stamps the ownership metadata on first run and adopts them. That's a no-op on
+stamps the ownership metadata on first run and adopts it. That's a no-op on
 every run after.
+
+`infra/traefik` references this Secret **by name**. Renaming it here breaks the
+certresolver there.
 
 ## Deploy
 
@@ -67,8 +75,8 @@ cp values.local.yaml.example values.local.yaml   # then paste the DuckDNS token
 ```
 
 `upgrade.sh` forces one updater run and shows its log, so a bad token fails in
-front of you rather than quietly at 3am. It also diffs the Traefik config first
-and warns before a redeploy.
+front of you rather than quietly at 3am. It **no longer causes an ingress
+outage** — that moved to `infra/traefik` along with the config.
 
 Health:
 
@@ -78,18 +86,12 @@ kubectl -n infra logs -l app.kubernetes.io/name=duckdns --tail=20   # expect "�
 dig +short zachd.duckdns.org                                        # expect the house's IP
 ```
 
-## Editing the Traefik config carefully
+## Editing the Traefik config
 
-`valuesContent` is Traefik's **entire** value overlay, so it necessarily carries
-settings that aren't DuckDNS's business — the ACME storage PVC, the http→https
-redirect, the `Recreate` strategy. They're there because they share the object.
+It isn't here any more — see [`../traefik`](../traefik). That chart's
+`upgrade.sh` diffs before applying and warns you about the outage.
 
-k3s's helm-controller redeploys Traefik whenever `valuesContent` changes, and
-with `Recreate` that's a real cluster-wide ingress gap, not a rolling one. Issued
-certs survive (`acme.json` is on the PVC), so a redeploy costs downtime, not a
-re-issue — but keep edits deliberate. `upgrade.sh` diffs before applying.
-
-Two names in there are easy to conflate:
+Two names are still easy to conflate when you get there:
 
 - `certResolver` (`duckdns`) — our label for the resolver. Renaming it means
   editing every chart's `ingress.tls.certResolver` **and** forces a full re-issue.
@@ -116,8 +118,8 @@ renews at 30 days remaining, so it won't touch DuckDNS for ~60 days. Skip the
 restart and everything looks perfectly healthy right up until a renewal fails
 DNS-01 against a token that no longer exists. Do it while you're thinking about it.
 
-The restart is a brief ingress blip (`Recreate`, see above), but it re-issues
-nothing — `acme.json` is on the PVC.
+The restart is a brief ingress blip (`Recreate` — see
+[`../traefik`](../traefik)), but it re-issues nothing: `acme.json` is on the PVC.
 
 ## History
 
@@ -127,3 +129,11 @@ app repo the owner of cluster-wide DNS and TLS that a dozen unrelated services
 quietly depended on. It moved here so the dependency is visible and the ownership
 matches reality. talaria still *uses* `zachd.duckdns.org` (its ingress host, a CSP
 entry, and email links) — it just no longer runs it.
+
+Then the Traefik half moved out again, to [`../traefik`](../traefik). Carrying
+Traefik's entire config overlay inside the DNS chart was tolerable while it was
+three ACME flags; it stopped being tolerable when access logging arrived and a
+routine DNS change started meaning "brief cluster-wide ingress outage". Same
+reasoning as the first move, one level finer: ownership should match what the
+thing actually is.
+

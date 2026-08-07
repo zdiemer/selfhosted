@@ -1,0 +1,100 @@
+{{/*
+k3s ships Traefik as a managed HelmChart. A HelmChartConfig named after that
+release lets us overlay values onto it without owning the install — the
+helm-controller merges this in and redeploys Traefik whenever `valuesContent`
+changes.
+
+Keep edits deliberate: every change here is a cluster-wide ingress OUTAGE.
+`updateStrategy: Recreate` plus a ReadWriteOnce acme.json volume means the old
+pod must be fully gone before the new one starts. upgrade.sh diffs this against
+the live object and makes you confirm.
+
+The whole body is a YAML string, so it is plain text templating rather than
+structured values — mind the indentation, and remember `helm lint` cannot see
+inside it. `helm template ... | yq .spec.valuesContent` is the real check.
+*/}}
+{{- $r := .Values.acme.certResolver }}
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: {{ .Values.helmChart.name }}
+  namespace: {{ .Values.helmChart.namespace }}
+  labels:
+    {{- include "traefik-config.labels" . | nindent 4 }}
+spec:
+  valuesContent: |-
+    persistence:
+      enabled: true
+      size: {{ .Values.acmeStorage.size }}
+      path: {{ .Values.acmeStorage.path }}
+      accessMode: ReadWriteOnce
+    deployment:
+      kind: Deployment
+    updateStrategy:
+      type: {{ .Values.updateStrategy.type }}
+      {{- /*
+        Explicitly null, not omitted: the Traefik chart's own default sets
+        rollingUpdate, and a Deployment carrying rollingUpdate alongside
+        Recreate is rejected by the API server. Helm merges null as a delete.
+      */}}
+      rollingUpdate: {{ .Values.updateStrategy.rollingUpdate | default "null" }}
+    {{- if .Values.httpsRedirect.enabled }}
+    ports:
+      web:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+    {{- end }}
+    logs:
+      general:
+        level: INFO
+      access:
+        enabled: {{ .Values.accessLog.enabled }}
+        {{- if .Values.accessLog.enabled }}
+        format: {{ .Values.accessLog.format }}
+        addInternals: {{ .Values.accessLog.addInternals }}
+        filters:
+          statuscodes: {{ .Values.accessLog.filters.statuscodes | quote }}
+          retryattempts: {{ .Values.accessLog.filters.retryattempts }}
+          minduration: {{ .Values.accessLog.filters.minduration | quote }}
+        fields:
+          general:
+            defaultmode: {{ .Values.accessLog.fields.general.defaultmode }}
+            names:
+              {{- range $k, $v := .Values.accessLog.fields.general.names }}
+              {{ $k }}: {{ $v }}
+              {{- end }}
+          headers:
+            # `drop` keeps cookies / Authorization / Remote-* out of the log.
+            defaultmode: {{ .Values.accessLog.fields.headers.defaultmode }}
+            names:
+              {{- range $k, $v := .Values.accessLog.fields.headers.names }}
+              {{ $k }}: {{ $v }}
+              {{- end }}
+        {{- end }}
+    {{- if .Values.acme.enabled }}
+    additionalArguments:
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge=true"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.provider={{ .Values.acme.provider }}"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.resolvers={{ join "," .Values.acme.resolvers }}"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.delaybeforecheck={{ .Values.acme.delayBeforeCheck }}"
+      - "--certificatesresolvers.{{ $r }}.acme.email={{ .Values.acme.email }}"
+      - "--certificatesresolvers.{{ $r }}.acme.storage={{ .Values.acmeStorage.path }}/acme.json"
+    env:
+      {{- /*
+        The token Secret is created by the infra/duckdns chart, into this
+        namespace as well as its own — secretKeyRef cannot cross namespaces.
+        Traefik reads this once at pod start and never re-reads it, so a token
+        rotation needs a rollout restart or renewals fail ~60 days later.
+      */}}
+      - name: DUCKDNS_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.acme.tokenSecret.name }}
+            key: {{ .Values.acme.tokenSecret.key }}
+      - name: DUCKDNS_PROPAGATION_TIMEOUT
+        value: "{{ .Values.acme.propagationTimeout }}"
+      - name: DUCKDNS_POLLING_INTERVAL
+        value: "{{ .Values.acme.pollingInterval }}"
+    {{- end }}

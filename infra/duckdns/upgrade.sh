@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Apply the current chart + values.local.yaml to the running duckdns release.
 #
-# This owns the cluster's public DNS (the updater CronJob) *and* its TLS (the
-# `duckdns` ACME certresolver that every ingress in this repo names). A bad
-# upgrade here can take HTTPS down cluster-wide, so it moves deliberately:
-# it adopts the pre-existing kube-system objects rather than fighting them, and
-# it tells you up front whether Traefik is about to redeploy.
+# This owns the cluster's public DNS (the updater CronJob) and the DuckDNS token
+# that Traefik's ACME certresolver reads. Breaking the token Secret stops every
+# cert in the cluster renewing, so it moves deliberately: it adopts the
+# pre-existing kube-system Secret rather than fighting it, and it force-runs the
+# updater so a bad token fails in front of you.
+#
+# The Traefik config itself lives in infra/traefik — this script no longer
+# touches it, and no longer causes an ingress outage.
 
 set -euo pipefail
 
@@ -27,10 +30,13 @@ if [[ ! -f "$LOCAL_VALUES" ]]; then
   exit 1
 fi
 
-# Read the Traefik namespace off the rendered manifest rather than values.yaml,
-# so a values.local.yaml override still points the adoption at the right place.
+# Read Traefik's namespace off the rendered Secret rather than values.yaml, so a
+# values.local.yaml override still points the adoption at the right place. The
+# second Secret copy is the only thing this chart still puts outside its own
+# namespace — the Traefik config itself moved to infra/traefik.
 TRAEFIK_NS="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" \
-  -s templates/traefik-config.yaml 2>/dev/null | awk '/^  namespace:/ {print $2; exit}')"
+  -s templates/secret.yaml 2>/dev/null \
+  | awk '/^  namespace:/ {print $2}' | grep -v "^${NAMESPACE}$" | head -1)"
 TRAEFIK_NS="${TRAEFIK_NS:-kube-system}"
 
 # One namespace per project; created manually, never chart-managed.
@@ -62,20 +68,19 @@ adopt() {
 }
 
 adopt secret duckdns-token "$TRAEFIK_NS"
-adopt helmchartconfig traefik "$TRAEFIK_NS"
 
-# Traefik redeploys iff valuesContent actually changes, and with a Recreate
-# strategy that's a real ingress gap rather than a rolling one. Say so before
-# it happens instead of leaving you to guess from the blip.
+# The Traefik HelmChartConfig used to be adopted here too. It now belongs to the
+# `traefik` release (infra/traefik). If this chart still claims it, the split
+# was left half-done — say so, because a duckdns upgrade would then fight the
+# traefik release over the same object on every run.
 if kubectl get helmchartconfig traefik -n "$TRAEFIK_NS" >/dev/null 2>&1; then
-  live="$(kubectl get helmchartconfig traefik -n "$TRAEFIK_NS" -o jsonpath='{.spec.valuesContent}')"
-  rendered="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" \
-    -s templates/traefik-config.yaml | awk '/valuesContent:/{f=1;next} f' | sed 's/^    //')"
-  if [[ "$live" != "$rendered" ]]; then
-    echo "==> NOTE: Traefik config changed — helm-controller will redeploy Traefik."
-    echo "    Expect a brief cluster-wide ingress outage. Issued certs survive"
-    echo "    (acme.json is on the PVC), so this is downtime, not a re-issue."
-    diff <(echo "$live") <(echo "$rendered") || true
+  hcc_owner="$(kubectl get helmchartconfig traefik -n "$TRAEFIK_NS" \
+    -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)"
+  if [[ "$hcc_owner" == "$RELEASE" ]]; then
+    echo "==> WARNING: helmchartconfig/traefik still belongs to release '${RELEASE}'."
+    echo "    The Traefik config moved to infra/traefik. Run its handover script:"
+    echo "        ${HERE}/../traefik/handover.sh"
+    echo "    Continuing — this upgrade will not touch that object."
   fi
 fi
 
