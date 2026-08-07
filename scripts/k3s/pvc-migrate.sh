@@ -124,6 +124,55 @@ if [[ "$POLICY" != "Retain" ]]; then
 fi
 
 # ------------------------------------------------------------------------------
+# 1b. Will the data actually fit?
+# ------------------------------------------------------------------------------
+# local-path enforces NO quota, so a claim's declared size is fiction — several
+# volumes here hold far more than they ask for (talaria's postgres declares 1Gi
+# and holds 75G). Both truenas classes enforce their size for real, so migrating
+# at the declared size fails mid-copy or truncates. Measure the source before
+# touching anything.
+step "1b. Capacity"
+
+SRC_PATH="$(kubectl get pv "$SRC_PV" -o jsonpath='{.spec.hostPath.path}' 2>/dev/null)"
+[[ -z "$SRC_PATH" ]] && SRC_PATH="$(kubectl get pv "$SRC_PV" -o jsonpath='{.spec.local.path}' 2>/dev/null)"
+
+ACTUAL_BYTES=""
+if [[ -n "$SRC_NODE" && -n "$SRC_PATH" ]]; then
+    ACTUAL_BYTES="$(run_on_node_sudo "$SRC_NODE" "du -sb '$SRC_PATH' 2>/dev/null | cut -f1" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+
+if [[ -z "$ACTUAL_BYTES" || ! "$ACTUAL_BYTES" =~ ^[0-9]+$ ]]; then
+    echo "  [WARN] could not measure ${SRC_NODE}:${SRC_PATH}"
+    echo "         Verify by hand that the data fits in ${SIZE} before continuing."
+else
+    REQ_BYTES="$(python3 -c "
+import re,sys
+s=${SIZE@Q}
+m=re.match(r'([0-9.]+)([KMGTPEi]*)',s)
+u={'Ki':1024,'Mi':1024**2,'Gi':1024**3,'Ti':1024**4,'K':1000,'M':1000**2,'G':1000**3,'T':1000**4,'':1}
+print(int(float(m.group(1))*u.get(m.group(2),1)))
+")"
+    printf '  %-14s %s\n' 'declared' "$SIZE"
+    printf '  %-14s %s\n' 'actual' "$(numfmt --to=iec-i --suffix=B "$ACTUAL_BYTES" 2>/dev/null || echo "${ACTUAL_BYTES}B")"
+    # 10% headroom: ext4 metadata and the filesystem's own overhead mean a
+    # volume sized exactly to its contents has nowhere to land.
+    NEED=$(( ACTUAL_BYTES * 110 / 100 ))
+    if [[ "$NEED" -gt "$REQ_BYTES" ]]; then
+        echo ""
+        echo "FAIL: the source holds more than the target claim will allow."
+        echo "      needs at least $(numfmt --to=iec-i --suffix=B "$NEED" 2>/dev/null || echo "${NEED}B") including 10% headroom."
+        echo ""
+        echo "      local-path enforces no quota, so this volume outgrew its own"
+        echo "      declaration without anything complaining. ${TARGET_CLASS} does"
+        echo "      enforce it, and the copy would fail partway."
+        echo ""
+        echo "      Raise persistence.size in the chart, helm upgrade, then re-run."
+        exit 1
+    fi
+    echo "  [OK] fits, with $(( (REQ_BYTES - ACTUAL_BYTES) * 100 / REQ_BYTES ))% of the claim spare"
+fi
+
+# ------------------------------------------------------------------------------
 # 2. Consumers
 # ------------------------------------------------------------------------------
 step "2. Workloads using this PVC"
