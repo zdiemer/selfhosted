@@ -1,0 +1,50 @@
+# Shared configuration for BOTH democratic-csi releases.
+#
+# This chart is installed twice from one directory — once per driver, because
+# democratic-csi runs one deployment per backend protocol:
+#
+#   democratic-csi-iscsi   values.yaml + values-iscsi.yaml   -> truenas-iscsi
+#   democratic-csi-nfs     values.yaml + values-nfs.yaml     -> truenas-nfs
+#
+# Only settings that are genuinely identical for both drivers belong here.
+# Connection details and dataset paths are repeated in each overlay rather than
+# shared from this file: helm does not template values files, so a `truenas.host`
+# key here could not be read by the subchart. It would look like configuration
+# and do nothing.
+#
+# Secrets (the TrueNAS API key) live in the gitignored values.local.yaml — see
+# values.local.tpl.yaml and scripts/secrets.sh.
+#
+# Prerequisites, all of which upgrade.sh pre-flights:
+#   - infra/snapshot-controller installed FIRST (VolumeSnapshotClass is its CRD)
+#   - NFS + iSCSI services enabled on the TrueNAS (both ship disabled)
+#   - open-iscsi + nfs-common on every node (scripts/k3s/iscsi-prereq.sh)
+
+democratic-csi:
+  controller:
+    # Leader-elected; a second replica is availability, not throughput. A
+    # controller outage stalls provisioning, it never touches volume data.
+    replicaCount: 1
+
+    # No nodeSelector, no affinity. Pinning the component that hands out
+    # unpinned storage would be self-defeating.
+    nodeSelector: {}
+    affinity: {}
+
+    driver:
+      logLevel: info
+
+  node:
+    # DaemonSet — this lands on all 10 nodes, including the 3.7GiB laptops, so
+    # the footprint matters more here than anywhere else in this chart.
+    nodeSelector: {}
+
+    driver:
+      logLevel: info
+
+  csiDriver:
+    # Delegate fsGroup so a pod's securityContext.fsGroup is applied by the
+    # driver at mount rather than by the kubelet recursively chown-ing every
+    # file. On a large volume that walk is the difference between a pod starting
+    # in seconds and in minutes.
+    fsGroupPolicy: ReadWriteOnceWithFSType

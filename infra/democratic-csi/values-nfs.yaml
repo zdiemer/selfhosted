@@ -1,0 +1,99 @@
+# truenas-nfs — RWX filesystem storage on ZFS datasets.
+#
+#   helm upgrade --install democratic-csi-nfs ... -f values.yaml -f values-nfs.yaml
+#
+# This is the class for bulk and warm data: Paperless media, RomM metadata, the
+# claude-workspace home, Minecraft backups, and the k8up restic repository.
+# It is also the only class that can do ReadWriteMany, which is what local-path
+# never offered — the reason self-hosted Loki was rejected outright
+# (infra/alloy/README.md:30) and why RomM was pushed onto SMB.
+#
+# Failure behaviour is much kinder than iSCSI's: with `hard` mounts (the default,
+# and the only safe choice) I/O blocks while the NAS is away and resumes cleanly
+# when it returns — pods hang, nothing corrupts, no restart needed. Never set
+# `soft`; it returns I/O errors to the application and risks silent corruption.
+
+democratic-csi:
+  csiDriver:
+    # Must be globally unique per cluster, and MUST differ from the iSCSI release.
+    name: org.democratic-csi.nfs
+    # NFS needs no attach/detach step — the node mounts the export directly.
+    # Leaving this on would make every volume wait on a VolumeAttachment that
+    # nothing ever satisfies.
+    attachRequired: false
+
+  storageClasses:
+    - name: truenas-nfs
+      defaultClass: false
+      reclaimPolicy: Delete
+      volumeBindingMode: Immediate
+      allowVolumeExpansion: true
+      parameters:
+        fsType: nfs
+      mountOptions:
+        # NFSv4.1 — v3 needs rpcbind and separate lock daemons, v4.1 carries
+        # locking in-protocol over a single port.
+        - nfsvers=4.1
+        # hard is deliberate and load-bearing. See the header above: soft mounts
+        # trade corruption risk for convenience, and this is where the restic
+        # repository lives.
+        - hard
+        - noatime
+      secrets:
+        provisioner-secret:
+        controller-publish-secret:
+        node-stage-secret:
+        node-publish-secret:
+        controller-expand-secret:
+
+  volumeSnapshotClasses:
+    - name: truenas-nfs
+      deletionPolicy: Delete
+      parameters:
+      secrets:
+        snapshotter-secret:
+
+  driver:
+    config:
+      driver: freenas-api-nfs
+
+      # httpConnection.apiKey comes from values.local.yaml. The subchart renders
+      # this whole block into a Secret, not a ConfigMap.
+      httpConnection:
+        protocol: https
+        host: 192.168.4.36
+        port: 443
+        # TrueNAS ships a self-signed certificate. LAN-local call to a fixed IP.
+        allowInsecure: true
+
+      zfs:
+        # Must already exist — democratic-csi creates children, not parents.
+        # upgrade.sh pre-flights this via the API.
+        datasetParentName: tank/k8s/nfs/v
+        detachedSnapshotsDatasetParentName: tank/k8s/nfs/s
+
+        # Unlike the iSCSI side, quotas here are real and worth having: an NFS
+        # dataset with no quota lets one runaway volume consume the whole pool,
+        # and the restic repository lives on this class.
+        datasetEnableQuotas: true
+        datasetEnableReservation: false
+
+        # 0777 with root mapping below. Individual workloads run as assorted
+        # non-root UIDs and NFS has no fsGroup equivalent to fix that at mount
+        # time, so permissions are handled at the share rather than per volume.
+        datasetPermissionsMode: "0777"
+        datasetPermissionsUser: 0
+        datasetPermissionsGroup: 0
+
+      nfs:
+        shareHost: 192.168.4.36
+        shareAlldirs: false
+        # Restrict to the LAN the nodes actually sit on. Left empty this exports
+        # to everything that can reach 2049.
+        shareAllowedNetworks:
+          - 192.168.4.0/24
+        shareAllowedHosts: []
+        shareMaprootUser: root
+        shareMaprootGroup: root
+        shareMapallUser: ""
+        shareMapallGroup: ""

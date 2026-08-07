@@ -1,0 +1,19 @@
+# Copy to values.local.yaml (gitignored via the **/values.local.yaml glob) and
+# fill in the TrueNAS API key. Both releases read this same file.
+#
+# Create the key in the TrueNAS UI:
+#   Credentials -> Users -> (an account with dataset + sharing privileges)
+#   -> API Keys -> Add
+#
+# Do NOT reuse the SMB account from games/romm — that one is a read-only share
+# user with no API rights. This key can create and destroy datasets, so it is
+# considerably more powerful than anything else this cluster holds.
+#
+# Once filled in, register it with 1Password so it survives this machine:
+#   ./scripts/secrets.sh import infra/democratic-csi/values.local.yaml
+
+democratic-csi:
+  driver:
+    config:
+      httpConnection:
+        apiKey: "1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

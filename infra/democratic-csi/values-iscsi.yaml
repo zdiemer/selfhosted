@@ -1,0 +1,114 @@
+# truenas-iscsi — RWO block storage on ZFS zvols.
+#
+#   helm upgrade --install democratic-csi-iscsi ... -f values.yaml -f values-iscsi.yaml
+#
+# This is the class for anything that fsyncs: Postgres, MariaDB, Mongo, every
+# SQLite app, and the Minecraft world. iSCSI hands the node a block device and
+# ext4 runs on top, so the filesystem semantics are the same ones these apps get
+# on local disk. NFS is the wrong tool for them.
+#
+# The trade is failure behaviour: when the NAS goes away, iSCSI read-onlys the
+# filesystem after node.session.timeo.replacement_timeout (set to 300s by
+# scripts/k3s/iscsi-prereq.sh) and affected pods need a restart even after it
+# returns. Planned NAS windows must be quiesced with scripts/k3s/nas-maintenance.sh
+# rather than ridden out. See infra/democratic-csi/README.md.
+
+democratic-csi:
+  csiDriver:
+    # Must be globally unique per cluster, and MUST differ from the NFS release.
+    name: org.democratic-csi.iscsi
+
+  storageClasses:
+    - name: truenas-iscsi
+      defaultClass: false
+      # Delete is correct here: the survival tier stays on local-path and every
+      # migrated volume is covered by k8up. A Retain default would silently
+      # accumulate orphaned zvols on the NAS forever.
+      #
+      # NOTE: during migration, scripts/k3s/pvc-migrate.sh patches the SOURCE
+      # local-path PV to Retain. That is a different object and unaffected by
+      # this.
+      reclaimPolicy: Delete
+      # Immediate, not WaitForFirstConsumer. WFFC exists so a volume is created
+      # in the same zone/node as its first consumer — meaningless when the
+      # volume lives on the NAS and every node can reach it equally. Immediate
+      # also surfaces provisioning failures at PVC creation rather than at first
+      # pod schedule, which is far easier to debug.
+      volumeBindingMode: Immediate
+      # The whole point. local-path cannot do this — raising persistence.size on
+      # a local-path PVC makes helm upgrade fail on an immutable-field patch.
+      allowVolumeExpansion: true
+      parameters:
+        fsType: ext4
+      # noatime: these are database volumes; an atime write per read is pure
+      # overhead over a network block device.
+      mountOptions:
+        - noatime
+      secrets:
+        provisioner-secret:
+        controller-publish-secret:
+        node-stage-secret:
+        node-publish-secret:
+        controller-expand-secret:
+
+  volumeSnapshotClasses:
+    - name: truenas-iscsi
+      # Delete: a VolumeSnapshot object removed by k8up retention should take its
+      # ZFS snapshot with it, otherwise the pool fills with snapshots nothing
+      # references. The CRDs themselves are pinned against accidental deletion —
+      # see infra/snapshot-controller/README.md for why that matters here.
+      deletionPolicy: Delete
+      parameters:
+      secrets:
+        snapshotter-secret:
+
+  driver:
+    config:
+      driver: freenas-api-iscsi
+
+      # httpConnection.apiKey comes from values.local.yaml. The subchart renders
+      # this whole block into a Secret, not a ConfigMap, so the key is never in
+      # plaintext in the cluster.
+      httpConnection:
+        protocol: https
+        host: 192.168.4.36
+        port: 443
+        # TrueNAS ships a self-signed certificate. This is a LAN-local call to a
+        # fixed IP, so accept it rather than plumbing a CA in.
+        allowInsecure: true
+
+      zfs:
+        # Set these to real datasets on your pool before first install. They must
+        # exist — democratic-csi creates children, not parents. upgrade.sh
+        # pre-flights their existence via the API.
+        datasetParentName: tank/k8s/iscsi/v
+        detachedSnapshotsDatasetParentName: tank/k8s/iscsi/s
+
+        # Thin provisioning. The cluster's declared sizes have always been
+        # nominal (local-path enforced no quota at all), so reserving the full
+        # requested capacity up front would suddenly make ~239GiB of mostly-empty
+        # claims real. Revisit if the pool gets tight.
+        zvolEnableReservation: false
+
+        # lz4 is effectively free on modern CPUs and these are database and
+        # world-data volumes with plenty of compressible structure.
+        zvolCompression: lz4
+        zvolDedup: "off"
+        zvolBlocksize:
+
+      iscsi:
+        targetPortal: "192.168.4.36:3260"
+        interface:
+        namePrefix: "csi-"
+        nameSuffix: "-cluster"
+        targetGroups:
+          - targetGroupPortalGroup: 1
+            targetGroupInitiatorGroup: 1
+            targetGroupAuthType: None
+        # Required for the CSI driver to write to the extent at all.
+        extentInsecureTpc: true
+        extentXenCompat: false
+        extentDisablePhysicalBlocksize: true
+        extentBlocksize: 512
+        extentRpm: "SSD"
+        extentAvailThreshold: 0
