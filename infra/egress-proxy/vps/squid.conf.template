@@ -72,8 +72,13 @@ cache_log /var/log/squid/cache.log
 # ---------------------------------------------------------------------------
 # MULTIPLE EXIT ADDRESSES FROM THIS ONE BOX
 # ---------------------------------------------------------------------------
-# Most providers sell additional IPv4 for a few dollars a month, and hand out a
-# /64 of IPv6 for free. squid can pick which one a request leaves from:
+# ONLY IF THE PROVIDER SELLS EXTRA IPv4 PER INSTANCE. Vultr, Hetzner and Linode
+# do, for a few dollars a month each. DigitalOcean does NOT — one public IPv4
+# per Droplet and at most one Reserved IP at a time, and routing outbound over
+# that Reserved IP moves *all* egress to it rather than making it selectable.
+# See README.md before reaching for this.
+#
+# Where it is available, squid can pick which address a request leaves from:
 #
 #   acl rotate_a random 1/3
 #   acl rotate_b random 1/2

@@ -26,17 +26,37 @@ When a service genuinely wants rotation — because it is rate-limited *per
 address* rather than challenged — there are three ways to get it, and all of
 them stay flat-rate, which the bandwidth maths demands:
 
-**1. More addresses on this same box.** Most providers sell extra IPv4 for a few
-dollars a month and hand out a `/64` of IPv6 for free. squid picks the source
-per request with `tcp_outgoing_address`, either randomly or pinned per client:
+**1. More addresses on this same box — CHECK YOUR PROVIDER FIRST.** squid picks
+the source per request with `tcp_outgoing_address`, either randomly or pinned per
+client:
 
 ```squid
 acl svc_scraper proxy_auth scraper
 tcp_outgoing_address 203.0.113.11 svc_scraper     # this client always exits here
 ```
 
-The commented block at the bottom of `squid.conf.template` has both shapes. This
-is the cheapest real rotation and it needs no second machine.
+The commented block at the bottom of `squid.conf.template` has both shapes. But
+this only works if the box actually has several public IPv4 addresses bound to
+it, and **that is a provider question with genuinely different answers**:
+
+| Provider | Extra IPv4 per instance? |
+|---|---|
+| Vultr, Hetzner, Linode | Yes, a few dollars a month each. `tcp_outgoing_address` works as written. |
+| **DigitalOcean** | **No.** One public IPv4 per Droplet, and at most one Reserved IP assigned at a time. This approach is not available. |
+
+On DigitalOcean a [Reserved IP](https://docs.digitalocean.com/products/networking/reserved-ips/)
+can carry outbound traffic, but only by [repointing the Droplet's default
+gateway](https://docs.digitalocean.com/products/networking/reserved-ips/how-to/outbound-traffic/)
+at the anchor gateway — which moves *all* egress to that one address. That makes
+it a fast way to **replace** an address (reassign in seconds, no rebuild), not a
+way to rotate between several. Worth knowing that repointing the default gateway
+on a remote box will drop your SSH session if you get it wrong.
+
+DigitalOcean's IPv6 allocation is 16 addresses, which `tcp_outgoing_address`
+could rotate across — but many scraping targets publish no AAAA record at all,
+so the practical reach is small. BYOIP (bring your own /24) exists and is GA,
+which is the real answer if you ever want many addresses there, and is far more
+than a home cluster needs.
 
 **2. More boxes, round-robin.** Run `bootstrap.sh` on a second and third VPS and
 add them as peers of one lane with `roundRobin: true`. Squid round-robins across
