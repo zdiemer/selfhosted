@@ -57,7 +57,7 @@ kubectl rollout restart deployment traefik -n kube-system
 Skip that and everything looks perfectly healthy for ~60 days, until a renewal
 fails against a token Traefik no longer has.
 
-## Two things that were quietly broken
+## Three things that were quietly broken
 
 **`deployment.strategy` was never a real key.** The config carried
 `deployment.strategy.type: Recreate` for its whole life. The Traefik chart reads
@@ -71,6 +71,31 @@ blocks on `FailedAttachVolume` while the old one refuses to die. Fixed here.
 **There were no access logs at all.** Traefik ran without any `--accesslog`
 flag, producing about two log lines per day. There was no way to answer "is
 something scanning me", "who hit that endpoint", or "why did that 502".
+
+**The ACME delay flag was deprecated.** Traefik warned on every start:
+`delayBeforeCheck is now deprecated, please use propagation.delayBeforeChecks
+instead.` It still worked, but a deprecated ACME flag is exactly the sort of
+thing that vanishes in a routine k3s bump and takes cluster-wide TLS with it.
+Now rendered as `...dnschallenge.propagation.delaybeforechecks`.
+
+## The startup middleware race is expected
+
+For a few seconds after Traefik starts, its log fills with:
+
+```
+ERR error="middleware \"auth-authelia-forwardauth@kubernetescrd\" does not exist"
+```
+
+This is a race, not a fault: the `kubernetesingress` provider builds routers
+from Ingress objects before the `kubernetescrd` provider has finished syncing
+the `Middleware` CRDs those routers reference. It resolves itself within
+seconds and the errors stop.
+
+It matters only because it is not free: during that window, requests to every
+Authelia-gated host get a 500. `updateStrategy: Recreate` means each config
+change spends that window with no old pod still serving. Expect a handful of
+5xx in the access log around any run of `./upgrade.sh` — those are this, not a
+regression.
 
 ## Access logs
 

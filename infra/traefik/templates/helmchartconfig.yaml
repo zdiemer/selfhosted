@@ -78,7 +78,7 @@ spec:
       - "--certificatesresolvers.{{ $r }}.acme.dnschallenge=true"
       - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.provider={{ .Values.acme.provider }}"
       - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.resolvers={{ join "," .Values.acme.resolvers }}"
-      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.delaybeforecheck={{ .Values.acme.delayBeforeCheck }}"
+      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.propagation.delaybeforechecks={{ .Values.acme.delayBeforeChecks }}"
       - "--certificatesresolvers.{{ $r }}.acme.email={{ .Values.acme.email }}"
       - "--certificatesresolvers.{{ $r }}.acme.storage={{ .Values.acmeStorage.path }}/acme.json"
     env:

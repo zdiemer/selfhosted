@@ -59,7 +59,18 @@ acme:
     - 8.8.8.8:53
   # DuckDNS propagates fast, but ACME will fail the order outright if it checks
   # too early — these three knobs buy patience, not speed.
-  delayBeforeCheck: 30s
+  #
+  # delayBeforeChecks renders as `...dnschallenge.propagation.delaybeforechecks`.
+  # The old flat `...dnschallenge.delaybeforecheck` (singular) is deprecated and
+  # Traefik has been warning about it on every start:
+  #   "delayBeforeCheck is now deprecated, please use
+  #    propagation.delayBeforeChecks instead."
+  # It still works today, but deprecated ACME flags are exactly the kind of
+  # thing that disappears in a k3s bump and takes cluster-wide TLS with it.
+  delayBeforeChecks: 30s
+  # These two stay env vars (DUCKDNS_PROPAGATION_TIMEOUT / _POLLING_INTERVAL) —
+  # they belong to lego's duckdns provider, not to Traefik's ACME config, so
+  # they are not part of the propagation.* group above.
   propagationTimeout: 300
   pollingInterval: 10
 

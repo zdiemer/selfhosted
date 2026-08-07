@@ -5,7 +5,10 @@ type: application
 version: 1.0.0
 # We do not install Traefik: k3s does, from its bundled HelmChart. This chart
 # only owns the HelmChartConfig that overlays it, so appVersion tracks the
-# Traefik that k3s currently ships rather than anything we build.
-appVersion: "3.6.10"
+# Traefik that k3s currently ships rather than anything we build. Read it back
+# with:
+#   kubectl -n kube-system get deploy traefik \
+#     -o jsonpath='{.spec.template.spec.containers[0].image}'
+appVersion: "3.6.7"
 maintainers:
   - name: zachd

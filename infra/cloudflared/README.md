@@ -45,21 +45,61 @@ The public-hostname → origin map lives **on the tunnel**, not in this chart. I
 Zero Trust → Networks → Tunnels → *your tunnel* → **Public Hostnames**, add one
 per service, all with the same origin:
 
-| Hostname | Service (origin) | TLS |
+Every entry uses the same origin —
+`https://traefik.kube-system.svc.cluster.local:443`, **No TLS Verify on** —
+so the only column that actually varies is the hostname:
+
+| Hostname | Backing ingress | Service |
 |---|---|---|
-| `auth.diemer.codes` | `https://traefik.kube-system.svc.cluster.local:443` | No TLS Verify **on** |
-| `webdav.diemer.codes` | same | same |
-| `keepass.diemer.codes` | same | same |
-| `docs.diemer.codes` | same | same |
-| `pdf.diemer.codes` | same | same |
-| `games.diemer.codes` | same | same |
-| `romm.diemer.codes` | same | same |
-| `talaria.deals` | same | same |
+| `auth.diemer.codes` | `auth/authelia` | `authelia:9091` |
+| `claude.diemer.codes` | `claude/claude-workspace` | `claude-workspace:7681` |
+| `docs.diemer.codes` | `docs/paperless` | `paperless:8000` |
+| `games.diemer.codes` | `games/gamedex` | `gamedex:8080` |
+| `happy.diemer.codes` | `happy/happy-server` | `happy-server:3005` |
+| `homes.diemer.codes` | `web/apartment-watch-web` | `apartment-watch-web:8080` |
+| `keepass.diemer.codes` | `auth/keepass-keeweb` | `keepass-keeweb:80` |
+| `old.diemer.codes` | `web/old-diemer-codes` | `old-diemer-codes:80` |
+| `pdf.diemer.codes` | `docs/stirling` | `stirling:8080` |
+| `romm.diemer.codes` | `games/romm` | `romm:8080` |
+| `status.diemer.codes` | `infra/cluster-status` | `cluster-status:80` |
+| `webdav.diemer.codes` | `auth/keepass-webdav` | `keepass-webdav:80` |
+| `talaria.deals` | `default/talaria-deals` | `talaria-nginx:80` |
 
 Leave the HTTP `Host` header blank (preserve original) so Traefik can match the
 ingress rule. Adding each hostname auto-creates its proxied CNAME in that
 hostname's own DNS zone — no manual DNS records. One tunnel serves several
 zones: `talaria.deals` is an apex, not a `diemer.codes` subdomain.
+
+### This table can drift, and the cluster is the honest half
+
+The dashboard is authoritative for routing, and nothing in this repo can read
+it. What the table above actually shows is the **cluster's side** — every
+non-`duckdns` host some Ingress claims to serve. Regenerate it any time:
+
+```bash
+kubectl get ingress -A -o json | python3 -c "
+import sys, json
+for i in json.load(sys.stdin)['items']:
+    ns, nm = i['metadata']['namespace'], i['metadata']['name']
+    for r in i['spec'].get('rules', []):
+        h = r.get('host', '')
+        if h and not h.endswith('zachd.duckdns.org'):
+            b = r['http']['paths'][0]['backend']['service']
+            print(f\"{h:<28} {ns}/{nm:<24} {b['name']}\")
+" | sort
+```
+
+Drift shows up in one of two shapes, and they fail very differently:
+
+- **In the cluster, not in the dashboard** — the host 404s at Cloudflare's edge
+  and never reaches the tunnel. Obvious the moment anyone tries it.
+- **In the dashboard, not in the cluster** — the request arrives at Traefik with
+  a `Host` header no ingress rule matches, and Traefik answers with its default
+  backend (404) over the self-signed default cert. This one is easy to miss,
+  because the tunnel itself looks perfectly healthy.
+
+Since the whole point of a table like this is to catch the second case, treat a
+row here with no matching ingress as a bug rather than a leftover.
 
 ## Deploy
 
@@ -71,6 +111,28 @@ cp values.local.yaml.example values.local.yaml   # then paste the tunnel token
 Health: `kubectl -n infra logs deploy/cloudflared` should show four
 `Registered tunnel connection` lines. The connector also serves `/ready` on
 `:2000` (used by the liveness/readiness probes).
+
+## Known: episodic QUIC reconnects
+
+Both tunnels (this one and `web/kelsey-green-cloudflared`) periodically drop and
+re-dial their edge connections:
+
+```
+WRN Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity"
+ERR failed to accept incoming stream requests error="failed to accept QUIC stream: Application error 0x0 (remote)"
+INF Registered tunnel connection location=sjc06 protocol=quic
+```
+
+This is **episodic, not continuous** — roughly 100 such lines over three weeks,
+arriving in tight bursts on a handful of days and nothing at all in between. The
+shape (both tunnels at once, clustered, self-healing) points at the house's
+uplink rather than at cloudflared or the cluster.
+
+It is not currently worth chasing: four connections are maintained precisely so
+a single one dropping is invisible, and requests only fail if a burst takes out
+enough of them at once. Worth revisiting only if the access log
+(`infra/traefik` → `infra/alloy`) shows `diemer.codes` 5xx lining up with these
+bursts — which is now something that can actually be checked.
 
 ## Reusing for another domain
 
