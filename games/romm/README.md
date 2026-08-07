@@ -177,7 +177,7 @@ DuckDNS resolves any `*.zachd.duckdns.org` query to the same A record as
 the parent domain, so `romm.zachd.duckdns.org` already resolves today —
 no DuckDNS account changes and no edits to talaria's `duckdns-updater`
 CronJob (which only refreshes the `zachd` record). See
-`../../minecraft/bluemap-ingress.yaml` for the same pattern in action at
+`../../minecraft/bluemap-ingress/` for the same pattern in action at
 `map.zachd.duckdns.org`.
 
 For TLS, talaria's Traefik holds a wildcard `*.zachd.duckdns.org` cert

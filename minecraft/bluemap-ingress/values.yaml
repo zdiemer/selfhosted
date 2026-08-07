@@ -1,0 +1,57 @@
+# BlueMap — the Minecraft world's web viewer, at map.zachd.duckdns.org.
+#
+# This chart is one Ingress and nothing else. It exists for the same reason
+# web/talaria-deals does: the workload it points at is deployed from a chart
+# this repo does not own — here the upstream `itzg/minecraft` chart, installed
+# as release `mc`, which knows nothing about our ingress conventions.
+#
+#     browser ──TLS──▶ Traefik ──Host: map.zachd.duckdns.org──▶ mc-minecraft-bluemap:8100
+#                         │
+#                    duckdns certresolver, riding the *.zachd.duckdns.org wildcard
+#
+# HISTORY: this used to be `minecraft/bluemap-ingress.yaml`, a loose file applied
+# with `kubectl apply -f`. That made it the one Ingress in the cluster with no
+# Helm ownership at all — invisible to `helm list`, unaffected by any upgrade,
+# and impossible to roll back. Its header comment had also gone stale, still
+# crediting "the talaria duckdns-updater CronJob" and
+# `talaria/helm/traefik-config.yaml`, neither of which has existed for months.
+#
+# PREREQ: BlueMap must be enabled inside the pod (`accept-download: true` in
+# /data/config/bluemap/core.conf, then a pod restart) or the in-pod webserver
+# isn't listening and this Ingress 502s. See the minecraft README.
+
+# The in-cluster service to route to. This chart does NOT own it — the upstream
+# `mc` release does. That is the real cost of keeping the route here: if the
+# minecraft chart ever renames the service or moves the port, nothing over there
+# knows this Ingress exists and it would quietly start answering 503.
+# upgrade.sh pre-flights both, so the break is loud at deploy time instead.
+target:
+  service: mc-minecraft-bluemap
+  port: 8100
+
+ingress:
+  className: traefik
+  host: map.zachd.duckdns.org
+
+  # Public, deliberately. BlueMap is a read-only render of the world — no
+  # commands, no player data beyond positions — and gating it behind Authelia
+  # would mean handing a login to everyone who plays. If that calculus ever
+  # changes, add a forwardauth middleware the way docs/stirling-pdf does.
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    # Mandatory, not an optimisation: DuckDNS stores one TXT record, at the
+    # account's top-level subdomain, so a per-host DNS-01 challenge for
+    # `map.zachd.duckdns.org` can never be answered. The wildcard challenge
+    # lives at the base name, which DuckDNS handles natively.
+    wildcardSan: "*.zachd.duckdns.org"
+
+# NOT SOLVED HERE, and worth knowing: `mc-minecraft-bluemap` is a LoadBalancer
+# service, so klipper-lb also publishes BlueMap on port 8100 of *every* node IP.
+# Anyone on the LAN reaches it without passing through Traefik at all, which
+# means those requests never appear in the access log either.
+#
+# The fix is `service.type: ClusterIP` in the minecraft values — but that is the
+# upstream chart, and a `helm upgrade` there restarts the server. Do it in an
+# offline window, not while people are playing.

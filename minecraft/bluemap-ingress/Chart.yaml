@@ -1,0 +1,11 @@
+apiVersion: v2
+name: bluemap-ingress
+description: Publishes the Minecraft server's BlueMap web viewer at map.zachd.duckdns.org
+type: application
+version: 1.0.0
+# No app and no image: this chart is a single Ingress. BlueMap is a mod running
+# inside the mc-minecraft pod, deployed from the upstream itzg/minecraft chart,
+# so there is no appVersion of ours to track.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

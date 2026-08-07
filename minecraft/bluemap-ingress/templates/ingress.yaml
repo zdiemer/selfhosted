@@ -1,0 +1,44 @@
+{{/*
+Renders into the release namespace, which must be the namespace the minecraft
+release runs in — an Ingress can only reference a Service beside it. upgrade.sh
+defaults to `minecraft` and pre-flights that the target service is actually
+there.
+
+Deliberately a separate Ingress object rather than a rule added to the upstream
+chart's own: that one would belong to the `mc` release, and editing it from here
+would have the two releases fighting over the same object on every upgrade.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "bluemap-ingress.fullname" . }}
+  labels:
+    {{- include "bluemap-ingress.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
+    # DuckDNS can only set TXT at the account's top-level subdomain, so per-host
+    # certs for sub-subdomains fail ACME. Ride the wildcard SAN.
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.target.service }}
+                port:
+                  number: {{ .Values.target.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  # No secretName: no cert-manager and no TLS Secrets in this cluster. Traefik
+  # holds the cert in acme.json on a PVC; this list is what it feeds to ACME.
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+  {{- end }}
