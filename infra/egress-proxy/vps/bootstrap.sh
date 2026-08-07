@@ -32,6 +32,16 @@ TLS_NAME="${TLS_NAME:-egress.local}"
 # home address does not lock the cluster out.
 HOME_DDNS="${HOME_DDNS:-zachd.duckdns.org}"
 SSH_PORT="${SSH_PORT:-22}"
+# Encrypt the cluster->VPS hop? Default off, and that is a finding rather than a
+# preference: squid's cache_peer TLS works between two identical builds but the
+# cluster's image is --with-gnutls and Ubuntu's squid is OpenSSL, and across
+# that pair this box accepts the CONNECT and the tunnel then carries no data.
+# Verified from the cluster that `curl --proxy https://` through here works, so
+# the listener is not the problem — squid-to-squid tunnelling is.
+#
+# Set TLS_HOP=true only if the cluster side terminates TLS itself (an stunnel or
+# ghostunnel sidecar), not by pointing squid's cache_peer at it directly.
+TLS_HOP="${TLS_HOP:-false}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,8 +99,14 @@ chmod 640 /etc/squid/secret/passwd
 # ---------------------------------------------------------------------------
 # squid
 # ---------------------------------------------------------------------------
-echo "==> Writing /etc/squid/squid.conf"
-sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" "${HERE}/squid.conf.template" > /etc/squid/squid.conf
+echo "==> Writing /etc/squid/squid.conf (TLS hop: ${TLS_HOP})"
+if [[ "$TLS_HOP" == "true" ]]; then
+  LISTENER="https_port ${PROXY_PORT} tls-cert=/etc/squid/tls/proxy.pem"
+else
+  LISTENER="http_port ${PROXY_PORT}"
+fi
+sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@LISTENER@|${LISTENER}|g" \
+  "${HERE}/squid.conf.template" > /etc/squid/squid.conf
 
 if ! squid -k parse -f /etc/squid/squid.conf 2>&1 | grep -viE 'requires the use of Via' | grep -iqE 'error|fatal|aborting'; then
   echo "    config parses"
@@ -118,9 +134,14 @@ echo "==> Firewall (nftables)"
 install -m 0755 "${HERE}/duckdns-allow.sh" /usr/local/sbin/egress-allow-home
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
   "${HERE}/nftables.conf" > /etc/nftables.conf
+# Through the unit, not a bare `nft -f`. Both load the same file, but loading it
+# directly leaves nftables.service reporting `inactive` on a box that is in fact
+# firewalled — and `systemctl is-active nftables` is the obvious health check, so
+# a correct box that looks broken is its own kind of problem.
 systemctl enable nftables >/dev/null 2>&1 || true
-nft -f /etc/nftables.conf
-echo "    ruleset loaded"
+systemctl restart nftables
+systemctl is-active --quiet nftables && echo "    ruleset loaded (nftables.service active)" || {
+  echo "FAIL: nftables did not start"; systemctl status nftables --no-pager -l | tail -20; exit 1; }
 
 cat > /etc/systemd/system/egress-allow-home.service <<EOF
 [Unit]
@@ -166,8 +187,11 @@ cat <<EOF
 lanes:
   vps:
     enabled: true
-    caCert: |
-$(sed 's/^/      /' /etc/squid/tls/proxy.crt)
+    tls: ${TLS_HOP}
+$(if [[ "$TLS_HOP" == "true" ]]; then
+    printf '    caCert: |\n'
+    sed 's/^/      /' /etc/squid/tls/proxy.crt
+  fi)
     peers:
       - name: vps
         host: "$(curl -s --max-time 10 https://api.ipify.org 2>/dev/null || echo '<this-vps-public-ip>')"

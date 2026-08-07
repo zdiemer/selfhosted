@@ -9,13 +9,19 @@
 # Cloudflare clearance is bound to the TLS fingerprint that minted it, and
 # talaria pins JA3/JA4. There is no ssl_bump here and there must never be.
 
-# TLS, not plain HTTP. Without it the proxy credential and every CONNECT target
-# hostname cross the public internet in cleartext. The tunnelled payload is the
-# client's own TLS either way — this protects the metadata and the password.
+# The listener. Plain by default — see "THE HOP IS NOT ENCRYPTED" in README.md.
 #
-# Only the cluster's squid ever speaks this protocol, which is what makes it
-# possible: Playwright/Camoufox cannot use an https:// proxy URL at all.
-https_port @PROXY_PORT@ tls-cert=/etc/squid/tls/proxy.pem
+# Short version: squid can speak TLS to a cache_peer, and it demonstrably works
+# when both ends are the same build, but the cluster's image is built
+# --with-gnutls while Ubuntu's squid is OpenSSL, and across that pair the
+# CONNECT is accepted by this box and then the tunnel's data phase dies. Proven
+# from the cluster: `curl --proxy https://…` through this box works perfectly,
+# so the listener is fine; it is squid-to-squid tunnelling that is not.
+#
+# What protects the hop instead is the nftables allowlist plus proxy auth. What
+# is exposed is the credential and the CONNECT target hostnames, to an on-path
+# observer. The tunnelled payload is the client's own TLS either way.
+@LISTENER@
 
 # ---------------------------------------------------------------------------
 # Authentication — this is what stops it being an open relay

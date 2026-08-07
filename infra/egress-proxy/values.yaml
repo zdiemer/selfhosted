@@ -154,22 +154,35 @@ lanes:
     kind: parent
     enabled: false
     port: 3131
-    # Wrap the hop to the VPS in TLS. Only squid speaks to the peer, so this is
-    # invisible to Playwright/Camoufox — which cannot use an https:// proxy URL
-    # and would otherwise force the credential and every CONNECT target
-    # hostname to cross the internet in cleartext.
+    # DEFAULT OFF, AND THAT IS A FINDING RATHER THAN A PREFERENCE.
     #
-    # Verified end to end against a two-squid chain before any VPS existed:
-    # the peer authenticated the cluster over a self-signed cert pinned with
-    # tls-cafile, and killing the peer produced a 503 rather than a fall back to
-    # the home address. The image is built --with-gnutls rather than
-    # --with-openssl and all of it works regardless.
-    tls: true
+    # Encrypting the cluster->VPS hop is desirable: without it the proxy
+    # credential and every CONNECT target hostname cross the internet in
+    # cleartext (the tunnelled payload is the client's own TLS either way). And
+    # it is only possible at all because *only* squid talks to the peer —
+    # Playwright/Camoufox cannot use an https:// proxy URL.
+    #
+    # It works between two identical squid builds: verified against a two-squid
+    # chain, pinned self-signed cert and all, before any VPS existed. It does
+    # NOT work against the real box. The cluster image is built --with-gnutls
+    # and Ubuntu's squid is OpenSSL, and across that pair the VPS accepts the
+    # CONNECT (logging it 200) and the tunnel then carries no data — the cluster
+    # reports "Connection to vps failed" and returns 502. Failing closed, at
+    # least, rather than leaking to the home address.
+    #
+    # Proven not to be the VPS's fault: `curl --proxy https://<vps>:3129
+    # --proxy-cacert ...` from a cluster pod works perfectly and returns the
+    # VPS address over HTTP/2. It is squid-to-squid tunnelling that breaks.
+    #
+    # What protects the hop instead: the VPS's nftables allowlist admits only
+    # the house, so a credential observed in transit is not usable from
+    # anywhere else. To get encryption back, terminate TLS on the cluster side
+    # with an stunnel/ghostunnel sidecar and point cache_peer at it over
+    # loopback — then set this true and TLS_HOP=true on the VPS. Not built yet.
+    tls: false
 
-    # The peer's certificate, PEM, set in values.local.yaml. A self-signed cert
-    # is its own CA, so this file IS the trust decision for that hop — stronger
-    # than a public CA, and it needs no domain validation on a box that has no
-    # domain. infra/egress-proxy/vps/bootstrap.sh prints it ready to paste.
+    # The peer's certificate, PEM. Only used when tls is true. A self-signed
+    # cert is its own CA, so this file IS the trust decision for that hop.
     caCert: ""
 
     peers:
@@ -224,12 +237,19 @@ clients:
     allowedHosts: []
 
   # apartment-watch runs Camoufox with geoip=True, which derives locale,
-  # timezone and lat/long FROM THE EXIT IP. Moving this one to a lane whose exit
-  # is not plausibly near San Francisco desyncs the fingerprint and gets it
-  # flagged harder than leaving it direct. Measure first, move deliberately.
+  # timezone and lat/long FROM THE EXIT IP — so the exit has to be plausibly
+  # near San Francisco or the fingerprint describes somewhere the traffic is not
+  # coming from. The vps lane's exit is in DigitalOcean SFO3 for exactly that
+  # reason.
+  #
+  # THE REMAINING RISK IS THE ASN, NOT THE GEO. This scraped well from a
+  # residential address — Craigslist answers a plain httpx GET from one
+  # essentially always — and a datacenter ASN may be treated worse. Watch the
+  # `blocked` counter in the run summary (`fetch stats: {... 'blocked': 0 ...}`);
+  # if it climbs off zero, put this back to `direct`, which is a one-word revert.
   - name: apartment-watch
     namespace: web
-    lane: direct
+    lane: vps
     allowedHosts: []
 
 # Passwords live in values.local.yaml as a MAP keyed by client name, never as

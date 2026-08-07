@@ -246,13 +246,26 @@ for d in yaml.safe_load_all(sys.stdin):
         sys.stdout.write(d['data']['squid.conf'])
 " <<<"$RENDERED" | $K exec -i "$CANARY" -- sh -c 'mkdir -p /etc/squid/peers /etc/squid/secret && cat > /etc/squid/test.conf'
 
-python3 -c "
+# EVERY key of the peers Secret, not just peers.conf. The pinned CA lands in the
+# same mount and `tls-cafile` names it, and squid does not treat a missing CA
+# file as fatal — it logs "Ignoring error setting CA certificate location" and
+# carries on with default verification, which then rejects a self-signed peer.
+# A canary that only wrote peers.conf reproduced exactly that warning and failed
+# the deploy for a problem that did not exist.
+for KEY in $(python3 -c "
 import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):
-    if not d: continue
-    if d.get('kind') == 'Secret' and 'peers.conf' in (d.get('stringData') or {}):
-        sys.stdout.write(d['stringData']['peers.conf'])
-" <<<"$RENDERED" | $K exec -i "$CANARY" -- sh -c 'cat > /etc/squid/peers/peers.conf'
+    if d and d.get('kind') == 'Secret' and 'peers.conf' in (d.get('stringData') or {}):
+        print('\n'.join(d['stringData'])); break
+" <<<"$RENDERED"); do
+  python3 -c "
+import sys, yaml
+key = sys.argv[1]
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get('kind') == 'Secret' and 'peers.conf' in (d.get('stringData') or {}):
+        sys.stdout.write(d['stringData'][key]); break
+" "$KEY" <<<"$RENDERED" | $K exec -i "$CANARY" -- sh -c "cat > /etc/squid/peers/${KEY}"
+done
 
 PARSE="$($K exec "$CANARY" -- sh -c 'touch /etc/squid/secret/passwd; squid -k parse -f /etc/squid/test.conf 2>&1' || true)"
 # The Via warning is expected and deliberate — see values.yaml.
