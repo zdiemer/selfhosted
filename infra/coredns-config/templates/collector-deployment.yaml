@@ -1,0 +1,90 @@
+{{- if and .Values.dnsLogging.enabled .Values.collector.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+  annotations:
+    # The whole point of the audit is the data. Keep the volume if the release
+    # is removed, so closing the window (which deletes this Deployment) does not
+    # also throw away the inventory before it has been read.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.collector.storage.storageClassName }}
+  # Rendered ONLY when non-empty: an explicit `storageClassName: ""` means
+  # "no class" to Kubernetes, not "use the default", and leaves the claim
+  # Pending forever with no useful event.
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.collector.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # RWO claim on local-path: two pods can never hold it at once, and a rolling
+  # update would start the replacement before releasing the volume and wedge on
+  # FailedAttachVolume. Same reasoning as infra/traefik's ACME volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "coredns-config.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collector
+  template:
+    metadata:
+      labels:
+        {{- include "coredns-config.labels" . | nindent 8 }}
+        app.kubernetes.io/component: collector
+      annotations:
+        # Restart when the collector source changes, not just when the image does.
+        checksum/collect: {{ include (print $.Template.BasePath "/collector-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "coredns-config.fullname" . }}-collector
+      # Never preempts anything. This is a temporary audit instrument and should
+      # be the first thing evicted under pressure, not a competitor to real work.
+      priorityClassName: batch-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: collector
+          image: {{ .Values.collector.image }}
+          command: ["python3", "-u", "/app/collect.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: POD_REFRESH_MAX_SECONDS
+              value: {{ .Values.collector.podRefreshMaxSeconds | quote }}
+            - name: FLUSH_SECONDS
+              value: {{ .Values.collector.flushSeconds | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: app
+              mountPath: /app
+              readOnly: true
+          resources:
+            {{- toYaml .Values.collector.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "coredns-config.fullname" . }}-collector
+        - name: app
+          configMap:
+            name: {{ include "coredns-config.fullname" . }}-collector
+{{- end }}

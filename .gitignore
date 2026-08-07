@@ -38,3 +38,8 @@ minecraft/claude-mod/libs/
 # Python __pycache__
 __pycache__/
 *.pyc
+
+# Egress audit captures (scripts/egress-audit.sh). Raw DNS query logs plus pod
+# IP snapshots — a full record of everything the cluster resolved during the
+# window, so it stays local.
+.egress-audit/

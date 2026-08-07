@@ -1,0 +1,39 @@
+{{- if .Values.dnsLogging.enabled }}
+{{/*
+The ONE object this chart owns.
+
+Name and namespace are both fixed, not derived from the release: the k3s
+CoreDNS Deployment mounts a ConfigMap literally named `coredns-custom` from
+kube-system, with `optional: true`. A differently-named ConfigMap is mounted by
+nothing and fails silently — CoreDNS starts, imports an empty glob, and logs
+nothing at all.
+
+The key suffix is load-bearing too. Files matching `*.override` are imported
+from INSIDE the `.:53` server block, which is where a `log` directive has to
+go. Files matching `*.server` are imported at top level and would be read as a
+new server block instead — same content, and CoreDNS would fail to parse it.
+
+Rendered only when logging is on. Absence is the off state, so `helm upgrade`
+with dnsLogging.enabled=false removes the object; upgrade.sh notices that
+transition and restarts CoreDNS for it, because CoreDNS keeps logging until it
+does.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+data:
+  egress-audit.override: |
+    # Managed by the coredns-config Helm chart. See infra/coredns-config.
+    #
+    # Egress inventory instrument, expected to be switched on for a measurement
+    # window and off again. `class` is what keeps the volume survivable: the
+    # Kubernetes search path turns one real lookup into four or five NXDOMAINs,
+    # and success-only discards them here rather than in Alloy.
+    log {{ if .Values.dnsLogging.zones }}{{ join " " .Values.dnsLogging.zones }}{{ else }}.{{ end }} {
+        class {{ join " " .Values.dnsLogging.classes }}
+    }
+{{- end }}

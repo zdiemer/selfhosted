@@ -1,0 +1,18 @@
+# Copy to values.local.yaml (gitignored) to OPEN A MEASUREMENT WINDOW.
+#
+# The window lives here rather than in values.yaml on purpose: the tracked
+# default must stay `false`, so that anyone running upgrade.sh without this file
+# closes the window rather than silently re-opening it. Deleting this file and
+# re-running upgrade.sh is how you turn it off.
+#
+#   cp values.local.yaml.example values.local.yaml
+#   ./upgrade.sh                          # restarts CoreDNS — brief DNS gap
+#   ../../scripts/egress-audit.sh status
+#   ../../scripts/egress-audit.sh report
+#   rm values.local.yaml && ./upgrade.sh  # close it
+#
+# No secrets in this file — it is local only because it is a mode switch with a
+# cluster-wide side effect, not because it is sensitive.
+
+dnsLogging:
+  enabled: true

@@ -1,0 +1,224 @@
+{{- if and .Values.dnsLogging.enabled .Values.collector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+data:
+  collect.py: |
+    """Cluster egress inventory collector.
+
+    Streams the CoreDNS query log and attributes every external lookup to the
+    workload that made it, then writes a compact aggregate to /data.
+
+    TWO DESIGN POINTS WORTH KNOWING.
+
+    1. IT AGGREGATES IN MEMORY AND PERSISTS COUNTS, NOT LINES. The raw query log
+       is gigabytes over a multi-day window and is of no interest once it has
+       been counted. What lands on disk is a few KB of {workload -> host ->
+       count}, so the PVC never comes under pressure and there is nothing to
+       rotate.
+
+    2. IT ATTRIBUTES AT QUERY TIME, AGAINST A WATCHED POD CACHE. Pod IPs are
+       ephemeral, and the workloads most worth seeing are exactly the ones that
+       do not persist -- duckdns, apartment-watch and the smitele collectors
+       are CronJobs, and a duckdns pod resolves www.duckdns.org and exits in
+       about a second.
+
+       This originally polled every 20s and those pods landed in the
+       unattributed bucket exactly as you would expect: the first run of it
+       attributed six long-lived workloads and left www.duckdns.org,
+       api.smitegame.com and api.ipify.org homeless. A watch gets the ADDED
+       event with the pod IP already populated, so the cache is current before
+       the pod has finished starting. The periodic re-list stays as a safety
+       net for a dropped stream, not as the primary path.
+    """
+    import collections, json, os, re, ssl, sys, threading, time, urllib.request
+
+    SA   = "/var/run/secrets/kubernetes.io/serviceaccount"
+    API  = "https://kubernetes.default.svc"
+    OUT  = "/data/inventory.json"
+    NS   = "kube-system"
+
+    # How long a single watch connection is allowed to live before the API
+    # server closes it and the loop re-lists. Not a polling interval — pod
+    # changes arrive as events, immediately.
+    POD_REFRESH_MAX = int(os.environ.get("POD_REFRESH_MAX_SECONDS", "1800"))
+    FLUSH           = int(os.environ.get("FLUSH_SECONDS", "30"))
+
+    with open(f"{SA}/token") as f:
+        TOKEN = f.read().strip()
+    CTX = ssl.create_default_context(cafile=f"{SA}/ca.crt")
+
+    def api(path, stream=False, timeout=30):
+        req = urllib.request.Request(API + path, headers={"Authorization": f"Bearer {TOKEN}"})
+        r = urllib.request.urlopen(req, context=CTX, timeout=(None if stream else timeout))
+        return r if stream else json.load(r)
+
+    # CoreDNS "common" log format, with the API's timestamps=true prefix:
+    #   2026-08-07T09:00:00Z 10.42.3.15:41234 - 1 "A IN api.ipify.org. udp 41 false 512" NOERROR ...
+    LINE = re.compile(r'(?P<ip>\d+\.\d+\.\d+\.\d+):\d+ - \d+ "(?P<qtype>\w+) \w+ (?P<qname>\S+) ')
+
+    # Names that never leave the cluster. The log plugin takes zones to INCLUDE
+    # and has no negative filter, so "not internal" has to be expressed here.
+    INTERNAL = re.compile(r'(\.cluster\.local\.?$|\.svc\.?$|\.in-addr\.arpa\.?$|\.ip6\.arpa\.?$|^localhost\.?$)')
+    SUFFIX   = re.compile(r'-[a-z0-9]{5,10}(-[a-z0-9]{5})?$')
+
+    lock         = threading.Lock()
+    owners       = {}                                        # ip -> "ns/workload"
+    seen         = collections.defaultdict(collections.Counter)
+    unattributed = collections.Counter()
+    stats        = {"parsed": 0, "external": 0, "started": time.time(), "reconnects": 0}
+
+    def resume():
+        """Pick up where a previous instance left off.
+
+        Without this the PVC would be decorative: the counters live in memory,
+        so any restart -- an eviction, a node reboot, a chart upgrade -- would
+        silently reset a multi-day window to zero while leaving a full-looking
+        file on disk. Reloading makes a restart cost only the seconds it was
+        down.
+        """
+        try:
+            with open(OUT) as f:
+                prev = json.load(f)
+        except (OSError, ValueError):
+            return
+        for key, hosts in prev.get("workloads", {}).items():
+            seen[key].update(hosts)
+        unattributed.update(prev.get("unattributed", {}))
+        stats["parsed"]   = prev.get("parsed", 0)
+        stats["external"] = prev.get("external", 0)
+        stats["started"]  = prev.get("started", stats["started"])
+        print(f"resumed: {stats['parsed']} queries, {len(seen)} workloads", file=sys.stderr, flush=True)
+
+    resume()
+
+    def record(pod, into):
+        ip = (pod.get("status") or {}).get("podIP")
+        if not ip:
+            return
+        m    = pod["metadata"]
+        app  = (m.get("labels") or {}).get("app.kubernetes.io/name")
+        name = app or SUFFIX.sub("", m["name"])
+        into[ip] = f"{m['namespace']}/{name}"
+
+    def watch_owners():
+        """Keep the pod-IP cache current by watching, not polling.
+
+        Entries are only ever added, never removed on DELETE. A pod that has
+        since exited is still the correct answer for the lookups it made while
+        it lived, and those are precisely the ones being chased here.
+        """
+        while True:
+            try:
+                listing = api("/api/v1/pods?resourceVersion=0")
+                fresh = {}
+                for p in listing.get("items", []):
+                    record(p, fresh)
+                # Node IPs too: a hostNetwork pod resolves from the node address.
+                for n in api("/api/v1/nodes?resourceVersion=0").get("items", []):
+                    for a in (n.get("status") or {}).get("addresses", []):
+                        if a.get("type") == "InternalIP":
+                            fresh.setdefault(a["address"], f"node/{n['metadata']['name']}")
+                with lock:
+                    owners.update(fresh)
+
+                rv = listing["metadata"]["resourceVersion"]
+                r = api(f"/api/v1/pods?watch=true&resourceVersion={rv}"
+                        f"&timeoutSeconds={POD_REFRESH_MAX}", stream=True)
+                for raw in r:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    ev = json.loads(raw)
+                    if ev.get("type") in ("ADDED", "MODIFIED"):
+                        d = {}
+                        record(ev.get("object") or {}, d)
+                        if d:
+                            with lock:
+                                owners.update(d)
+            except Exception as e:
+                # A 410 Gone (resourceVersion aged out) lands here too; the loop
+                # re-lists, which is the correct recovery.
+                print(f"pod watch ended: {e}", file=sys.stderr, flush=True)
+                time.sleep(3)
+
+    def flush():
+        while True:
+            time.sleep(FLUSH)
+            try:
+                with lock:
+                    doc = {
+                        "started":      stats["started"],
+                        "updated":      time.time(),
+                        "parsed":       stats["parsed"],
+                        "external":     stats["external"],
+                        "reconnects":   stats["reconnects"],
+                        "workloads":    {k: dict(v) for k, v in seen.items()},
+                        "unattributed": dict(unattributed),
+                    }
+                tmp = OUT + ".partial"
+                with open(tmp, "w") as f:
+                    json.dump(doc, f, indent=1, sort_keys=True)
+                os.replace(tmp, OUT)          # atomic; a fetch never reads a half file
+            except Exception as e:
+                print(f"flush failed: {e}", file=sys.stderr, flush=True)
+
+    def coredns_pod():
+        pods = api(f"/api/v1/namespaces/{NS}/pods?labelSelector=k8s-app%3Dkube-dns")
+        for p in pods.get("items", []):
+            if (p.get("status") or {}).get("phase") == "Running":
+                return p["metadata"]["name"]
+        return None
+
+    def tail():
+        """Follow the log, reconnecting across CoreDNS restarts.
+
+        Reconnecting matters more than it looks: enabling this audit restarts
+        CoreDNS, and toggling it off restarts it again. A collector that died
+        on the first stream close would capture nothing.
+        """
+        since = 3600
+        while True:
+            pod = None
+            try:
+                pod = coredns_pod()
+                if not pod:
+                    time.sleep(5); continue
+                print(f"following {NS}/{pod}", file=sys.stderr, flush=True)
+                r = api(f"/api/v1/namespaces/{NS}/pods/{pod}/log"
+                        f"?follow=true&timestamps=true&sinceSeconds={since}", stream=True)
+                since = 10   # only the first attach back-fills
+                for raw in r:
+                    m = LINE.search(raw.decode("utf-8", "replace"))
+                    if not m:
+                        continue
+                    with lock:
+                        stats["parsed"] += 1
+                    qname = m.group("qname")
+                    if INTERNAL.search(qname) or m.group("qtype") not in ("A", "AAAA", "HTTPS"):
+                        continue
+                    host = qname.rstrip(".")
+                    if "." not in host:
+                        continue
+                    with lock:
+                        stats["external"] += 1
+                        who = owners.get(m.group("ip"))
+                        if who:
+                            seen[who][host] += 1
+                        else:
+                            unattributed[host] += 1
+            except Exception as e:
+                print(f"log stream ended ({pod}): {e}", file=sys.stderr, flush=True)
+            with lock:
+                stats["reconnects"] += 1
+            time.sleep(3)
+
+    for fn in (watch_owners, flush):
+        threading.Thread(target=fn, daemon=True).start()
+    time.sleep(2)     # let the first pod cache land before attributing anything
+    tail()
+{{- end }}

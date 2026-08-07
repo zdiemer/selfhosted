@@ -1,0 +1,51 @@
+{{- if and .Values.dnsLogging.enabled .Values.collector.enabled }}
+{{/*
+Read-only, and narrow. `pods/log` is the sensitive one — it is a read of
+application output cluster-wide, which is why it is scoped to a `get` on the
+subresource and nothing else. The collector only ever reads CoreDNS's, but RBAC
+cannot express "one pod's log" without naming the pod, and CoreDNS pod names
+change on every restart (which this audit causes twice).
+
+Node addresses are read so a query from a hostNetwork pod attributes to a node
+rather than falling into the unattributed bucket.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "coredns-config.fullname" . }}-collector
+  labels:
+    {{- include "coredns-config.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "coredns-config.fullname" . }}-collector
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coredns-config.fullname" . }}-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}

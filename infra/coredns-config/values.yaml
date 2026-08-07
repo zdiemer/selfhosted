@@ -1,0 +1,165 @@
+# Cluster DNS configuration, and the instrument that measures egress.
+#
+# WHAT THIS CHART IS. k3s ships CoreDNS as a manifest Addon and owns the
+# install, the Deployment, and the `coredns` ConfigMap that holds the Corefile.
+# We do not. This chart owns exactly one object — a ConfigMap named
+# `coredns-custom` in kube-system — which the k3s Corefile already imports:
+#
+#     .:53 {
+#         ...
+#         import /etc/coredns/custom/*.override    <- inside the server block
+#         forward . /etc/resolv.conf
+#     }
+#     import /etc/coredns/custom/*.server          <- new server blocks
+#
+# The CoreDNS Deployment already mounts `coredns-custom` at /etc/coredns/custom
+# with `optional: true`, so this is a supported extension point, not a fight
+# with k3s's reconciler. Nothing here patches a k3s-owned object.
+#
+# WHY IT EXISTS. To answer "what does this cluster actually talk to?" Every
+# egress connection begins with a DNS lookup, so CoreDNS is the one place that
+# sees all of it — including from workloads deployed out of other repos
+# (whatnowgg, talaria) that this repo cannot read. Traefik's access log is the
+# equivalent record for ingress; there was no counterpart for egress until this.
+#
+# The inventory it produces is what infra/egress-proxy's per-service allowlists
+# get built from. See scripts/egress-audit.sh for the collection side.
+
+# ---------------------------------------------------------------------------
+# DNS query logging
+# ---------------------------------------------------------------------------
+# DEFAULT OFF, AND MEANT TO STAY THAT WAY. This is an audit instrument you
+# switch on for a measurement window, not a permanent pipeline.
+#
+# The CoreDNS `log` plugin writes one line per query. This cluster runs ~150
+# pods across 10 nodes, and left on it would plausibly cost several GB/month in
+# Loki — against a 50 GB/month free tier that infra/alloy's allowlist is
+# carefully built to stay inside, and which already carries the ingress logs.
+# Turn it on, run scripts/egress-audit.sh for a day or two, read the inventory,
+# turn it off again.
+#
+# The permanent, cheap counterpart is infra/egress-proxy's access log: bounded
+# by the number of opted-in services, and attributed by authenticated client
+# name rather than by ephemeral pod IP.
+dnsLogging:
+  enabled: false
+
+  # WHICH RESPONSES GET LOGGED. This is the single most important knob for
+  # volume, and it belongs here rather than in Alloy's drop stages.
+  #
+  # Kubernetes DNS clients walk a search path — a lookup of `api.ipify.org`
+  # is first tried as `api.ipify.org.<ns>.svc.cluster.local`, then
+  # `api.ipify.org.svc.cluster.local`, then `api.ipify.org.cluster.local`, and
+  # only then as written. The first three are NXDOMAIN. So four or five lines
+  # in every five are a failed prefix of a lookup that succeeded, and filtering
+  # them downstream means paying to read and discard them.
+  #
+  # `success` keeps NOERROR only, which is exactly the set that says "this name
+  # resolved, and something is about to connect to it". Add `denial` only if you
+  # are chasing a resolution failure, and expect roughly 5x the volume.
+  #
+  # Valid: success, denial, error, all.
+  classes:
+    - success
+
+  # Zones to log. Empty means all of them.
+  #
+  # There is deliberately no negative filter here, because the plugin has none —
+  # `log` takes zones to include, and "everything except cluster.local" is not
+  # expressible. Internal service lookups are dropped by the collector instead,
+  # where a regex can say "not internal".
+  zones: []
+
+# ---------------------------------------------------------------------------
+# The collector
+# ---------------------------------------------------------------------------
+# Turning on the log only produces lines in a pod that rotates them away. This
+# is the thing that reads them.
+#
+# IT RUNS IN THE CLUSTER, not in a terminal, because a measurement window is
+# measured in days and a laptop is not. It streams the CoreDNS log through the
+# Kubernetes API, attributes each lookup, and writes an aggregate to a PVC that
+# survives its own restarts. Fetch and read it with:
+#
+#     ./scripts/egress-audit.sh report
+#
+# IT PERSISTS COUNTS, NOT LINES. The raw log is gigabytes over a few days and is
+# uninteresting once counted; what lands on disk is a few KB of
+# {workload -> host -> count}. Nothing to rotate, and the PVC never fills.
+#
+# IT ATTRIBUTES AT QUERY TIME, against a WATCHED pod cache. This is the part
+# that matters. Pod IPs are ephemeral, and the workloads most worth seeing are
+# the ones that don't persist — duckdns, apartment-watch and the smitele
+# collectors are CronJobs, and a duckdns pod resolves www.duckdns.org and exits
+# in about a second.
+#
+# This polled every 20s at first, and those pods landed in the unattributed
+# bucket exactly as you would expect: six long-lived workloads attributed,
+# www.duckdns.org and api.smitegame.com homeless. Watching gets the ADDED event
+# with the pod IP already set, before the pod has finished starting.
+collector:
+  # Only meaningful when dnsLogging.enabled — there is nothing to collect
+  # otherwise, and both templates are gated on the pair.
+  enabled: true
+
+  # Stdlib-only Python against the API with the ServiceAccount token, the same
+  # shape infra/cluster-status's collector uses. No kubectl in the image, no
+  # dependencies to install, nothing to build.
+  image: python:3.12-alpine
+
+  # How long one watch connection lives before the API server closes it and the
+  # collector re-lists. NOT a polling interval — pod changes arrive as events.
+  # Only worth lowering if you suspect the watch is silently missing events.
+  podRefreshMaxSeconds: 1800
+
+  # How often the aggregate is written. Only bounds how stale a fetch can be.
+  flushSeconds: 30
+
+  storage:
+    size: 1Gi
+    # Leave empty for the cluster default. It is rendered only when non-empty:
+    # an explicit `storageClassName: ""` means "no class" to Kubernetes rather
+    # than "the default one", and leaves the claim Pending forever.
+    storageClassName: ""
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 192Mi
+
+# ---------------------------------------------------------------------------
+# The ConfigMap name is NOT configurable, on purpose.
+# ---------------------------------------------------------------------------
+# `coredns-custom` is hardcoded in the k3s CoreDNS Deployment's volume spec.
+# Renaming it here would render a ConfigMap nothing mounts, and the failure is
+# silent: CoreDNS starts fine, imports nothing, and logs nothing. Check the
+# mount before assuming otherwise:
+#   kubectl -n kube-system get deploy coredns \
+#     -o jsonpath='{.spec.template.spec.volumes[?(@.name=="custom-config-volume")]}'
+#
+# This chart owns that ConfigMap outright. Anything else that ever needs to
+# extend the Corefile — a stub zone, a rewrite, a second server block — adds a
+# key here rather than creating its own object, because there is only one
+# ConfigMap and the last writer would win.
+
+# ---------------------------------------------------------------------------
+# A CHANGE HERE RESTARTS CLUSTER DNS. Read this before editing.
+# ---------------------------------------------------------------------------
+# The `reload` plugin in the Corefile watches the Corefile, not the files it
+# imports, so a change to this ConfigMap has no effect until CoreDNS restarts.
+# upgrade.sh does that restart for you — but it is not free:
+#
+#   * CoreDNS runs ONE replica, with `maxUnavailable: 1`. The old pod is
+#     terminated before the new one is ready, so there is a real, if short,
+#     cluster-wide DNS gap on every restart.
+#   * A Corefile that fails to parse means the replacement pod crashloops and
+#     the old one is already gone. Cluster DNS stays down until the ConfigMap
+#     is removed.
+#
+# That is why upgrade.sh boots a throwaway pod on the real CoreDNS image with
+# the assembled config and proves it answers a query BEFORE touching the live
+# deployment, and rolls the ConfigMap back automatically if the restart or the
+# post-restart resolution check fails. Do not apply this chart with plain
+# `helm upgrade`.
