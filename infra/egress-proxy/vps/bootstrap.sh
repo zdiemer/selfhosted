@@ -42,6 +42,13 @@ SSH_PORT="${SSH_PORT:-22}"
 # Set TLS_HOP=true only if the cluster side terminates TLS itself (an stunnel or
 # ghostunnel sidecar), not by pointing squid's cache_peer at it directly.
 TLS_HOP="${TLS_HOP:-false}"
+# Accept the proxy port from the house over the public internet, as well as over
+# the tailnet. Default false: once the cluster reaches this box on its 100.x
+# address, a public listener is pure exposure, and closing it is what makes the
+# cleartext proxy credential (see TLS_HOP above) worthless to an observer.
+#
+# Set true if this box is NOT on a tailnet. SSH is unaffected either way.
+PUBLIC_FALLBACK="${PUBLIC_FALLBACK:-false}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -132,7 +139,15 @@ systemctl is-active --quiet squid && echo "    squid running" || {
 # cannot connect. It never widens on failure.
 echo "==> Firewall (nftables)"
 install -m 0755 "${HERE}/duckdns-allow.sh" /usr/local/sbin/egress-allow-home
+if [[ "$PUBLIC_FALLBACK" == "true" ]]; then
+  FB4="tcp dport ${PROXY_PORT} ip  saddr @home_v4 accept"
+  FB6="tcp dport ${PROXY_PORT} ip6 saddr @home_v6 accept"
+else
+  FB4="# public fallback disabled (PUBLIC_FALLBACK=false) — tailnet only"
+  FB6="# the home_v4/home_v6 sets are still refreshed, but nothing consults them"
+fi
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
+    -e "s|@PUBLIC_FALLBACK_V4@|${FB4}|" -e "s|@PUBLIC_FALLBACK_V6@|${FB6}|" \
   "${HERE}/nftables.conf" > /etc/nftables.conf
 # Through the unit, not a bare `nft -f`. Both load the same file, but loading it
 # directly leaves nftables.service reporting `inactive` on a box that is in fact

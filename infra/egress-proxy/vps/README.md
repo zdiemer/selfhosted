@@ -4,11 +4,15 @@ The far end of the `vps` lane. A ~$5/month box running squid, so that traffic
 which should not come from the house doesn't.
 
 ```
-pod --http--> [cluster squid] --TLS--> [this box] --> the internet
+pod --http--> [cluster squid] --WireGuard (tailnet)--> [this box] --> the internet
 ```
 
 Everything here is run **once, on the VPS**. Nothing in this directory runs in
 the cluster.
+
+The hop rides the tailnet rather than TLS, and the public proxy port is closed
+entirely — see [Security posture](#security-posture) for why that ended up being
+both simpler and stronger than the TLS design it replaced.
 
 ## One address, or a rotating pool?
 
@@ -90,16 +94,49 @@ the cluster names a *lane* rather than a host: swapping the address is a
 
 ## Install
 
+**1. Join the tailnet first.** The default firewall posture admits the proxy port
+*only* on `tailscale0`, so a box that is not on the tailnet is unreachable by
+design. `--accept-dns=false` is deliberate: MagicDNS would repoint
+`/etc/resolv.conf` at `100.100.100.100`, and this box resolves thousands of
+scraping destinations — its resolver should not depend on tailscaled.
+
+```sh
+ssh root@<vps>
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --ssh --hostname=egress-sfo3 --accept-dns=false
+tailscale ip -4          # this is the address the cluster will use
+```
+
+**2. Bootstrap.**
+
 ```sh
 scp -r infra/egress-proxy/vps/ root@<vps>:/tmp/egress-vps
 ssh root@<vps> 'bash /tmp/egress-vps/bootstrap.sh'
 ```
 
 Tunable by environment: `PROXY_PORT` (3129), `CLUSTER_USER` (homecluster),
-`TLS_NAME` (egress.local), `HOME_DDNS` (zachd.duckdns.org), `SSH_PORT` (22).
+`HOME_DDNS` (zachd.duckdns.org), `SSH_PORT` (22), `TLS_NAME` (egress.local),
+plus two that decide the posture:
 
-It is idempotent — re-running keeps the existing certificate and password. It
-prints a block ready to paste into `infra/egress-proxy/values.local.yaml`, then:
+| | Default | Meaning |
+|---|---|---|
+| `PUBLIC_FALLBACK` | `false` | Also admit the proxy port from the house over the public internet. Only needed for a box that is *not* on a tailnet. |
+| `TLS_HOP` | `false` | Serve `https_port` instead of `http_port`. Only useful if the cluster side terminates TLS itself — squid's own `cache_peer tls` does not work against this box. |
+
+Idempotent — re-running keeps the existing certificate and password. It prints a
+block ready to paste into `infra/egress-proxy/values.local.yaml`.
+
+**3. Point the lane at the tailnet address, not the public one.** The printed
+block carries the box's public IP, because that is what it can see about itself.
+Replace it:
+
+```yaml
+    peers:
+      - name: vps
+        host: "100.x.y.z"     # tailscale ip -4, NOT the public address
+```
+
+**4. Apply.**
 
 ```sh
 ./infra/egress-proxy/upgrade.sh
@@ -126,11 +163,22 @@ service switches when you change its `lane` to `vps` in `values.yaml`.
 - **SSH stays open to the world, deliberately.** Locking it to the same DDNS set
   means one failed lookup plus a changed home address locks you out of a box
   with no console. Use keys, disable password auth.
-- **The hop is TLS.** Not for the payload — that is the client's own TLS and is
-  safe regardless — but because the credential and every CONNECT target hostname
-  would otherwise cross the internet in cleartext. This is only possible because
-  *only squid* talks to this box: Playwright/Camoufox cannot use an `https://`
-  proxy URL at all.
+- **The hop rides the tailnet, not TLS.** squid *can* speak TLS to a cache_peer
+  and it works between two identical builds, but the cluster image is
+  `--with-gnutls` while Ubuntu's squid is OpenSSL, and across that pair this box
+  accepts the CONNECT and the tunnel then carries no data. (Proven not to be
+  this box's fault: `curl --proxy https://` through it works perfectly.) So the
+  listener is plain and the hop is wrapped by WireGuard instead — which is
+  strictly better, because it encrypts the whole conversation rather than just
+  the proxy control channel, needs no certificate pinning, and lets the public
+  listener be closed entirely.
+- **With `PUBLIC_FALLBACK=false` there is no public listener at all.** That is
+  what makes the proxy credential uninteresting: there is nothing on the
+  internet to replay it against. It also removes the "residential address
+  changed and locked the cluster out" failure mode, and makes the
+  DuckDNS-following timer vestigial — it still refreshes the sets, but no rule
+  consults them. Left running because it costs nothing and is the fallback if
+  this box ever leaves the tailnet.
 - **No destination allowlist here.** This box sees one authenticated client and
   has already lost the context of which service made the request. Filtering
   belongs on the cluster side, where the client authenticates by name.
@@ -154,17 +202,24 @@ nft list set inet egress home_v4          # should hold the current home address
 tail -f /var/log/squid/access.log         # same logfmt shape as the cluster side
 ```
 
-**The test worth actually doing** is that a dead exit fails closed rather than
-falling back to the house — that is the whole point of `never_direct`:
+**The tests worth actually doing** are that a dead exit fails closed rather than
+falling back to the house — the whole point of `never_direct` — and that the
+public port really is shut:
 
 ```sh
-ssh root@<vps> systemctl stop squid
-# the same curl must now FAIL, not return the home address
+# 1. dead exit must refuse, not fall back
+ssh root@<vps> systemctl stop squid     # (or: systemctl stop tailscaled)
+#    the same request must now FAIL, not return the home address
 ssh root@<vps> systemctl start squid
+
+# 2. from a cluster pod: the public address must time out, the tailnet one work
+curl --max-time 12 -x http://user:pass@<public-ip>:3129  https://api.ipify.org   # expect timeout
+curl --max-time 12 -x http://user:pass@100.x.y.z:3129    https://api.ipify.org   # expect the VPS IP
 ```
 
-This was verified against a two-squid chain before any VPS existed: with the
-peer stopped, the request returned `503`, and the address never leaked.
+Both verified on the live box: stopping tailscaled produced a timeout rather
+than the home address, and the public listener times out while the tailnet one
+answers.
 
 ## Known gaps
 
