@@ -78,6 +78,8 @@ INCLUDE_EXTERNAL=0
 FROM_CLUSTER=0
 VERIFY_ONLY=0
 ASSUME_YES=0
+FILES_ONLY=0
+KEEP="${KEEP:-20}"
 ITEM_OVERRIDE=""
 
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -669,16 +671,34 @@ cmd_backup() {
 
   # A full vault dump, so 1Password itself can be rebuilt — not just the files.
   # --reveal is required or concealed field values come back masked.
-  if command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1; then
-    mkdir -p "$tmp/stage/vault"
-    op item list --vault "$VAULT" --format json 2>/dev/null | jq -r '.[].id' \
-      | while read -r id; do op item get "$id" --vault "$VAULT" --format json --reveal; done \
-      | jq -s '.' > "$tmp/stage/vault/items.json" 2>/dev/null || true
-    note "vault dump: $(jq 'length' "$tmp/stage/vault/items.json" 2>/dev/null || echo 0) item(s)"
-  else
-    echo "op unavailable — files-only backup (still restores every secret, but cannot rebuild the vault)" \
+  #
+  # This used to swallow every error (2>/dev/null … || true) and then report
+  # whatever jq found, which was 0. A session that expires between `op whoami`
+  # and `op item list` produced an archive with an EMPTY items.json and no
+  # indication anything was wrong — a silent hole in the half of the backup that
+  # exists specifically for losing 1Password. Count the items and insist they
+  # match, or say plainly that this is a files-only archive.
+  local want=0 got=0
+  if [[ $FILES_ONLY -eq 1 ]]; then
+    printf 'Files-only by request (--files-only). Every secret restores from files/;\nthe vault structure does not.\n' \
       > "$tmp/stage/VAULT-DUMP-SKIPPED"
-    note "op unavailable — files-only backup"
+    note "files-only backup (requested)"
+  elif command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1 \
+       && want="$(op item list --vault "$VAULT" --format json 2>/dev/null | jq 'length' 2>/dev/null)" \
+       && [[ "${want:-0}" -gt 0 ]]; then
+    mkdir -p "$tmp/stage/vault"
+    op item list --vault "$VAULT" --format json | jq -r '.[].id' \
+      | while read -r id; do op item get "$id" --vault "$VAULT" --format json --reveal; done \
+      | jq -s '.' > "$tmp/stage/vault/items.json"
+    got="$(jq 'length' "$tmp/stage/vault/items.json" 2>/dev/null || echo 0)"
+    if [[ "$got" -ne "$want" ]]; then
+      die "vault dump incomplete: got ${got} of ${want} items. Re-run 'eval \$(op signin)' first, or pass --files-only to accept a files-only archive."
+    fi
+    note "vault dump: ${got} item(s)"
+  else
+    printf 'op was unavailable or not signed in. Every secret still restores from\nfiles/; only the vault structure is missing. Re-run after `eval $(op signin)`\nfor a full archive.\n' \
+      > "$tmp/stage/VAULT-DUMP-SKIPPED"
+    note "op unavailable or signed out — files-only backup (secrets still restore; vault structure does not)"
   fi
 
   # Never write a plaintext archive to disk; /dev/shm is tmpfs, / is not.
@@ -698,6 +718,21 @@ cmd_backup() {
   age -d -i "$AGE_KEY" "$tmp/verify.age" | tar tzf - >/dev/null \
     || die "the backup just written cannot be decrypted"
   note "verified: readable and decryptable"
+
+  # Retention. Names are ISO-8601 UTC, so a lexical sort is a chronological one.
+  # Prune only AFTER the new archive is verified, so a failed run never costs an
+  # old good copy.
+  local -a archives; local old n
+  mapfile -t archives < <(smbclient "$NAS_SHARE" -A "$NAS_CREDS" -c "cd ${NAS_DIR}; ls" 2>/dev/null \
+    | grep -oE 'selfhosted-secrets-[0-9]{8}T[0-9]{6}Z\.tar\.gz\.age' | sort -u)
+  n=${#archives[@]}
+  if [[ $n -gt $KEEP ]]; then
+    for old in "${archives[@]:0:$((n - KEEP))}"; do
+      smbclient "$NAS_SHARE" -A "$NAS_CREDS" -c "cd ${NAS_DIR}; del ${old}" >/dev/null 2>&1 \
+        && echo "    pruned ${old}"
+    done
+  fi
+  note "${n} archive(s) on the NAS, keeping ${KEEP}"
 }
 
 cmd_restore() {
@@ -743,6 +778,7 @@ Usage: scripts/secrets.sh <command> [options] [path...]
   restore [--verify-only]  recover from the latest NAS archive
 
 Options: --dry-run  --force  --yes  --include-external  --vault NAME
+         --files-only (skip the vault dump)  --keep N (archive retention, default 20)
 
 The contract is still values.local.yaml. This script only moves it around, and
 no deploy path depends on it — every template carries the op inject one-liner.
@@ -762,6 +798,8 @@ while [[ $# -gt 0 ]]; do
     --include-external) INCLUDE_EXTERNAL=1 ;;
     --from-cluster)     FROM_CLUSTER=1 ;;
     --verify-only)      VERIFY_ONLY=1 ;;
+    --files-only)       FILES_ONLY=1 ;;
+    --keep)             KEEP="$2"; shift ;;
     --vault)            VAULT="$2"; shift ;;
     --item)             ITEM_OVERRIDE="$2"; shift ;;
     -h|--help)          usage; exit 0 ;;

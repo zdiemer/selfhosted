@@ -1,0 +1,3 @@
+# age public keys that backups are encrypted to. Public — safe to commit.
+# Any checkout can CREATE a backup; only the paper key can READ one.
+age1we08al2f8s9qhka08c94nf8e2esf65ch6yfxshmr54dqdsf7kccqqs3zlt
