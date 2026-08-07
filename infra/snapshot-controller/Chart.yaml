@@ -1,0 +1,13 @@
+apiVersion: v2
+name: snapshot-controller
+description: CSI snapshot controller + VolumeSnapshot CRDs — k3s ships neither, and democratic-csi needs both
+type: application
+version: 1.0.0
+# Tracks the external-snapshotter release the upstream chart deploys.
+appVersion: "v8.6.0"
+maintainers:
+  - name: zachd
+dependencies:
+  - name: snapshot-controller
+    version: 5.2.0
+    repository: https://piraeus.io/helm-charts/

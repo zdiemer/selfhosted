@@ -1,0 +1,62 @@
+# CSI snapshot controller.
+#
+# k3s bundles neither the VolumeSnapshot CRDs nor the controller that acts on
+# them — `kubectl get volumesnapshotclass` on a stock k3s returns "server doesn't
+# have a resource type". Without this, democratic-csi's VolumeSnapshotClass
+# objects are unrecognized types and every snapshot silently does nothing.
+#
+# This is a thin wrapper: all real configuration belongs to the upstream chart
+# under the `snapshot-controller:` key below.
+
+snapshot-controller:
+  # The CRDs are the whole reason this chart exists. Note that helm will NOT
+  # remove them on uninstall (by design — deleting a CRD deletes every snapshot
+  # object with it), so removing this release leaves the types behind.
+  installCRDs: true
+
+  controller:
+    enabled: true
+
+    # Leader-elected, so a second replica buys availability rather than
+    # throughput. One is right for a home cluster — a controller outage delays
+    # snapshots, it doesn't lose data.
+    replicaCount: 1
+
+    # Deliberately no nodeSelector or affinity. This runs anywhere; pinning
+    # cluster-wide controllers to a node is the exact failure mode this whole
+    # storage migration exists to remove.
+    nodeSelector: {}
+    affinity: {}
+
+    # Small and steady — it watches objects and calls the CSI driver, it never
+    # touches volume data. The limit is a guard against a runaway watch loop on
+    # the 3.7GB nodes, not a real expectation.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
+    args:
+      leaderElection: true
+      leaderElectionNamespace: "$(NAMESPACE)"
+      httpEndpoint: ":8080"
+      # Group snapshots (several volumes captured at one consistent point) are
+      # unused here — every workload owns exactly one volume.
+      #
+      # null, NOT "". The upstream template renders this map with
+      #   range $flag, $val := .Values.controller.args
+      #   - --{{ $flag | kebabcase }}={{ $val }}
+      # so an empty string still emits a bare `--feature-gates=` rather than
+      # dropping the flag. null removes the key from the merged map entirely,
+      # which is the only way to omit it. Same trap as the bare Traefik filter
+      # flag in 0a18466.
+      featureGates: null
+
+  webhook:
+    # The validating webhook only rejects malformed snapshot objects. It adds a
+    # second deployment plus a cert to keep alive, and a webhook that fails open
+    # is decoration while one that fails closed can block snapshot creation
+    # entirely. Not worth it at this scale.
+    enabled: false
