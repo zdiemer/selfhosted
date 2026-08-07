@@ -59,7 +59,7 @@ persistence:
   configs:
     enabled: true
     size: 1Gi
-    storageClass: ""              # "" → cluster default StorageClass
+    storageClass: truenas-nfs     # NAS-backed; local-path pinned this to one node
     accessMode: ReadWriteOnce
 
 auth:

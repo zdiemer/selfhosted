@@ -27,6 +27,7 @@ source "$(dirname "$0")/_common.sh"
 
 PLAN_ONLY=true
 ASSUME_YES=false
+CHART_CMD=""
 RSYNC_IMAGE="${RSYNC_IMAGE:-instrumentisto/rsync-ssh:alpine}"
 
 usage() {
@@ -36,9 +37,14 @@ Usage: $(basename "$0") <namespace> <pvc> <target-class> [options]
 Migrate a PVC from local-path to truenas-iscsi or truenas-nfs, preserving data.
 
 OPTIONS:
-  --execute      Actually perform the migration (default: plan only)
-  --yes          Don't prompt at each destructive step (implies --execute)
-  -h, --help     Show this help
+  --execute            Actually perform the migration (default: plan only)
+  --yes                Don't prompt at each destructive step (implies --execute)
+  --chart-cmd <cmd>    Command that recreates the PVC on the new class, usually
+                       the chart's upgrade.sh. Run automatically at step 5
+                       instead of pausing for you to do it by hand. Required
+                       with --yes, since there is otherwise nothing to recreate
+                       the claim before the copy looks for it.
+  -h, --help           Show this help
 
 EXAMPLES:
   $(basename "$0") docs stirling-configs truenas-nfs
@@ -67,12 +73,22 @@ while [[ "${1:-}" != "" ]]; do
     case "$1" in
         --execute) PLAN_ONLY=false; shift ;;
         --yes)     PLAN_ONLY=false; ASSUME_YES=true; shift ;;
+        --chart-cmd) CHART_CMD="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Error: Unknown option: $1" >&2; usage ;;
     esac
 done
 
 require_tools kubectl python3
+
+# --yes silences the step-5 prompt too, so without a chart command there is
+# nothing to recreate the claim and the copy would race a PVC that never
+# appears. Refuse the combination rather than fail halfway through.
+if [[ "$ASSUME_YES" == "true" && -z "$CHART_CMD" ]]; then
+    echo "Error: --yes requires --chart-cmd." >&2
+    echo "       Otherwise nothing recreates pvc/${PVC} between the delete and the copy." >&2
+    exit 1
+fi
 
 K="kubectl -n ${NAMESPACE}"
 TMP_CLAIM="${PVC}-migsrc"
@@ -255,6 +271,34 @@ fi
 # ------------------------------------------------------------------------------
 # 3. Scale down
 # ------------------------------------------------------------------------------
+scale_everything_down() {
+    for cj in "${CRONJOBS[@]}"; do
+        [[ -z "$cj" ]] && continue
+        $K patch "$cj" -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || true
+    done
+    for o in "${OWNERS[@]}"; do
+        [[ -z "$o" || "$o" == pod/* || "$o" == job/* ]] && continue
+        $K scale "$o" --replicas=0 >/dev/null 2>&1 || true
+    done
+
+    local remaining=""
+    for _ in $(seq 1 60); do
+        remaining="$($K get pods -o json | python3 -c "
+import json, sys
+pvc = ${PVC@Q}
+d = json.load(sys.stdin)
+print(sum(1 for p in d['items']
+          if p.get('status', {}).get('phase') not in ('Succeeded', 'Failed')
+          and any((v.get('persistentVolumeClaim') or {}).get('claimName') == pvc
+                  for v in (p['spec'].get('volumes') or []))))
+")"
+        [[ "$remaining" == "0" ]] && return 0
+        sleep 5
+    done
+    echo "FAIL: ${remaining} live pod(s) still hold the PVC"
+    return 1
+}
+
 step "3. Scale down"
 confirm "Scale down ${#OWNERS[@]} workload(s) in ${NAMESPACE}?"
 
@@ -320,7 +364,17 @@ echo "  [OK] pv/${SRC_PV} is $(kubectl get pv "$SRC_PV" -o jsonpath='{.status.ph
 # 5. Recreate the PVC on the new class
 # ------------------------------------------------------------------------------
 step "5. Recreate the claim on ${TARGET_CLASS}"
-cat <<EOF
+if [[ -n "$CHART_CMD" ]]; then
+    echo "  running: ${CHART_CMD}"
+    if ! bash -c "$CHART_CMD"; then
+        echo ""
+        echo "FAIL: chart command exited non-zero."
+        echo "      pvc/${PVC} was deleted but pv/${SRC_PV} is Retain and intact."
+        echo "      Fix the chart, then re-run this script from step 5."
+        exit 1
+    fi
+else
+    cat <<EOF
 
   Now run the chart's upgrade.sh with the new storage class, e.g.
 
@@ -330,13 +384,22 @@ cat <<EOF
   scaled at 0 — this script restores the replica counts at the end.
 
 EOF
-confirm "Has pvc/${PVC} been recreated on ${TARGET_CLASS}?"
+    confirm "Has pvc/${PVC} been recreated on ${TARGET_CLASS}?"
+fi
 
 NEW_CLASS="$($K get pvc "$PVC" -o jsonpath='{.spec.storageClassName}' 2>/dev/null || true)"
 [[ "$NEW_CLASS" == "$TARGET_CLASS" ]] \
     || { echo "FAIL: pvc/${PVC} is on '${NEW_CLASS:-<missing>}', expected ${TARGET_CLASS}"; exit 1; }
 $K wait --for=jsonpath='{.status.phase}'=Bound "pvc/${PVC}" --timeout=120s
 echo "  [OK] pvc/${PVC} bound on ${TARGET_CLASS}"
+
+# The chart just re-applied its own manifests, which resets replicas to whatever
+# values.yaml says — so the workload is running again, against a brand new EMPTY
+# volume. Left alone it would serve empty state to users and fight the copy Job
+# for the RWO claim. Put it back to zero before anything touches the data.
+echo "  re-scaling to 0 after the chart upgrade"
+scale_everything_down || exit 1
+echo "  [OK] volume is idle again"
 
 # ------------------------------------------------------------------------------
 # 6. Copy
@@ -353,7 +416,12 @@ metadata:
   namespace: ${NAMESPACE}
 spec:
   accessModes: [${MODE}]
-  storageClassName: ""
+  # The SOURCE class, not "". Binding requires PVC.storageClassName to equal
+  # PV.storageClassName exactly, and a local-path PV carries "local-path" —
+  # "" means "no class" and the controller rejects it with VolumeMismatch.
+  # (The "" idiom in games/romm's static SMB PVs works only because those PVs
+  # genuinely declare "" themselves.)
+  storageClassName: ${SRC_CLASS}
   volumeName: ${SRC_PV}
   resources:
     requests:
@@ -383,16 +451,31 @@ spec:
           args:
             - |
               echo "--- source ---"
-              du -sh /src; find /src -type f | wc -l
+              du -sh /src; SRCN=$(find /src -type f | wc -l); echo "$SRCN files"
               echo "--- copying ---"
-              rsync -aHAX --numeric-ids --info=progress2 /src/ /dst/
-              echo "--- verify (checksum diff, must be empty) ---"
-              rsync -aHAXn --checksum --itemize-changes /src/ /dst/ > /tmp/diff
+              # --delete makes the destination an exact mirror. The chart upgrade
+              # in step 5 briefly runs the app against the new EMPTY volume, and
+              # it writes things there: stirling generated a fresh JWT signing
+              # keypair and an empty-DB backup in 76 seconds. Those are artifacts
+              # of that boot, not data, and without --delete they survive the
+              # migration and shadow the real state.
+              rsync -aHAX --delete --numeric-ids --info=progress2 /src/ /dst/
+              echo "--- verify (must be empty) ---"
+              # --delete here too. Without it rsync only reports files present in
+              # the source, so anything existing ONLY in the destination passes
+              # silently — which is exactly the case this needs to catch.
+              rsync -aHAXn --delete --checksum --itemize-changes /src/ /dst/ > /tmp/diff
               if [ -s /tmp/diff ]; then
                 echo "MISMATCH:"; cat /tmp/diff; exit 1
               fi
               echo "--- destination ---"
-              du -sh /dst; find /dst -type f | wc -l
+              du -sh /dst; DSTN=$(find /dst -type f | wc -l); echo "$DSTN files"
+              # Belt and braces: the checksum pass above should make this
+              # impossible, but a count mismatch is cheap to assert and would
+              # catch anything rsync's filters skipped.
+              if [ "$SRCN" != "$DSTN" ]; then
+                echo "FILE COUNT MISMATCH: src=$SRCN dst=$DSTN"; exit 1
+              fi
               echo "VERIFIED"
           volumeMounts:
             - { name: src, mountPath: /src, readOnly: true }
