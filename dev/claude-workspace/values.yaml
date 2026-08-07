@@ -169,9 +169,13 @@ resources:
   term:
     requests:
       cpu: 50m
-      memory: 128Mi
+      # ~2.9Gi resident with a session live, against a 128Mi request — the
+      # scheduler was booking this pod at 4% of what it actually holds.
+      memory: 2560Mi
     limits:
-      memory: 3Gi
+      # 2.9Gi steady against a 3Gi ceiling left nothing for a second session;
+      # 4Gi restores headroom rather than waiting for the OOM kill.
+      memory: 4Gi
   # The happy daemon process is tiny, but it HOSTS the claude sessions the phone
   # spawns (they are its children) — so give it the same roomy ceiling as the
   # term container's tmux-hosted sessions, with a low request (idle when no

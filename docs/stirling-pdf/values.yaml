@@ -104,6 +104,7 @@ resources:
   # CPU and memory hard, so keep a generous memory ceiling.
   requests:
     cpu: 100m
-    memory: 512Mi
+    # JVM idle still holds ~870Mi resident here, above the old 512Mi request.
+    memory: 1Gi
   limits:
     memory: 2Gi

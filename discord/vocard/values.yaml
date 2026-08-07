@@ -95,7 +95,9 @@ mongo:
     # storageClass: ""   # unset = cluster default (k3s local-path)
   resources:
     requests:
-      memory: 256Mi
+      # Mongo sits at ~261Mi, fractionally over the old 256Mi request — it will
+      # only grow with the cache, so give it a little room above the measurement.
+      memory: 384Mi
       cpu: 100m
     limits:
       memory: 1Gi

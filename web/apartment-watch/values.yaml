@@ -48,7 +48,8 @@ web:
   resources:
     requests:
       cpu: 10m
-      memory: 64Mi
+      # ~83Mi resident, just over the old 64Mi request.
+      memory: 96Mi
     limits:
       cpu: 500m
       memory: 256Mi

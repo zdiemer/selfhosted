@@ -64,6 +64,7 @@ ingress:
 resources:
   requests:
     cpu: 50m
-    memory: 256Mi
+    # ~465Mi resident at rest, well over the old 256Mi request.
+    memory: 512Mi
   limits:
     memory: 1Gi

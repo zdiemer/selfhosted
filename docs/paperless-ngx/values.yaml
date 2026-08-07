@@ -116,7 +116,8 @@ gotenberg:
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
+      # Chromium-backed renderer idles at ~285Mi, over twice the old request.
+      memory: 320Mi
     limits:
       memory: 1Gi
 
@@ -159,6 +160,7 @@ resources:
   # ingestion lags.
   requests:
     cpu: 200m
-    memory: 512Mi
+    # ~695Mi resident at rest, above the old 512Mi request.
+    memory: 768Mi
   limits:
     memory: 2Gi
