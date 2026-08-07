@@ -36,8 +36,13 @@ read_cred() {
   python3 -c "
 import sys, yaml
 d = yaml.safe_load(open('${LOCAL_VALUES}')) or {}
-v = (d.get('grafanaCloud') or {}).get('$1', '')
-if not v or 'XXX' in str(v) or str(v).startswith('glc_00000'):
+v = str((d.get('grafanaCloud') or {}).get('$1', ''))
+# Reject the literal values shipped in values.local.yaml.example. '123456' is
+# the one that actually bit: it looks like a real instance ID, so it survives a
+# read-through, and Grafana Cloud answers every push with HTTP 530 rather than
+# anything that says 'wrong tenant'.
+PLACEHOLDERS = {'123456', '000000', 'glc_' + '0' * 60}
+if not v or 'XXX' in v or v in PLACEHOLDERS or v.startswith('glc_00000'):
     sys.exit(1)
 print(v)
 "
@@ -45,10 +50,21 @@ print(v)
 
 for f in lokiUrl lokiUser promUrl promUser token; do
   if ! read_cred "$f" >/dev/null; then
-    echo "FAIL: grafanaCloud.${f} is unset or still the example placeholder in ${LOCAL_VALUES}"
+    echo "FAIL: grafanaCloud.${f} is unset or still an example placeholder in ${LOCAL_VALUES}"
+    echo
+    echo "  The two instance IDs are DIFFERENT numbers and are easy to conflate:"
+    echo "    lokiUser -> grafana.com -> your stack -> Loki  -> Send Logs    -> 'User'"
+    echo "    promUser -> grafana.com -> your stack -> Prom  -> Send Metrics -> 'Username'"
     exit 1
   fi
 done
+
+if [[ "$(read_cred lokiUser)" == "$(read_cred promUser)" ]]; then
+  echo "FAIL: lokiUser and promUser are the same value."
+  echo "      They are separate per-signal instance IDs; identical means one was"
+  echo "      copied from the wrong panel. Loki pushes would fail with HTTP 530."
+  exit 1
+fi
 
 echo "==> writing Secret ${SECRET} in ${NAMESPACE}"
 kubectl create secret generic "$SECRET" -n "$NAMESPACE" \
@@ -68,20 +84,37 @@ helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES"
 
 kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=180s
 
-# A bad token does not stop the pod — Alloy starts fine and simply fails every
-# push, so "Running" proves nothing. Read the log for the actual answer.
-echo "==> checking for delivery errors (10s)"
-sleep 10
-if kubectl -n "$NAMESPACE" logs daemonset/"$RELEASE" --tail=200 2>/dev/null \
-   | grep -iE 'final error sending batch|401|403|unauthorized' | head -5; then
-  echo "    ^ credentials or endpoint look wrong — check values.local.yaml"
-else
-  echo "    no delivery errors"
-fi
+# Bad credentials do not stop the pod — Alloy starts cleanly, tails happily, and
+# simply fails every push, so "Running" proves nothing and neither does the log
+# (a wrong tenant ID produces HTTP 530, which says nothing about credentials).
+#
+# Ask Alloy's own counters instead. sent_bytes_total > 0 is the only statement
+# that actually means "logs are landing in Grafana Cloud".
+echo "==> verifying delivery (Alloy's own counters, 30s)"
+sleep 30
+AP="$(kubectl -n "$NAMESPACE" get pods -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)"
+M="$(kubectl run "alloy-verify-$$" -n "$NAMESPACE" --rm -i --restart=Never --quiet \
+      --image=curlimages/curl:8.11.1 --command -- \
+      curl -s --max-time 15 "http://${AP}:12345/metrics" 2>/dev/null || true)"
 
-echo "==> what is being shipped"
-kubectl -n "$NAMESPACE" logs daemonset/"$RELEASE" --tail=200 2>/dev/null \
-  | grep -c 'tail routine' || true
+SENT="$(  awk -F' ' '/^loki_write_sent_bytes_total/{s+=$2} END{print s+0}'    <<<"$M")"
+DROPPED="$(awk -F' ' '/^loki_write_dropped_entries_total/{s+=$2} END{print s+0}' <<<"$M")"
+CODES="$(grep -o 'status_code="[0-9]*"' <<<"$M" | sort -u | tr '\n' ' ')"
+
+echo "    loki sent_bytes=${SENT}  dropped_entries=${DROPPED}"
+echo "    push status codes seen: ${CODES:-none yet}"
+
+if [[ "${SENT:-0}" -gt 0 ]]; then
+  echo "    ok: logs are reaching Grafana Cloud"
+else
+  echo
+  echo "    NOT DELIVERING. Nothing has been accepted. Common causes:"
+  echo "      530 -> lokiUser is the wrong instance ID (it is NOT the same"
+  echo "             number as promUser, and NOT the account/org ID)"
+  echo "      401/403 -> token lacks logs:write, or is from another stack"
+  echo "    Fix values.local.yaml and re-run; Alloy retries automatically."
+  exit 1
+fi
 cat <<EOF
 
 Verify in Grafana Cloud -> Explore:

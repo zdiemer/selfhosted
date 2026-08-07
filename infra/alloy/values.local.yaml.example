@@ -15,11 +15,17 @@
 grafanaCloud:
   # From "Send Logs" — e.g. https://logs-prod-021.grafana.net/loki/api/v1/push
   lokiUrl: "https://logs-prod-XXX.grafana.net/loki/api/v1/push"
-  lokiUser: "123456"
+  # THE LOKI INSTANCE ID. This is NOT the same number as promUser below, and not
+  # the account/org ID — it is the "User" shown on the Send Logs panel itself.
+  # Get it wrong and Grafana Cloud answers every push with HTTP 530, which says
+  # nothing about tenants or credentials; Alloy keeps tailing happily and
+  # silently drops every line. upgrade.sh now checks the delivery counter.
+  lokiUser: "REPLACE_ME_loki_instance_id"
 
   # From "Send Metrics" — e.g. https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push
   promUrl: "https://prometheus-prod-XXX.grafana.net/api/prom/push"
-  promUser: "123456"
+  # The PROMETHEUS instance ID — a different number from lokiUser.
+  promUser: "REPLACE_ME_prom_instance_id"
 
   # The access-policy token. Same one for both endpoints.
   token: "glc_000000000000000000000000000000000000000000000000000000000000"
