@@ -92,7 +92,17 @@ FAILED_NODES=()
 for hostname in "${NODE_NAMES[@]}"; do
     echo "--- $hostname ---"
 
-    status=$(run_on_node_sudo "$hostname" '
+    # Only the IQN read needs root (/etc/iscsi/initiatorname.iscsi is mode 600).
+    # Everything else is world-readable, so the audit runs unprivileged and stays
+    # useful on a node without passwordless sudo — which includes whichever node
+    # you happen to be sitting on. Auditing must not require what fixing requires,
+    # or democratic-csi/upgrade.sh's preflight would prompt on every run.
+    RUNNER=run_on_node_sudo
+    if is_local_node "$hostname" && ! sudo -n true 2>/dev/null; then
+        RUNNER=run_on_node
+    fi
+
+    status=$($RUNNER "$hostname" '
         for pkg in open-iscsi nfs-common; do
             if dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
                 echo "pkg:$pkg=ok"
@@ -106,10 +116,14 @@ for hostname in "${NODE_NAMES[@]}"; do
         # simple missing-service.
         echo "iscsid=$(systemctl is-active iscsid 2>/dev/null || true)"
         echo "oom_protected=$(systemctl show iscsid -p OOMScoreAdjust --value 2>/dev/null || echo "?")"
-        if [ -s /etc/iscsi/initiatorname.iscsi ]; then
+        if [ ! -s /etc/iscsi/initiatorname.iscsi ]; then
+            echo "iqn=none"
+        elif [ -r /etc/iscsi/initiatorname.iscsi ]; then
             grep "^InitiatorName=" /etc/iscsi/initiatorname.iscsi | sed "s/^InitiatorName=/iqn=/"
         else
-            echo "iqn=none"
+            # Present but unreadable without root. Not a fault — just excluded
+            # from the cross-node uniqueness comparison below.
+            echo "iqn=unreadable"
         fi
     ' 2>/dev/null) || {
         echo "  [ERROR] could not reach $hostname"
@@ -121,7 +135,7 @@ for hostname in "${NODE_NAMES[@]}"; do
     echo "$status" | sed 's/^/  /'
 
     node_iqn=$(echo "$status" | grep '^iqn=' | cut -d= -f2-)
-    [[ "$node_iqn" != "none" ]] && NODE_IQNS["$hostname"]="$node_iqn"
+    [[ "$node_iqn" != "none" && "$node_iqn" != "unreadable" ]] && NODE_IQNS["$hostname"]="$node_iqn"
 
     if echo "$status" | grep -qE "=missing|iscsid=(inactive|failed|unknown|)$|iqn=none|oom_protected=0"; then
         MISSING_NODES+=("$hostname")
