@@ -111,28 +111,31 @@ data:
     # No clients configured yet. Everything falls through to the terminal deny
     # below, which is the correct posture for a proxy nobody has opted into.
     {{- end }}
-    {{- range .Values.clients }}
-    {{- $acl := include "egress-proxy.aclName" .name }}
-    {{- $lane := .lane | default "direct" }}
+    {{- range $client := .Values.clients }}
+    {{- $acl := include "egress-proxy.aclName" $client.name }}
+    {{- $lanes := include "egress-proxy.clientLanes" (dict "root" $ "client" $client) | fromYamlArray }}
 
-    acl {{ $acl }} proxy_auth {{ .name }}
-    # Annotates the transaction so the lane shows up in the access log. Lane is
-    # a property of the client, but putting it in the line keeps the log
-    # self-describing rather than only meaningful next to these values.
-    note lane {{ $lane }} {{ $acl }}
-    {{- /*
-      Access is granted on the client's own lane port ONLY. A worker pointed at
-      another lane's port gets a plain denial rather than quietly crawling from
-      an address its clearance cookie was not minted on.
-    */}}
-    {{- with .allowedHosts }}
+    acl {{ $acl }} proxy_auth {{ $client.name }}
+    {{- with $client.allowedHosts }}
     # dstdomain matches an exact host as written; a leading dot matches the
     # domain and its subdomains. `.tracker.gg` covers api.tracker.gg,
     # `api.tracker.gg` does not cover anything else.
     acl dst_{{ $acl }} dstdomain {{ join " " . }}
-    http_access allow {{ $acl }} lane_{{ $lane }} dst_{{ $acl }}
-    {{- else }}
-    http_access allow {{ $acl }} lane_{{ $lane }}
+    {{- end }}
+    {{- /*
+      One allow per lane the client may use, and NOTHING else. A client with a
+      single lane is therefore still pinned to one port; a client that is
+      allowed to move between exits gets exactly the ports it is allowed to
+      move between. Either way a request on some other lane's port is a plain
+      denial rather than a crawl from an address whose clearance cookie was
+      minted somewhere else.
+    */}}
+    {{- range $lane := $lanes }}
+    # Annotating per lane keeps the access log self-describing: with a client
+    # that moves, `lane=` is the only thing in the line that says which exit
+    # actually carried the request.
+    note lane {{ $lane }} {{ $acl }} lane_{{ $lane }}
+    http_access allow {{ $acl }} lane_{{ $lane }}{{ if $client.allowedHosts }} dst_{{ $acl }}{{ end }}
     {{- end }}
     {{- end }}
 

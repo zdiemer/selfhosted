@@ -231,6 +231,25 @@ clients:
   #
   # smitele-bot is the service this was designed around: ~118 GB/month against a
   # Cloudflare-fronted endpoint that has already banned the address once.
+  #
+  # ONE LANE, AND NOT THE DROPLET — MEASURED, NOT ASSUMED.
+  #
+  # The plan was [direct, vps], so that a tracker.gg ban on the house moved the
+  # crawl to the droplet instead of standing down for four hours. The chart
+  # supports that (see `lanes:` on a client). It is not enabled because the
+  # droplet cannot get past Cloudflare at all:
+  #
+  #   direct lane (23.93.106.229)   -> minted in ~20s, request served, "Usable."
+  #   vps lane   (147.182.206.23)   -> no cf_clearance after 120s, breaker armed
+  #
+  # Same code, same proxy chain, minutes apart — so it is the address, not the
+  # mint path. DigitalOcean's ASN is refused clearance where the residential one
+  # is not. smitele-bot's own docs predicted exactly this and called it cheap to
+  # disprove; it has now been disproven, which is the useful outcome.
+  #
+  # Rotation for this client therefore needs exits that can actually mint —
+  # static-ISP/residential, not datacenter. Re-test with:
+  #   collect.py --check-egress   (with SMITELE_EGRESS_PROXY on the lane)
   - name: smitele-bot
     namespace: discord
     lane: direct
