@@ -93,7 +93,12 @@ democratic-csi:
         # lz4 is effectively free on modern CPUs and these are database and
         # world-data volumes with plenty of compressible structure.
         zvolCompression: lz4
-        zvolDedup: "off"
+
+        # zvolDedup is deliberately NOT set. Passing it — even as "off", which is
+        # already the ZFS default — makes this TrueNAS reject the whole create:
+        #   {"data.dedup":[{"message":"Extra inputs are not permitted","errno":22}]}
+        # Its API no longer accepts dedup in the dataset payload, and democratic-csi
+        # forwards the key verbatim whenever it is present. Leave it out.
         zvolBlocksize:
 
       iscsi:
