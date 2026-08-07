@@ -73,8 +73,20 @@ data:
     cache_log stdio:/dev/stderr
     cache_store_log none
 
-    # ---- listener ---------------------------------------------------------
-    http_port {{ .Values.service.port }}
+    # ---- listeners: one per lane ------------------------------------------
+    # The port IS the lane. smitele-bot keys its Cloudflare clearance state on
+    # `scheme://host:port`, so two exits sharing a port would share a clearance
+    # bucket while sitting behind different addresses — a cookie minted through
+    # one replayed from the other, refused every time. Peer choice therefore has
+    # to be something the client can see, and a port is the only part of the URL
+    # that survives identity()'s credential stripping.
+    {{- $active := (include "egress-proxy.activeLanes" . | fromYaml) }}
+    {{- range $laneName, $lane := $active }}
+    http_port {{ $lane.port }} name={{ $laneName }}
+    {{- end }}
+    {{- range $laneName, $lane := $active }}
+    acl lane_{{ $laneName }} myportname {{ $laneName }}
+    {{- end }}
 
     # ---- authentication ---------------------------------------------------
     auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/secret/passwd
@@ -108,29 +120,40 @@ data:
     # a property of the client, but putting it in the line keeps the log
     # self-describing rather than only meaningful next to these values.
     note lane {{ $lane }} {{ $acl }}
+    {{- /*
+      Access is granted on the client's own lane port ONLY. A worker pointed at
+      another lane's port gets a plain denial rather than quietly crawling from
+      an address its clearance cookie was not minted on.
+    */}}
     {{- with .allowedHosts }}
     # dstdomain matches an exact host as written; a leading dot matches the
     # domain and its subdomains. `.tracker.gg` covers api.tracker.gg,
     # `api.tracker.gg` does not cover anything else.
     acl dst_{{ $acl }} dstdomain {{ join " " . }}
-    http_access allow {{ $acl }} dst_{{ $acl }}
+    http_access allow {{ $acl }} lane_{{ $lane }} dst_{{ $acl }}
     {{- else }}
-    http_access allow {{ $acl }}
+    http_access allow {{ $acl }} lane_{{ $lane }}
     {{- end }}
-    {{- $laneCfg := index $.Values.lanes $lane }}
-    {{- if eq $laneCfg.kind "direct" }}
-    always_direct allow {{ $acl }}
+    {{- end }}
+
+    # ---- lane routing -----------------------------------------------------
+    # Keyed on the listener port rather than on the client, so adding a client
+    # to an existing lane needs no routing change, and a lane's exit is stated
+    # once no matter how many workers share it.
+    {{- range $laneName, $lane := $active }}
+    {{- if eq $lane.kind "direct" }}
+    always_direct allow lane_{{ $laneName }}
     {{- else }}
-    {{- range $peer := $laneCfg.peers }}
+    {{- range $peer := $lane.peers }}
     {{- if $peer.host }}
-    cache_peer_access {{ $peer.name }} allow {{ $acl }}
+    cache_peer_access {{ $peer.name }} allow lane_{{ $laneName }}
     {{- end }}
     {{- end }}
     # THE LINE THAT MAKES A DEAD EXIT FAIL CLOSED. Squid's default when a peer
-    # is unreachable is to go DIRECT — which would silently drop this service
-    # back onto the home address, the exact failure the lane exists to prevent,
-    # with no error and no log entry that looks wrong.
-    never_direct allow {{ $acl }}
+    # is unreachable is to go DIRECT — which would silently drop this lane back
+    # onto the home address, the exact failure the lane exists to prevent, with
+    # no error and no log entry that looks wrong.
+    never_direct allow lane_{{ $laneName }}
     {{- end }}
     {{- end }}
 
@@ -139,8 +162,8 @@ data:
     # first-match-wins, so these deny anyone who was not explicitly routed to a
     # peer. Without them peer selection is allow-by-default once a peer exists,
     # and a `direct` client could be routed through someone else's paid exit.
-    {{- range $laneName, $lane := .Values.lanes }}
-    {{- if and (eq $lane.kind "parent") $lane.enabled }}
+    {{- range $laneName, $lane := $active }}
+    {{- if eq $lane.kind "parent" }}
     {{- range $peer := $lane.peers }}
     {{- if $peer.host }}
     cache_peer_access {{ $peer.name }} deny all

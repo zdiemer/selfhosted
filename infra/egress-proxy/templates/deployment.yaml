@@ -10,10 +10,13 @@ spec:
   selector:
     {{- include "egress-proxy.selectorLabels" . | nindent 4 }}
   ports:
-    - name: proxy
-      port: {{ .Values.service.port }}
-      targetPort: proxy
+    {{- /* One port per active lane — the port is how a client selects its exit. */}}
+    {{- range $laneName, $lane := (include "egress-proxy.activeLanes" . | fromYaml) }}
+    - name: lane-{{ $laneName | trunc 10 | trimSuffix "-" }}
+      port: {{ $lane.port }}
+      targetPort: {{ $lane.port }}
       protocol: TCP
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -62,19 +65,27 @@ spec:
           command: ["/usr/sbin/squid"]
           args: ["-N", "-f", "/etc/squid/squid.conf"]
           ports:
-            - name: proxy
-              containerPort: {{ .Values.service.port }}
+            {{- range $laneName, $lane := (include "egress-proxy.activeLanes" . | fromYaml) }}
+            - name: lane-{{ $laneName | trunc 10 | trimSuffix "-" }}
+              containerPort: {{ $lane.port }}
               protocol: TCP
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          {{- $portHex := printf "%04X" (int .Values.service.port) }}
+          {{- $hexes := list }}
+          {{- range $laneName, $lane := (include "egress-proxy.activeLanes" . | fromYaml) }}
+          {{- $hexes = append $hexes (printf "%04X" (int $lane.port)) }}
+          {{- end }}
+          {{- $portHexes := join " " (sortAlpha $hexes) }}
           # THE PROBE DOES NOT CONNECT TO THE PROXY. It reads the kernel's
-          # socket table and asserts that something is bound to the port in
-          # LISTEN state (0A), which is the same fact a tcpSocket probe
-          # establishes — without opening a client connection.
+          # socket table and asserts that something is bound to EVERY lane's
+          # port in LISTEN state (0A) — the same fact a tcpSocket probe
+          # establishes, without opening a client connection. Checking every
+          # lane matters: a single lane failing to bind would otherwise leave
+          # the pod Ready while one exit silently refused connections.
           #
           # That matters because squid logs every probe connection as an
           # aborted transaction (`url=error:transaction-end-before-headers`),
@@ -94,9 +105,9 @@ spec:
                 - bash
                 - -c
                 - >-
-                  awk -v p=':{{ $portHex }}$'
-                  '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
-                  /proc/net/tcp6 /proc/net/tcp
+                  for h in {{ $portHexes }}; do
+                  awk -v p=":$h\$" '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
+                  /proc/net/tcp6 /proc/net/tcp || exit 1; done
             initialDelaySeconds: 3
             periodSeconds: 10
           livenessProbe:
@@ -105,9 +116,9 @@ spec:
                 - bash
                 - -c
                 - >-
-                  awk -v p=':{{ $portHex }}$'
-                  '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
-                  /proc/net/tcp6 /proc/net/tcp
+                  for h in {{ $portHexes }}; do
+                  awk -v p=":$h\$" '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
+                  /proc/net/tcp6 /proc/net/tcp || exit 1; done
             initialDelaySeconds: 15
             periodSeconds: 20
           volumeMounts:

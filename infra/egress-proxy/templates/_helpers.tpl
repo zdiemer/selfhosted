@@ -29,7 +29,43 @@ house is the one that gets wrapped (see lanes.vps.tls).
 */}}
 {{- define "egress-proxy.clientUrl" -}}
 {{- $pw := index .root.Values.clientPasswords .client.name | default "" -}}
-{{- printf "http://%s:%s@%s.%s.svc.cluster.local:%v" .client.name $pw (include "egress-proxy.fullname" .root) .root.Release.Namespace .root.Values.service.port -}}
+{{- printf "http://%s:%s@%s.%s.svc.cluster.local:%v" .client.name $pw (include "egress-proxy.fullname" .root) .root.Release.Namespace (include "egress-proxy.clientPort" .) -}}
+{{- end -}}
+
+{{/*
+The listener port for a client's lane.
+
+This is what makes the exit visible in the URL, and it is the whole reason lanes
+have ports at all: smitele-bot reduces its proxy URL to `scheme://host:port` to
+key its Cloudflare clearance state, so two clients on different exits must not
+share a port or they share a clearance bucket while sitting behind different
+addresses. See the lanes section of values.yaml.
+*/}}
+{{- define "egress-proxy.clientPort" -}}
+{{- $laneName := .client.lane | default "direct" -}}
+{{- $lane := index .root.Values.lanes $laneName -}}
+{{- if not $lane -}}
+{{- fail (printf "client %q names lane %q, which is not defined under lanes" .client.name $laneName) -}}
+{{- end -}}
+{{- if not $lane.port -}}
+{{- fail (printf "lane %q has no port. Every lane needs its own listener port — see the lanes section of values.yaml" $laneName) -}}
+{{- end -}}
+{{- $lane.port -}}
+{{- end -}}
+
+{{/*
+Lanes that are actually listening: `direct` always, plus every enabled parent.
+A disabled lane must not open a port, or a client could reach a listener with no
+peer behind it and get an error that looks like a network fault.
+*/}}
+{{- define "egress-proxy.activeLanes" -}}
+{{- $out := dict -}}
+{{- range $name, $lane := .Values.lanes -}}
+{{- if or (eq $lane.kind "direct") $lane.enabled -}}
+{{- $_ := set $out $name $lane -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $out -}}
 {{- end -}}
 
 {{/*

@@ -48,6 +48,60 @@ or a provider pool — all covered in [`vps/README.md`](vps/README.md). It is
 chosen per lane, per service, precisely because turning it on globally would
 break smitele-bot.
 
+### Every lane listens on its own port, and that is load-bearing
+
+The obvious design is one port for everything, with squid choosing the exit per
+client (`userhash`) or per request (`round-robin`). **That is wrong here**, and
+wrong in a way that looks fine until it costs a day of crawling.
+
+smitele-bot keys its Cloudflare clearance state on `egress.identity()`, which
+strips credentials and reduces the URL to `scheme://host:port`:
+
+```
+http://bot:hunter2@gate.example.net:8080  ->  http://gate.example.net:8080
+```
+
+If every worker points at one port and squid quietly spreads them across exits,
+they all share **one** clearance bucket while sitting behind **different**
+addresses. A cookie minted through exit A is replayed from exit B, refused, and
+re-minted — twelve solves burned, four-hour breaker armed. Squid's peer
+selection is invisible to the application, so the application cannot defend
+against it.
+
+A port per lane puts the exit in the URL, so `identity()` differs per lane and
+each exit gets its own clearance bucket. Clients are additionally restricted to
+their own lane's port, so a worker pointed at the wrong one gets a 403 rather
+than a silent crawl from an unexpected address.
+
+Verified functionally, not just by parse: two lanes over two exits routed
+deterministically by port on every request, and a cross-lane request returned
+`403`. `userhash` was tried first and could not be shown to pin reliably — but
+even if it had, it would not have fixed the identity collision, which is the
+part that actually matters.
+
+### Scaling to many exits
+
+A single address caps out at a few hundred requests an hour before tracker.gg
+issues a long `Retry-After`. Throughput comes from N sticky exits used in
+parallel, never from rotating faster. The 12-solves-a-day budget is **per
+egress**, so it scales with the lanes rather than being divided among them.
+
+```yaml
+lanes:
+  vps1: { kind: parent, enabled: true, port: 3132, tls: true, caCert: "…", peers: [...] }
+  vps2: { kind: parent, enabled: true, port: 3133, tls: true, caCert: "…", peers: [...] }
+clients:
+  - { name: smitele-collector-1, namespace: discord, lane: vps1 }
+  - { name: smitele-collector-2, namespace: discord, lane: vps2 }
+```
+
+Each shard gets its own URL, its own identity, its own clearance bucket, and is
+sticky by construction because its lane has exactly one peer.
+
+The cluster side of this is done. **The throughput unlock is app-side**: the
+collector has to run N shards in parallel, each with a distinct
+`EGRESS_PROXY_URL`. Until that exists, extra lanes and extra VPSes buy nothing.
+
 ## Fail closed
 
 Squid's default when a peer is unreachable is to go **DIRECT** — which would silently drop a service back onto the home address, the exact failure the lane exists to prevent, with no error and no log line that looks wrong. Every client routed to a peer therefore also gets `never_direct`, and `upgrade.sh` fails the deploy if any client is peered without it.

@@ -40,8 +40,8 @@ imagePullPolicy: IfNotPresent
 # requirement actually depends on.
 replicaCount: 2
 
-service:
-  port: 3128
+# There is no single `service.port`: every lane listens on its own port. See the
+# lanes section for why that is load-bearing rather than cosmetic.
 
 # ---------------------------------------------------------------------------
 # SQUID IS CONFIGURED TO BE A BLIND TUNNEL. Do not change this casually.
@@ -100,6 +100,33 @@ squid:
 # A lane is a named exit. Clients name a lane, never a host, so moving a service
 # to a different exit is a one-word change here and needs no change in the
 # service's own chart.
+#
+# EVERY LANE LISTENS ON ITS OWN PORT, AND THAT IS LOAD-BEARING.
+#
+# The obvious design is one port for everything, with squid choosing the exit
+# per client (`userhash`) or per request (`round-robin`). That is wrong here,
+# and wrong in a way that looks fine until it costs a day of crawling.
+#
+# smitele-bot keys its Cloudflare clearance state on `egress.identity()`, which
+# strips credentials and reduces the proxy URL to `scheme://host:port`:
+#
+#     http://bot:hunter2@gate.example.net:8080  ->  http://gate.example.net:8080
+#
+# If every worker points at one port and squid quietly spreads them across
+# exits, they all share ONE clearance bucket while actually sitting behind
+# DIFFERENT addresses. A cookie minted through exit A is then replayed from exit
+# B, refused, and re-minted — twelve solves burned and a four-hour breaker armed.
+# That is the exact failure the proxy exists to avoid, reached from the other
+# direction, and squid's peer selection is invisible to the application so the
+# application cannot defend against it.
+#
+# A port per lane makes the exit visible in the URL, so identity() differs per
+# lane, each exit gets its own clearance bucket, and each client is sticky by
+# construction because its lane has exactly one peer. Scaling throughput is then
+# "more lanes, more workers", not "rotate faster".
+#
+# Clients are also restricted to their own lane's port, so pointing a worker at
+# the wrong one is a 403 rather than a silent crawl from an unexpected address.
 lanes:
   # The home address, reached the way it always was. This is not a no-op: the
   # request is authenticated, attributed and logged on the way out. It is the
@@ -107,6 +134,7 @@ lanes:
   # VPS exists.
   direct:
     kind: direct
+    port: 3128
 
   # A single sticky exit on a cheap VPS. Disabled until infra/egress-proxy/vps
   # has been stood up and `host` filled in via values.local.yaml.
@@ -115,9 +143,17 @@ lanes:
   # is bound to the exit address, there are only twelve solves a day before a
   # four-hour breaker arms, and the cookie's useful life is six to seven hours.
   # A rotating pool does not work worse here — it fails within minutes.
+  #
+  # SCALING THIS TO MANY EXITS: copy this block per exit — vps1, vps2, ... —
+  # each with its own port and its own single peer, and give each one a client
+  # (one per collector shard). N lanes used in parallel is how throughput grows,
+  # because a single address caps out at a few hundred requests an hour before
+  # tracker.gg issues a long Retry-After. The 12-solves-a-day budget is per
+  # egress, so it scales with the lanes rather than being divided among them.
   vps:
     kind: parent
     enabled: false
+    port: 3131
     # Wrap the hop to the VPS in TLS. Only squid speaks to the peer, so this is
     # invisible to Playwright/Camoufox — which cannot use an https:// proxy URL
     # and would otherwise force the credential and every CONNECT target
@@ -155,6 +191,7 @@ lanes:
   residential:
     kind: parent
     enabled: false
+    port: 3140
     roundRobin: true
     tls: false
     peers: []

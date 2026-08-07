@@ -195,6 +195,24 @@ denied   = set(re.findall(r'^\s*cache_peer_access (\S+) deny all', conf, re.M))
 for peer in sorted(declared - denied):
     fails.append(f"peer {peer} has no closing `cache_peer_access {peer} deny all`")
 
+# ONE PORT PER LANE, AND NO TWO LANES SHARING ONE. Two exits behind a single
+# port collapse into one clearance bucket for any client that keys anti-bot
+# state on scheme://host:port, which is a 403 storm rather than a config error.
+ports = re.findall(r'^\s*http_port (\d+) name=(\S+)', conf, re.M)
+seen = {}
+for port, lane in ports:
+    if port in seen:
+        fails.append(f"lanes {seen[port]} and {lane} share port {port} — they would "
+                     f"share a clearance bucket while using different exits")
+    seen[port] = lane
+
+# Every lane that listens must also be routed, or a client reaches a listener
+# with no exit behind it and gets what looks like a network fault.
+lanes = {lane for _, lane in ports}
+routed = set(re.findall(r'^\s*(?:always_direct|never_direct) allow lane_(\S+)', conf, re.M))
+for lane in sorted(lanes - routed):
+    fails.append(f"lane {lane} listens but has no always_direct/never_direct rule")
+
 for f in fails:
     print(f"    FAIL {f}")
 if fails:
@@ -273,11 +291,13 @@ if [[ -z "$FIRST_CLIENT" ]]; then
   exit 0
 fi
 
+# The first client's OWN lane port, not "the Service's port" — there is no such
+# thing any more, and a client is only permitted on its own lane's listener.
 PORT="$(python3 -c "
 import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):
-    if d and d.get('kind') == 'Service':
-        print(d['spec']['ports'][0]['port']); break
+    if d and d.get('kind') == 'Secret' and 'username' in (d.get('stringData') or {}):
+        print(d['stringData']['port']); break
 " <<<"$RENDERED")"
 
 USER_NAME="${FIRST_CLIENT%%$'\t'*}"

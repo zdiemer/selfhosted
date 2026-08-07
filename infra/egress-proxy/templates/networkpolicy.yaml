@@ -38,8 +38,11 @@ spec:
             matchLabels:
               egress.zachd/proxied: "true"
       ports:
-        - port: {{ .Values.service.port }}
+        {{- /* One listener per lane; a client reaches its exit by port. */}}
+        {{- range $laneName, $lane := (include "egress-proxy.activeLanes" . | fromYaml) }}
+        - port: {{ $lane.port }}
           protocol: TCP
+        {{- end }}
   egress:
     - to:
         - namespaceSelector: {}
