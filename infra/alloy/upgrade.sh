@@ -82,7 +82,16 @@ helm repo update grafana >/dev/null
 echo "==> helm upgrade --install ${RELEASE} ${CHART} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES"
 
-kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=180s
+# The credentials arrive as env vars from a Secret, and env vars are read once
+# at process start. Rewriting the Secret alone leaves every running pod using
+# the old values, so a re-run after fixing a wrong instance ID would appear to
+# change nothing. Always restart.
+if kubectl -n "$NAMESPACE" get daemonset "$RELEASE" >/dev/null 2>&1; then
+  echo "==> restarting so the credential Secret is re-read"
+  kubectl -n "$NAMESPACE" rollout restart daemonset/"$RELEASE" >/dev/null
+fi
+
+kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=300s
 
 # Bad credentials do not stop the pod — Alloy starts cleanly, tails happily, and
 # simply fails every push, so "Running" proves nothing and neither does the log
