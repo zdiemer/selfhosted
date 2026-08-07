@@ -1,0 +1,97 @@
+{{/*
+Two cluster-scoped objects: the policy (the rules) and the binding (where they
+apply and how hard). They are separate on purpose — the binding's
+`validationActions` is how this goes from advisory to enforcing without
+touching a single rule.
+
+CEL note: annotation keys contain dots, so they must be indexed as map keys
+(`annotations['a.b/c']`), never with field selectors. Every expression guards
+with `in` first, because a missing annotations map makes indexing a hard error
+rather than a false.
+*/}}
+{{- $edge := .Values.edgeTlsAnnotation }}
+{{- $ep := "traefik.ingress.kubernetes.io/router.entrypoints" }}
+{{- $cr := "traefik.ingress.kubernetes.io/router.tls.certresolver" }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "ingress-policy.fullname" . }}
+  labels:
+    {{- include "ingress-policy.labels" . | nindent 4 }}
+spec:
+  # Ignore rather than Fail: if a rule is ever malformed, an unevaluatable
+  # policy must not become an outage that blocks every Ingress write in the
+  # cluster. The rules protect against drift, which is a slow problem; being
+  # unable to deploy at all is a fast one.
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups:   ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["ingresses"]
+  validations:
+    {{- if .Values.rules.requireIngressClass.enabled }}
+    - expression: >-
+        has(object.spec.ingressClassName) &&
+        object.spec.ingressClassName == '{{ .Values.rules.requireIngressClass.className }}'
+      message: >-
+        Ingress must set spec.ingressClassName: {{ .Values.rules.requireIngressClass.className }}.
+        Without it the Ingress silently depends on whichever IngressClass is
+        currently the cluster default.
+      reason: Invalid
+    {{- end }}
+
+    {{- if .Values.rules.requireEntrypoint.enabled }}
+    - expression: >-
+        has(object.metadata.annotations) &&
+        '{{ $ep }}' in object.metadata.annotations &&
+        object.metadata.annotations['{{ $ep }}'] == '{{ .Values.rules.requireEntrypoint.entrypoint }}'
+      message: >-
+        Ingress must set the annotation
+        {{ $ep }}: {{ .Values.rules.requireEntrypoint.entrypoint }}.
+        Without it Traefik binds the router to every non-internal entrypoint, so
+        the host also answers unencrypted on :80.
+      reason: Invalid
+    {{- end }}
+
+    {{- if .Values.rules.requireCertResolver.enabled }}
+    {{- /*
+      Either a certresolver, or an explicit statement that TLS ends at
+      Cloudflare's edge. The exemption is an annotation rather than a namespace
+      carve-out so that "deliberately edge-terminated" stays distinguishable
+      from "someone forgot" — which is the whole reason the rule exists.
+    */}}
+    - expression: >-
+        has(object.metadata.annotations) && (
+          '{{ $cr }}' in object.metadata.annotations ||
+          ('{{ $edge }}' in object.metadata.annotations &&
+           object.metadata.annotations['{{ $edge }}'] == 'true')
+        )
+      message: >-
+        Ingress must set {{ $cr }} so Traefik has a real certificate for the
+        host, or declare {{ $edge }}: "true" if TLS deliberately terminates at
+        the Cloudflare edge. Without either, Traefik falls back to its
+        self-signed default certificate.
+      reason: Invalid
+    {{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "ingress-policy.fullname" . }}
+  labels:
+    {{- include "ingress-policy.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "ingress-policy.fullname" . }}
+  validationActions:
+    {{- toYaml .Values.binding.validationActions | nindent 4 }}
+  matchResources:
+    {{- with .Values.exemptNamespaces }}
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            {{- toYaml . | nindent 12 }}
+    {{- end }}

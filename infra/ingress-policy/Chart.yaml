@@ -1,0 +1,9 @@
+apiVersion: v2
+name: ingress-policy
+description: Admission policy enforcing this cluster's Ingress conventions on every namespace, including tenants from other repos
+type: application
+version: 1.0.0
+# Pure policy, no workload and no image — nothing to version but the rules.
+appVersion: "1.0.0"
+maintainers:
+  - name: zachd

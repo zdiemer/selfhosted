@@ -18,6 +18,14 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
     # No router.tls.certresolver — public TLS ends at Cloudflare and the tunnel
     # dials in with No TLS Verify. See values.yaml.
+    #
+    # Say so out loud. infra/ingress-policy requires every Ingress to name a
+    # certresolver, precisely so that a host quietly falling back to Traefik's
+    # self-signed cert gets caught. This one genuinely must not name one, so it
+    # declares that rather than being silently skipped — the whole value of the
+    # rule is that "edge-terminated on purpose" stays distinguishable from
+    # "someone forgot".
+    ingress.zachd/tls-terminates-at-edge: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

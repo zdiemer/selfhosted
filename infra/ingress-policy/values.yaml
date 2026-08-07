@@ -1,0 +1,78 @@
+# Ingress conventions, enforced by the API server rather than by memory.
+#
+# WHY THIS EXISTS. Most of this cluster's ingress comes from charts in this
+# repo, which all copy the same annotation block. But not all of it: whatnowgg
+# deploys its dev environment here from a separate private repo and redeploys
+# every few hours, talaria's chart lives in another repo entirely, and money is
+# a submodule that isn't even checked out. A convention those charts can't see
+# is a convention that drifts.
+#
+# It already had. whatnowgg's Ingress carried no TLS annotations and no
+# entrypoint pin at all, so Traefik served it with its own self-signed
+# certificate and bound the router to every entrypoint. Nothing alerted; it just
+# quietly looked broken to anyone who visited. That is exactly the failure this
+# policy makes impossible to reintroduce — including by a repo that never reads
+# this one.
+#
+# WHY ValidatingAdmissionPolicy AND NOT KYVERNO. This is three CEL expressions.
+# VAP is built into the API server (GA since 1.30, and this cluster is on
+# v1.34.3), so it costs no pods, no webhook, no certificate rotation, and no new
+# failure mode in the admission path. A webhook-based policy engine that is down
+# either blocks every write or silently permits everything; a VAP cannot be
+# down, because it is the API server.
+
+# The three rules. Each maps to one CEL expression in the policy template.
+rules:
+  # 1. Route through Traefik explicitly. An Ingress with no ingressClassName
+  #    depends on whatever the cluster's default IngressClass happens to be,
+  #    which is invisible in the manifest and can change under you.
+  requireIngressClass:
+    enabled: true
+    className: traefik
+
+  # 2. Pin the router to the TLS entrypoint. Without this annotation Traefik
+  #    binds the router to every non-internal entrypoint, so the host answers on
+  #    plain :80 as well as :443 — which is how whatnowgg spent its first weeks.
+  requireEntrypoint:
+    enabled: true
+    entrypoint: websecure
+
+  # 3. Require a certresolver, so Traefik has a real certificate for the host
+  #    rather than falling back to its self-signed default.
+  requireCertResolver:
+    enabled: true
+
+# THE ONE LEGITIMATE EXEMPTION from rule 3.
+#
+# Hosts published through the Cloudflare tunnel terminate TLS at Cloudflare's
+# edge. The tunnel then dials Traefik with "No TLS Verify" on, so the
+# certificate Traefik presents is never validated — the tunnel is the trust
+# boundary. Asking the `duckdns` resolver for a `talaria.deals` cert would not
+# merely be pointless, it would FAIL: DNS-01 can only answer for the duckdns.org
+# zone, and one failing domain can take the whole ACME order down, wildcard
+# included.
+#
+# So those ingresses genuinely must not name a certresolver. They opt out
+# explicitly, by annotation, rather than by being quietly skipped — the
+# distinction between "deliberately edge-terminated" and "someone forgot" is the
+# entire point of the rule.
+edgeTlsAnnotation: ingress.zachd/tls-terminates-at-edge
+
+# Namespaces the policy ignores entirely. kube-system holds objects created by
+# k3s itself, which answer to upstream defaults rather than to ours.
+exemptNamespaces:
+  - kube-system
+
+binding:
+  # HOW FAILURES ARE HANDLED. Start at Warn+Audit: a non-conforming Ingress is
+  # still admitted, but the client gets a warning and the API server writes an
+  # audit annotation. That is deliberate — flipping straight to Deny would mean
+  # a foreign repo's next routine deploy fails on a rule its authors have never
+  # read, and whatnowgg redeploys every few hours.
+  #
+  # Flip to ["Deny"] once the warnings have been quiet for a week. Everything in
+  # the cluster passes as of this chart's first deploy, so the wait is about
+  # catching what redeploys on a slower cycle, not about fixing a backlog.
+  validationActions:
+    - Warn
+    - Audit
