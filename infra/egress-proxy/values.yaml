@@ -123,13 +123,26 @@ lanes:
     # and would otherwise force the credential and every CONNECT target
     # hostname to cross the internet in cleartext.
     #
-    # Verified supported on this image: it is built --with-gnutls rather than
-    # --with-openssl, and `cache_peer ... tls` parses regardless.
+    # Verified end to end against a two-squid chain before any VPS existed:
+    # the peer authenticated the cluster over a self-signed cert pinned with
+    # tls-cafile, and killing the peer produced a 503 rather than a fall back to
+    # the home address. The image is built --with-gnutls rather than
+    # --with-openssl and all of it works regardless.
     tls: true
+
+    # The peer's certificate, PEM, set in values.local.yaml. A self-signed cert
+    # is its own CA, so this file IS the trust decision for that hop — stronger
+    # than a public CA, and it needs no domain validation on a box that has no
+    # domain. infra/egress-proxy/vps/bootstrap.sh prints it ready to paste.
+    caCert: ""
+
     peers:
       - name: vps
         host: ""      # set in values.local.yaml
         port: 3129
+        # Name to verify the certificate against, if the cert was issued for
+        # something other than `host` (e.g. host is a bare IP). Defaults to host.
+        tlsName: ""
 
   # A rotating pool, for the sites that rate-limit per address rather than
   # challenge. Round-robin across N peers fits a Webshare-style endpoint list

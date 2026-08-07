@@ -1,0 +1,92 @@
+# The cluster's egress exit. Written by bootstrap.sh — edit there, not here.
+#
+# This is the far end of the chain that starts at infra/egress-proxy in the
+# cluster:
+#
+#   pod --http--> [cluster squid] --TLS--> [this box] --> the internet
+#
+# It is a BLIND TUNNEL, for the same reason the cluster side is: smitele-bot's
+# Cloudflare clearance is bound to the TLS fingerprint that minted it, and
+# talaria pins JA3/JA4. There is no ssl_bump here and there must never be.
+
+# TLS, not plain HTTP. Without it the proxy credential and every CONNECT target
+# hostname cross the public internet in cleartext. The tunnelled payload is the
+# client's own TLS either way — this protects the metadata and the password.
+#
+# Only the cluster's squid ever speaks this protocol, which is what makes it
+# possible: Playwright/Camoufox cannot use an https:// proxy URL at all.
+https_port @PROXY_PORT@ tls-cert=/etc/squid/tls/proxy.pem
+
+# ---------------------------------------------------------------------------
+# Authentication — this is what stops it being an open relay
+# ---------------------------------------------------------------------------
+# The firewall is defence in depth. THIS is the control. An open proxy on a
+# public IP is found by scanners in hours and will be used to attack other
+# people from an address that bills to you.
+auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/secret/passwd
+auth_param basic children 8 startup=2 idle=1
+auth_param basic realm egress
+auth_param basic credentialsttl 5 minutes
+acl authenticated proxy_auth REQUIRED
+
+# ---------------------------------------------------------------------------
+# Ports
+# ---------------------------------------------------------------------------
+acl CONNECT method CONNECT
+acl SSL_ports port 443 22 587
+acl Safe_ports port 80 443 22 587
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+# Destination filtering is deliberately NOT done here. The cluster side knows
+# which service is making the request; this box only sees one authenticated
+# client. Putting an allowlist here would mean maintaining it twice and
+# enforcing it where the useful context has already been lost.
+http_access allow authenticated
+http_access deny all
+
+# ---------------------------------------------------------------------------
+# Hygiene — same posture as the cluster side
+# ---------------------------------------------------------------------------
+via off
+forwarded_for delete
+httpd_suppress_version_string on
+cache deny all
+cache_mem 16 MB
+pinger_enable off
+shutdown_lifetime 5 seconds
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Same logfmt shape as the cluster side, so the two are directly comparable when
+# a request is missing and you need to know which hop dropped it. Nothing is
+# shipped off this box; it is journald only.
+logformat egress ts=%ts.%03tu svc=%un src=%>a method=%rm url=%ru status=%>Hs bytes_in=%<st bytes_out=%>st dst=%<a duration=%tr
+access_log stdio:/var/log/squid/access.log egress
+cache_log /var/log/squid/cache.log
+
+# ---------------------------------------------------------------------------
+# MULTIPLE EXIT ADDRESSES FROM THIS ONE BOX
+# ---------------------------------------------------------------------------
+# Most providers sell additional IPv4 for a few dollars a month, and hand out a
+# /64 of IPv6 for free. squid can pick which one a request leaves from:
+#
+#   acl rotate_a random 1/3
+#   acl rotate_b random 1/2
+#   tcp_outgoing_address 203.0.113.11 rotate_a
+#   tcp_outgoing_address 203.0.113.12 rotate_b
+#   tcp_outgoing_address 203.0.113.10
+#
+# or pin one address per client, which is usually what you want:
+#
+#   acl svc_scraper proxy_auth scraper
+#   tcp_outgoing_address 203.0.113.11 svc_scraper
+#
+# Left out by default on purpose. Rotation is not a free upgrade: it is exactly
+# what breaks smitele-bot, whose clearance cookie is bound to the exit address.
+# Add it per-client, for clients that are rate-limited per IP rather than
+# challenged.

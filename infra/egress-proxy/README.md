@@ -30,6 +30,24 @@ A CONNECT tunnel is opaque TCP: the client's handshake and its ALPN-negotiated h
 
 `via off` and `forwarded_for delete` are set for a related reason — the defaults append `Via:` and `X-Forwarded-For: <pod IP>`, announcing the request as proxied and leaking internal addressing. Squid warns `HTTP requires the use of Via` on every parse; that warning is expected.
 
+## Lanes, and whether an exit rotates
+
+A lane is a named exit. Clients name a lane, never a host, so moving a service
+is a one-word change here and needs no change in the service's own chart.
+
+- **`direct`** — the house. Not a no-op: authenticated, attributed and logged.
+- **`vps`** — a single sticky exit. See [`vps/`](vps/) for the box itself.
+- **`residential`** — round-robin over N peers, for per-IP rate limits.
+
+**One VPS is one address — a second address, not a rotating one.** That is the
+requirement rather than a limitation for the service this was built for:
+smitele-bot's clearance cookie is bound to the exit, and a rotating pool fails
+within minutes. Rotation, when a service actually wants it, comes from extra IPs
+on one box (`tcp_outgoing_address`), several boxes in a `roundRobin: true` lane,
+or a provider pool — all covered in [`vps/README.md`](vps/README.md). It is
+chosen per lane, per service, precisely because turning it on globally would
+break smitele-bot.
+
 ## Fail closed
 
 Squid's default when a peer is unreachable is to go **DIRECT** — which would silently drop a service back onto the home address, the exact failure the lane exists to prevent, with no error and no log line that looks wrong. Every client routed to a peer therefore also gets `never_direct`, and `upgrade.sh` fails the deploy if any client is peered without it.
