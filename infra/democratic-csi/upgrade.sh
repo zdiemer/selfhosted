@@ -160,7 +160,10 @@ for driver in iscsi nfs; do
 
   echo "==> Waiting for ${RELEASE} rollout"
   kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}-controller" --timeout=300s
-  kubectl -n "$NAMESPACE" rollout status "daemonset/${RELEASE}-node" --timeout=300s
+  # The DaemonSet rolls one pod at a time across ten nodes, several of them slow
+  # laptops pulling a fresh image. 300s times out around the eighth node and
+  # leaves the second release uninstalled, which is worse than waiting.
+  kubectl -n "$NAMESPACE" rollout status "daemonset/${RELEASE}-node" --timeout=900s
 done
 
 # ------------------------------------------------------------------------------
@@ -176,12 +179,32 @@ kubectl get volumesnapshotclass -o custom-columns='NAME:.metadata.name,DRIVER:.d
 
 echo ""
 echo "==> CSI drivers registered on every node"
+# A node without the plugin cannot mount that class, and the symptom is a pod
+# stuck ContainerCreating with nothing useful in its events. Fail loudly here
+# rather than discover it during a migration.
+COVERAGE_BAD=0
+WANT="$(kubectl get nodes --no-headers | grep -c . || true)"
 for driver in iscsi nfs; do
-  want="$(kubectl get nodes --no-headers | grep -c .)"
-  got="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="democratic-csi-${driver}" \
-          --field-selector=status.phase=Running --no-headers 2>/dev/null | grep -c 'node' || echo 0)"
-  printf '    %-24s %s/%s node pods running\n' "democratic-csi-${driver}" "$got" "$want"
+  GOT="$(kubectl -n "$NAMESPACE" get ds "democratic-csi-${driver}-node" \
+          -o jsonpath='{.status.numberReady}' 2>/dev/null || echo 0)"
+  printf '    %-24s %s/%s node pods ready\n' "democratic-csi-${driver}" "${GOT:-0}" "$WANT"
+  if [[ "${GOT:-0}" != "$WANT" ]]; then
+    COVERAGE_BAD=1
+    comm -23 <(kubectl get nodes -o name | sed 's|node/||' | sort) \
+             <(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="democratic-csi-${driver}" \
+                 -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' 2>/dev/null | sort -u) \
+      | sed 's/^/        missing: /'
+  fi
 done
+
+if [[ "$COVERAGE_BAD" != "0" ]]; then
+  echo ""
+  echo "FAIL: the CSI node plugin is not on every node."
+  echo "      Usually a taint the DaemonSet does not tolerate — check with:"
+  echo "        kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints"
+  echo "      Volumes of that class cannot mount on the nodes listed above."
+  exit 1
+fi
 
 echo ""
 echo "Both classes are installed but UNPROVEN. Before migrating any real data,"

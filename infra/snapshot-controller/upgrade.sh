@@ -26,7 +26,10 @@ CRDS=(
 # Report what would be destroyed if these CRDs went away, so the number is in
 # front of you before and after rather than in a postmortem.
 count_snapshots() {
-  kubectl get volumesnapshots -A --no-headers 2>/dev/null | grep -c . || echo 0
+  # `grep -c .` prints 0 AND exits 1 on empty input, so a `|| echo 0` fallback
+  # would emit a second 0 and the caller would compare "0\n0". Swallow the exit
+  # status instead and let grep's own count stand.
+  kubectl get volumesnapshots -A --no-headers 2>/dev/null | grep -c . || true
 }
 
 BEFORE="$(count_snapshots)"

@@ -39,6 +39,19 @@ democratic-csi:
     # the footprint matters more here than anywhere else in this chart.
     nodeSelector: {}
 
+    # Tolerate everything. A CSI node plugin is node infrastructure in the same
+    # class as flannel or kube-proxy: if it is missing from a node, no volume of
+    # that class can ever mount there, and the pod that needs one sits in
+    # ContainerCreating with no obvious cause.
+    #
+    # Without this the DaemonSet desires 9 of 10 nodes — zachd-ubuntu carries
+    # node-role.kubernetes.io/control-plane:NoSchedule. That node is not
+    # hypothetical: minecraft/claude-bridge is pinned to it with a matching
+    # toleration, so its PVC would have migrated onto a class that cannot mount
+    # where its pod is required to run.
+    tolerations:
+      - operator: Exists
+
     driver:
       logLevel: info
 
