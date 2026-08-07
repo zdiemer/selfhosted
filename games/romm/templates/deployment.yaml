@@ -25,6 +25,11 @@ spec:
         checksum/builder: {{ include (print $.Template.BasePath "/library-builder.yaml") . | sha256sum }}
       labels:
         {{- include "romm.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       # Kubernetes injects legacy service-discovery env vars for every Service in
       # the namespace: our Service is called "romm", so the pod was handed

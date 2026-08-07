@@ -22,6 +22,11 @@ spec:
       labels:
         {{- include "stirling.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: stirling-pdf
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       # Avoid k8s' legacy service-link env injection clobbering Stirling's own
       # *_PORT-style config with `tcp://...` Service URLs.

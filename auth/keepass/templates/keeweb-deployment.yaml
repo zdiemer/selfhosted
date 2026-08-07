@@ -17,6 +17,11 @@ spec:
       {{- end }}
       labels:
         {{- include "keepass.keeweb.selectorLabels" . | nindent 8 }}
+        {{- if .Values.keeweb.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       containers:
         - name: keeweb

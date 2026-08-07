@@ -1,0 +1,250 @@
+# Grafana Alloy — ships logs and metrics for the cluster's external ingress to
+# Grafana Cloud.
+#
+# VALUES-ONLY. There is no chart here; this file is passed to the upstream
+# `grafana/alloy` chart, the same arrangement as infra/headlamp and minecraft/.
+# upgrade.sh does the `helm repo add` and creates the credentials Secret.
+#
+# WHY GRAFANA CLOUD AND NOT SELF-HOSTED LOKI. The free tier covers this many
+# times over (50 GB/month, 14-day retention, 10k series), and self-hosting Loki
+# here would mean a ReadWriteOnce local-path PVC. That combination is genuinely
+# bad in this cluster: pods must not be pinned to a node, so a reschedule would
+# strand the log history on whichever node still holds the volume — exactly when
+# you most want to read it. Shipping off-node sidesteps the whole problem.
+#
+# THE TRADE, STATED PLAINLY: access logs contain client IPs, hostnames, request
+# paths, and every internal service name. They leave the house. Retention is 14
+# days, so this is a rolling two-week window, not history.
+
+# What the collector is: one pod per node, reading container logs through the
+# Kubernetes API rather than a hostPath mount of /var/log. That keeps it free of
+# host bindings entirely.
+controller:
+  type: daemonset
+
+alloy:
+  # Alloy's own agent-management/UI port. Nothing needs to reach it from
+  # outside; there is deliberately no Service or Ingress in front of it.
+  listenPort: 12345
+
+  # Credentials arrive as env vars from the Secret upgrade.sh builds out of
+  # values.local.yaml. They are never written into this ConfigMap — the config
+  # references them with sys.env() so the rendered ConfigMap stays safe to read.
+  extraEnv:
+    - name: GC_LOKI_URL
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: lokiUrl } }
+    - name: GC_LOKI_USER
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: lokiUser } }
+    - name: GC_PROM_URL
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: promUrl } }
+    - name: GC_PROM_USER
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: promUser } }
+    - name: GC_TOKEN
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: token } }
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  configMap:
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ----------------------------------------------------------------------
+      // WHAT GETS SHIPPED
+      //
+      // Only pods that genuinely have external ingress. This is the setting that
+      // keeps us inside the free tier: the cluster runs ~150 pods, and blanket
+      // shipping would plausibly exceed 50 GB/month on talaria's Elasticsearch
+      // and Logstash alone. The allowlist below lands at roughly 0.3-1 GB/month.
+      // ----------------------------------------------------------------------
+
+      // Tier 1 — the ingress plane itself. This is COMPLETE coverage of external
+      // HTTP by construction: every external request in the cluster traverses
+      // Traefik, so its access log is the whole record no matter which namespace
+      // or repo owns the workload behind it.
+      discovery.relabel "ingress_plane" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "kube-system/traefik|infra/cloudflared|auth/authelia"
+          action        = "keep"
+        }
+      }
+
+      // Tier 2 — the workloads actually behind an Ingress, so a 502 in Traefik's
+      // log can be read next to the application's own stack trace.
+      //
+      // SELF-MAINTAINING BY DESIGN: charts stamp this label from their own
+      // `ingress.enabled`, so a service that turns its ingress off stops
+      // shipping and a new service starts shipping, both with no change here.
+      discovery.relabel "ingress_backends" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_logging_zachd_external_ingress"]
+          regex         = "true"
+          action        = "keep"
+        }
+
+        // Subtract tier 1. The two sets are concatenated below, and concat does
+        // not deduplicate — a pod matching both would have every line shipped
+        // and billed twice, silently.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "kube-system/traefik|infra/cloudflared|auth/authelia"
+          action        = "drop"
+        }
+      }
+
+      discovery.relabel "external_ingress" {
+        targets = array.concat(
+          discovery.relabel.ingress_plane.output,
+          discovery.relabel.ingress_backends.output,
+        )
+
+        // Promote a deliberately small label set. Every distinct combination is
+        // a Loki stream, so this is the cardinality budget.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.external_ingress.output
+        forward_to = [loki.process.access_logs.receiver]
+      }
+
+      // ----------------------------------------------------------------------
+      // PARSING
+      // ----------------------------------------------------------------------
+      loki.process "access_logs" {
+        // Only Traefik emits the JSON access log; everything else is passed
+        // through untouched rather than failing a JSON parse on every line.
+        stage.match {
+          selector = "{app=\"traefik\"}"
+
+          stage.json {
+            expressions = {
+              RequestHost      = "RequestHost",
+              DownstreamStatus = "DownstreamStatus",
+            }
+          }
+
+          // Promoted to labels because these are the two axes worth slicing on
+          // and both are naturally low-cardinality: ~20 hosts, ~10 status codes.
+          //
+          // NOT promoted, deliberately: ClientHost, X-Forwarded-For, RequestPath.
+          // Those are unbounded — one stream per client IP or per URL would blow
+          // the series budget immediately. They stay as fields in the line and
+          // are still queryable with `| json`, which costs nothing.
+          stage.labels {
+            values = {
+              RequestHost      = "",
+              DownstreamStatus = "",
+            }
+          }
+        }
+
+        forward_to = [loki.write.grafana_cloud.receiver]
+      }
+
+      loki.write "grafana_cloud" {
+        endpoint {
+          url = sys.env("GC_LOKI_URL")
+          basic_auth {
+            username = sys.env("GC_LOKI_USER")
+            password = sys.env("GC_TOKEN")
+          }
+        }
+        external_labels = {
+          cluster = "home-k3s",
+        }
+      }
+
+      // ----------------------------------------------------------------------
+      // METRICS
+      //
+      // Traefik has been exporting Prometheus metrics on :9100 this whole time
+      // with nothing scraping them. k3s passes --metrics.prometheus=true by
+      // default; we scrape the pod IP directly, so that port never needs to
+      // reach the Service, let alone the LoadBalancer.
+      // ----------------------------------------------------------------------
+      discovery.relabel "traefik_metrics" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "kube-system/traefik"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:9100"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "traefik" {
+        targets         = discovery.relabel.traefik_metrics.output
+        forward_to      = [prometheus.relabel.trim.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "trim" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // Histogram buckets are the bulk of Traefik's series count and the free
+        // tier allows 10k. Request duration percentiles are nice; they are not
+        // worth spending the entire budget on. Drop this rule if the count
+        // turns out to have room.
+        rule {
+          source_labels = ["__name__"]
+          regex         = ".*_bucket"
+          action        = "drop"
+        }
+      }
+
+      prometheus.remote_write "grafana_cloud" {
+        endpoint {
+          url = sys.env("GC_PROM_URL")
+          basic_auth {
+            username = sys.env("GC_PROM_USER")
+            password = sys.env("GC_TOKEN")
+          }
+        }
+        external_labels = {
+          cluster = "home-k3s",
+        }
+      }

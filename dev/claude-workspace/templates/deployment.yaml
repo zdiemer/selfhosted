@@ -17,6 +17,11 @@ spec:
     metadata:
       labels:
         {{- include "claude-workspace.labels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       {{- if .Values.rbac.clusterAdmin }}
       # Cluster ops seat: kubectl/helm in the pod authenticate as this SA

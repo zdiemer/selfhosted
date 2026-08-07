@@ -19,6 +19,11 @@ spec:
         checksum/users: {{ include (print $.Template.BasePath "/users.yaml") . | sha256sum }}
       labels:
         {{- include "authelia.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       # K8s auto-injects env vars like AUTHELIA_SERVICE_PORT for every Service
       # in the namespace. Authelia interprets `AUTHELIA_*` as configuration

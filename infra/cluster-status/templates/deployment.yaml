@@ -19,6 +19,11 @@ spec:
         checksum/web: {{ include (print $.Template.BasePath "/web-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "cluster-status.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       serviceAccountName: {{ include "cluster-status.fullname" . }}
       securityContext:

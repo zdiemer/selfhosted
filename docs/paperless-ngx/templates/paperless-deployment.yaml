@@ -23,6 +23,11 @@ spec:
       labels:
         {{- include "paperless.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: paperless
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
     spec:
       # Kubernetes' legacy service-link env injection sets PAPERLESS_PORT to a
       # `tcp://...` URL (the paperless Service's clusterIP), which paperless-ngx

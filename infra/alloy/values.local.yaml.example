@@ -1,0 +1,25 @@
+# Copy to values.local.yaml (gitignored) and fill in. These never belong in git.
+#
+# All four URL/user values come from ONE place in Grafana Cloud:
+#   grafana.com -> your stack -> Details / "Send Logs" and "Send Metrics"
+#
+# The token is a single Access Policy token used for both. Create it at
+#   grafana.com -> Access Policies -> Create access policy
+# with scopes:  logs:write  and  metrics:write
+# then generate a token under that policy. The long string shown once is the
+# value below — it is a password, and it can write to your stack.
+#
+# The user IDs are numeric and are NOT secret (they are per-stack instance IDs),
+# but they live here anyway so the whole connection is described in one place.
+
+grafanaCloud:
+  # From "Send Logs" — e.g. https://logs-prod-021.grafana.net/loki/api/v1/push
+  lokiUrl: "https://logs-prod-XXX.grafana.net/loki/api/v1/push"
+  lokiUser: "123456"
+
+  # From "Send Metrics" — e.g. https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push
+  promUrl: "https://prometheus-prod-XXX.grafana.net/api/prom/push"
+  promUser: "123456"
+
+  # The access-policy token. Same one for both endpoints.
+  token: "glc_000000000000000000000000000000000000000000000000000000000000"
