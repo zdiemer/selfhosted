@@ -57,7 +57,10 @@ data:
     CTR="${CTR:-mc-minecraft}"
     TPS_WARN="${TPS_WARN:-19.5}"
     MEM_WARN_PCT="${MEM_WARN_PCT:-85}"
-    MEM_LIMIT_MI="${MEM_LIMIT_MI:-10240}"
+    # Must track resources.limits.memory in values.yaml, NOT the -Xms heap or
+    # the request. Pointing this at the 10G heap made a pod sitting at 87% of
+    # its real limit report 121% and warn every single minute.
+    MEM_LIMIT_MI="${MEM_LIMIT_MI:-16384}"
 
     kubectl -n "$NS" exec "$DEPLOY" -c "$CTR" -- rcon-cli "spark tps" >/dev/null 2>&1 || {
       echo "sample_failed reason=rcon_exec_error"; exit 0; }

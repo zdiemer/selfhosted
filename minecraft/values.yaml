@@ -321,17 +321,22 @@ startupProbe:
 # ----------------------------------------------------------------------------
 # Resources
 # ----------------------------------------------------------------------------
-# 10G heap + ~4G off-heap headroom on zachd-ubuntu-2 (12 cores / 32G). Prominence
+# 10G heap + off-heap headroom on zachd-ubuntu-2 (12 cores / 32G). Prominence
 # II's off-heap (Metaspace, direct buffers, mod native libs, mc-backup sidecar)
-# runs ~1.6G idle; the 14Gi limit leaves room for that plus worldgen spikes.
-# Request matches the committed -Xms10G heap; the CPU limit is generous burst
-# room for parallel chunk gen / GC on the 12-core node.
+# measures ~2.2G in steady state, not the ~1.6G first assumed — RSS sits at
+# ~12.2Gi with the server idle at 20 TPS. So the request tracks measured steady
+# state rather than the bare -Xms10G heap: requesting only the heap under-books
+# the node by >2Gi and lets the scheduler overcommit around it.
+#
+# The old 14Gi limit left just 1.8Gi over steady state, which is inside normal
+# worldgen spike range; 16Gi restores real headroom. The CPU limit is generous
+# burst room for parallel chunk gen / GC on the 12-core node.
 resources:
   requests:
-    memory: 10Gi
+    memory: 13Gi
     cpu: 2000m
   limits:
-    memory: 14Gi
+    memory: 16Gi
     cpu: 8000m
 
 # ----------------------------------------------------------------------------

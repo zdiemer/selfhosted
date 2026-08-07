@@ -3,7 +3,7 @@
 #
 #   ./monitor.sh                       # poll every 60s until Ctrl-C
 #   INTERVAL=30 ./monitor.sh           # override interval
-#   MEM_LIMIT_MI=10240 ./monitor.sh    # container memory limit (for % calc)
+#   MEM_LIMIT_MI=16384 ./monitor.sh    # container memory limit (for % calc)
 #
 # One sample = trigger `spark tps`, tail the async reply from server logs,
 # read container RSS via `kubectl top`. Flags TPS < 19.5 or mem >= 85%.
@@ -14,7 +14,7 @@ REL="${RELEASE:-mc}"
 INTERVAL="${INTERVAL:-60}"
 TPS_WARN="${TPS_WARN:-19.5}"
 MEM_WARN_PCT="${MEM_WARN_PCT:-85}"
-MEM_LIMIT_MI="${MEM_LIMIT_MI:-10240}"
+MEM_LIMIT_MI="${MEM_LIMIT_MI:-16384}"
 
 DEPLOY="deploy/${REL}-minecraft"
 CTR="mc-minecraft"
