@@ -12,3 +12,7 @@ __pycache__/
 *.pyc
 # NOT criteria.yaml — templates/configmap.yaml reads it with .Files.Get, and
 # anything listed here is invisible to that.
+
+# 1Password reference templates — never part of the packaged chart.
+values.local.tpl.yaml
+criteria.tpl.yaml

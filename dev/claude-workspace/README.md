@@ -136,17 +136,34 @@ internet and cluster-admin + root-on-every-node. Never disable
    authorize the device code. Use a token/login with `repo` + `read:org` scope
    — the GHCR PAT above is packages-only and `gh` will reject it. Auth persists
    on the PVC at `~/.config/gh`.
-4. **Repo + local values**: clone this repo to `~/code/selfhosted`, then from
-   the laptop run [`scripts/sync-local-values.sh`](../../scripts/sync-local-values.sh)
-   to copy every gitignored `values.local.yaml` into the pod — without them,
-   deploys from the pod fail on `required` values or silently render secrets
-   empty. Re-run after any local-values change.
+4. **Repo + local values**: clone this repo to `~/code/selfhosted`, then pull
+   the secrets the pod needs — without them, deploys from the pod fail on
+   `required` values or silently render secrets empty:
+
+   ```sh
+   scripts/secrets.sh pull --from-cluster
+   ```
+
+   That unpacks `secret/selfhosted-secrets` (ns `claude`), which the laptop
+   publishes with [`scripts/secrets.sh`](../../scripts/secrets.sh) `publish`.
+   The pod cannot talk to 1Password directly — Service Accounts are a
+   Teams/Business feature, and putting the account password here would expose
+   every vault rather than just `selfhosted` — so the cluster Secret is the
+   relay. It grants the pod nothing new: this SA is already cluster-admin
+   (`templates/rbac.yaml`) and can read every Secret in the cluster, including
+   the rendered chart Secrets carrying these same values.
+
+   Because this is a **pull**, a restart no longer needs the laptop: re-run the
+   command above after any pod restart. `publish` also applies it here
+   immediately when the pod is up, so in practice one command on the laptop
+   still does the whole job.
 5. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
    does not exist. If one ever lands on the PVC it silently takes precedence
    and everything breaks confusingly — `rm ~/.kube/config` is the fix.
-6. **Other repos' secrets** (sync-local-values.sh only covers this repo):
-   - gamedex (standalone clone): copy its values from the laptop —
-     `tar czf - -C ~/Code/gamedex values.local.yaml | kubectl -n claude exec -i deploy/claude-workspace -c term -- tar xzf - -C /home/node/code/gamedex`
+6. **Other repos' secrets**:
+   - gamedex / money / smitele-bot (standalone clones): publish from the laptop
+     with `scripts/secrets.sh publish --include-external`, then pull here as
+     above. The files land beside each clone if the clone exists.
    - talaria keeps secrets sops-encrypted in-git; the image ships `sops`
      (age support built in), but the age private key must be copied to the
      pod at `~/.config/sops/age/keys.txt` (chmod 700 dir / 600 file) —

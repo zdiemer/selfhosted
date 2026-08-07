@@ -18,6 +18,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 LOCAL_VALUES="${HERE}/values.local.yaml"
 
+# Materialize values.local.yaml from 1Password when it's missing and a template
+# exists. Convenience only: values.local.yaml is still the contract, so this
+# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
+# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
+if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
+  echo "==> materializing values.local.yaml from 1Password"
+  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
+    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
+  chmod 600 "$LOCAL_VALUES"
+fi
+
+
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 

@@ -63,6 +63,21 @@ repo stays the full index of what runs on the cluster. Clone with
   swallows chart *templates* named that way, silently and without an error
   (`templates/ghcr-secret.yaml` never gets added). Name pull-secret templates
   something else — see `web/apartment-watch/templates/imagepullsecret.yaml`.
+- **1Password is where those secrets actually live.** `values.local.yaml` is
+  still the only thing helm reads, but it is now materialized rather than
+  hand-kept: each project tracks a `values.local.tpl.yaml` holding nothing but
+  `op://` references, and
+
+      op inject -i values.local.tpl.yaml -o values.local.yaml -f
+
+  reproduces the real file. That one-liner is the whole contract — it works in
+  a standalone app-repo clone with no `scripts/` directory. `scripts/secrets.sh`
+  is bulk convenience on top (`pull`, `status`, `verify`, `publish`, `backup`)
+  and no deploy path depends on it. The `.example` files stay: they document
+  *shape and provenance*, which a template of references cannot.
+  `infra/coredns-config` is a deliberate exception — its `values.local.yaml` is
+  a mode switch, not a secret, and its *absence* is what closes the DNS audit
+  window, so it is never materialized.
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.

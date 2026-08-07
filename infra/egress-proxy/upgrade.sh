@@ -363,4 +363,13 @@ cat <<'EOF'
         egress.proxy.enabled: true
     and stamps  egress.zachd/proxied: "true"  on its pods (the NetworkPolicy
     selects on that label, so a pod without it cannot reach the listener).
+
+    This script GENERATES client passwords into values.local.yaml, so it is the
+    one chart whose local file can be newer than 1Password. Push it back, or the
+    next machine materializes the old passwords:
+
+        ../../scripts/secrets.sh push infra/egress-proxy/values.local.yaml
+
+    (Deliberately no auto-materialize block above: step 1 creates the file
+    itself, and racing that against op inject would only confuse things.)
 EOF

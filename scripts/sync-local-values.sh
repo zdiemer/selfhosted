@@ -1,42 +1,29 @@
 #!/usr/bin/env bash
-# Copy every gitignored values.local.yaml from this checkout into the
-# claude-workspace pod's repo clone. Without this, deploying a chart from the
-# pod either fails on `required` values or — worse — silently renders secret
-# values empty (helm has no idea a second -f file was supposed to exist).
+# DEPRECATED — forwards to scripts/secrets.sh publish.
 #
-# One-way, laptop → pod. Re-run after adding or changing any values.local.yaml.
+# This used to tar every values.local.yaml straight into the claude-workspace
+# pod. That was push-only: the pod could not refresh itself, so every restart
+# (and the pod restarts often — tmux dies with it) needed someone at this
+# laptop to re-run the copy. It also found files by `-name values.local.yaml`,
+# which silently missed web/apartment-watch/criteria.yaml.
 #
-# Usage: scripts/sync-local-values.sh [--dry-run]
+# `secrets.sh publish` writes the same set — plus criteria.yaml — into a Secret
+# in the claude namespace, then applies it in the pod if it's up. The pod pulls
+# for itself with `secrets.sh pull --from-cluster`, so a restart no longer needs
+# this machine at all.
+#
+# Storing the bundle in a Secret grants the pod nothing: it already runs as a
+# cluster-admin SA (dev/claude-workspace/templates/rbac.yaml) and can read every
+# Secret in the cluster, including the rendered chart Secrets holding these same
+# values.
+#
+# This shim exists so muscle memory and old docs keep working. Use secrets.sh.
 
 set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
-NAMESPACE="${NAMESPACE:-claude}"
-DEPLOY="${DEPLOY:-claude-workspace}"
-POD_REPO="${POD_REPO:-/home/node/code/selfhosted}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "note: sync-local-values.sh is deprecated — forwarding to 'secrets.sh publish'." >&2
+echo "      Pod-side refresh is now 'scripts/secrets.sh pull --from-cluster'." >&2
+echo >&2
 
-command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
-
-cd "$ROOT"
-mapfile -t FILES < <(find . -name values.local.yaml -not -path './.git/*' | sort)
-[[ ${#FILES[@]} -gt 0 ]] || { echo "no values.local.yaml files found — nothing to sync"; exit 0; }
-
-echo "==> Files to sync (${#FILES[@]}):"
-printf '    %s\n' "${FILES[@]}"
-
-if [[ "${1:-}" == "--dry-run" ]]; then
-  echo "==> Dry run, stopping here."
-  exit 0
-fi
-
-# Fail with a real message if the pod hasn't cloned the repo yet — tar's own
-# error ("cannot chdir") is easy to misread as a sync-side problem.
-kubectl -n "$NAMESPACE" exec "deploy/${DEPLOY}" -c term -- test -d "$POD_REPO" || {
-  echo "FAIL: ${POD_REPO} does not exist in the pod. Clone the repo there first."; exit 1; }
-
-echo "==> Syncing into ${DEPLOY} (ns ${NAMESPACE}) at ${POD_REPO}"
-tar czf - "${FILES[@]}" | \
-  kubectl -n "$NAMESPACE" exec -i "deploy/${DEPLOY}" -c term -- \
-  tar xzf - -C "$POD_REPO"
-
-echo "==> Done."
+exec "${HERE}/secrets.sh" publish "$@"

@@ -17,6 +17,27 @@ NAMESPACE="${NAMESPACE:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 LOCAL_VALUES="${HERE}/values.local.yaml"
+
+# Materialize values.local.yaml from 1Password when it's missing and a template
+# exists. Convenience only: values.local.yaml is still the contract, so this
+# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
+# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
+if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
+  echo "==> materializing values.local.yaml from 1Password"
+  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
+    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
+  chmod 600 "$LOCAL_VALUES"
+fi
+
+# criteria.yaml is read off disk by templates/configmap.yaml via .Files.Get, so
+# it must exist before helm runs — same contract as a -f file.
+if [[ ! -f "${HERE}/criteria.yaml" && -f "${HERE}/criteria.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
+  echo "==> materializing criteria.yaml from 1Password"
+  op inject -i "${HERE}/criteria.tpl.yaml" -o "${HERE}/criteria.yaml" \
+    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
+  chmod 600 "${HERE}/criteria.yaml"
+fi
+
 VALUE_ARGS=(-f "$VALUES")
 [[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
