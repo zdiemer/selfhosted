@@ -229,19 +229,40 @@ get_k3s_service_name() {
     fi
 }
 
-sort_nodes_agents_first() {
-    local -a server_names=()
-    local -a agent_names=()
+_partition_nodes_by_role() {
+    SERVER_NAMES=()
+    AGENT_NAMES=()
 
     for name in "${NODE_NAMES[@]}"; do
         local role
         role=$(get_node_role "$name")
         if [[ "$role" == "server" ]]; then
-            server_names+=("$name")
+            SERVER_NAMES+=("$name")
         else
-            agent_names+=("$name")
+            AGENT_NAMES+=("$name")
         fi
     done
+}
 
-    NODE_NAMES=("${agent_names[@]}" "${server_names[@]}")
+# Disruption order: agents first, control plane last. Right for reboots and OS
+# package updates (restart.sh, update.sh) — you want the API server still up
+# while the agents are bouncing, and the node you are least willing to lose
+# touched last.
+sort_nodes_agents_first() {
+    local -a SERVER_NAMES AGENT_NAMES
+    _partition_nodes_by_role
+    NODE_NAMES=("${AGENT_NAMES[@]}" "${SERVER_NAMES[@]}")
+}
+
+# Version order: servers first, agents last. Kubernetes only supports a kubelet
+# at or BEHIND the control plane, never ahead — so a version upgrade has to move
+# the servers up before any agent follows.
+#
+# k3s-upgrade.sh used the agents-first order until 2026-08-06, which is how
+# zachd-ubuntu-2 ended up on v1.35.4 while the server was still on v1.34.3: an
+# unsupported skew that the script would happily recreate on the next run.
+sort_nodes_servers_first() {
+    local -a SERVER_NAMES AGENT_NAMES
+    _partition_nodes_by_role
+    NODE_NAMES=("${SERVER_NAMES[@]}" "${AGENT_NAMES[@]}")
 }
