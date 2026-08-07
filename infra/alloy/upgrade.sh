@@ -79,6 +79,57 @@ echo "==> helm repo add grafana"
 helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update grafana >/dev/null
 
+# ---------------------------------------------------------------------------
+# Does the rendered config actually parse?
+# ---------------------------------------------------------------------------
+# This is a DaemonSet on every node, and the config is a single inline River
+# document that is easy to get subtly wrong — a renamed component leaves a
+# dangling reference that looks fine in YAML and fails only when Alloy starts.
+# The rollout below would catch it (a crashlooping pod stalls the rollout rather
+# than sweeping the fleet), but it catches it *after* taking a node's shipper
+# down, and the error is then buried in a pod log rather than printed here.
+#
+# `alloy validate` resolves the component graph, so it catches exactly that
+# class of mistake. Verified to fail (exit 1) on a dangling reference.
+echo "==> Validating the rendered Alloy config"
+RENDERED_CFG="$(helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" | python3 -c "
+import sys, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get('kind') == 'ConfigMap':
+        for k, v in (d.get('data') or {}).items():
+            if k.endswith('.alloy'):
+                sys.stdout.write(v)
+")"
+VALIDATE_IMAGE="$(helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" | python3 -c "
+import sys, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get('kind') == 'DaemonSet':
+        print(d['spec']['template']['spec']['containers'][0]['image']); break
+")"
+
+if [[ -z "$RENDERED_CFG" ]]; then
+  echo "FAIL: could not find the rendered Alloy config in the chart output."
+  exit 1
+fi
+
+VPOD="alloy-validate-$$"
+kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found >/dev/null 2>&1 || true
+kubectl -n "$NAMESPACE" run "$VPOD" --image="$VALIDATE_IMAGE" --restart=Never \
+  --command -- sleep 180 >/dev/null
+for _ in $(seq 1 40); do
+  sleep 3
+  [[ "$(kubectl -n "$NAMESPACE" get pod "$VPOD" -o jsonpath='{.status.phase}' 2>/dev/null)" == "Running" ]] && break
+done
+printf '%s' "$RENDERED_CFG" | kubectl -n "$NAMESPACE" exec -i "$VPOD" -- sh -c 'cat > /tmp/config.alloy'
+if ! VOUT="$(kubectl -n "$NAMESPACE" exec "$VPOD" -- alloy validate /tmp/config.alloy 2>&1)"; then
+  echo "FAIL: Alloy rejected the rendered config. Nothing has been applied."
+  sed 's/^/      /' <<<"$VOUT" | tail -25
+  kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  exit 1
+fi
+kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+echo "    ok: config graph resolves"
+
 echo "==> helm upgrade --install ${RELEASE} ${CHART} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES"
 

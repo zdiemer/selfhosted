@@ -74,6 +74,32 @@ Not labelled yet: the three submodule charts (`games/gamedex`,
 `finance/money`, `infra/sms-relay`) live in their own repos. Tier 1 already
 covers every request to them; only the app-side correlation is missing.
 
+**Tier 3 — the egress plane.** `infra/egress-proxy`. The mirror image of tier 1:
+every opted-in outbound request traverses the proxy, so its access log is the
+whole record of external egress the way Traefik's is for ingress. The proxy has
+no Ingress and never will, so it cannot be double-shipped by tier 2.
+
+Squid emits its access log as logfmt precisely so this needs no regex:
+
+```
+ts=1786121898.340 svc=apartment-watch lane=direct src=10.42.9.249 method=CONNECT \
+  url=sapi.craigslist.org:443 status=200 bytes_in=71889 bytes_out=2440 \
+  peer=TCP_TUNNEL:HIER_DIRECT dst=208.82.238.1 duration=6465
+```
+
+`svc`, `lane` and `status` are promoted to labels — all three bounded by
+construction, and `status` earns it because a spike in 403 is an `allowedHosts`
+list that is too tight while 407 is a credential that has not landed. Those are
+the two ways this breaks a service and both are invisible without it.
+
+`url` and `dst` stay in the line. One stream per destination host is exactly the
+cardinality bomb the `RequestPath` rule below is about — a single browser-driven
+apartment-watch run has already been measured at **70 distinct hosts**.
+
+The stream selector also carries a line filter (`|= "svc="`), because the same
+container writes squid's `cache_log` to stderr. Those lines still ship, just
+unparsed — which is what you want when something goes wrong at startup.
+
 ## Cardinality discipline
 
 Every distinct label combination is a Loki stream, and the free tier caps active
@@ -115,10 +141,39 @@ does not stop the pod**: Alloy starts cleanly and simply fails every push, so
 
 # metrics arriving
 traefik_service_requests_total{cluster="home-k3s"}
+
+# egress: who is talking to what, and how much
+{cluster="home-k3s", app="egress-proxy"} | logfmt
+sum by (svc) (count_over_time({cluster="home-k3s", app="egress-proxy"}[1h]))
+
+# egress: the two ways an allowlist breaks a service
+{cluster="home-k3s", app="egress-proxy", status=~"403|407"}
 ```
+
+Note that the access-log queries can only be run from Grafana — the token in
+`values.local.yaml` is deliberately write-only (`logs:write`), so the push side
+can be verified from a shell but the read side cannot.
 
 Then check the monthly projection at grafana.com → your stack → Billing/Usage
 after 24h. Budget is 50 GB/month.
+
+### `dropped_entries` after a restart is expected
+
+`upgrade.sh` restarts the DaemonSet every run (env vars are read once at start),
+and `loki.source.kubernetes` then re-reads each pod's log from the beginning.
+Long-lived pods like `cloudflared` and `authelia` have weeks of history, and
+Grafana Cloud rejects anything older than about 7 days:
+
+```
+status=400 ... has timestamp too old: 2026-07-25T11:38:01Z,
+             oldest acceptable timestamp is: 2026-07-31T17:26:36Z
+```
+
+So a five-figure `dropped_entries` immediately after an upgrade is the replay
+being trimmed, not a broken pipeline — the number to read is `sent_bytes`, and
+`status_code="204"` appearing alongside the 400s. Lines that *are* inside the
+window get re-sent, but Loki deduplicates identical (stream, timestamp, line)
+entries, so they are not billed twice.
 
 ## Known gaps
 

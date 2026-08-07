@@ -110,10 +110,31 @@ alloy:
         }
       }
 
-      discovery.relabel "external_ingress" {
+      // Tier 3 — the egress plane. The mirror image of tier 1: every opted-in
+      // outbound request in the cluster traverses this proxy, so its access log
+      // is the whole record of external egress in the same way Traefik's is for
+      // ingress. See infra/egress-proxy.
+      //
+      // Not covered by tier 2's label: the proxy has no Ingress and never will,
+      // so it cannot be double-shipped by the concat below.
+      discovery.relabel "egress_plane" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "infra/egress-proxy"
+          action        = "keep"
+        }
+      }
+
+      // Renamed from `external_ingress`: it carries both directions now, and a
+      // name that says otherwise is the kind of thing that gets believed later.
+      discovery.relabel "shipped" {
         targets = array.concat(
           discovery.relabel.ingress_plane.output,
           discovery.relabel.ingress_backends.output,
+          discovery.relabel.egress_plane.output,
         )
 
         // Promote a deliberately small label set. Every distinct combination is
@@ -137,7 +158,7 @@ alloy:
       }
 
       loki.source.kubernetes "pods" {
-        targets    = discovery.relabel.external_ingress.output
+        targets    = discovery.relabel.shipped.output
         forward_to = [loki.process.access_logs.receiver]
       }
 
@@ -168,6 +189,49 @@ alloy:
             values = {
               RequestHost      = "",
               DownstreamStatus = "",
+            }
+          }
+        }
+
+        // The egress side. Squid's access log is emitted as logfmt precisely so
+        // this needs no regex — see the `logformat egress` line in
+        // infra/egress-proxy.
+        //
+        // The line filter matters as much as the stream selector: the same
+        // container also writes squid's cache_log to stderr (startup banner,
+        // warnings), which is not logfmt and has no business being parsed as
+        // it. Those lines still ship, unparsed, which is what you want when
+        // something goes wrong at start.
+        stage.match {
+          selector = "{app=\"egress-proxy\"} |= \"svc=\""
+
+          stage.logfmt {
+            mapping = {
+              svc    = "",
+              lane   = "",
+              status = "",
+            }
+          }
+
+          // All three are bounded by construction and each is an axis worth
+          // slicing on: svc by the number of opted-in clients, lane by the
+          // number of exits, status by HTTP.
+          //
+          // `status` earns its place — a spike in 403 is an allowedHosts list
+          // that is too tight, and 407 is a credential that has not landed.
+          // Those are the two ways this breaks a service, and both are
+          // invisible without it.
+          //
+          // NOT promoted, deliberately: url and dst. One stream per destination
+          // host is exactly the cardinality bomb the RequestPath note above is
+          // about — and a single browser-driven run has already been measured
+          // at 70 distinct hosts. They stay in the line, queryable with
+          // `| logfmt` for free.
+          stage.labels {
+            values = {
+              svc    = "",
+              lane   = "",
+              status = "",
             }
           }
         }
