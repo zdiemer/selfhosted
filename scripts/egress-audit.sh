@@ -161,7 +161,9 @@ for key in sorted(d["workloads"]):
 
 if d["unattributed"]:
     print(f"{'-'*74}\nUNATTRIBUTED — no pod or node held that IP when the query was seen")
-    print("(pod created and gone inside one 20s cache refresh)\n")
+    print("(the pod's ADDED event had not arrived yet, or these counts predate")
+    print(" a collector change — the aggregate resumes across restarts, so a")
+    print(" long window can mix attribution from before and after a fix)\n")
     for host, n in sorted(d["unattributed"].items(), key=lambda kv: -kv[1])[:40]:
         print(f"    {n:7d}  {host}")
     print()
