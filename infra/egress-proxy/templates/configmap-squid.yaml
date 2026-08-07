@@ -1,0 +1,152 @@
+{{/*
+The whole squid config, EXCEPT the cache_peer lines.
+
+Those live in a Secret and arrive through the `include` below, because a peer
+carries `login=user:password` on the same line as its hostname and there is no
+way to reference a Secret from inside a squid directive. Splitting on that seam
+keeps the readable, reviewable 95% of the config in a ConfigMap where `kubectl
+get cm -o yaml` is a useful thing to run.
+
+ORDER IS SEMANTICS IN THIS FILE. http_access rules are first-match-wins, and
+cache_peer_access cannot reference a peer that has not been declared yet. The
+sequence below is: hygiene, logging, listener, auth, port safety, peers, then
+clients, then a terminal deny.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "egress-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "egress-proxy.labels" . | nindent 4 }}
+data:
+  squid.conf: |
+    # Managed by the egress-proxy Helm chart. See infra/egress-proxy.
+    #
+    # THIS IS A BLIND TUNNEL. There is no ssl_bump and no TLS interception, and
+    # adding any would break smitele-bot's Cloudflare clearance (bound to the
+    # TLS fingerprint that minted it) and talaria's pinned JA3/JA4, silently.
+    # A CONNECT tunnel is opaque TCP: the client's handshake and its
+    # ALPN-negotiated h2 reach the origin untouched.
+
+    visible_hostname egress-proxy
+    # No pid file: squid runs in the foreground under an init-less container and
+    # the root filesystem is read-only, so there is nowhere to put one.
+    pid_filename none
+    shutdown_lifetime {{ .Values.squid.shutdownLifetimeSeconds }} seconds
+    # Needs root and raw ICMP; we have neither and want neither.
+    pinger_enable off
+    {{- if .Values.squid.stripProxyHeaders }}
+
+    # Squid warns "HTTP requires the use of Via" for the first of these on every
+    # parse. That warning is expected. The defaults would append `Via:` and
+    # `X-Forwarded-For: <pod IP>` to plain-HTTP requests, announcing the request
+    # as proxied and leaking internal addressing to the origin.
+    via off
+    forwarded_for delete
+    httpd_suppress_version_string on
+    {{- end }}
+
+    # CONNECT is uncacheable by nature; this covers plain HTTP, where caching
+    # would make the proxy answer for an origin it should only be relaying.
+    cache_mem {{ .Values.squid.cacheMemMB }} MB
+    cache deny all
+
+    # ---- logging ----------------------------------------------------------
+    # logfmt-shaped so Alloy can parse it without a regex per field. `svc` comes
+    # from the authenticated username, which is the entire reason auth exists
+    # here: it is a durable service name where %>a would be an ephemeral pod IP.
+    logformat egress ts=%ts.%03tu svc=%un lane=%note{lane} src=%>a method=%rm url=%ru status=%>Hs bytes_in=%<st bytes_out=%>st peer=%Ss:%Sh dst=%<a duration=%tr
+
+    # NOTE ON HEALTH-CHECK NOISE, because the obvious fix does not work.
+    # Any connection that opens and closes without sending a request is logged
+    # as `method=- url=error:transaction-end-before-headers`. Neither
+    # `acl ... method NONE` nor `acl ... src` will suppress those from an
+    # access_log line: the ACL is evaluated in a context with no HTTP request,
+    # and squid says so ("used in context without an HTTP request") while
+    # logging the line regardless — and emits an extra warning per probe on top.
+    #
+    # So the probes in deployment.yaml read /proc/net/tcp instead of connecting.
+    # If these lines ever reappear, something is opening and dropping
+    # connections to the listener; that is worth knowing rather than hiding.
+    access_log stdio:/dev/stdout egress
+    cache_log stdio:/dev/stderr
+    cache_store_log none
+
+    # ---- listener ---------------------------------------------------------
+    http_port {{ .Values.service.port }}
+
+    # ---- authentication ---------------------------------------------------
+    auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/secret/passwd
+    auth_param basic children 8 startup=2 idle=1
+    auth_param basic realm egress-proxy
+    auth_param basic credentialsttl 5 minutes
+
+    # ---- port safety ------------------------------------------------------
+    # Evaluated before any client rule, so a request to an unexpected port is a
+    # plain denial rather than something an allowlist has to remember to cover.
+    acl CONNECT method CONNECT
+    acl SSL_ports port {{ join " " .Values.squid.connectPorts }}
+    acl Safe_ports port {{ join " " .Values.squid.safePorts }}
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+
+    # ---- peers (from the Secret; see secret-peers.yaml) --------------------
+    include /etc/squid/peers/peers.conf
+
+    # ---- clients ----------------------------------------------------------
+    {{- if not .Values.clients }}
+    # No clients configured yet. Everything falls through to the terminal deny
+    # below, which is the correct posture for a proxy nobody has opted into.
+    {{- end }}
+    {{- range .Values.clients }}
+    {{- $acl := include "egress-proxy.aclName" .name }}
+    {{- $lane := .lane | default "direct" }}
+
+    acl {{ $acl }} proxy_auth {{ .name }}
+    # Annotates the transaction so the lane shows up in the access log. Lane is
+    # a property of the client, but putting it in the line keeps the log
+    # self-describing rather than only meaningful next to these values.
+    note lane {{ $lane }} {{ $acl }}
+    {{- with .allowedHosts }}
+    # dstdomain matches an exact host as written; a leading dot matches the
+    # domain and its subdomains. `.tracker.gg` covers api.tracker.gg,
+    # `api.tracker.gg` does not cover anything else.
+    acl dst_{{ $acl }} dstdomain {{ join " " . }}
+    http_access allow {{ $acl }} dst_{{ $acl }}
+    {{- else }}
+    http_access allow {{ $acl }}
+    {{- end }}
+    {{- $laneCfg := index $.Values.lanes $lane }}
+    {{- if eq $laneCfg.kind "direct" }}
+    always_direct allow {{ $acl }}
+    {{- else }}
+    {{- range $peer := $laneCfg.peers }}
+    {{- if $peer.host }}
+    cache_peer_access {{ $peer.name }} allow {{ $acl }}
+    {{- end }}
+    {{- end }}
+    # THE LINE THAT MAKES A DEAD EXIT FAIL CLOSED. Squid's default when a peer
+    # is unreachable is to go DIRECT — which would silently drop this service
+    # back onto the home address, the exact failure the lane exists to prevent,
+    # with no error and no log entry that looks wrong.
+    never_direct allow {{ $acl }}
+    {{- end }}
+    {{- end }}
+
+    # ---- peer closing rules ----------------------------------------------
+    # Must come AFTER the per-client allows above: cache_peer_access is
+    # first-match-wins, so these deny anyone who was not explicitly routed to a
+    # peer. Without them peer selection is allow-by-default once a peer exists,
+    # and a `direct` client could be routed through someone else's paid exit.
+    {{- range $laneName, $lane := .Values.lanes }}
+    {{- if and (eq $lane.kind "parent") $lane.enabled }}
+    {{- range $peer := $lane.peers }}
+    {{- if $peer.host }}
+    cache_peer_access {{ $peer.name }} deny all
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+
+    http_access deny all

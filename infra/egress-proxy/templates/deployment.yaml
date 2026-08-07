@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "egress-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "egress-proxy.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "egress-proxy.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: proxy
+      port: {{ .Values.service.port }}
+      targetPort: proxy
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "egress-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "egress-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "egress-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "egress-proxy.labels" . | nindent 8 }}
+      annotations:
+        # Squid reads its config once at start. Without these a config change
+        # applies cleanly, reports success, and changes nothing until something
+        # unrelated happens to restart the pod.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-squid.yaml") . | sha256sum }}
+        checksum/peers: {{ include (print $.Template.BasePath "/secret-peers.yaml") . | sha256sum }}
+    spec:
+      # On the critical path for every opted-in service: if this is evicted,
+      # their egress stops. Not platform-core — it holds no state, and a restart
+      # costs a reconnect rather than a recovery.
+      priorityClassName: platform-app
+      securityContext:
+        runAsNonRoot: true
+        # uid 13 is `proxy` in the Ubuntu image, and owns /var/log/squid and
+        # /var/spool/squid there.
+        runAsUser: 13
+        runAsGroup: 13
+        fsGroup: 13
+      containers:
+        - name: squid
+          image: {{ .Values.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          # Deliberately NOT the image's entrypoint. That script regenerates a
+          # snakeoil TLS cert (needs a writable /etc/ssl/private and root) and
+          # tails four log files into stdout to work around file-based logging
+          # — neither of which applies here: there is no TLS termination, and
+          # the config already logs to stdio. Invoking squid directly keeps the
+          # container non-root with a read-only root filesystem.
+          command: ["/usr/sbin/squid"]
+          args: ["-N", "-f", "/etc/squid/squid.conf"]
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- $portHex := printf "%04X" (int .Values.service.port) }}
+          # THE PROBE DOES NOT CONNECT TO THE PROXY. It reads the kernel's
+          # socket table and asserts that something is bound to the port in
+          # LISTEN state (0A), which is the same fact a tcpSocket probe
+          # establishes — without opening a client connection.
+          #
+          # That matters because squid logs every probe connection as an
+          # aborted transaction (`url=error:transaction-end-before-headers`),
+          # roughly 17k lines a day across two pods, and none of squid's
+          # access_log ACLs will suppress them: `method NONE` is evaluated in a
+          # context with no HTTP request, so squid warns and logs the line
+          # anyway (adding a second noise line per probe), and filtering on
+          # `src` does not take either. Not generating the transaction is the
+          # only thing that actually works.
+          #
+          # Not an HTTP probe for a separate reason: every request needs
+          # credentials, so an unauthenticated probe would read its own 407 as
+          # a failure.
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - >-
+                  awk -v p=':{{ $portHex }}$'
+                  '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
+                  /proc/net/tcp6 /proc/net/tcp
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - >-
+                  awk -v p=':{{ $portHex }}$'
+                  '$4=="0A" && $2 ~ p {f=1} END{exit !f}'
+                  /proc/net/tcp6 /proc/net/tcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/squid/squid.conf
+              subPath: squid.conf
+              readOnly: true
+            - name: peers
+              mountPath: /etc/squid/peers
+              readOnly: true
+            - name: auth
+              mountPath: /etc/squid/secret
+              readOnly: true
+            - name: spool
+              mountPath: /var/spool/squid
+            - name: logs
+              mountPath: /var/log/squid
+            - name: run
+              mountPath: /var/run/squid
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "egress-proxy.fullname" . }}
+        - name: peers
+          secret:
+            secretName: {{ include "egress-proxy.fullname" . }}-peers
+        - name: auth
+          secret:
+            # Built by upgrade.sh, not by Helm: the htpasswd entries need a
+            # hash function no template has, and regenerating them on every
+            # render would churn the Secret on every upgrade.
+            secretName: {{ include "egress-proxy.fullname" . }}-auth
+        # Squid wants these writable even with no cache_dir configured, and the
+        # root filesystem is read-only.
+        - name: spool
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

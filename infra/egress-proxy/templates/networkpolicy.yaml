@@ -1,0 +1,82 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Ingress is the security boundary. Proxy auth gives us attribution — a durable
+service name in every log line — but it is the NetworkPolicy that decides who
+can reach the listener at all, so a leaked credential is not on its own a way
+in from an unrelated namespace.
+
+Clients are selected by a LABEL rather than by an explicit namespace list, the
+same way infra/alloy selects log sources: charts stamp
+`egress.zachd/proxied: "true"` on their own pods from their own
+`egress.proxy.enabled`, so a service that opts out stops being allowed and a
+new one starts, with no edit here. The allowlist cannot drift out of sync with
+reality because it is derived from it.
+
+Egress stays wide on purpose. This is the one pod in the cluster that is
+supposed to talk to arbitrary external hosts — the per-destination allowlist
+lives in squid's dstdomain ACLs, a layer that can actually see a hostname,
+which is the entire reason this chart exists.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "egress-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "egress-proxy.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "egress-proxy.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              egress.zachd/proxied: "true"
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        {{- range .Values.squid.safePorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+        {{- range $laneName, $lane := $.Values.lanes }}
+        {{- if and (eq $lane.kind "parent") $lane.enabled }}
+        {{- range $peer := $lane.peers }}
+        {{- if $peer.host }}
+        # The {{ $laneName }} lane's peer listens here.
+        - port: {{ $peer.port }}
+          protocol: TCP
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- range .Values.networkPolicy.extraEgressPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+{{- end }}

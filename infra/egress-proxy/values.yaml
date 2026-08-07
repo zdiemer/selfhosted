@@ -1,0 +1,223 @@
+# The cluster's single egress choke point.
+#
+# WHY THIS EXISTS. Ingress has been unified for a while — everything external
+# arrives through Traefik or the Cloudflare tunnel, infra/ingress-policy enforces
+# the conventions at admission, and infra/alloy ships the access log. Egress had
+# no equivalent, and three separate problems followed from that:
+#
+#   1. EVERYTHING LEAVES FROM THE HOUSE. games/gamedex talks to ~50 hosts,
+#      finance/money scrapes Zillow and Redfin, web/apartment-watch scrapes
+#      Craigslist and Zumper, and discord/smitele-bot pulls ~118 GB/month
+#      through a Cloudflare-fronted tracker.gg — all from the address the
+#      household browses from. smitele-bot has already been refused with
+#      `Retry-After: 3600`, which its own docs correctly read as a ban on the
+#      address rather than a rate limit.
+#
+#   2. PROXYING WAS BEING REINVENTED PER SERVICE. smitele-bot has a careful
+#      egress abstraction; talaria has an unrelated one with three provider
+#      backends; finance/money has a third and cruder one. None share anything.
+#
+#   3. NETWORKPOLICY CANNOT EXPRESS A HOSTNAME. k3s does enforce NetworkPolicy
+#      (kube-router's controller, embedded in the agent), but only at L3/L4. Six
+#      charts here hand-roll the same `0.0.0.0/0 except RFC1918` block, each with
+#      a comment apologising that hostnames aren't matchable. A forward proxy is
+#      the layer where a destination allowlist can actually live.
+#
+# THE DESIGN SPINE: `lane: direct` MEANS "MEASURED, BUT UNCHANGED". A service can
+# opt in for attribution and byte accounting with no change at all to where its
+# traffic exits, and be moved to a different exit later as a one-line change.
+# That is what makes this safe to roll out incrementally — the measurement and
+# the change-of-address are separate decisions.
+
+image: ubuntu/squid:6.6-24.04_edge
+imagePullPolicy: IfNotPresent
+
+# Two replicas because it is on the critical path for every opted-in service and
+# a squid restart would otherwise be an outage for them. Safe to scale: a
+# CONNECT tunnel is per-connection state, and every replica resolves a lane to
+# the same exit, so which replica answers has no bearing on the address a
+# request leaves from. That property is what smitele-bot's sticky-exit
+# requirement actually depends on.
+replicaCount: 2
+
+service:
+  port: 3128
+
+# ---------------------------------------------------------------------------
+# SQUID IS CONFIGURED TO BE A BLIND TUNNEL. Do not change this casually.
+# ---------------------------------------------------------------------------
+# There is no ssl_bump, no sslproxy_cert, and no TLS interception anywhere in
+# the rendered config, and adding any would break the two most important clients
+# silently rather than loudly:
+#
+#   * smitele-bot impersonates Firefox with curl_cffi and mints its Cloudflare
+#     clearance cookie in Camoufox. The cookie is bound to the TLS fingerprint
+#     that minted it.
+#   * talaria pins JA3/JA4 through httpcloak, and its TODOS explicitly warn
+#     against proxies acting as HTTP/2-to-HTTP/1 gateways, which destroys the
+#     browser's H2 fingerprint.
+#
+# A CONNECT tunnel is opaque TCP. The client's TLS handshake and its
+# ALPN-negotiated h2 reach the origin untouched, and squid never parses a byte
+# of either — so both concerns are satisfied by construction. Anything that
+# terminates TLS here forfeits that.
+squid:
+  # `via off` and `forwarded_for delete` matter beyond hygiene: the defaults
+  # append `Via:` and `X-Forwarded-For: <pod IP>` to plain-HTTP requests, which
+  # both announces the request as proxied and leaks internal addressing to the
+  # origin. Squid warns "HTTP requires the use of Via" on parse; that warning is
+  # expected and the setting is deliberate.
+  stripProxyHeaders: true
+
+  # Ports CONNECT is allowed to reach. 443 is the whole story for the scrapers,
+  # but this is a list because real clients need more: dev/claude-workspace and
+  # web/kelsey-green's git-sync clone over SSH on 22, and auth/authelia sends
+  # mail on 587. Adding a service without adding its port here fails as a plain
+  # denial, which is at least loud.
+  connectPorts: [443, 22, 587]
+
+  # Ports reachable for plain (non-CONNECT) HTTP. 80 is here because Debian
+  # images fetch deb.debian.org over port 80 and apt's signature checks cover
+  # integrity.
+  safePorts: [80, 443, 22, 587]
+
+  # Squid resolves destination names itself, through CoreDNS like any other pod.
+  # Worth knowing while an infra/coredns-config audit window is open: those
+  # lookups appear in the DNS inventory attributed to egress-proxy, alongside
+  # the client's own lookup of the same name. Reach is still correct; counts
+  # double for proxied clients.
+  cacheMemMB: 8
+
+  # Squid's default is a 30-second wait for existing connections on shutdown,
+  # which turns every rollout into a 30-second pause for anything holding a
+  # tunnel. These are long-lived crawls, not user requests; cut it short and let
+  # the client reconnect.
+  shutdownLifetimeSeconds: 5
+
+# ---------------------------------------------------------------------------
+# LANES — where traffic actually leaves from
+# ---------------------------------------------------------------------------
+# A lane is a named exit. Clients name a lane, never a host, so moving a service
+# to a different exit is a one-word change here and needs no change in the
+# service's own chart.
+lanes:
+  # The home address, reached the way it always was. This is not a no-op: the
+  # request is authenticated, attributed and logged on the way out. It is the
+  # right starting lane for every service, and the only one available until a
+  # VPS exists.
+  direct:
+    kind: direct
+
+  # A single sticky exit on a cheap VPS. Disabled until infra/egress-proxy/vps
+  # has been stood up and `host` filled in via values.local.yaml.
+  #
+  # Sticky is the requirement, not a preference: smitele-bot's clearance cookie
+  # is bound to the exit address, there are only twelve solves a day before a
+  # four-hour breaker arms, and the cookie's useful life is six to seven hours.
+  # A rotating pool does not work worse here — it fails within minutes.
+  vps:
+    kind: parent
+    enabled: false
+    # Wrap the hop to the VPS in TLS. Only squid speaks to the peer, so this is
+    # invisible to Playwright/Camoufox — which cannot use an https:// proxy URL
+    # and would otherwise force the credential and every CONNECT target
+    # hostname to cross the internet in cleartext.
+    #
+    # Verified supported on this image: it is built --with-gnutls rather than
+    # --with-openssl, and `cache_peer ... tls` parses regardless.
+    tls: true
+    peers:
+      - name: vps
+        host: ""      # set in values.local.yaml
+        port: 3129
+
+  # A rotating pool, for the sites that rate-limit per address rather than
+  # challenge. Round-robin across N peers fits a Webshare-style endpoint list
+  # natively.
+  #
+  # DELIBERATE LIMIT: BrightData-style rotation encodes the country and session
+  # in the USERNAME, per request. A cache_peer carries one fixed `login=`, so
+  # that provider cannot be expressed as a peer and stays app-side in whatever
+  # client needs it. See the README.
+  residential:
+    kind: parent
+    enabled: false
+    roundRobin: true
+    tls: false
+    peers: []
+
+# ---------------------------------------------------------------------------
+# CLIENTS — who may use the proxy, and through which lane
+# ---------------------------------------------------------------------------
+# Each client gets a credential whose username is the chart name. NetworkPolicy
+# is the security boundary; the credential exists so that every line in the
+# access log carries a durable service name instead of an ephemeral pod IP.
+#
+# `namespace` is where the client's Secret is rendered — this release writes a
+# Secret into each client's namespace holding the ready-made proxy URL, the same
+# way infra/duckdns renders its token into two namespaces from one release.
+#
+# `allowedHosts` empty means "anywhere". Fill it from a real measurement
+# (scripts/egress-audit.sh) rather than from a guess, then tighten. An allowlist
+# written from imagination breaks the service at the worst moment and teaches
+# everyone to widen it back to empty.
+clients:
+  # Both start on `direct`, which changes nothing about where their traffic
+  # exits — it makes it attributable and counted. Moving either to `vps` is a
+  # one-word change once an exit exists.
+  #
+  # smitele-bot is the service this was designed around: ~118 GB/month against a
+  # Cloudflare-fronted endpoint that has already banned the address once.
+  - name: smitele-bot
+    namespace: discord
+    lane: direct
+    allowedHosts: []
+
+  # apartment-watch runs Camoufox with geoip=True, which derives locale,
+  # timezone and lat/long FROM THE EXIT IP. Moving this one to a lane whose exit
+  # is not plausibly near San Francisco desyncs the fingerprint and gets it
+  # flagged harder than leaving it direct. Measure first, move deliberately.
+  - name: apartment-watch
+    namespace: web
+    lane: direct
+    allowedHosts: []
+
+# Passwords live in values.local.yaml as a MAP keyed by client name, never as
+# part of the `clients` list above. Helm merges maps by key but REPLACES lists
+# wholesale, so a password added to a list in values.local.yaml would silently
+# drop every client defined here. upgrade.sh generates this file if missing.
+clientPasswords: {}
+
+# Upstream proxy credentials, keyed by PEER name (not lane name — a round-robin
+# lane has several peers and each may authenticate differently). Same map-vs-list
+# reasoning as clientPasswords. Set in values.local.yaml.
+peerLogins: {}
+  # vps:
+  #   username: ""
+  #   password: ""
+
+networkPolicy:
+  enabled: true
+  # Egress from the proxy itself. This is the one pod in the cluster that is
+  # supposed to talk to arbitrary external hosts, so it stays wide — the
+  # per-destination allowlist is enforced by squid's ACLs above, at a layer that
+  # can actually see hostnames.
+  extraEgressPorts: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# NOT configured here, deliberately:
+#   * A metrics exporter. squid-exporter would add a third-party image for
+#     counters the access log already implies, and the access log is where
+#     per-destination bytes have to live anyway (Grafana Cloud's 10k-series free
+#     tier makes a per-destination LABEL a cardinality bomb — the same argument
+#     infra/alloy makes about RequestPath). Revisit if the log proves
+#     insufficient.
+#   * Caching. `cache deny all` is set: CONNECT is uncacheable by nature, and
+#     caching plain HTTP would make the proxy answer for an origin it should
+#     only be relaying.
