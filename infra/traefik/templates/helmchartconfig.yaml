@@ -54,10 +54,18 @@ spec:
         {{- if .Values.accessLog.enabled }}
         format: {{ .Values.accessLog.format }}
         addInternals: {{ .Values.accessLog.addInternals }}
+        {{- /*
+          Only emit filter keys that carry a value. A `true` here renders as a
+          bare valueless CLI flag (`--accesslog.filters.retryattempts`), which
+          Traefik 3.6.7 accepts at startup and then silently ignores the whole
+          access log for — no error, no output. See values.yaml.
+        */}}
         filters:
           statuscodes: {{ .Values.accessLog.filters.statuscodes | quote }}
-          retryattempts: {{ .Values.accessLog.filters.retryattempts }}
           minduration: {{ .Values.accessLog.filters.minduration | quote }}
+          {{- if .Values.accessLog.filters.retryattempts }}
+          retryattempts: true
+          {{- end }}
         fields:
           general:
             defaultmode: {{ .Values.accessLog.fields.general.defaultmode }}

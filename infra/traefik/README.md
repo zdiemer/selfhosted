@@ -78,6 +78,58 @@ instead.` It still worked, but a deprecated ACME flag is exactly the sort of
 thing that vanishes in a routine k3s bump and takes cluster-wide TLS with it.
 Now rendered as `...dnschallenge.propagation.delaybeforechecks`.
 
+## Do not turn `filters.retryattempts` back on
+
+Setting it `true` makes the chart render a **bare, valueless** CLI flag:
+
+```
+--accesslog.filters.retryattempts
+```
+
+Traefik 3.6.7 accepts that at startup, reports it in its args, serves traffic
+normally, and increments its Prometheus counters — while writing **no access log
+at all**. No error, no warning, nothing on stderr. It cost a full debugging pass
+to find, because every observable signal said the config had applied.
+
+The template only emits filter keys that carry a value now. If you ever want
+retry logging back, verify that lines actually appear before believing it works.
+
+## Two reconcile traps worth knowing
+
+**Helm adopts on install without writing.** The first
+`helm upgrade --install` against a pre-existing object *takes ownership* and
+records the new manifest in the release — but does not push the content. The
+next upgrade then diffs new-against-new, produces an empty patch, and changes
+nothing. Symptom: `helm get manifest` shows your change, the live object doesn't
+have it. Fix is to `kubectl apply` the rendered manifest once; after that the
+release and the object agree and normal upgrades work.
+
+**helm-controller can only fetch the chart from some nodes.** The `HelmChart` CR
+pins an exact tarball:
+
+```
+https://%{KUBERNETES_API}%/static/charts/traefik-38.0.201+up38.0.2.tgz
+```
+
+That URL resolves through the `kubernetes` Service, which round-robins across
+all three control-plane apiservers — and each server only serves the chart
+version *its own k3s release* bundles. This cluster's control plane is split
+(`v1.34.3+k3s3` on `zachd-ubuntu`, `v1.34.6+k3s1` on the two laptops), and only
+`zachd-ubuntu` still has 38.x. The other two answer **404**.
+
+So roughly two out of three reconcile attempts fail. The job retries forever
+(`backoffLimit: 1000`), so a config change *does* land eventually — at an
+unpredictable moment, as an unannounced cluster-wide outage. To land it
+deliberately, delete the failing job pod until an attempt succeeds:
+
+```bash
+kubectl -n kube-system delete pod -l job-name=helm-install-traefik --force
+```
+
+**The real fix is aligning k3s versions across the control plane**
+(`scripts/k3s/k3s-upgrade.sh`). Until then, every change here is a coin flip on
+timing.
+
 ## The startup middleware race is expected
 
 For a few seconds after Traefik starts, its log fills with:

@@ -126,9 +126,16 @@ accessLog:
   # Keep every status code. The instinct is to log only 4xx/5xx, but the 2xx
   # stream is exactly what makes "someone is walking my URL space" visible, and
   # at home traffic volumes the cost is negligible (~0.3-1 GB/month total).
+  #
+  # retryattempts is deliberately FALSE rather than true. With it on, the chart
+  # renders a bare valueless `--accesslog.filters.retryattempts` flag, and
+  # Traefik 3.6.7 then starts cleanly, reports the flag in its args, serves
+  # traffic, increments its metrics — and writes no access log at all. It is a
+  # silent no-op, which is the worst possible failure for a logging change.
+  # Leave this off unless you have verified lines actually appear with it on.
   filters:
     statuscodes: ""
-    retryattempts: true
+    retryattempts: false
     minduration: ""
 
   # Don't log Traefik's own internal routers (ping, dashboard, the acme
