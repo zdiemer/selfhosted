@@ -120,7 +120,7 @@ collector:
     # Leave empty for the cluster default. It is rendered only when non-empty:
     # an explicit `storageClassName: ""` means "no class" to Kubernetes rather
     # than "the default one", and leaves the claim Pending forever.
-    storageClassName: ""
+    storageClassName: truenas-nfs
 
   resources:
     requests:
