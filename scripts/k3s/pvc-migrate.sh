@@ -515,9 +515,22 @@ echo "  [OK] checksum-level diff was empty"
 
 $K delete job "$COPY_JOB" --ignore-not-found >/dev/null
 $K delete pvc "$TMP_CLAIM" --ignore-not-found >/dev/null
-# Deleting the temp claim leaves a stale claimRef; clear it so the PV reads as
-# Available rather than Released-and-confusing when cleanup.sh looks at it later.
-kubectl patch pv "$SRC_PV" --type=merge -p '{"spec":{"claimRef":null}}' >/dev/null 2>&1 || true
+
+# RESERVE the rollback PV — do NOT clear claimRef.
+#
+# An earlier version cleared it so the PV would read Available rather than
+# Released. That put the rollback back into the free pool, and a PV with no
+# claimRef is fair game for any PVC of the same class and size. It bit
+# immediately: the next chart to create a local-path claim (web/apartment-watch)
+# bound straight onto finance/money-data's rollback volume, mounting one app's
+# database into another. Nothing was lost only because apartment-watch opens
+# SQLite read-only and found no file of its own.
+#
+# Pointing claimRef at a name that will never exist reserves the PV forever: the
+# binder only ever matches a PV to the exact namespace/name in its claimRef.
+kubectl patch pv "$SRC_PV" --type=merge \
+    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${PVC}-ROLLBACK-DO-NOT-BIND\"}}}" \
+    >/dev/null 2>&1 || true
 
 step "8. Scale back up"
 for o in "${OWNERS[@]}"; do

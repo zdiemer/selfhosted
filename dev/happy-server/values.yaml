@@ -30,7 +30,7 @@ persistence:
   # before they land here.
   data:
     size: 5Gi
-    storageClass: ""              # "" → cluster default StorageClass (k3s local-path)
+    storageClass: truenas-iscsi   # NAS-backed block; PGlite needs real fsync
     accessMode: ReadWriteOnce
 
 security:

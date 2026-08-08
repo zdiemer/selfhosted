@@ -84,7 +84,7 @@ persistence:
     # "" => cluster default StorageClass (k3s local-path). Must render as an
     # ABSENT field, never as an empty string — storageClassName: "" means "no
     # class at all" and leaves the PVC Pending forever.
-    storageClass: ""
+    storageClass: truenas-iscsi
 
 resources:
   requests:
