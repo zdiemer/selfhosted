@@ -92,7 +92,10 @@ lavalink:
 mongo:
   storage:
     size: 5Gi
-    # storageClass: ""   # unset = cluster default (k3s local-path)
+    # NAS-backed block. Note the volumeClaimTemplate is IMMUTABLE, so changing
+    # this on an existing release needs `kubectl delete sts --cascade=orphan`
+    # first — a plain helm upgrade is rejected outright.
+    storageClass: truenas-iscsi
   resources:
     requests:
       # Mongo sits at ~261Mi, fractionally over the old 256Mi request — it will

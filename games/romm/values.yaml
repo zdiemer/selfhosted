@@ -73,7 +73,7 @@ persistence:
     accessMode: ReadWriteOnce
   db:
     size: 10Gi
-    storageClass: ""
+    storageClass: truenas-iscsi   # NAS-backed block; MariaDB needs real fsync
 
 # Written to /romm/config/config.yml.
 config:
