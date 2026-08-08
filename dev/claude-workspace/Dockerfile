@@ -35,6 +35,12 @@ ARG GH_VERSION=2.96.0
 # deliberately, same as the claude CLI.
 ARG BUN_VERSION=1.2
 ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
+# 1Password CLI. The pod used to have no path to the vault at all — secrets
+# arrived only in the cluster relay bundle, so an edit made HERE was stranded
+# until the laptop published again. With op present, scripts/op-session.sh signs
+# in unattended from ~/.config/selfhosted/op-password and `secrets.sh sync`
+# works the same here as on the laptop. The relay stays as the bootstrap path.
+ARG OP_VERSION=2.38.1
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
@@ -42,7 +48,7 @@ ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         git openssh-client tmux curl ca-certificates \
-        ripgrep jq less procps python3 tini \
+        ripgrep jq less procps python3 python3-yaml tini unzip \
  && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL -o /usr/local/bin/ttyd \
         "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
@@ -61,6 +67,11 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
  && curl -fsSL -o /usr/local/bin/sops \
         "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64" \
  && chmod 0755 /usr/local/bin/sops \
+ && curl -fsSL -o /tmp/op.zip \
+        "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VERSION}/op_linux_amd64_v${OP_VERSION}.zip" \
+ && unzip -p /tmp/op.zip op > /usr/local/bin/op \
+ && chmod 0755 /usr/local/bin/op \
+ && rm -f /tmp/op.zip \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
     | tar xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh" \
  && curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \

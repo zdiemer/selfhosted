@@ -136,41 +136,59 @@ internet and cluster-admin + root-on-every-node. Never disable
    authorize the device code. Use a token/login with `repo` + `read:org` scope
    — the GHCR PAT above is packages-only and `gh` will reject it. Auth persists
    on the PVC at `~/.config/gh`.
-4. **Repo + local values**: clone this repo to `~/code/selfhosted`, then pull
-   the secrets the pod needs — without them, deploys from the pod fail on
-   `required` values or silently render secrets empty:
-
-   ```sh
-   scripts/secrets.sh pull --from-cluster
-   ```
-
-   That unpacks `secret/selfhosted-secrets` (ns `claude`), which the laptop
-   publishes with [`scripts/secrets.sh`](../../scripts/secrets.sh) `publish`.
-   The pod cannot talk to 1Password directly — Service Accounts are a
-   Teams/Business feature, and putting the account password here would expose
-   every vault rather than just `selfhosted` — so the cluster Secret is the
-   relay. It grants the pod nothing new: this SA is already cluster-admin
-   (`templates/rbac.yaml`) and can read every Secret in the cluster, including
-   the rendered chart Secrets carrying these same values.
-
-   Because this is a **pull**, a restart no longer needs the laptop: re-run the
-   command above after any pod restart. `publish` also applies it here
-   immediately when the pod is up, so in practice one command on the laptop
-   still does the whole job.
+4. **Repo**: clone this repo to `~/code/selfhosted`. The secrets it needs are
+   no longer a manual step — see below.
 5. **Gotcha**: kubectl/helm use the in-cluster SA only while `~/.kube/config`
    does not exist. If one ever lands on the PVC it silently takes precedence
    and everything breaks confusingly — `rm ~/.kube/config` is the fix.
-6. **Other repos' secrets**:
-   - gamedex / money / smitele-bot (standalone clones): publish from the laptop
-     with `scripts/secrets.sh publish --include-external`, then pull here as
-     above. The files land beside each clone if the clone exists.
-   - talaria keeps secrets sops-encrypted in-git; the image ships `sops`
-     (age support built in), but the age private key must be copied to the
-     pod at `~/.config/sops/age/keys.txt` (chmod 700 dir / 600 file) —
-     sops' default search path, so it works in every shell and script with
-     no env var (a `SOPS_AGE_KEY_FILE` export in `~/.bashrc` only reaches
-     interactive shells). ⚠️ That key decrypts every talaria secret —
-     copying it makes Authelia the only thing guarding them.
+
+### Secrets
+
+Two paths, deliberately. The pod needs every chart's `values.local.yaml` or
+deploys from here fail on `required` values — or worse, silently render a
+secret empty.
+
+**The relay is the bootstrap path.** `secret/selfhosted-secrets` (ns `claude`)
+is a bundle the laptop publishes with
+[`scripts/secrets.sh`](../../scripts/secrets.sh) `publish`. It is mounted into
+the `init-home` initContainer, which unpacks it on **every pod start**, so a
+restart is self-sufficient and needs nobody — this used to be a
+`secrets.sh pull --from-cluster` you had to remember, and a pod that came back
+without it looked fine right up until a deploy. `publish` still applies it
+immediately when the pod is already running.
+
+It grants the pod nothing new: this SA is cluster-admin (`templates/rbac.yaml`)
+and can already read every Secret in the cluster, including the rendered chart
+Secrets carrying these same values. It needs no credentials, which is exactly
+why it stays even though the pod can now reach 1Password.
+
+**1Password is the return path**, and it is optional
+(`secrets.onePassword.enabled`, credentials in `values.local.yaml`). Without it
+the relay is one-directional: a secret edited *here* sits on the PVC until the
+laptop publishes over the top of it. With it, `scripts/secrets.sh sync` works
+here exactly as it does on the laptop —
+[`scripts/op-session.sh`](../../scripts/op-session.sh) signs in unattended from
+`~/.config/selfhosted/op-password`, adding the account on first use if the PVC
+has never seen it.
+
+The honest accounting, since this reverses an earlier decision recorded here:
+the account password is now on the PVC. Against a cluster-admin SA that could
+already read the rendered Secrets, what is genuinely new is reach into vault
+items no chart has deployed yet. Everything stays behind Authelia. The earlier
+objection assumed Service Accounts (a Teams/Business feature this account does
+not have) were the only alternative to the password; the pty sign-in in
+`scripts/lib/op-signin-pty.py` is the third option that did not exist then.
+
+**Other repos:**
+- gamedex / money / smitele-bot / sms-relay / whatnowgg (standalone clones): in
+  scope by default now — `publish` bundles them, and they land beside each clone
+  under `~/code` if the clone exists.
+- talaria keeps secrets sops-encrypted in-git; the image ships `sops` (age
+  support built in). Its age private key belongs in the vault, materialized to
+  `~/.config/sops/age/keys.txt` (chmod 700 dir / 600 file) — sops' default
+  search path, so it works in every shell and script with no env var (a
+  `SOPS_AGE_KEY_FILE` export in `~/.bashrc` only reaches interactive shells).
+  ⚠️ That key decrypts every talaria secret.
 
 ### Self-upgrade
 

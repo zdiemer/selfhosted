@@ -1,7 +1,28 @@
-# Copy to values.local.yaml (gitignored). This chart needs no secrets — the
-# Anthropic OAuth login and the git ssh key both live on the home PVC, created
-# interactively from the web terminal. The only local toggle is the ingress,
-# which stays off until the pod's first boot is verified.
+# Copy to values.local.yaml (gitignored). The Anthropic OAuth login and the git
+# ssh key both live on the home PVC, created interactively from the web
+# terminal, so they are not here. The ingress stays off until the pod's first
+# boot is verified.
 
 ingress:
   enabled: true
+
+# OPTIONAL — 1Password credentials for the pod itself.
+#
+# Leave this out and the pod still gets every secret: the init container unpacks
+# the relay bundle (secret/selfhosted-secrets) on every start, so a restart is
+# self-sufficient. What these add is the return path — a secret edited HERE
+# reaches the vault via `scripts/secrets.sh sync` instead of waiting to be
+# overwritten by the laptop's next publish.
+#
+# The Secret Key is on the same paper sheet as the age backup key (see
+# scripts/systemd/README.md). Anything set here is a real credential: this file
+# is gitignored and the values belong in the vault item dev-claude-workspace.
+#
+# secrets:
+#   onePassword:
+#     enabled: true
+#     account: my
+#     address: my.1password.com
+#     email: you@example.org
+#     secretKey: "A3-XXXXXX-XXXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+#     password: "…"

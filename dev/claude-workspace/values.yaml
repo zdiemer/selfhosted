@@ -168,6 +168,41 @@ bakery:
   # PI_WEB_ALLOWED_MODELS, PI_WEB_FAKE_AGENT).
   extraEnv: {}
 
+# How this pod gets the per-chart values.local.yaml files it needs to deploy.
+secrets:
+  relay:
+    # Unpack secret/selfhosted-secrets (published by scripts/secrets.sh) into the
+    # checkout on every pod start. Before this, a restart left the pod with
+    # whatever the PVC happened to hold and someone had to remember to run
+    # `secrets.sh pull --from-cluster` by hand — and a fresh deploy from here
+    # would fail on `required` values or, worse, render a secret empty.
+    #
+    # optional: the Secret may not exist yet on a brand-new cluster, and the pod
+    # must still start.
+    enabled: true
+    secretName: selfhosted-secrets
+    # Where the selfhosted checkout lives on the PVC. Skipped if absent.
+    repoPath: /home/node/code/selfhosted
+  onePassword:
+    # Give the pod its own vault access, so a secret edited HERE reaches
+    # 1Password instead of waiting for the laptop to publish over the top of it.
+    # The relay above stays regardless — it is the bootstrap path and needs no
+    # credentials.
+    #
+    # This does put the account password on the PVC. The honest accounting: this
+    # SA is already cluster-admin (templates/rbac.yaml) and can read every
+    # rendered chart Secret, which carries most of these same values; what is
+    # genuinely new is reach into vault items no chart has deployed yet.
+    # Everything is gated behind Authelia. Values belong in values.local.yaml.
+    enabled: false
+    # Shorthand from `op account list`.
+    account: my
+    address: my.1password.com
+    email: ""
+    # Both of these are secrets — set them in values.local.yaml, never here.
+    secretKey: ""
+    password: ""
+
 resources:
   # tmux spawns `claude` (and `happy`, which wraps another claude) — hungry
   # Node processes, so a roomy memory ceiling.
