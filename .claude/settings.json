@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Tracked, unlike settings.local.json: these rules describe the repo, not this machine.",
+    "Submodules here are revision records, not workspaces. The copy that deploys lives in",
+    "the app's own clone under ~/Code — an edit inside a submodule worktree changes a file",
+    "that can never ship, and the superproject reports it as a dirty gitlink rather than as",
+    "the change it is. scripts/submodules-lock.sh enforces this on the filesystem; these",
+    "rules are the version that can explain itself, and they fire before the write is",
+    "attempted rather than after it fails with EACCES.",
+    "additionalDirectories names ~/Code so the correct checkout is reachable by default."
+  ],
+  "permissions": {
+    "deny": [
+      "Edit(games/gamedex/**)",
+      "Write(games/gamedex/**)",
+      "Edit(finance/money/**)",
+      "Write(finance/money/**)",
+      "Edit(discord/smitele-bot/**)",
+      "Write(discord/smitele-bot/**)",
+      "Edit(infra/sms-relay/**)",
+      "Write(infra/sms-relay/**)",
+      "Edit(web/whatnowgg/**)",
+      "Write(web/whatnowgg/**)",
+      "Edit(web/talaria/**)",
+      "Write(web/talaria/**)",
+      "Edit(web/old-diemer-codes/site/**)",
+      "Write(web/old-diemer-codes/site/**)"
+    ],
+    "additionalDirectories": [
+      "~/Code"
+    ]
+  }
+}

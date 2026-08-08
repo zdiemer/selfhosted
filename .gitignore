@@ -18,7 +18,16 @@ secrets/
 # Local-only overlays (per-project secrets: tokens, passwords, identities).
 # The ** glob covers every subproject's values.local.yaml.
 **/values.local.yaml
-.claude/
+
+# .claude/settings.local.json is this machine's permission grants and stays
+# local. settings.json is the opposite: the submodule deny rules belong to the
+# repo, so they reach every checkout and the claude-workspace pod.
+#
+# `.claude/*` and not `.claude/`: git cannot re-include a file whose parent
+# DIRECTORY is excluded — it never descends far enough to see the negation — so
+# the trailing-slash form would make the next line dead.
+.claude/*
+!.claude/settings.json
 
 # apartment-watch search stipulations — carries the alert phone number and a
 # personal shortlist of where to live. criteria.example.yaml is the tracked

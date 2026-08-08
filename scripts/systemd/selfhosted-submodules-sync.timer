@@ -1,0 +1,18 @@
+# Daily. A pin is a record, not a dependency — nothing breaks while one is a few
+# hours stale, and a deploy is a human-scale event.
+
+[Unit]
+Description=Sync selfhosted submodule pins daily
+Documentation=file:%h/Code/selfhosted/scripts/systemd/README.md
+
+[Timer]
+# One OnCalendar only: they accumulate rather than override, so a stray
+# `OnCalendar=daily` above this line would add a second midnight firing.
+# 04:30 keeps it clear of the 03:00 backup, which walks the same checkout.
+OnCalendar=*-*-* 04:30:00
+AccuracySec=15min
+Persistent=true
+Unit=selfhosted-submodules-sync.service
+
+[Install]
+WantedBy=timers.target

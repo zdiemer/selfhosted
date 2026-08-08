@@ -1,0 +1,42 @@
+# Move the submodule pins to what the cluster is actually running.
+#
+# The README says a pin here records the deployed commit. Nothing enforced that
+# — pins moved by hand, when someone remembered. scripts/sync-submodules.sh
+# advances a pin only once the chart's image tag at that commit matches the
+# image the cluster is running, so the claim stays true rather than degrading
+# into "whatever is on the branch".
+#
+# It commits locally and never pushes: what lands on GitHub stays a decision.
+#
+# Install (see also scripts/systemd/README.md):
+#     ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-submodules-sync.{service,timer} ~/.config/systemd/user/
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now selfhosted-submodules-sync.timer
+
+[Unit]
+Description=Record deployed commits in selfhosted's submodule pins
+Documentation=file:%h/Code/selfhosted/scripts/sync-submodules.sh
+After=network-online.target
+Wants=network-online.target
+OnFailure=selfhosted-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Code/selfhosted
+ExecStart=%h/Code/selfhosted/scripts/sync-submodules.sh --commit
+
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+
+# It fetches, checks out inside submodules, and toggles their read-only bit, so
+# the whole checkout has to be writable. ~/.config/selfhosted is not needed here
+# — no secrets are touched.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/Code/selfhosted
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
