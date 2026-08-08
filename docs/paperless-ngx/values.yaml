@@ -70,7 +70,7 @@ persistence:
     accessMode: ReadWriteOnce
   postgres:
     size: 5Gi
-    storageClass: ""
+    storageClass: truenas-iscsi   # NAS-backed block; Postgres needs real fsync
     accessMode: ReadWriteOnce
 
 postgres:

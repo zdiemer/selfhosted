@@ -391,8 +391,12 @@ $K delete pvc "$PVC" --wait=true
 # silently did not apply, say) can bind straight onto the data being migrated.
 #
 # Naming the temp claim up front means only that claim can ever bind it.
+# uid and resourceVersion MUST be nulled explicitly. A merge patch merges into
+# the existing claimRef object, so setting only name/namespace leaves the old
+# claim's uid behind and the binder rejects the new claim with "already bound to
+# a different claim" — the PV sits Released forever.
 kubectl patch pv "$SRC_PV" --type=merge \
-    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${TMP_CLAIM}\"}}}" >/dev/null
+    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${TMP_CLAIM}\",\"uid\":null,\"resourceVersion\":null}}}" >/dev/null
 echo "  [OK] pv/${SRC_PV} is $(kubectl get pv "$SRC_PV" -o jsonpath='{.status.phase}')"
 
 # ------------------------------------------------------------------------------
@@ -564,7 +568,7 @@ $K delete pvc "$TMP_CLAIM" --ignore-not-found >/dev/null
 # Pointing claimRef at a name that will never exist reserves the PV forever: the
 # binder only ever matches a PV to the exact namespace/name in its claimRef.
 kubectl patch pv "$SRC_PV" --type=merge \
-    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${PVC}-ROLLBACK-DO-NOT-BIND\"}}}" \
+    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${PVC}-ROLLBACK-DO-NOT-BIND\",\"uid\":null,\"resourceVersion\":null}}}" \
     >/dev/null 2>&1 || true
 
 step "8. Scale back up"
