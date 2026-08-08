@@ -522,6 +522,15 @@ spec:
               # of that boot, not data, and without --delete they survive the
               # migration and shadow the real state.
               rsync -aHAX --delete --numeric-ids --info=progress2 /src/ /dst/
+              # Flush before verifying. rsync returns once its writes are
+              # accepted, not once they are durable, and the checksum pass that
+              # follows re-reads every byte. On whatnowgg that raced: a 63MB
+              # SQLite file reported a checksum mismatch immediately after the
+              # copy and was byte-identical minutes later, with nothing having
+              # written to it in between. A false MISMATCH aborts a migration
+              # that actually succeeded, which is the expensive direction to
+              # get wrong.
+              sync
               echo "--- verify (must be empty) ---"
               # --delete here too. Without it rsync only reports files present in
               # the source, so anything existing ONLY in the destination passes

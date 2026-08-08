@@ -63,7 +63,13 @@ EXCLUDE_FILES=("infra/coredns-config/values.local.yaml")
 
 # Apps whose charts live in their own repo and deploy from a standalone clone
 # (README §Conventions). Their secrets are outside this checkout entirely.
-EXTERNAL_REPOS=("gamedex" "money" "smitele-bot")
+#
+# An entry is a path under EXTERNAL_BASE, not just a repo name — it is only ever
+# used as a prefix, so a chart nested inside its repo works unchanged.
+# whatnowgg keeps its chart at deploy/chart/ rather than at the repo root, and
+# deploys from the standalone clone: the submodule at web/whatnowgg is a
+# revision record, so the copy that actually ships is the one under ~/Code.
+EXTERNAL_REPOS=("gamedex" "money" "smitele-bot" "whatnowgg/deploy/chart")
 # The laptop clones under ~/Code, the claude-workspace pod under ~/code. Pick
 # whichever exists so the same command works in both without a flag.
 if [[ -n "${EXTERNAL_BASE:-}" ]]; then :
