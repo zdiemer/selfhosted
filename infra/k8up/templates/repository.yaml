@@ -53,6 +53,13 @@ kind: PersistentVolumeClaim
 metadata:
   name: k8up-restic-repo
   namespace: {{ $namespace }}
+  annotations:
+    # Exclude the repository from the backups it stores. k8up backs up every PVC
+    # it finds in a namespace, and this claim IS the repository — without this it
+    # copies the repo into itself, once per namespace, every night. It showed up
+    # immediately: /data/k8up-restic-repo snapshots in happy and minecraft, and a
+    # repository that reached 100GiB backing up ~110GiB of real data.
+    k8up.io/backup: "false"
   labels:
     {{- include "k8up-wrapper.labels" $ | nindent 4 }}
 spec:
