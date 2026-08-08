@@ -1,0 +1,14 @@
+# Copy to values.local.yaml (gitignored) and set a repository password.
+#
+# This password is the ONLY way to read the restic repository. It is not
+# recoverable and it is not derivable from anything else — lose it and every
+# backup on the NAS becomes permanently unreadable, however intact the files
+# are. Generate one and put it somewhere that is not this cluster:
+#
+#   openssl rand -base64 32
+#
+# Then register it so it survives this machine:
+#   ./scripts/secrets.sh import infra/k8up/values.local.yaml
+
+restic:
+  password: "CHANGE-ME"

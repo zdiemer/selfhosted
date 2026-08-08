@@ -1,0 +1,176 @@
+# k8up — the cluster's backups.
+#
+# Every PVC that matters gets copied to a restic repository on the NAS, on a
+# schedule, with the databases dumped rather than snapshotted mid-write.
+#
+# WHY THIS EXISTS. Before the storage migration the only backup in the cluster
+# was Minecraft's mc-backup sidecar, and it wrote to a volume on the same node
+# and the same disk as the world it protected. Everything else had nothing. The
+# migration then left every source PV Retained as a rollback, which worked as a
+# stopgap but is not a backup: it is one copy, on one node's local disk, of one
+# moment in time, and it is meant to be reclaimed.
+#
+# WHAT PROTECTS WHAT. These are different failure modes and neither replaces
+# the other:
+#   ZFS snapshots (infra/democratic-csi)  same pool. Instant rollback from a
+#                                         mistake. Useless if the pool dies.
+#   restic here                           a second copy in a different dataset,
+#                                         content-addressed and verifiable, with
+#                                         app-consistent dumps for databases.
+#
+# THE REPOSITORY. One restic repo shared by every namespace, at vault/k8s/restic
+# on the NAS, mounted over NFS. Shared rather than per-namespace because restic
+# deduplicates within a repo and much of this cluster is the same base images and
+# the same Postgres pages; separate repos would store all of it many times over.
+#
+# The cost of sharing is the prune lock: restic's prune takes the repository
+# exclusively, so exactly ONE schedule prunes (see maintenance below) and every
+# other schedule only ever writes.
+
+# ------------------------------------------------------------------------------
+# The restic repository, mounted from the NAS
+# ------------------------------------------------------------------------------
+repository:
+  # Created by hand on the TrueNAS, not by democratic-csi — the CSI driver only
+  # exports datasets it provisioned itself, and this one predates any claim.
+  nfs:
+    server: 192.168.4.36
+    path: /mnt/vault/k8s/restic
+  # Where the restic repo is mounted inside every backup pod.
+  mountPath: /restic-repo
+  # Nominal — NFS enforces the dataset quota, not this number.
+  size: 500Gi
+
+# ------------------------------------------------------------------------------
+# Retention
+# ------------------------------------------------------------------------------
+# Applied by the single maintenance schedule below, across the whole repository.
+#
+# Weighted towards recent history because that is what actually gets restored:
+# the realistic case is "this broke in the last day or two", not "recover March".
+# keepLast guarantees a floor no matter how the calendar buckets fall — a volume
+# that has not changed in a month still keeps its most recent snapshots.
+retention:
+  keepLast: 5
+  keepHourly: 24
+  keepDaily: 14
+  keepWeekly: 8
+  keepMonthly: 6
+
+# ------------------------------------------------------------------------------
+# Schedules
+# ------------------------------------------------------------------------------
+# One Schedule per namespace. k8up backs up every PVC in the namespace it finds,
+# so this list is about WHEN and WHAT ELSE (dumps), not about enumerating volumes.
+#
+# Times are staggered deliberately. They share one repository and one NAS: three
+# namespaces starting at 02:00 would contend on the restic lock and on the disk,
+# and the slowest would decide when they all finish.
+schedules:
+  # --- databases: dumped, not file-copied ---------------------------------
+  # A file copy of a running database is a copy of a database mid-write. It
+  # usually restores, which is worse than never restoring, because you find out
+  # when you need it. Each of these runs a real dump first via PreBackupPod, and
+  # k8up backs up the dump's stdout alongside the volume.
+  - name: docs
+    namespace: docs
+    schedule: "0 1 * * *"
+  - name: games
+    namespace: games
+    schedule: "20 1 * * *"
+  - name: discord
+    namespace: discord
+    schedule: "40 1 * * *"
+
+  # --- application state --------------------------------------------------
+  - name: auth
+    namespace: auth
+    schedule: "0 2 * * *"
+  - name: finance
+    namespace: finance
+    schedule: "20 2 * * *"
+  - name: web
+    namespace: web
+    schedule: "40 2 * * *"
+  - name: infra
+    namespace: infra
+    schedule: "0 3 * * *"
+  - name: happy
+    namespace: happy
+    schedule: "20 3 * * *"
+  - name: whatnow
+    namespace: whatnow
+    schedule: "40 3 * * *"
+  - name: claude
+    namespace: claude
+    schedule: "0 4 * * *"
+  - name: default
+    namespace: default
+    schedule: "20 4 * * *"
+
+  # --- Minecraft ----------------------------------------------------------
+  # Late, and alone: mc-data is the most write-active volume in the cluster.
+  # No dump hook — the itzg mc-backup sidecar already writes consistent world
+  # tarballs into mc-backups on its own schedule, and k8up backs that volume up
+  # like any other. See templates/prebackuppods.yaml.
+  - name: minecraft
+    namespace: minecraft
+    schedule: "0 5 * * *"
+
+  # --- the survival tier --------------------------------------------------
+  # These deliberately stayed on local-path so that a NAS outage cannot stop you
+  # logging in to fix the NAS. That decision is about AVAILABILITY and says
+  # nothing about durability — they still need backing up, and being tiny they
+  # cost nothing to take often.
+  - name: kube-system
+    namespace: kube-system
+    schedule: "30 4 * * *"
+
+# ------------------------------------------------------------------------------
+# Repository maintenance
+# ------------------------------------------------------------------------------
+# Exactly one schedule prunes and checks, because both take the repository lock
+# and every namespace shares it. Runs after the last backup of the night.
+maintenance:
+  namespace: k8up
+  prune:
+    schedule: "0 6 * * 0"     # Sunday, after Saturday night's backups
+  check:
+    schedule: "0 7 * * 0"     # verifies repository integrity, after the prune
+
+# Logical dumps for the three real databases. See templates/prebackuppods.yaml.
+databaseDumps:
+  enabled: true
+
+# ------------------------------------------------------------------------------
+# Upstream operator
+# ------------------------------------------------------------------------------
+k8up:
+  replicaCount: 1
+
+  k8up:
+    # Cron fields above are read in this zone. Without it the operator uses UTC
+    # and "02:00" silently means 18:00 or 19:00 local depending on the season —
+    # backups landing in the middle of the evening rather than overnight.
+    timezone: America/Los_Angeles
+    enableLeaderElection: true
+    # Back up every PVC found, rather than only those carrying a backup
+    # annotation. Opt-out is the safer default for a cluster this size: a new
+    # service is protected the day it lands instead of the day someone
+    # remembers. Exclude a volume with k8up.io/backup=false on the PVC.
+    skipWithoutAnnotation: false
+
+  # The operator itself only schedules; the backup pods do the work. Small, but
+  # it watches every namespace, so give it enough headroom to not get OOM-killed
+  # mid-schedule on a busy node.
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  # No nodeSelector or affinity — pinning the thing that backs up the cluster to
+  # one node is how you discover it stopped running when that node died.
+  nodeSelector: {}
+  affinity: {}

@@ -1,0 +1,81 @@
+{{/*
+One Schedule per namespace. k8up discovers the PVCs itself, so these say when to
+run, not what to copy.
+
+Only `backup` is set here. prune and check live on the single maintenance
+schedule, because both take restic's exclusive repository lock and every
+namespace shares one repository — a prune racing eleven backups would block all
+of them, and two prunes at once can leave the repo needing a repair.
+*/}}
+{{- range .Values.schedules }}
+---
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: backup-{{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" $ | nindent 4 }}
+spec:
+  backend:
+    {{- include "k8up-wrapper.backend" $ | nindent 4 }}
+  backup:
+    schedule: "{{ .schedule }}"
+    volumes:
+      {{- include "k8up-wrapper.repoVolume" $ | nindent 6 }}
+    # Keep a couple of finished jobs per namespace so a failure is still visible
+    # the next morning, without leaving weeks of pods behind.
+    successfulJobsHistoryLimit: 2
+    failedJobsHistoryLimit: 4
+    # A backup that has hung for four hours is not going to finish, and it holds
+    # the repository lock while it waits. Fail it so the next one can run.
+    activeDeadlineSeconds: 14400
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        # restic packs and encrypts in memory. Four of the ten nodes have under
+        # 4GiB, so this is a ceiling that keeps a backup from evicting the very
+        # workload it is backing up.
+        memory: 1Gi
+{{- end }}
+---
+{{/*
+Repository maintenance — the only schedule allowed to prune or check.
+*/}}
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: maintenance
+  namespace: {{ .Values.maintenance.namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  backend:
+    {{- include "k8up-wrapper.backend" . | nindent 4 }}
+  prune:
+    schedule: "{{ .Values.maintenance.prune.schedule }}"
+    volumes:
+      {{- include "k8up-wrapper.repoVolume" . | nindent 6 }}
+    retention:
+      {{- toYaml .Values.retention | nindent 6 }}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        # Prune rewrites pack files and is the most memory-hungry thing restic
+        # does; it is also the one operation whose failure can leave the repo
+        # needing a repair, so it gets room rather than a tight cap.
+        memory: 2Gi
+  check:
+    schedule: "{{ .Values.maintenance.check.schedule }}"
+    volumes:
+      {{- include "k8up-wrapper.repoVolume" . | nindent 6 }}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi

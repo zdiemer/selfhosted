@@ -1,0 +1,129 @@
+{{/*
+Database dumps.
+
+A file-level copy of a running database copies it mid-write. It usually restores
+— which is worse than never restoring, because you find out during a recovery.
+Each of these starts a client pod before its namespace's backup runs, and k8up
+captures the dump's STDOUT as a file in the repository alongside the volumes.
+
+The pods are clients over the service, not sidecars: nothing here touches the
+charts that own the databases, so those stay independently upgradeable and this
+chart owns the whole backup story.
+
+Credentials come from the databases' OWN secrets, referenced rather than copied,
+so a rotation there is picked up here with no changes and no second copy of a
+password to drift.
+
+Note these do NOT replace the volume backup — k8up still copies the PVC. They
+add a consistent logical dump next to the physical files. The dump is what you
+restore from; the files are what you have if the dump is somehow unusable.
+*/}}
+{{- if .Values.databaseDumps.enabled }}
+---
+apiVersion: k8up.io/v1
+kind: PreBackupPod
+metadata:
+  name: paperless-postgres-dump
+  namespace: docs
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  # -F c is the custom format: compressed, and restorable table-by-table with
+  # pg_restore rather than all-or-nothing like a plain SQL file.
+  # A single string, not a list: k8up copies this verbatim into the pod's
+  # k8up.io/backupcommand annotation and shell-word-splits it, so the whole
+  # pipeline has to sit inside one quoted -c argument.
+  backupCommand: /bin/sh -c 'PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h paperless-postgres -U $POSTGRES_USER -d $POSTGRES_DB -F c'
+  fileExtension: .pgdump
+  pod:
+    spec:
+      # No restartPolicy. k8up realises a PreBackupPod as a DEPLOYMENT, and a
+      # Deployment's pod template only accepts restartPolicy: Always — "Never"
+      # is rejected by the API server, the operator retries forever, and the
+      # Backup sits with PreBackupPodReady=True and no job ever created.
+      containers:
+        - name: dump
+          # Matches the server's major version. pg_dump refuses to dump a server
+          # newer than itself, so this tracks docs/paperless-ngx's postgres image.
+          image: postgres:16-alpine
+          command: ["sleep", "infinity"]
+          envFrom:
+            - secretRef:
+                name: paperless-postgres
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: k8up.io/v1
+kind: PreBackupPod
+metadata:
+  name: romm-db-dump
+  namespace: games
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  # --single-transaction takes the dump inside one consistent snapshot without
+  # locking the tables, which matters here: romm's largest table is ~97k rows and
+  # a locking dump would stall the app for the duration.
+  backupCommand: /bin/sh -c 'mariadb-dump -h romm-db -u root -p$MARIADB_ROOT_PASSWORD --single-transaction --routines --triggers --all-databases'
+  fileExtension: .sql
+  pod:
+    spec:
+      # No restartPolicy. k8up realises a PreBackupPod as a DEPLOYMENT, and a
+      # Deployment's pod template only accepts restartPolicy: Always — "Never"
+      # is rejected by the API server, the operator retries forever, and the
+      # Backup sits with PreBackupPodReady=True and no job ever created.
+      containers:
+        - name: dump
+          image: mariadb:11
+          command: ["sleep", "infinity"]
+          envFrom:
+            - secretRef:
+                name: romm-db
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: k8up.io/v1
+kind: PreBackupPod
+metadata:
+  name: vocard-mongo-dump
+  namespace: discord
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  # --archive writes a single stream to stdout, which is what k8up captures.
+  backupCommand: /bin/sh -c 'mongodump --host vocard-mongo --username $MONGO_USER --password $MONGO_PASS --authenticationDatabase admin --archive --gzip'
+  fileExtension: .archive.gz
+  pod:
+    spec:
+      # No restartPolicy. k8up realises a PreBackupPod as a DEPLOYMENT, and a
+      # Deployment's pod template only accepts restartPolicy: Always — "Never"
+      # is rejected by the API server, the operator retries forever, and the
+      # Backup sits with PreBackupPodReady=True and no job ever created.
+      containers:
+        - name: dump
+          image: mongo:7
+          command: ["sleep", "infinity"]
+          env:
+            # This secret uses hyphenated keys, which are not valid shell
+            # identifiers, so they cannot be pulled in wholesale with envFrom
+            # the way the other two are.
+            - name: MONGO_USER
+              valueFrom:
+                secretKeyRef: { name: vocard-mongo, key: mongo-root-username }
+            - name: MONGO_PASS
+              valueFrom:
+                secretKeyRef: { name: vocard-mongo, key: mongo-root-password }
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 512Mi }
+{{- end }}
+{{/*
+Minecraft deliberately has no PreBackupPod. The itzg mc-backup sidecar already
+produces consistent world tarballs on its own schedule — RCON save-off,
+save-all flush, tar, save-on — into the mc-backups volume, and k8up backs that
+volume up like any other. A second flush here would duplicate that work and
+fight the sidecar for the RCON connection. mc-data is copied too, and may be
+mid-write; the tarball is the consistent artifact to restore from.
+*/}}

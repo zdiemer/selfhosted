@@ -1,0 +1,1 @@
+{{ op://homelab/infra-k8up/values.local.yaml }}

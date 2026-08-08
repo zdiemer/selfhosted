@@ -1,0 +1,12 @@
+apiVersion: v2
+name: k8up
+description: Backups for every PVC in the cluster — restic to the NAS, with app-consistent dumps for the databases
+type: application
+version: 1.0.0
+appVersion: "4.10.0"
+maintainers:
+  - name: zachd
+dependencies:
+  - name: k8up
+    version: 4.10.0
+    repository: https://k8up-io.github.io/k8up

@@ -1,0 +1,81 @@
+{{/*
+The restic repository, made reachable from every namespace that backs up.
+
+k8up's `local` backend writes to a path inside the backup pod, so the repository
+has to be a volume that pod can mount. It is one NFS export on the NAS shared by
+every namespace, which means a static PV/PVC pair per namespace pointing at the
+same export — dynamic provisioning would hand each namespace its own dataset and
+defeat the whole point of a shared, deduplicated repo.
+
+Static PVs need storageClassName: "" to mean "no class". That is the one case
+where the empty string is correct: these PVs genuinely have no class, unlike a
+chart-managed PVC where "" would leave the claim Pending forever.
+
+Retain, not Delete. Uninstalling this chart must never be able to delete the
+backups — that is the one resource in the cluster where an accidental
+`helm uninstall` has no recovery path.
+*/}}
+{{- $ns := list }}
+{{- range .Values.schedules }}{{ $ns = append $ns .namespace }}{{ end }}
+{{- $ns = append $ns .Values.maintenance.namespace }}
+{{- range $namespace := ($ns | uniq) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8up-restic-repo-{{ $namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" $ | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ $.Values.repository.size }}
+  accessModes: ["ReadWriteMany"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  # Claimed up front so nothing else can bind it. A PV with a free claimRef is
+  # fair game for any PVC of matching class and size — that is how one app's
+  # claim ended up mounted on another app's database during the migration.
+  claimRef:
+    namespace: {{ $namespace }}
+    name: k8up-restic-repo
+  mountOptions:
+    - nfsvers=4.1
+    # hard, always. A soft mount returns I/O errors to the writer, and a restic
+    # repository that takes a write error mid-pack can be left needing a repair.
+    - hard
+    - noatime
+  nfs:
+    server: {{ $.Values.repository.nfs.server }}
+    path: {{ $.Values.repository.nfs.path }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: k8up-restic-repo
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" $ | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: ""
+  volumeName: k8up-restic-repo-{{ $namespace }}
+  resources:
+    requests:
+      storage: {{ $.Values.repository.size }}
+---
+{{/*
+The repository password, in every namespace that runs a backup. restic derives
+the repo's master key from it — there is no recovery path if it is lost, and no
+way to read the repository without it.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k8up-restic-password
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" $ | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ required "restic.password is required — set it in values.local.yaml" $.Values.restic.password | quote }}
+{{- end }}
