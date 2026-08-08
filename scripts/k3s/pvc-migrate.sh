@@ -28,6 +28,7 @@ source "$(dirname "$0")/_common.sh"
 PLAN_ONLY=true
 ASSUME_YES=false
 CHART_CMD=""
+TARGET_SIZE=""
 RSYNC_IMAGE="${RSYNC_IMAGE:-instrumentisto/rsync-ssh:alpine}"
 
 usage() {
@@ -39,6 +40,10 @@ Migrate a PVC from local-path to truenas-iscsi or truenas-nfs, preserving data.
 OPTIONS:
   --execute            Actually perform the migration (default: plan only)
   --yes                Don't prompt at each destructive step (implies --execute)
+  --target-size <size> Size the chart will give the NEW claim, e.g. 4Gi. Only
+                       needed when the migration also RAISES the size: the
+                       capacity check otherwise compares against the old claim's
+                       declaration and refuses a volume that has outgrown it.
   --chart-cmd <cmd>    Command that recreates the PVC on the new class, usually
                        the chart's upgrade.sh. Run automatically at step 5
                        instead of pausing for you to do it by hand. Required
@@ -74,6 +79,7 @@ while [[ "${1:-}" != "" ]]; do
         --execute) PLAN_ONLY=false; shift ;;
         --yes)     PLAN_ONLY=false; ASSUME_YES=true; shift ;;
         --chart-cmd) CHART_CMD="$2"; shift 2 ;;
+        --target-size) TARGET_SIZE="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Error: Unknown option: $1" >&2; usage ;;
     esac
@@ -161,14 +167,15 @@ if [[ -z "$ACTUAL_BYTES" || ! "$ACTUAL_BYTES" =~ ^[0-9]+$ ]]; then
     echo "  [WARN] could not measure ${SRC_NODE}:${SRC_PATH}"
     echo "         Verify by hand that the data fits in ${SIZE} before continuing."
 else
+    CHECK_SIZE="${TARGET_SIZE:-$SIZE}"
     REQ_BYTES="$(python3 -c "
 import re,sys
-s=${SIZE@Q}
+s=${CHECK_SIZE@Q}
 m=re.match(r'([0-9.]+)([KMGTPEi]*)',s)
 u={'Ki':1024,'Mi':1024**2,'Gi':1024**3,'Ti':1024**4,'K':1000,'M':1000**2,'G':1000**3,'T':1000**4,'':1}
 print(int(float(m.group(1))*u.get(m.group(2),1)))
 ")"
-    printf '  %-14s %s\n' 'declared' "$SIZE"
+    printf '  %-14s %s%s\n' 'declared' "$SIZE" "${TARGET_SIZE:+  -> ${TARGET_SIZE} (target)}"
     printf '  %-14s %s\n' 'actual' "$(numfmt --to=iec-i --suffix=B "$ACTUAL_BYTES" 2>/dev/null || echo "${ACTUAL_BYTES}B")"
     # 10% headroom: ext4 metadata and the filesystem's own overhead mean a
     # volume sized exactly to its contents has nowhere to land.
@@ -182,7 +189,10 @@ print(int(float(m.group(1))*u.get(m.group(2),1)))
         echo "      declaration without anything complaining. ${TARGET_CLASS} does"
         echo "      enforce it, and the copy would fail partway."
         echo ""
-        echo "      Raise persistence.size in the chart, helm upgrade, then re-run."
+        echo "      Raise persistence.size in the chart, then re-run with"
+        echo "        --target-size <newsize>"
+        echo "      so this check measures against the claim the chart will create,"
+        echo "      not the old declaration it has already outgrown."
         exit 1
     fi
     echo "  [OK] fits, with $(( (REQ_BYTES - ACTUAL_BYTES) * 100 / REQ_BYTES ))% of the claim spare"
