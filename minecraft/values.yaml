@@ -399,9 +399,12 @@ mcbackup:
 podAnnotations:
   cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
 
-# Pinned to zachd-ubuntu-2 — a dedicated, untainted worker. The world data
-# lives on this node's local-path disk, and the data PV's node-affinity
-# reinforces the pin. No toleration needed: zachd-ubuntu-2 carries no taints
-# (unlike the control-plane node zachd-ubuntu we migrated off).
-nodeSelector:
-  kubernetes.io/hostname: zachd-ubuntu-2
+# No node pin. The world used to live on zachd-ubuntu-2's local-path disk and
+# the data PV's node-affinity reinforced that, so the server could only ever run
+# there — a dead node meant a dead server. mc-data is now a TrueNAS iSCSI zvol
+# and mc-backups an NFS dataset, both reachable from every node, so the server
+# schedules anywhere.
+#
+# Backups are also no longer on the same disk as the world they protect, which
+# is what made them not really backups.
+nodeSelector: {}
