@@ -46,16 +46,31 @@ repository:
 # ------------------------------------------------------------------------------
 # Applied by the single maintenance schedule below, across the whole repository.
 #
-# Weighted towards recent history because that is what actually gets restored:
-# the realistic case is "this broke in the last day or two", not "recover March".
-# keepLast guarantees a floor no matter how the calendar buckets fall — a volume
-# that has not changed in a month still keeps its most recent snapshots.
+# A HARD CEILING on how many snapshots exist, so the repository stops growing
+# once it reaches steady state instead of accumulating forever.
+#
+# These buckets are not additive in the way they look: restic keeps the newest
+# snapshot in each bucket, so with ONE backup per volume per night the worst case
+# is keepDaily + keepWeekly + keepMonthly distinct snapshots, roughly 17 — about
+# four months of history, then flat.
+#
+# keepHourly is deliberately absent. It was set to 24 and did nothing useful:
+# with a nightly schedule there is at most one snapshot per hour-bucket anyway,
+# so it simply pinned the last 24 DAYS on top of keepDaily. An hourly bucket only
+# earns its place with an hourly schedule.
+#
+# keepLast is the floor that ignores the calendar entirely — a volume nobody has
+# touched in months still keeps its most recent few, which is what you want when
+# a rarely-changing config volume turns out to be corrupt.
+#
+# Size is bounded by CHANGE, not by snapshot count: restic deduplicates, so
+# seventeen snapshots of a mostly-static 21GB volume cost roughly one copy plus
+# the deltas.
 retention:
-  keepLast: 5
-  keepHourly: 24
-  keepDaily: 14
-  keepWeekly: 8
-  keepMonthly: 6
+  keepLast: 3
+  keepDaily: 7
+  keepWeekly: 4
+  keepMonthly: 3
 
 # ------------------------------------------------------------------------------
 # Schedules
@@ -134,9 +149,15 @@ schedules:
 maintenance:
   namespace: k8up
   prune:
-    schedule: "0 6 * * 0"     # Sunday, after Saturday night's backups
+    # DAILY, not weekly. Retention is only enforced when prune runs, so a weekly
+    # prune lets six extra days of snapshots pile up before anything is released
+    # — the repository sawtooths well above its steady-state size. Daily keeps it
+    # flat. Runs after the last backup of the night finishes.
+    schedule: "30 6 * * *"
   check:
-    schedule: "0 7 * * 0"     # verifies repository integrity, after the prune
+    # Weekly is right for check: it verifies repository integrity, which is worth
+    # doing regularly but costs a full read and changes nothing.
+    schedule: "0 7 * * 0" 
 
 # Logical dumps for the three real databases. See templates/prebackuppods.yaml.
 databaseDumps:
