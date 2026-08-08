@@ -31,7 +31,7 @@ webdav:
     # Holds the .kdbx file(s). 1Gi is wildly more than needed; KeePass DBs
     # are typically <1MB.
     size: 1Gi
-    storageClass: ""
+    storageClass: truenas-nfs
     accessMode: ReadWriteOnce
   # Static HTTP Basic credentials for native KeePass clients (KeePassXC,
   # KeePass2Android, Strongbox iOS). The plaintext password rides over HTTPS

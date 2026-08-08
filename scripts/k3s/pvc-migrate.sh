@@ -451,7 +451,12 @@ spec:
           args:
             - |
               echo "--- source ---"
-              du -sh /src; SRCN=$(find /src -type f | wc -l); echo "$SRCN files"
+              # NOTE: this manifest is an UNQUOTED heredoc so it can interpolate
+              # \${PVC}, \${COPY_JOB} and friends. Every variable meant for the
+              # POD's shell must therefore be escaped, or the local shell eats it
+              # — an unescaped \$(find /src ...) runs on the workstation, where
+              # /src does not exist.
+              du -sh /src; SRCN=\$(find /src -type f | wc -l); echo "\$SRCN files"
               echo "--- copying ---"
               # --delete makes the destination an exact mirror. The chart upgrade
               # in step 5 briefly runs the app against the new EMPTY volume, and
@@ -469,12 +474,12 @@ spec:
                 echo "MISMATCH:"; cat /tmp/diff; exit 1
               fi
               echo "--- destination ---"
-              du -sh /dst; DSTN=$(find /dst -type f | wc -l); echo "$DSTN files"
+              du -sh /dst; DSTN=\$(find /dst -type f | wc -l); echo "\$DSTN files"
               # Belt and braces: the checksum pass above should make this
               # impossible, but a count mismatch is cheap to assert and would
               # catch anything rsync's filters skipped.
-              if [ "$SRCN" != "$DSTN" ]; then
-                echo "FILE COUNT MISMATCH: src=$SRCN dst=$DSTN"; exit 1
+              if [ "\$SRCN" != "\$DSTN" ]; then
+                echo "FILE COUNT MISMATCH: src=\$SRCN dst=\$DSTN"; exit 1
               fi
               echo "VERIFIED"
           volumeMounts:
