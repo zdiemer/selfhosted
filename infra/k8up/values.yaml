@@ -49,97 +49,106 @@ repository:
 # A HARD CEILING on how many snapshots exist, so the repository stops growing
 # once it reaches steady state instead of accumulating forever.
 #
-# These buckets are not additive in the way they look: restic keeps the newest
-# snapshot in each bucket, so with ONE backup per volume per night the worst case
-# is keepDaily + keepWeekly + keepMonthly distinct snapshots, roughly 17 — about
-# four months of history, then flat.
+# These buckets have to match the CADENCE or they silently mean something else.
+# restic keeps the newest snapshot per bucket, so a bucket finer than the backup
+# interval just pins that many BACKUPS regardless of its name:
 #
-# keepHourly is deliberately absent. It was set to 24 and did nothing useful:
-# with a nightly schedule there is at most one snapshot per hour-bucket anyway,
-# so it simply pinned the last 24 DAYS on top of keepDaily. An hourly bucket only
-# earns its place with an hourly schedule.
+#   keepHourly with a nightly schedule  pinned the last 24 DAYS
+#   keepDaily  with a weekly schedule   would pin the last 7 WEEKS
+#
+# Both were present at some point and both were wrong. Against a weekly cadence
+# the only buckets that mean what they say are weekly and coarser: 6 weeks plus
+# 3 months is roughly five months of history, then flat.
 #
 # keepLast is the floor that ignores the calendar entirely — a volume nobody has
 # touched in months still keeps its most recent few, which is what you want when
 # a rarely-changing config volume turns out to be corrupt.
 #
-# Size is bounded by CHANGE, not by snapshot count: restic deduplicates, so
-# seventeen snapshots of a mostly-static 21GB volume cost roughly one copy plus
-# the deltas.
+# Size is bounded by CHANGE, not by snapshot count: restic deduplicates, so nine
+# snapshots of a mostly-static 21GB volume cost roughly one copy plus the deltas.
 retention:
   keepLast: 3
-  keepDaily: 7
-  keepWeekly: 4
+  keepWeekly: 6
   keepMonthly: 3
 
 # ------------------------------------------------------------------------------
 # Schedules
 # ------------------------------------------------------------------------------
-# One Schedule per namespace. k8up backs up every PVC in the namespace it finds,
-# so this list is about WHEN and WHAT ELSE (dumps), not about enumerating volumes.
+# WEEKLY, one namespace-group per night, rather than everything every night.
 #
-# Times are staggered deliberately. They share one repository and one NAS: three
-# namespaces starting at 02:00 would contend on the restic lock and on the disk,
-# and the slowest would decide when they all finish.
+# Nightly was more than this cluster needs and more than the NAS enjoys. Spread
+# across the week instead, each night carries one real workload, so a run never
+# contends with another for the shared restic lock and never bleeds into the
+# morning. It also means a bad night costs a week of history at worst, not a day
+# — an acceptable trade for volumes that mostly change slowly.
+#
+# Ordered heaviest-first early in the week, so the long ones have the most room
+# before Sunday's prune. Sizes are real data, not declared:
+#
+#   default    ~85G  (talaria postgres 75G + elasticsearch 9.8G)
+#   games      ~24G  (romm-data 21G; the 78TB library is excluded)
+#   minecraft  ~11G  (world + the sidecar's tarballs)
+#   claude      ~6G  (103k small files)
+#   everything else is under a gigabyte
 schedules:
-  # --- databases: dumped, not file-copied ---------------------------------
-  # A file copy of a running database is a copy of a database mid-write. It
-  # usually restores, which is worse than never restoring, because you find out
-  # when you need it. Each of these runs a real dump first via PreBackupPod, and
-  # k8up backs up the dump's stdout alongside the volume.
-  - name: docs
-    namespace: docs
-    schedule: "0 1 * * *"
-  - name: games
-    namespace: games
-    schedule: "20 1 * * *"
-  - name: discord
-    namespace: discord
-    schedule: "40 1 * * *"
-
-  # --- application state --------------------------------------------------
-  - name: auth
-    namespace: auth
-    schedule: "0 2 * * *"
-  - name: finance
-    namespace: finance
-    schedule: "20 2 * * *"
-  - name: web
-    namespace: web
-    schedule: "40 2 * * *"
-  - name: infra
-    namespace: infra
-    schedule: "0 3 * * *"
-  - name: happy
-    namespace: happy
-    schedule: "20 3 * * *"
-  - name: whatnow
-    namespace: whatnow
-    schedule: "40 3 * * *"
-  - name: claude
-    namespace: claude
-    schedule: "0 4 * * *"
+  # --- Monday: the big one, alone ------------------------------------------
   - name: default
     namespace: default
-    schedule: "20 4 * * *"
+    schedule: "0 1 * * 1"
 
-  # --- Minecraft ----------------------------------------------------------
-  # Late, and alone: mc-data is the most write-active volume in the cluster.
-  # No dump hook — the itzg mc-backup sidecar already writes consistent world
-  # tarballs into mc-backups on its own schedule, and k8up backs that volume up
-  # like any other. See templates/prebackuppods.yaml.
+  # --- Tuesday -------------------------------------------------------------
+  # Dumps its MariaDB via PreBackupPod first.
+  - name: games
+    namespace: games
+    schedule: "0 1 * * 2"
+
+  # --- Wednesday -----------------------------------------------------------
+  # No dump hook — the itzg sidecar already writes consistent world tarballs
+  # into mc-backups. See templates/prebackuppods.yaml.
   - name: minecraft
     namespace: minecraft
-    schedule: "0 5 * * *"
+    schedule: "0 1 * * 3"
 
-  # --- the survival tier --------------------------------------------------
-  # These deliberately stayed on local-path so that a NAS outage cannot stop you
-  # logging in to fix the NAS. That decision is about AVAILABILITY and says
-  # nothing about durability — they still need backing up, and being tiny they
-  # cost nothing to take often.
+  # --- Thursday ------------------------------------------------------------
+  - name: claude
+    namespace: claude
+    schedule: "0 1 * * 4"
+  - name: docs
+    namespace: docs
+    schedule: "0 3 * * 4"
+
+  # --- Friday --------------------------------------------------------------
+  - name: discord
+    namespace: discord
+    schedule: "0 1 * * 5"
+  - name: auth
+    namespace: auth
+    schedule: "0 2 * * 5"
+  - name: finance
+    namespace: finance
+    schedule: "30 2 * * 5"
+
+  # --- Saturday ------------------------------------------------------------
+  - name: web
+    namespace: web
+    schedule: "0 1 * * 6"
+  - name: infra
+    namespace: infra
+    schedule: "30 1 * * 6"
+  - name: happy
+    namespace: happy
+    schedule: "0 2 * * 6"
+
+  # --- Sunday, before the prune --------------------------------------------
+  - name: whatnow
+    namespace: whatnow
+    schedule: "0 1 * * 0"
+  # Survival tier: on local-path so a NAS outage cannot stop you logging in to
+  # fix the NAS. That is a decision about AVAILABILITY and says nothing about
+  # durability, so it is still backed up.
   - name: kube-system
     namespace: kube-system
-    schedule: "30 4 * * *"
+    schedule: "30 1 * * 0"
 
 # ------------------------------------------------------------------------------
 # Repository maintenance
@@ -149,15 +158,31 @@ schedules:
 maintenance:
   namespace: k8up
   prune:
-    # DAILY, not weekly. Retention is only enforced when prune runs, so a weekly
-    # prune lets six extra days of snapshots pile up before anything is released
-    # — the repository sawtooths well above its steady-state size. Daily keeps it
-    # flat. Runs after the last backup of the night finishes.
-    schedule: "30 6 * * *"
+    # Sunday morning, after the week's last backup. Daily made sense when the
+    # backups were daily; against a weekly cadence it would walk the repository
+    # six times for nothing.
+    schedule: "0 6 * * 0"
   check:
-    # Weekly is right for check: it verifies repository integrity, which is worth
-    # doing regularly but costs a full read and changes nothing.
-    schedule: "0 7 * * 0" 
+    # After the prune, so it verifies what the prune left behind.
+    schedule: "0 8 * * 0"
+
+# ------------------------------------------------------------------------------
+# Not backed up
+# ------------------------------------------------------------------------------
+# Backups are opt-out, so anything enormous and re-acquirable has to be excluded
+# explicitly with k8up.io/backup=false on the PVC. That annotation is declared by
+# the chart that OWNS each volume, not here — this chart would otherwise need a
+# privileged job to patch objects it does not own, which is a lot of moving parts
+# for a label:
+#
+#   games/romm      romm-library, a ~78TB read-only ROM corpus. Agreed as
+#                   not-worth-backing-up when the migration was planned, then
+#                   missed when this chart was built: the first run spent nine
+#                   hours reaching 1.9% of it.
+#   discord/smitele-bot  matchdata, ~500Gi and re-derivable from the Hi-Rez API.
+#
+# romm-saves is deliberately NOT excluded: small, and save states exist nowhere
+# else.
 
 # Logical dumps for the three real databases. See templates/prebackuppods.yaml.
 databaseDumps:

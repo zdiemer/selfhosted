@@ -2,6 +2,15 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "romm.fullname" . }}-library
+  annotations:
+    # Never back this up. It is the ROM library itself — nominally 1Ti here, ~78TB
+    # on the real share — mounted read-only and re-acquirable. infra/k8up backs up
+    # every PVC it finds unless told otherwise, and its first run spent nine hours
+    # reaching 1.9% of this one before anybody noticed.
+    #
+    # romm-saves is a separate claim precisely so it can be treated differently:
+    # save states are small and exist nowhere else, so those DO get backed up.
+    k8up.io/backup: "false"
   labels:
     {{- include "romm.labels" . | nindent 4 }}
 spec:

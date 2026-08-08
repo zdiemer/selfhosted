@@ -1,0 +1,38 @@
+{{/*
+The executor identity for the maintenance namespace.
+
+k8up creates a pod-executor ServiceAccount and its RoleBinding in each namespace
+it runs a BACKUP in — and only there. The maintenance namespace never runs one:
+it exists to hold the single Schedule that prunes and checks the shared
+repository. So the operator never sets it up, and the first prune fails twice
+over: the job cannot be created at all ("serviceaccount pod-executor not found"),
+and once the account exists but is unbound, restic gets partway through and then
+cannot write its snapshot list back ("cannot list resource snapshots").
+
+Neither failure is loud. The Prune object simply sits there.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-executor
+  namespace: {{ .Values.maintenance.namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-executor-namespaced
+  namespace: {{ .Values.maintenance.namespace }}
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  # Created by the upstream k8up chart; the same role every other namespace's
+  # executor is bound to.
+  name: k8up-executor
+subjects:
+  - kind: ServiceAccount
+    name: pod-executor
+    namespace: {{ .Values.maintenance.namespace }}

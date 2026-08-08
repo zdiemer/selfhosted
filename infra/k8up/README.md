@@ -1,6 +1,6 @@
 # k8up — the cluster's backups
 
-Every PVC copied to a restic repository on the NAS, nightly, with the databases
+Every PVC copied to a restic repository on the NAS, weekly, with the databases
 dumped rather than snapshotted mid-write.
 
 Until this existed the only backup in the cluster was Minecraft's `mc-backup`
@@ -63,14 +63,19 @@ A file-level copy of a running database is a copy of a database mid-write. It
 usually restores — which is worse than never restoring, because you find out
 during a recovery.
 
-Three `PreBackupPod`s run a real dump first; k8up captures stdout as a file in
+Four `PreBackupPod`s run a real dump first; k8up captures stdout as a file in
 the repository alongside the volumes:
 
-| Namespace | Database | Command | File |
-|---|---|---|---|
-| `docs` | Postgres 16 | `pg_dump -F c` | `docs-dump.pgdump` |
-| `games` | MariaDB | `mariadb-dump --single-transaction` | `games-dump.sql` |
-| `discord` | MongoDB | `mongodump --archive --gzip` | `discord-dump.archive.gz` |
+| Namespace | Database | Command | File | Working |
+|---|---|---|---|---|
+| `docs` | Postgres 16 | `pg_dump -F c` | `docs-dump.pgdump` | yes |
+| `games` | MariaDB | `mariadb-dump --single-transaction` | `games-dump.sql` | yes |
+| `discord` | MongoDB | `mongodump --archive --gzip` | `discord-dump.archive.gz` | yes |
+| `default` | Postgres 15 | `pg_dump -F c` | `default-dump.pgdump` | **no — see TODO** |
+
+For the RWO databases the dump is not a supplement, it IS the backup: their
+volume snapshots come out 0 B whenever the backup pod lands on a node that
+cannot attach the volume.
 
 They are clients over the service, not sidecars — nothing here modifies the
 charts that own the databases. Credentials are *referenced* from those charts'
@@ -85,20 +90,34 @@ into `mc-backups`, and k8up backs that volume up like any other.
 
 ## Schedules
 
-Nightly, staggered across 01:00–05:00 local. They share one repository and one
-NAS — three namespaces starting at 02:00 would contend on the restic lock and
-the slowest would decide when they all finished.
+Weekly, one workload per night rather than everything every night. Nightly was
+more than this cluster needs and more than the NAS enjoys; spread across the week
+each run gets the repository to itself and never bleeds into the morning. A bad
+night costs a week of history at worst.
+
+Heaviest first: `default` Monday (~85G), `games` Tuesday (~24G), `minecraft`
+Wednesday (~11G), then the small ones Thursday through Sunday.
 
 `kube-system` and `auth` are included even though those volumes deliberately
 stayed on `local-path`. That decision was about **availability** — the NAS being
 down must not stop you logging in to fix the NAS — and says nothing about
 durability.
 
-Maintenance runs Sunday: prune at 06:00, check at 07:00.
+Maintenance runs Sunday after the last backup: prune at 06:00, check at 08:00.
 
 Backups are **opt-out**, not opt-in (`skipWithoutAnnotation: false`). A new
-service is protected the day it lands rather than the day someone remembers.
-Exclude a volume with `k8up.io/backup=false` on the PVC.
+service is protected the day it lands rather than the day someone remembers. The
+cost is that anything enormous and re-acquirable must be excluded explicitly with
+`k8up.io/backup=false`, declared by the chart that OWNS the volume:
+
+| Volume | Why not |
+|---|---|
+| `games/romm-library` | ~78TB ROM corpus, read-only, re-acquirable. The first run spent nine hours reaching 1.9% of it. |
+| `discord/smitele-bot-matchdata` | ~500Gi, re-derivable from the Hi-Rez API |
+| `*/k8up-restic-repo` | the repository itself — without this it backs up into itself, nightly, per namespace |
+
+`games/romm-saves` is deliberately **not** excluded: small, and save states exist
+nowhere else.
 
 ## Proving a restore
 
@@ -127,6 +146,38 @@ kubectl -n docs get snapshots.k8up.io
 
 Done on 2026-08-08 for `stirling-configs`: 11 files, `diff -r` identical to
 live, JWT signing keys included.
+
+## TODO
+
+**Get talaria's Postgres backed up.** It is the largest database in the cluster
+(75G, 45 tables, ~40M rows in the biggest) and right now it has **no backup at
+all** — the volume snapshot is 0 B because of the RWO attach problem above, and
+the `PreBackupPod` dump that should cover it cannot connect.
+
+What is already ruled out, so nobody repeats it:
+
+- The server. It listens on `0.0.0.0:5432` and accepts connections from inside
+  its own pod.
+- The endpoint. Present, ready, correct port.
+- Pod networking. `Connection refused` reproduces same-node and straight to the
+  pod IP, not just via the service.
+- The NetworkPolicy. `~/Code/talaria` now admits `component: backup`, and a test
+  pod carrying labels byte-identical to `talaria-backend`'s (minus
+  `pod-template-hash`) is still refused — while the real backend connects fine
+  from the same namespace. No egress policies exist.
+
+Two loose threads worth pulling first:
+
+1. `pod.metadata.labels` set on the PreBackupPod does **not** appear on the live
+   object. If k8up ignores that field, the label approach cannot work at all and
+   needs `podConfigRef` or a different mechanism.
+2. Whatever distinguishes `talaria-backend` from an identically-labelled pod.
+   `pod-template-hash` is the only difference found so far, which should be
+   irrelevant to `matchLabels` — suggesting the policy is not what is blocking
+   this, and something else is refusing the connection.
+
+Until then the only copy of that database is whatever ZFS snapshots the NAS
+holds, which is not a backup in the sense the rest of this document means.
 
 ## Gotchas that cost time here
 

@@ -118,8 +118,93 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 64Mi }
             limits: { memory: 512Mi }
+---
+apiVersion: k8up.io/v1
+kind: PreBackupPod
+metadata:
+  name: talaria-postgres-dump
+  namespace: default
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  # ⚠️ NOT WORKING YET — talaria's Postgres is currently UNBACKED-UP.
+  #
+  # The most important dump in the cluster: 75G, 45 tables, ~40M rows in the
+  # largest. Its VOLUME snapshot is 0 B (see the note at the bottom of this
+  # file), so this dump is not a supplement to the file copy, it IS the backup —
+  # and it does not yet run.
+  #
+  # WHAT IS KNOWN. pg_dump gets "connection refused" reaching talaria-postgres
+  # over the service, while talaria-backend connects from the same namespace
+  # without trouble. Ruled out: the server (listening on 0.0.0.0:5432, accepts
+  # connections from inside its own pod), the endpoint (present and ready), pod
+  # networking (refused same-node and direct to the pod IP alike), and the
+  # NetworkPolicy — a test pod carrying labels identical to talaria-backend's,
+  # on a component the policy now admits, is refused just the same. There are no
+  # egress policies.
+  #
+  # Also unexplained: the pod.metadata.labels below do not appear on the live
+  # PreBackupPod object, so k8up may not be honouring that field at all — which
+  # would make the whole label approach moot.
+  #
+  # Until this is solved, the only copy of this database is whatever ZFS
+  # snapshots the NAS holds.
+  #
+  # -F c for the same reason as paperless: compressed, and restorable
+  # table-by-table with pg_restore rather than all-or-nothing.
+  backupCommand: /bin/sh -c 'PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h talaria-postgres -U $POSTGRES_USER -d $POSTGRES_DB -F c'
+  fileExtension: .pgdump
+  pod:
+    metadata:
+      labels:
+        # talaria's chart puts a NetworkPolicy in front of Postgres that admits
+        # only named components — a pod without these three labels gets
+        # "connection refused" from the service and the dump produces nothing.
+        # The matching ingress rule lives in ~/Code/talaria's network-policies.yaml.
+        app.kubernetes.io/name: talaria
+        app.kubernetes.io/instance: talaria
+        app.kubernetes.io/component: backup
+    spec:
+      containers:
+        - name: dump
+          # PostgreSQL 15 here, NOT 16 like paperless. pg_dump refuses to dump a
+          # server newer than itself, and silently produces a dump the older
+          # server cannot restore if it is older — so this tracks the server.
+          image: postgres:15-alpine
+          command: ["sleep", "infinity"]
+          envFrom:
+            - secretRef:
+                name: talaria-secrets
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            # A 75G database dumps through a compression pipeline; give it room.
+            limits: { memory: 1Gi }
 {{- end }}
 {{/*
+WHY THE DUMPS ARE THE BACKUP, NOT A BONUS.
+
+k8up backs up a PVC by mounting it into a pod. truenas-iscsi is ReadWriteOnce,
+and for a block device that means single-node ATTACH: when the application holds
+the volume on one node and the backup pod is scheduled onto another, the volume
+cannot attach — and k8up snapshots the empty mountpoint instead of failing. The
+Backup object reports success.
+
+That is not theoretical. The first scheduled run produced:
+
+  default/data-talaria-postgres-0   75G on disk    0 B snapshot
+  discord/data-vocard-mongo-0      459M on disk    0 B snapshot
+  games/romm-db                    719M on disk   15 B snapshot
+  happy/happy-server-data          210M on disk    0 B snapshot
+
+while romm-data, claude-workspace-home, mc-data and talaria-elasticsearch copied
+correctly — the difference being nothing but which node the backup pod landed on.
+
+A green backup containing nothing is the worst failure mode available, so the
+databases do not depend on it. These PreBackupPods reach the database over the
+SERVICE, which has no attach semantics and works wherever the pod runs. The
+volume copies are left enabled as best-effort: when they land right they are a
+free extra, and when they do not the dump is unaffected.
+
 Minecraft deliberately has no PreBackupPod. The itzg mc-backup sidecar already
 produces consistent world tarballs on its own schedule — RCON save-off,
 save-all flush, tar, save-on — into the mc-backups volume, and k8up backs that
