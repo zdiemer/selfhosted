@@ -39,6 +39,7 @@ repo stays the full index of what runs on the cluster. Clone with
 | [`docs/stirling-pdf/`](docs/stirling-pdf/) | Stirling PDF — locally-processed toolkit for ~50 PDF operations (merge/convert/OCR/sign/redact). Gated behind Authelia forward-auth at the Traefik ingress. | [docs/stirling-pdf/README](docs/stirling-pdf/README.md) |
 | [`web/kelsey-green/`](web/kelsey-green/) | kelsey.green — static Astro site, no image of our own: git-sync pulls the CI-built `deploy` branch and nginx serves it. Public via a Cloudflare tunnel (outbound-only) as well as the usual DuckDNS ingress. | [web/kelsey-green/README](web/kelsey-green/README.md) |
 | [`web/old-diemer-codes/`](web/old-diemer-codes/) → **submodule** | old.diemer.codes — the 2019 Create React App personal site, kept exactly as it was. Inverts the usual submodule shape: the app repo is a frozen archive we don't modify, so the chart + Dockerfile live here and the source is the submodule under `site/`. Public via the shared Cloudflare tunnel. | [web/old-diemer-codes/README](web/old-diemer-codes/README.md) |
+| [`web/talaria/`](web/talaria/) → **submodule** | talaria — auction watch platform (search, tracking, listing alerts): a Python backend, scrapers, and a frontend, with Postgres, Elasticsearch, Redis and Logstash in its own chart at `helm/talaria/`. The biggest thing on the cluster, and the only one whose secrets are sops-encrypted in-git rather than in a `values.local.yaml`. Chart + source live in [zdiemer/talaria](https://github.com/zdiemer/talaria). | [zdiemer/talaria README](https://github.com/zdiemer/talaria#readme) |
 | [`web/talaria-deals/`](web/talaria-deals/) | talaria.deals — a single Ingress publishing the sibling `talaria` project's existing service through the shared Cloudflare tunnel. Lives here rather than in talaria's chart because that chart is in another repo; additive, so talaria keeps answering on DuckDNS. | [web/talaria-deals/README](web/talaria-deals/README.md) |
 | [`web/apartment-watch/`](web/apartment-watch/) | Daily SF rental scraper → SMS. A CronJob scrapes Craigslist (plain HTTP) plus Zumper/Apartments.com/Zillow (Camoufox, to clear Akamai and PerimeterX), filters on rent/laundry/parking/neighborhood with a scored scam filter, and texts a digest of new matches through `infra/sms-relay`. No frontend and no Ingress. Stipulations live in a gitignored `criteria.yaml`. | [web/apartment-watch/README](web/apartment-watch/README.md) |
 | [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) and `talaria.deals` through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. One tunnel, any number of zones. | [infra/cloudflared/README](infra/cloudflared/README.md) |
@@ -72,12 +73,22 @@ repo stays the full index of what runs on the cluster. Clone with
 
   reproduces the real file. That one-liner is the whole contract — it works in
   a standalone app-repo clone with no `scripts/` directory. `scripts/secrets.sh`
-  is bulk convenience on top (`pull`, `status`, `verify`, `publish`, `backup`)
-  and no deploy path depends on it. The `.example` files stay: they document
-  *shape and provenance*, which a template of references cannot.
+  is bulk convenience on top (`sync`, `pull`, `status`, `verify`, `publish`,
+  `backup`) and no deploy path depends on it. The `.example` files stay: they
+  document *shape and provenance*, which a template of references cannot.
   `infra/coredns-config` is a deliberate exception — its `values.local.yaml` is
   a mode switch, not a secret, and its *absence* is what closes the DNS audit
   window, so it is never materialized.
+- **And it converges on its own.** A `secrets.sh sync` timer (every 15 min,
+  [`scripts/systemd/`](scripts/systemd/)) pushes when only the file moved, pulls
+  when only the vault moved, and refuses when both did — judged against a
+  recorded hash of what the two last agreed on, not against mtimes. It runs
+  unattended because [`scripts/op-session.sh`](scripts/op-session.sh) obtains a
+  session without a terminal, which is also why the weekly backup regained its
+  vault dump. Editing a secret is back to editing the file; the ritual around it
+  is gone. The standalone app clones under `~/Code` are in scope by default —
+  they are where secrets actually change, and they used to be invisible to
+  everything but the backup.
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.
@@ -88,9 +99,24 @@ repo stays the full index of what runs on the cluster. Clone with
   `ghcr.io/zdiemer/<name>` (public package: the cluster is multi-node, so every
   node pulls anonymously) and ships `build.sh` + `upgrade.sh`.
   [zdiemer/gamedex](https://github.com/zdiemer/gamedex) is the reference shape.
-  Work in the app's own checkout and deploy from there — only that checkout needs
-  the `values.local.yaml` secrets. Afterwards record what shipped with
-  `git submodule update --remote games/<name>` and commit the moved pin.
+  Work in the app's own checkout and deploy from there — that checkout is the
+  **source** for its `values.local.yaml`, and the submodule copy here is a
+  materialize-on-demand artifact, never a second source.
+
+  **The submodule worktrees are read-only** (`scripts/submodules-lock.sh`:
+  `chmod -R a-w` plus a `no-push` remote, with matching deny rules in the tracked
+  `.claude/settings.json`). An edit made inside one looks like it worked and can
+  never ship, which is the kind of mistake worth making impossible rather than
+  memorable. Unlock deliberately if you ever need to.
+
+  Pins move on their own: [`scripts/sync-submodules.sh`](scripts/sync-submodules.sh)
+  (daily timer) advances one only once the chart's `image.tag` at that commit
+  matches the image the cluster is actually running, so the pin keeps meaning
+  *what shipped* rather than *what is on the branch*. It commits locally and
+  never pushes. `web/whatnowgg` deploys to a VPS instead of this cluster, so it
+  tracks its newest `v*` tag; `web/talaria` pins every image to `:latest`, so its
+  pin follows the branch head with that stated plainly; `web/old-diemer-codes/site`
+  is a frozen archive and is skipped.
 
   The one exception is [`web/old-diemer-codes/`](web/old-diemer-codes/), where the
   app repo is a frozen 2019 archive that is deliberately not being modified: the
