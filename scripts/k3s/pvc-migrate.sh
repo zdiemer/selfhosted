@@ -245,9 +245,17 @@ fi
 # Record replica counts so they can be restored exactly, rather than assumed to
 # be 1. A workload that was deliberately scaled to 3 must come back at 3.
 declare -A REPLICAS=()
-for o in "${OWNERS[@]}"; do
+for o in ${OWNERS[@]+"${OWNERS[@]}"}; do
     [[ "$o" == pod/* || "$o" == job/* ]] && continue
     REPLICAS["$o"]="$($K get "$o" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 1)"
+    # Step 8 restores exactly what is recorded here. If a workload is ALREADY at
+    # zero — because it was scaled down by hand before running this — then zero
+    # is what it gets restored to, and the migration finishes "successfully"
+    # with the app still down. Say so now rather than leave it a surprise.
+    if [[ "${REPLICAS[$o]}" == "0" ]]; then
+        echo "  [WARN] $o is already at 0 replicas."
+        echo "         It will be RESTORED to 0 — scale it up yourself afterwards."
+    fi
 done
 
 if [[ "$PLAN_ONLY" == "true" ]]; then

@@ -69,7 +69,10 @@ persistence:
     # One PVC, subPathed into /romm/resources, /romm/assets and /redis-data.
     # Covers and screenshots for a library this size add up — 20Gi was optimistic.
     size: 50Gi
-    storageClass: ""        # "" → cluster default StorageClass
+    # iSCSI, NOT nfs. 240k cover/screenshot files in ~21G — NFS pays a
+    # round-trip per file and would take hours. The claim is ReadWriteOnce, so
+    # RWX was never the reason to put it on nfs. See dev/claude-workspace.
+    storageClass: truenas-iscsi
     accessMode: ReadWriteOnce
   db:
     size: 10Gi

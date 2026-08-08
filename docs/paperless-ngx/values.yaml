@@ -66,7 +66,7 @@ persistence:
   # the Deployment. SQLite-style single RWO PVC keeps things simple.
   data:
     size: 20Gi
-    storageClass: ""             # "" → cluster default StorageClass
+    storageClass: truenas-nfs    # NAS-backed; bulk media, RWX-capable
     accessMode: ReadWriteOnce
   postgres:
     size: 5Gi
