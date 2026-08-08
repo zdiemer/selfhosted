@@ -301,7 +301,13 @@ op_session_ready() {
     line="$("$helper" ensure)" || return 1
     [[ -n "$line" ]] && eval "$line"
   fi
-  op whoami >/dev/null 2>&1 || return 1
+  # `op vault list`, not `op whoami`: whoami answers from local state and
+  # succeeds against a session the server has already invalidated, so it would
+  # wave through a dead token and let every verb below fail one layer deeper
+  # with "UNRESOLVABLE" — which reads like a broken template, not an expired
+  # session. Observed exactly that: 24 of 24 charts unresolvable while whoami
+  # cheerfully reported the right email.
+  op vault list --format json >/dev/null 2>&1 || return 1
   OP_SESSION_READY=1
 }
 
@@ -833,9 +839,29 @@ cmd_sync() {
   # suppress it here and take exactly one at the end.
   NO_BACKUP=1
 
+  local refreshed=0
   while IFS=$'\t' read -r logical tpl out; do
     [[ -n "$logical" ]] || continue
     verdict="$(classify_one "$logical" "$tpl" "$out" "$tmp/probe")"
+
+    # A session that died part-way through a run is indistinguishable from a
+    # broken template: every probe from that point on fails, and op's message
+    # for both is "You are not currently signed in". So on the first such
+    # failure, force a re-validation (which signs in again if the session is
+    # genuinely gone) and give that one file another go.
+    #
+    # Deliberately here and not inside classify_one: that runs in a command
+    # substitution, so a sign-in there would be discarded with the subshell and
+    # repeated for every remaining file — each one invalidating the last.
+    if [[ "$verdict" == "UNRESOLVABLE" && $refreshed -eq 0 ]]; then
+      refreshed=1
+      OP_SESSION_READY=0
+      if op_session_ready; then
+        note "session was stale — signed in again and retrying ${logical}"
+        verdict="$(classify_one "$logical" "$tpl" "$out" "$tmp/probe")"
+      fi
+    fi
+
     case "$verdict" in
       in-sync)
         # Cheap and worth doing: an agreeing pair with no marker is exactly the

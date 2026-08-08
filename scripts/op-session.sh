@@ -78,13 +78,25 @@ need_op_binary() {
     || die "op not found. Install the 1Password CLI (>= 2.0)."
 }
 
-# Validate by calling op, in a subshell so a dead token never leaks into this
-# shell's environment. An expiry check against the clock would be a guess; op
-# invalidates sessions for reasons other than time.
+# Validate by making op actually talk to the server, in a subshell so a dead
+# token never leaks into this shell's environment.
+#
+# NOT `op whoami`. That answers from local state and SUCCEEDS against a session
+# the server has already invalidated — verified the hard way: whoami returned
+# the right email while `op read`, `op inject` and `op vault list` all failed
+# with "You are not currently signed in" using the same token. A liveness probe
+# that lies is worse than none, because op-session then hands out a dead token
+# and every caller fails somewhere further downstream with that same misleading
+# message.
+#
+# `op vault list` is the cheapest call that requires a real round-trip. An
+# expiry check against the clock would be a guess in the other direction: op
+# invalidates sessions for reasons besides time, signing in elsewhere among
+# them.
 token_line_works() {
   local line="$1"
   [[ -n "$line" ]] || return 1
-  ( eval "$line" && op whoami --account "$ACCOUNT" >/dev/null 2>&1 )
+  ( eval "$line" && op vault list --account "$ACCOUNT" --format json >/dev/null 2>&1 )
 }
 
 read_cached() { [[ -f "$TOKEN_FILE" ]] && cat "$TOKEN_FILE" || true; }
@@ -177,6 +189,9 @@ cmd_status() {
   if have_service_account; then echo "service account token set (no session needed)"; return 0; fi
   need_op_binary
   local cached; cached="$(read_cached)"
+  # Deliberately the same probe `ensure` uses. A status that reported "valid"
+  # from a weaker check than the one callers depend on would be actively
+  # misleading — which is exactly what it did while this used op whoami.
   if token_line_works "$cached"; then
     echo "session valid   ${TOKEN_FILE}  ($(op_email))"
     return 0
