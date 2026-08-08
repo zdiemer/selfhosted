@@ -18,3 +18,7 @@
 	path = discord/smitele-bot
 	url = git@github.com:zdiemer/smitele-bot.git
 	branch = main
+[submodule "web/whatnowgg"]
+	path = web/whatnowgg
+	url = git@github.com:zdiemer/whatnowgg.git
+	branch = main
