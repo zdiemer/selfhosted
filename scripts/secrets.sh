@@ -366,14 +366,24 @@ cmd_import() {
     # in shell history. Strip exactly one trailing newline — $(cat) would strip
     # all of them and break the byte-equality gate below.
     #
-    # The two verbs take their input differently, and neither is interchangeable
-    # (both verified against op 2.38):
-    #   create  --template FILE   ('-' for stdin is NOT accepted)
-    #   edit    - (JSON on stdin) ('label[text]=' assignments are NOT accepted)
+    # Both verbs take a JSON body the same way, and neither accepts the secret as
+    # an argv assignment:
+    #   create  --template FILE
+    #   edit    --template FILE
+    #
+    # EDIT USED TO PASS '-' AND SILENTLY DID NOTHING. op's grammar is
+    # `op item edit <item> [<assignment>...]`, so a bare '-' is taken as an
+    # assignment rather than as "the JSON is on stdin"; op then never reads
+    # stdin, changes nothing, and EXITS 0 — so `|| die` never fired and push
+    # reported success on every no-op. It hid for as long as it did because the
+    # migration only ever CREATED items, and create already used --template.
+    # (op's own help pipes with no '-' at all: `cat x.json | op item edit item`.
+    # --template is that same path without depending on argv-vs-stdin
+    # precedence, and it is what the help documents first.)
     local sd body_json existing; sd="$(scratch)"
     body_json="$sd/item.json"; existing="$sd/existing.json"
 
-    # `op item edit -` REPLACES the field set with what it is given; it does not
+    # `op item edit` REPLACES the field set with what it is given; it does not
     # merge. web/apartment-watch owns two files (values.local.yaml and
     # criteria.yaml) on one item, so writing the second would silently drop the
     # first. Fetch the current fields and merge into them.
@@ -398,7 +408,11 @@ if raw:
         if fld.get("label") == label or fld.get("id") == label:
             continue                       # replaced below
         keep = {k: fld[k] for k in ("id", "label", "type", "value") if k in fld}
-        if keep.get("label") or keep.get("value"):
+        # Carry forward only fields that HOLD something. An empty built-in
+        # (notesPlain is always present on a SECURE_NOTE, usually blank) would be
+        # sent back and then re-added by op on top of itself, so the item grows a
+        # duplicate notesPlain on every single edit.
+        if keep.get("value"):
             fields.append(keep)
 fields.append({"id": label, "label": label, "type": "STRING", "value": body})
 print(json.dumps({"title": title, "category": "SECURE_NOTE", "fields": fields}))
@@ -406,7 +420,7 @@ PY
     chmod 600 "$body_json"
 
     if [[ -s "$existing" ]]; then
-      op item edit "$title" --vault "$VAULT" - < "$body_json" >/dev/null \
+      op item edit "$title" --vault "$VAULT" --template "$body_json" >/dev/null \
         || die "op item edit failed for ${title}"
     else
       op item create --vault "$VAULT" --template "$body_json" >/dev/null \
@@ -476,17 +490,53 @@ cmd_push() {
     title="$(item_title "$f")"; label="$(field_label "$f")"
     if [[ $DRY_RUN -eq 1 ]]; then echo "    would push $f -> op://${VAULT}/${title}/${label}"; continue; fi
     note "pushing ${f} -> op://${VAULT}/${title}/${label}"
-    local bj; bj="$(scratch)/item.json"
-    python3 - "$ROOT/$f" "$title" "$label" > "$bj" <<'PY'
+    local sd bj existing; sd="$(scratch)"
+    bj="$sd/item.json"; existing="$sd/existing.json"
+
+    # The same two rules import obeys, and for the same reasons: --template
+    # rather than '-' (see the note in cmd_import — '-' is read as an assignment
+    # and the edit silently no-ops), and MERGE into the item's current fields,
+    # because edit replaces the field set wholesale. Pushing a single field
+    # without merging would have quietly deleted apartment-watch's criteria.yaml
+    # the first time anyone pushed its values.local.yaml.
+    op item get "$title" --vault "$VAULT" --format json > "$existing" 2>/dev/null \
+      || die "no vault item ${title} — run: secrets.sh import ${f}"
+    chmod 600 "$existing"
+
+    python3 - "$ROOT/$f" "$title" "$label" "$existing" > "$bj" <<'PY'
 import json, sys, pathlib
 body = pathlib.Path(sys.argv[1]).read_text()
-if body.endswith("\n"): body = body[:-1]
-print(json.dumps({"title": sys.argv[2], "category": "SECURE_NOTE",
-    "fields": [{"id": sys.argv[3], "label": sys.argv[3], "type": "STRING", "value": body}]}))
+if body.endswith("\n"): body = body[:-1]   # exactly one; the template supplies it
+title, label, existing_path = sys.argv[2], sys.argv[3], sys.argv[4]
+
+fields, raw = [], pathlib.Path(existing_path).read_text().strip()
+if raw:
+    for fld in (json.loads(raw).get("fields") or []):
+        if fld.get("label") == label or fld.get("id") == label:
+            continue                       # replaced below
+        keep = {k: fld[k] for k in ("id", "label", "type", "value") if k in fld}
+        # Carry forward only fields that HOLD something. An empty built-in
+        # (notesPlain is always present on a SECURE_NOTE, usually blank) would be
+        # sent back and then re-added by op on top of itself, so the item grows a
+        # duplicate notesPlain on every single edit.
+        if keep.get("value"):
+            fields.append(keep)
+fields.append({"id": label, "label": label, "type": "STRING", "value": body})
+print(json.dumps({"title": title, "category": "SECURE_NOTE", "fields": fields}))
 PY
     chmod 600 "$bj"
-    op item edit "$title" --vault "$VAULT" - < "$bj" >/dev/null \
+    op item edit "$title" --vault "$VAULT" --template "$bj" >/dev/null \
       || die "push failed for ${f}"
+
+    # PROVE IT LANDED. The whole reason this bug survived is that op reported
+    # success while changing nothing, so a push that cannot show the vault now
+    # reproduces the file is a failed push, not a finished one.
+    local tpl_rel; tpl_rel="$(dirname "$f")/$([[ "$label" == values.local.yaml ]] \
+      && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
+    if [[ -f "${ROOT}/${tpl_rel}" ]]; then
+      verify_one "$tpl_rel" "$f" >/dev/null \
+        || die "pushed ${f} but the vault does not reproduce it — nothing is backed up"
+    fi
   done
   # A backup can never be more than one change stale.
   [[ $DRY_RUN -eq 1 ]] || cmd_backup || true
