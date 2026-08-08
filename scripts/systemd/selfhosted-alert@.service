@@ -1,0 +1,23 @@
+# OnFailure target for the timers here: text me which unit failed and why.
+#
+# A template unit so one file serves every timer — %i is the failed unit's name,
+# passed by OnFailure=selfhosted-alert@%n.service.
+#
+# Opt-in: scripts/notify-failure.sh exits 0 with a journal line when
+# ~/.config/selfhosted/alert.env is missing, so a machine that has not been set
+# up does not turn one failure into two.
+
+[Unit]
+Description=Text about the failure of %i
+Documentation=file:%h/Code/selfhosted/scripts/notify-failure.sh
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Code/selfhosted/scripts/notify-failure.sh %i
+TimeoutStartSec=2min
+
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=true

@@ -64,12 +64,37 @@ EXCLUDE_FILES=("infra/coredns-config/values.local.yaml")
 # Apps whose charts live in their own repo and deploy from a standalone clone
 # (README §Conventions). Their secrets are outside this checkout entirely.
 #
-# An entry is a path under EXTERNAL_BASE, not just a repo name — it is only ever
-# used as a prefix, so a chart nested inside its repo works unchanged.
-# whatnowgg keeps its chart at deploy/chart/ rather than at the repo root, and
-# deploys from the standalone clone: the submodule at web/whatnowgg is a
-# revision record, so the copy that actually ships is the one under ~/Code.
-EXTERNAL_REPOS=("gamedex" "money" "smitele-bot" "whatnowgg/deploy/chart")
+# THE STANDALONE CLONE IS THE SOURCE. Both copies of these files exist on this
+# machine — ~/Code/gamedex/values.local.yaml is what deploys, and
+# games/gamedex/values.local.yaml is a submodule checkout of the same repo — and
+# nothing kept them equal. Two sources for one vault item is a silent-divergence
+# machine, so the submodule copy is demoted to a materialize-on-demand artifact:
+# excluded from discovery here, still reproducible by the op inject one-liner
+# its own template carries.
+#
+# Each entry is  <submodule chart path>:<path under EXTERNAL_BASE>. The left
+# side is the LOGICAL identity — item titles are derived from it, so they stay
+# exactly what the migration created (games/gamedex -> games-gamedex) no matter
+# which copy is being read. whatnowgg keeps its chart at deploy/chart/ rather
+# than at the repo root; the mapping absorbs that without a special case.
+EXTERNAL_MAP=(
+  "games/gamedex:gamedex"
+  "finance/money:money"
+  "discord/smitele-bot:smitele-bot"
+  "infra/sms-relay:sms-relay"
+  "web/whatnowgg/deploy/chart:whatnowgg/deploy/chart"
+)
+# web/talaria is deliberately absent: talaria keeps its secrets sops-encrypted
+# in git (.sops.yaml, helm/talaria/secrets.*.yaml), so it has no
+# values.local.yaml to manage and would otherwise be reported NOT MIGRATED
+# forever. Its sops age key lives in the vault as its own item instead.
+
+# Kept as the flat list the bundle format uses (external/<name>/...), so the
+# on-disk layout the pod already understands does not change.
+EXTERNAL_REPOS=()
+for _pair in "${EXTERNAL_MAP[@]}"; do EXTERNAL_REPOS+=("${_pair#*:}"); done
+unset _pair
+
 # The laptop clones under ~/Code, the claude-workspace pod under ~/code. Pick
 # whichever exists so the same command works in both without a flag.
 if [[ -n "${EXTERNAL_BASE:-}" ]]; then :
@@ -78,9 +103,45 @@ elif [[ -d "$HOME/code" ]]; then EXTERNAL_BASE="$HOME/code"
 else EXTERNAL_BASE="$HOME/Code"
 fi
 
+# Submodule paths whose secrets are managed from the standalone clone instead.
+#
+# NOT simply "every submodule", and the requirement is the CLONE EXISTING, not
+# the mapping existing. A submodule with no clone under ~/Code deploys from the
+# checkout in this repo, so suppressing it would silently drop a managed secret
+# — infra/sms-relay was exactly that until its clone was made, and the naive
+# rule dropped it on the first run. Falling back to the checkout means a machine
+# that has cloned only some of these repos still manages all of them.
+MIRROR_PREFIXES=()
+if [[ -f "${ROOT}/.gitmodules" ]] && command -v git >/dev/null 2>&1; then
+  while IFS= read -r _sub; do
+    [[ -n "$_sub" ]] || continue
+    for _pair in "${EXTERNAL_MAP[@]}"; do
+      _logical="${_pair%%:*}"
+      [[ "$_logical" == "$_sub" || "$_logical" == "$_sub"/* ]] || continue
+      [[ -d "${EXTERNAL_BASE}/${_pair#*:}" ]] || continue
+      MIRROR_PREFIXES+=("$_sub"); break
+    done
+  done < <(
+    git -C "$ROOT" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+      | awk '{print $2}'
+  )
+  unset _sub _pair _logical
+fi
+
+# What the last successful sync agreed on, per item field: a sha256 of the
+# content both sides held at that moment. Comparing today's two sides against a
+# remembered third point is the only way to tell "the vault moved" from "the
+# file moved" from "both moved" — mtime alone cannot, which is why cmd_status
+# hedges its wording and why nothing before this wrote anything automatically.
+SYNC_STATE_DIR="${SYNC_STATE_DIR:-$HOME/.config/selfhosted/sync-state}"
+
 DRY_RUN=0
 FORCE=0
-INCLUDE_EXTERNAL=0
+# External clones are in scope by default now. They are where secrets actually
+# change; leaving them opt-in is what left ~/Code/whatnowgg unmanaged entirely.
+INCLUDE_EXTERNAL=1
+BUNDLE_FILE=""
+NO_BACKUP=0
 FROM_CLUSTER=0
 VERIFY_ONLY=0
 ASSUME_YES=0
@@ -100,12 +161,27 @@ is_excluded() {
   return 1
 }
 
-# Every managed secret file that currently exists, repo-relative.
+# True for a path inside any submodule. Prefix match on the submodule root, so
+# it catches nested charts (web/whatnowgg/deploy/chart) as well as top-level
+# ones, and needs no update when a submodule is added.
+is_mirror() {
+  local f="$1" p
+  [[ ${#MIRROR_PREFIXES[@]} -eq 0 ]] && return 1
+  for p in "${MIRROR_PREFIXES[@]}"; do
+    [[ "$f" == "$p" || "$f" == "$p"/* ]] && return 0
+  done
+  return 1
+}
+
+# Every managed secret file that currently exists, repo-relative. Mirrors are
+# omitted: their real copy is discovered by discover_pairs from ~/Code.
 discover_local() {
   local f
   while IFS= read -r f; do
     f="${f#./}"
-    is_excluded "$f" || printf '%s\n' "$f"
+    is_excluded "$f" && continue
+    is_mirror "$f" && continue
+    printf '%s\n' "$f"
   done < <(cd "$ROOT" && find . -name values.local.yaml -not -path './.git/*' | sort)
   for f in "${EXTRA_FILES[@]}"; do
     [[ -f "$ROOT/$f" ]] && printf '%s\n' "$f"
@@ -115,13 +191,49 @@ discover_local() {
   return 0
 }
 
-# Every chart that has been migrated, as "tpl<TAB>output" pairs.
+# Every migrated chart, as three tab-separated columns:
+#
+#   logical      repo-relative identity — what item titles and messages use
+#   tpl          ABSOLUTE path to the template
+#   out          ABSOLUTE path to the file it materializes
+#
+# Logical and real diverge only for the standalone clones, where the identity
+# stays the submodule path (so op://homelab/games-gamedex/... keeps working)
+# while the bytes live under ~/Code. Everything downstream operates on absolute
+# paths, which is what lets one code path serve both.
+discover_pairs() {
+  local t out logical dir ext etpl eout
+  while IFS= read -r t; do
+    t="${t#./}"
+    out="$(tpl_output "$t")"
+    is_excluded "$out" && continue
+    is_mirror "$out" && continue
+    printf '%s\t%s\t%s\n' "$out" "${ROOT}/${t}" "${ROOT}/${out}"
+  done < <(cd "$ROOT" && find . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \) \
+             -not -path './.git/*' | sort)
+
+  [[ $INCLUDE_EXTERNAL -eq 1 ]] || return 0
+  local pair
+  for pair in "${EXTERNAL_MAP[@]}"; do
+    logical="${pair%%:*}"; ext="${EXTERNAL_BASE}/${pair#*:}"
+    [[ -d "$ext" ]] || continue
+    etpl="${ext}/values.local.tpl.yaml"
+    eout="${ext}/values.local.yaml"
+    [[ -f "$etpl" ]] || continue
+    printf '%s\t%s\t%s\n' "${logical}/values.local.yaml" "$etpl" "$eout"
+  done
+  return 0
+}
+
+# Kept for readability at call sites that only want "tpl<TAB>out" repo-relative.
 discover_tpl() {
   local t out
   while IFS= read -r t; do
     t="${t#./}"
     out="$(tpl_output "$t")"
-    is_excluded "$out" || printf '%s\t%s\n' "$t" "$out"
+    is_excluded "$out" && continue
+    is_mirror "$out" && continue
+    printf '%s\t%s\n' "$t" "$out"
   done < <(cd "$ROOT" && find . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \) \
              -not -path './.git/*' | sort)
 }
@@ -169,11 +281,35 @@ field_label() { basename "$1"; }
 
 # ---------------------------------------------------------------- op helpers
 
+# Sessions are obtained, not assumed. scripts/op-session.sh knows the whole
+# story (cached token -> pty sign-in -> interactive -> loud failure); everything
+# here just asks it for a line to eval. That one indirection is what lets every
+# verb below run from a systemd timer with no terminal attached.
+#
+# Done once, here, rather than at each op call site: need_op already gates every
+# command, and the session lands in this shell's environment where op finds it.
+OP_SESSION_READY=0
+
+# Obtain a session, returning non-zero rather than exiting. Split out from
+# need_op because cmd_backup has a real degraded mode — a files-only archive —
+# and needs to ASK for a session without a failure taking the whole backup down.
+op_session_ready() {
+  [[ $OP_SESSION_READY -eq 1 ]] && return 0
+  command -v op >/dev/null 2>&1 || return 1
+  local helper="${ROOT}/scripts/op-session.sh" line=""
+  if [[ -x "$helper" ]]; then
+    line="$("$helper" ensure)" || return 1
+    [[ -n "$line" ]] && eval "$line"
+  fi
+  op whoami >/dev/null 2>&1 || return 1
+  OP_SESSION_READY=1
+}
+
 need_op() {
+  op_session_ready && return 0
   command -v op >/dev/null 2>&1 \
-    || die "op not found. Install the 1Password CLI (>= 2.0), then: eval \$(op signin)"
-  op whoami >/dev/null 2>&1 \
-    || die "op is not signed in. Run: eval \$(op signin)"
+    || die "op not found. Install the 1Password CLI (>= 2.0)."
+  die "no 1Password session — see the message above, or run: ${ROOT}/scripts/op-session.sh login"
 }
 
 # Materialize one template. Four guards, each covering a distinct failure, and
@@ -184,19 +320,22 @@ need_op() {
 # it can still produce emptiness is a vault field that exists and is empty,
 # which is why only non-empty secrets get a ref (optional-empty values stay as
 # literals in the template) and why `check` asserts non-emptiness.
+#
+# Paths are ABSOLUTE. That is what lets the standalone clones under ~/Code go
+# through exactly the same code as the charts in this repo.
 inject_to() {
   local tpl="$1" out="$2" tmp
   # The temp file sits in the TARGET directory, not /dev/shm, so the final mv is
   # a same-filesystem rename and therefore atomic. A bad run can never leave a
   # half-written values.local.yaml where a working one used to be.
-  tmp="$(mktemp "${ROOT}/$(dirname "$out")/.secrets.XXXXXX")"
+  tmp="$(mktemp "$(dirname "$out")/.secrets.XXXXXX")"
   chmod 600 "$tmp"
 
   # No RETURN trap here — see scratch() below for why they misfire. Explicit
   # cleanup on every failure path instead.
   _fail() { rm -f "$tmp"; echo "FAIL: $1" >&2; return 1; }
 
-  op inject -i "${ROOT}/${tpl}" -o "$tmp" -f >/dev/null 2>&1 \
+  op inject -i "$tpl" -o "$tmp" -f >/dev/null 2>&1 \
     || { _fail "op inject failed for ${tpl}"; return 1; }
   if grep -q '{{ *op://' "$tmp"; then
     _fail "${tpl} left an unresolved reference"; return 1
@@ -204,19 +343,40 @@ inject_to() {
   python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$tmp" 2>/dev/null \
     || { _fail "${tpl} produced invalid YAML (op inject is not YAML-aware)"; return 1; }
 
-  mv "$tmp" "${ROOT}/${out}"
-  chmod 600 "${ROOT}/${out}"
+  mv "$tmp" "$out"
+  chmod 600 "$out"
 }
 
 # Same, but to a caller-supplied path in tmpfs — for comparisons that must never
 # touch the real file.
 inject_probe() {
   local tpl="$1" out="$2"
-  op inject -i "${ROOT}/${tpl}" -o "$out" -f >/dev/null 2>&1 || return 1
+  op inject -i "$tpl" -o "$out" -f >/dev/null 2>&1 || return 1
   grep -q '{{ *op://' "$out" && return 1
   python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$out" 2>/dev/null || return 1
   return 0
 }
+
+# ------------------------------------------------------------ sync markers
+#
+# The sha256 both sides agreed on at the last successful sync. Without this
+# third point of reference, "local differs from the vault" is all you can know,
+# and choosing a direction from mtime is a guess — fine for a report, not fine
+# for something that overwrites a credential.
+# Keyed by the vault coordinates (item title + field label) rather than by path,
+# so the standalone clone and the submodule checkout of the same chart can never
+# end up with two different opinions about what was last agreed.
+marker_path_tl() { printf '%s/%s.%s\n' "$SYNC_STATE_DIR" "$1" "$2"; }
+marker_path()    { marker_path_tl "$(item_title "$1")" "$(field_label "$1")"; }
+marker_read()    { local m; m="$(marker_path "$1")"; [[ -f "$m" ]] && cat "$m" || true; }
+marker_write_tl() {
+  local m; m="$(marker_path_tl "$1" "$2")"
+  mkdir -p "$SYNC_STATE_DIR"; chmod 700 "$SYNC_STATE_DIR"
+  # The hash of a secret is not a secret, but there is no reason to widen it.
+  ( umask 077; sha256sum < "$3" | cut -d' ' -f1 > "$m" )
+}
+marker_write() { marker_write_tl "$(item_title "$1")" "$(field_label "$1")" "$2"; }
+sha_of() { sha256sum < "$1" | cut -d' ' -f1; }
 
 # One scratch root for the whole run, removed on any exit.
 #
@@ -245,11 +405,11 @@ cmd_check() {
   note "vault ${VAULT} reachable as $(op whoami --format json | jq -r .email 2>/dev/null || echo '?')"
 
   local tmp rc=0; tmp="$(scratch)"
-  local tpl out ref empty
-  while IFS=$'\t' read -r tpl out; do
-    [[ -n "$tpl" ]] || continue
+  local logical tpl out ref empty
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
     if ! inject_probe "$tpl" "$tmp/probe"; then
-      echo "  UNRESOLVABLE  $tpl"; rc=1; continue
+      echo "  UNRESOLVABLE  $logical"; rc=1; continue
     fi
     # A ref that resolves to empty is the one way op inject can reintroduce the
     # silent-empty-secret failure this repo has been bitten by before.
@@ -257,44 +417,68 @@ cmd_check() {
     while IFS= read -r ref; do
       [[ -n "$ref" ]] || continue
       [[ -n "$(op read "$ref" 2>/dev/null)" ]] || { echo "  EMPTY FIELD   $ref"; empty=1; }
-    done < <(grep -oE 'op://[^ }"]+' "${ROOT}/${tpl}" | sort -u)
-    [[ $empty -eq 1 ]] && rc=1 || echo "  ok            $tpl"
-  done < <(discover_tpl)
+    done < <(grep -oE 'op://[^ }"]+' "$tpl" | sort -u)
+    [[ $empty -eq 1 ]] && rc=1 || echo "  ok            $logical"
+  done < <(discover_pairs)
   rm -f "$tmp/probe"
   return $rc
+}
+
+# Decide what a single managed file needs, against the vault and against the
+# marker left by the last successful sync. Prints one verdict word and leaves
+# the vault's bytes at $probe when it managed to resolve them.
+#
+#   in-sync | not-materialized | UNRESOLVABLE | pull | push | conflict | unknown
+#
+# "unknown" is drift with no marker to arbitrate it — the honest answer before
+# either side has ever been reconciled. It is never acted on automatically.
+classify_one() {
+  local logical="$1" tpl="$2" out="$3" probe="$4"
+  # Retry once. `op inject` reaches the network, and a single transient failure
+  # is not evidence that a template is broken — but it looks identical to one.
+  # Observed in practice: one chart out of 24 failed a probe on a run where the
+  # other 23 succeeded, then resolved fine on the next two runs. Without this,
+  # every such blip costs an SMS and teaches you to ignore the alert.
+  if ! inject_probe "$tpl" "$probe"; then
+    sleep 2
+    inject_probe "$tpl" "$probe" || { echo "UNRESOLVABLE"; return 0; }
+  fi
+  [[ -f "$out" ]] || { echo "not-materialized"; return 0; }
+  cmp -s "$out" "$probe" && { echo "in-sync"; return 0; }
+
+  local marker local_sha vault_sha
+  marker="$(marker_read "$logical")"
+  [[ -n "$marker" ]] || { echo "unknown"; return 0; }
+  local_sha="$(sha_of "$out")"; vault_sha="$(sha_of "$probe")"
+  [[ "$local_sha" == "$marker" ]] && { echo "pull";  return 0; }   # only the vault moved
+  [[ "$vault_sha" == "$marker" ]] && { echo "push";  return 0; }   # only the file moved
+  echo "conflict"                                                  # both moved
+}
+
+status_label() {
+  case "$1" in
+    in-sync)          echo "in-sync" ;;
+    not-materialized) echo "not-materialized" ;;
+    UNRESOLVABLE)     echo "UNRESOLVABLE" ;;
+    pull)             echo "DRIFT (vault newer — sync will pull)" ;;
+    push)             echo "DRIFT (local newer — sync will push)" ;;
+    conflict)         echo "CONFLICT (both sides changed — resolve by hand)" ;;
+    unknown)          echo "DRIFT (no sync marker — push or pull once to settle it)" ;;
+    *)                echo "$1" ;;
+  esac
 }
 
 cmd_status() {
   need_op
   local tmp; tmp="$(scratch)"
   printf '%-46s %s\n' "CHART" "STATE"
-  local tpl out
-  while IFS=$'\t' read -r tpl out; do
-    [[ -n "$tpl" ]] || continue
-    if [[ ! -f "${ROOT}/${out}" ]]; then
-      printf '%-46s %s\n' "$out" "not-materialized"; continue
-    fi
-    if ! inject_probe "$tpl" "$tmp/probe"; then
-      printf '%-46s %s\n' "$out" "UNRESOLVABLE"; continue
-    fi
-    if cmp -s "${ROOT}/${out}" "$tmp/probe"; then
-      printf '%-46s %s\n' "$out" "in-sync"
-    else
-      # mtime vs vault updated_at is a heuristic; it cannot distinguish
-      # concurrent edits. Say so rather than implying certainty.
-      local upd loc dir
-      dir="$(dirname "$out")"
-      upd="$(op item get "$(item_title "$out")" --vault "$VAULT" --format json 2>/dev/null \
-             | jq -r '.updated_at // empty')"
-      loc="$(date -u -r "${ROOT}/${out}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '')"
-      if [[ -n "$upd" && -n "$loc" && "$loc" > "$upd" ]]; then
-        printf '%-46s %s\n' "$out" "DRIFT (local newer — probably needs push)"
-      else
-        printf '%-46s %s\n' "$out" "DRIFT (vault newer — probably needs pull)"
-      fi
-    fi
+  local logical tpl out verdict
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
+    verdict="$(classify_one "$logical" "$tpl" "$out" "$tmp/probe")"
+    printf '%-46s %s\n' "$logical" "$(status_label "$verdict")"
     rm -f "$tmp/probe"
-  done < <(discover_tpl)
+  done < <(discover_pairs)
 
   # Files that exist but have no template yet — i.e. not migrated, so not backed
   # up by 1Password. This is the number that matters during the migration.
@@ -308,6 +492,22 @@ cmd_status() {
     esac
     [[ -f "${ROOT}/${tpl2}" ]] || { printf '%-46s %s\n' "$f" "NOT MIGRATED"; pending=$((pending+1)); }
   done < <(discover_local)
+
+  # Same question for the standalone clones. discover_pairs only yields charts
+  # that HAVE a template, so a clone whose secret was never imported would
+  # otherwise be invisible here — which is precisely the state this whole change
+  # exists to stop being possible.
+  if [[ $INCLUDE_EXTERNAL -eq 1 ]]; then
+    local pair ext
+    for pair in "${EXTERNAL_MAP[@]}"; do
+      ext="${EXTERNAL_BASE}/${pair#*:}"
+      [[ -f "${ext}/values.local.yaml" ]] || continue
+      [[ -f "${ext}/values.local.tpl.yaml" ]] && continue
+      printf '%-46s %s\n' "${pair%%:*}/values.local.yaml" "NOT MIGRATED (${ext})"
+      pending=$((pending+1))
+    done
+  fi
+
   [[ $pending -gt 0 ]] && echo && echo "${pending} file(s) still exist only on this machine."
   return 0
 }
@@ -316,20 +516,23 @@ cmd_pull() {
   if [[ $FROM_CLUSTER -eq 1 ]]; then cmd_pull_cluster "$@"; return; fi
   need_op
   local tmp; tmp="$(scratch)"
-  local tpl out n=0
-  while IFS=$'\t' read -r tpl out; do
-    [[ -n "$tpl" ]] || continue
-    if [[ $# -gt 0 ]] && ! printf '%s\n' "$@" | grep -qF "$(dirname "$out")"; then continue; fi
-    if [[ -f "${ROOT}/${out}" && $FORCE -eq 0 ]]; then
-      if inject_probe "$tpl" "$tmp/probe" && ! cmp -s "${ROOT}/${out}" "$tmp/probe"; then
-        skip "$out differs from the vault — inspect with 'status', then pull --force or push"
+  local logical tpl out n=0
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
+    if [[ $# -gt 0 ]] && ! printf '%s\n' "$@" | grep -qF "$(dirname "$logical")"; then continue; fi
+    if [[ -f "$out" && $FORCE -eq 0 ]]; then
+      if inject_probe "$tpl" "$tmp/probe" && ! cmp -s "$out" "$tmp/probe"; then
+        skip "$logical differs from the vault — inspect with 'status', then pull --force or push"
         rm -f "$tmp/probe"; continue
       fi
       rm -f "$tmp/probe"
     fi
-    if [[ $DRY_RUN -eq 1 ]]; then echo "    would materialize $out"; n=$((n+1)); continue; fi
-    inject_to "$tpl" "$out" && { echo "    $out"; n=$((n+1)); }
-  done < <(discover_tpl)
+    if [[ $DRY_RUN -eq 1 ]]; then echo "    would materialize $logical"; n=$((n+1)); continue; fi
+    # Record what both sides now agree on, so the next sync can tell which side
+    # moved instead of guessing. A pull that did not update the marker would
+    # make its own result look like local drift on the following run.
+    inject_to "$tpl" "$out" && { marker_write "$logical" "$out"; echo "    $logical"; n=$((n+1)); }
+  done < <(discover_pairs)
   note "$n file(s)"
 }
 
@@ -457,45 +660,73 @@ PY
 
     # Leave no broken template behind: a tpl in the tree that does not reproduce
     # its file is worse than no tpl, because upgrade.sh would materialize from it.
-    if ! verify_abs "$tplabs" "$src"; then
+    if ! verify_one "$tplabs" "$src"; then
       rm -f "$tplabs"
       die "$src does not round-trip — removed ${tplabs}; vault item ${title} left for inspection"
     fi
+    # Round-tripped, so both sides demonstrably agree: settle the marker now
+    # rather than leaving the first sync to report drift it cannot arbitrate.
+    marker_write_tl "$title" "$label" "$src"
   done
 }
 
-# Gate 1 on absolute paths, so it also covers the standalone app clones.
-verify_abs() {
-  local tpl="$1" out="$2" tmp
-  tmp="$(scratch)"
-  op inject -i "$tpl" -o "$tmp/probe" -f >/dev/null 2>&1 \
-    || { echo "    GATE1 FAIL (unresolvable)"; return 1; }
-  grep -q '{{ *op://' "$tmp/probe" && { echo "    GATE1 FAIL (unresolved ref)"; return 1; }
-  python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$tmp/probe" 2>/dev/null \
-    || { echo "    GATE1 FAIL (invalid YAML)"; return 1; }
-  if cmp -s "$out" "$tmp/probe"; then echo "    GATE1 byte-exact"; return 0; fi
-  echo "    GATE1 FAIL (differs)"; return 1
-}
-
-# Gate 1: byte equality. Gate 2 (render equality) is cmd_verify.
+# Gate 1: byte equality, on absolute paths — one implementation for the charts
+# here and for the standalone app clones. (This used to be two near-identical
+# functions, verify_one and verify_abs, differing only in whether they prepended
+# $ROOT; making every path absolute collapsed them.) Gate 2 is cmd_verify.
 verify_one() {
   local tpl="$1" out="$2" tmp rc=0
   tmp="$(scratch)"
   if ! inject_probe "$tpl" "$tmp/probe"; then rm -rf "$tmp"; echo "    GATE1 FAIL (unresolvable)"; return 1; fi
-  if cmp -s "${ROOT}/${out}" "$tmp/probe"; then echo "    GATE1 byte-exact"; else echo "    GATE1 FAIL (differs)"; rc=1; fi
+  if cmp -s "$out" "$tmp/probe"; then echo "    GATE1 byte-exact"; else echo "    GATE1 FAIL (differs)"; rc=1; fi
   rm -rf "$tmp"; return $rc
+}
+
+# Map an absolute path inside a standalone clone back to its logical identity —
+# the submodule path the vault item is named for. Empty if it is not one.
+logical_for_external() {
+  local abs="$1" pair logical dir
+  for pair in "${EXTERNAL_MAP[@]}"; do
+    logical="${pair%%:*}"; dir="${EXTERNAL_BASE}/${pair#*:}"
+    [[ "$abs" == "$dir"/* ]] && { printf '%s/%s\n' "$logical" "${abs#"$dir"/}"; return 0; }
+  done
+  return 1
+}
+
+# The other direction, for error messages: submodule path -> the clone to use.
+external_clone_hint() {
+  local logical="$1" pair sub
+  for pair in "${EXTERNAL_MAP[@]}"; do
+    sub="${pair%%:*}"
+    [[ "$logical" == "$sub"/* ]] && { printf '%s/%s/%s\n' "$EXTERNAL_BASE" "${pair#*:}" "${logical#"$sub"/}"; return 0; }
+  done
+  printf '%s\n' "(no standalone clone is mapped for ${logical})"
 }
 
 cmd_push() {
   need_op
   [[ $# -gt 0 ]] || die "usage: secrets.sh push <path> ..."
-  local f title label
+  local f src logical title label
   for f in "$@"; do
-    f="${f#"$ROOT"/}"; f="${f#./}"
-    [[ -f "${ROOT}/${f}" ]] || die "no such file: $f"
-    title="$(item_title "$f")"; label="$(field_label "$f")"
-    if [[ $DRY_RUN -eq 1 ]]; then echo "    would push $f -> op://${VAULT}/${title}/${label}"; continue; fi
-    note "pushing ${f} -> op://${VAULT}/${title}/${label}"
+    # Three accepted shapes, resolved to one logical identity: repo-relative,
+    # absolute inside the repo, and absolute inside a standalone clone. The last
+    # one is why external edits had no way into the vault before — push simply
+    # could not name them.
+    [[ "$f" == /* ]] || f="$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")" || true
+    if [[ "$f" == "$ROOT"/* ]]; then
+      logical="${f#"$ROOT"/}"; src="$f"
+    elif logical="$(logical_for_external "$f")"; then
+      src="$f"
+    else
+      die "no such managed file: $f"
+    fi
+    [[ -f "$src" ]] || die "no such file: $src"
+    is_mirror "$logical" && [[ "$src" == "$ROOT"/* ]] \
+      && die "$logical is a submodule checkout, not a source — push the standalone clone instead:
+       $(external_clone_hint "$logical")"
+    title="$(item_title "$logical")"; label="$(field_label "$logical")"
+    if [[ $DRY_RUN -eq 1 ]]; then echo "    would push $logical -> op://${VAULT}/${title}/${label}"; continue; fi
+    note "pushing ${logical} -> op://${VAULT}/${title}/${label}"
     local sd bj existing; sd="$(scratch)"
     bj="$sd/item.json"; existing="$sd/existing.json"
 
@@ -509,7 +740,7 @@ cmd_push() {
       || die "no vault item ${title} — run: secrets.sh import ${f}"
     chmod 600 "$existing"
 
-    python3 - "$ROOT/$f" "$title" "$label" "$existing" > "$bj" <<'PY'
+    python3 - "$src" "$title" "$label" "$existing" > "$bj" <<'PY'
 import json, sys, pathlib
 body = pathlib.Path(sys.argv[1]).read_text()
 if body.endswith("\n"): body = body[:-1]   # exactly one; the template supplies it
@@ -537,15 +768,22 @@ PY
     # PROVE IT LANDED. The whole reason this bug survived is that op reported
     # success while changing nothing, so a push that cannot show the vault now
     # reproduces the file is a failed push, not a finished one.
-    local tpl_rel; tpl_rel="$(dirname "$f")/$([[ "$label" == values.local.yaml ]] \
+    local tpl_abs; tpl_abs="$(dirname "$src")/$([[ "$label" == values.local.yaml ]] \
       && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
-    if [[ -f "${ROOT}/${tpl_rel}" ]]; then
-      verify_one "$tpl_rel" "$f" >/dev/null \
-        || die "pushed ${f} but the vault does not reproduce it — nothing is backed up"
+    if [[ -f "$tpl_abs" ]]; then
+      verify_one "$tpl_abs" "$src" >/dev/null \
+        || die "pushed ${logical} but the vault does not reproduce it — nothing is backed up"
     fi
+    # Proven equal, so this is the new agreed point for conflict detection.
+    marker_write_tl "$title" "$label" "$src"
   done
-  # A backup can never be more than one change stale.
-  [[ $DRY_RUN -eq 1 ]] || cmd_backup || true
+  # A backup can never be more than one change stale. cmd_sync suppresses this
+  # and takes one backup at the end instead of one per file.
+  #
+  # Subshell so the intended `|| true` actually holds: cmd_backup ends in `die`,
+  # and die exits the script, so an unreachable NAS used to discard the exit
+  # status of a push that had already succeeded.
+  [[ $DRY_RUN -eq 1 || $NO_BACKUP -eq 1 ]] || ( cmd_backup ) || true
 }
 
 # Gate 2 — render equality. The check that actually matters: an empty diff means
@@ -554,29 +792,117 @@ PY
 cmd_verify() {
   need_op
   local tmp; tmp="$(scratch)"
-  local tpl out dir rc=0
-  while IFS=$'\t' read -r tpl out; do
-    [[ -n "$tpl" ]] || continue
-    if [[ $# -gt 0 ]] && ! printf '%s\n' "$@" | grep -qF "$(dirname "$out")"; then continue; fi
-    dir="$(dirname "$out")"
-    echo "  ${dir}"
+  local logical tpl out dir rc=0
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
+    if [[ $# -gt 0 ]] && ! printf '%s\n' "$@" | grep -qF "$(dirname "$logical")"; then continue; fi
+    dir="$(dirname "$out")"          # where the chart actually is, repo or clone
+    echo "  $(dirname "$logical")"
     verify_one "$tpl" "$out" || rc=1
-    if [[ ! -f "${ROOT}/${dir}/Chart.yaml" ]]; then
+    if [[ ! -f "${dir}/Chart.yaml" ]]; then
       echo "    GATE2 skipped (values-only project — render against the upstream chart by hand)"
       continue
     fi
     inject_probe "$tpl" "$tmp/probe" || { rc=1; continue; }
     if diff -q \
-        <(helm template gate "${ROOT}/${dir}" -f "${ROOT}/${dir}/values.yaml" -f "${ROOT}/${out}" 2>/dev/null) \
-        <(helm template gate "${ROOT}/${dir}" -f "${ROOT}/${dir}/values.yaml" -f "$tmp/probe" 2>/dev/null) >/dev/null; then
+        <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$out" 2>/dev/null) \
+        <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$tmp/probe" 2>/dev/null) >/dev/null; then
       echo "    GATE2 render-identical"
     else
       echo "    GATE2 FAIL — rendered manifests differ. Do NOT commit this template."
       rc=1
     fi
     rm -f "$tmp/probe"
-  done < <(discover_tpl)
+  done < <(discover_pairs)
   return $rc
+}
+
+# ------------------------------------------------------------------- sync
+#
+# The verb that removes the churn. Everything else here is a manual instrument;
+# this is the one a timer runs, so it is deliberately conservative: it acts only
+# where the marker proves which side moved, and it stops rather than guessing.
+cmd_sync() {
+  need_op
+  local tmp; tmp="$(scratch)"
+  local logical tpl out verdict
+  local pushed=0 pulled=0 conflicts=0 unknown=0 unresolvable=0 fresh=0
+
+  # cmd_push takes a NAS backup per file ("a backup can never be more than one
+  # change stale"). Reconciling twelve files would take twelve backups, so
+  # suppress it here and take exactly one at the end.
+  NO_BACKUP=1
+
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
+    verdict="$(classify_one "$logical" "$tpl" "$out" "$tmp/probe")"
+    case "$verdict" in
+      in-sync)
+        # Cheap and worth doing: an agreeing pair with no marker is exactly the
+        # state every chart is in right after the migration, and recording it
+        # now is what lets the NEXT divergence be arbitrated instead of flagged.
+        [[ -n "$(marker_read "$logical")" ]] || { marker_write "$logical" "$out"; fresh=$((fresh+1)); }
+        ;;
+      not-materialized)
+        if [[ $DRY_RUN -eq 1 ]]; then echo "  would materialize  $logical"
+        else
+          inject_to "$tpl" "$out" && { marker_write "$logical" "$out"; echo "  materialized  $logical"; }
+        fi
+        pulled=$((pulled+1))
+        ;;
+      pull)
+        if [[ $DRY_RUN -eq 1 ]]; then echo "  would pull    $logical"
+        else
+          inject_to "$tpl" "$out" && { marker_write "$logical" "$out"; echo "  pulled        $logical"; }
+        fi
+        pulled=$((pulled+1))
+        ;;
+      push)
+        if [[ $DRY_RUN -eq 1 ]]; then echo "  would push    $logical"
+        else
+          cmd_push "$out" >/dev/null && echo "  pushed        $logical"
+        fi
+        pushed=$((pushed+1))
+        ;;
+      conflict)
+        echo "  CONFLICT      $logical — both sides changed since the last sync"
+        echo "                keep the vault: secrets.sh pull --force $(dirname "$logical")"
+        echo "                keep the file:  secrets.sh push ${out}"
+        conflicts=$((conflicts+1))
+        ;;
+      unknown)
+        echo "  DRIFT         $logical — no sync marker, so which side moved is unknowable"
+        echo "                settle it once with push or pull; sync handles it from then on"
+        unknown=$((unknown+1))
+        ;;
+      UNRESOLVABLE)
+        # Counted apart from conflicts: a conflict is a decision waiting for a
+        # human, this is a broken template or an unreachable vault. Both stop
+        # the run, but calling them the same thing makes the summary lie.
+        echo "  UNRESOLVABLE  $logical — its template does not resolve against the vault"
+        unresolvable=$((unresolvable+1))
+        ;;
+    esac
+    rm -f "$tmp/probe"
+  done < <(discover_pairs)
+
+  NO_BACKUP=0
+  [[ $fresh -gt 0 ]] && note "recorded ${fresh} baseline marker(s)"
+  note "${pushed} pushed, ${pulled} pulled, ${conflicts} conflict(s), ${unknown} unarbitrated, ${unresolvable} unresolvable"
+
+  if [[ $DRY_RUN -eq 0 && $(( pushed + pulled )) -gt 0 ]]; then
+    # SUBSHELLS, not plain `|| echo`. Both of these end in `die` on failure, and
+    # die runs `exit` — which unwinds this whole script rather than the function,
+    # so the `||` would never fire and a NAS that happens to be down would take
+    # the cluster publish down with it. The reconciliation already succeeded by
+    # this point; neither of these is allowed to retroactively fail it.
+    ( cmd_backup )  || echo "    backup failed — the vault still holds the change"
+    ( cmd_publish ) || echo "    publish failed — the pod stays stale until the next run"
+  fi
+
+  # Non-zero on anything a human has to look at. A timer that always exits 0
+  # cannot tell you it has stopped being useful.
+  [[ $(( conflicts + unknown + unresolvable )) -eq 0 ]]
 }
 
 # ------------------------------------------------------- cluster relay
@@ -639,16 +965,28 @@ cmd_publish() {
   fi
 }
 
-# Run inside the claude-workspace pod. No 1Password credentials are needed or
-# wanted there: a Service Account is Teams-only, and putting the account
-# password in the pod would expose every vault, not just this one.
+# Run inside the claude-workspace pod: unpack the relay bundle onto the PVC.
+#
+# This is the BOOTSTRAP path, and it stays that way even though the pod can now
+# reach 1Password itself. It needs no credentials, no network beyond the API
+# server, and it is what the initContainer runs before anything else exists —
+# including, on a fresh PVC, the checkout that would hold the op templates.
+#
+# --bundle reads a mounted file instead of calling kubectl. That is what makes
+# it usable from an initContainer: no kubectl in the image, no RBAC, no API
+# round-trip, just the Secret projected as a volume.
 cmd_pull_cluster() {
-  command -v kubectl >/dev/null || die "kubectl required"
   local tmp; tmp="$(scratch)"
-  kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" >/dev/null 2>&1 \
-    || die "secret/${CLUSTER_SECRET} not found in ns ${CLUSTER_NS}. Run 'secrets.sh publish' on a machine with op."
-  kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" \
-    -o jsonpath='{.data.bundle\.tar\.gz}' | base64 -d > "$tmp/bundle.tar.gz"
+  if [[ -n "$BUNDLE_FILE" ]]; then
+    [[ -f "$BUNDLE_FILE" ]] || die "no bundle at ${BUNDLE_FILE}"
+    cp "$BUNDLE_FILE" "$tmp/bundle.tar.gz"
+  else
+    command -v kubectl >/dev/null || die "kubectl required (or pass --bundle FILE)"
+    kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" >/dev/null 2>&1 \
+      || die "secret/${CLUSTER_SECRET} not found in ns ${CLUSTER_NS}. Run 'secrets.sh publish' on a machine with op."
+    kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" \
+      -o jsonpath='{.data.bundle\.tar\.gz}' | base64 -d > "$tmp/bundle.tar.gz"
+  fi
   tar xzf "$tmp/bundle.tar.gz" -C "$tmp"
   if [[ $DRY_RUN -eq 1 ]]; then
     note "bundle contents:"; sed 's/^/    /' "$tmp/MANIFEST"; return 0
@@ -739,7 +1077,15 @@ cmd_backup() {
     printf 'Files-only by request (--files-only). Every secret restores from files/;\nthe vault structure does not.\n' \
       > "$tmp/stage/VAULT-DUMP-SKIPPED"
     note "files-only backup (requested)"
-  elif command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1 \
+  # ASK for a session; do not merely test for one. This branch used to check
+  # `op whoami` and quietly degrade, which was correct when an unattended run
+  # could never sign in — but now it can, and a passive check means the timer
+  # keeps producing files-only archives while looking like it succeeded. That is
+  # the exact silent-hole failure the paragraph above is about.
+  #
+  # Still degrades rather than dying if the session cannot be had: half a backup
+  # beats none, and it says so on stdout and inside the archive.
+  elif op_session_ready \
        && want="$(op item list --vault "$VAULT" --format json 2>/dev/null | jq 'length' 2>/dev/null)" \
        && [[ "${want:-0}" -gt 0 ]]; then
     mkdir -p "$tmp/stage/vault"
@@ -807,6 +1153,17 @@ cmd_restore() {
 
   if [[ $VERIFY_ONLY -eq 1 ]]; then
     note "contents (nothing written):"; sed 's/^/    /' "$tmp/x/MANIFEST" 2>/dev/null || find "$tmp/x" -type f | sed 's/^/    /'
+    # The MANIFEST covers files.tar.gz only, so it says nothing about the half
+    # of the archive that exists for losing 1Password itself. Report that half
+    # explicitly — otherwise a files-only archive and a full one look identical
+    # here, which is precisely how the weekly backup shipped without its vault
+    # dump for as long as it did.
+    if [[ -f "$tmp/x/vault/items.json" ]]; then
+      note "vault dump: $(jq 'length' "$tmp/x/vault/items.json" 2>/dev/null || echo '?') item(s)"
+    else
+      note "NO VAULT DUMP in this archive — files restore, the vault structure does not"
+      [[ -f "$tmp/x/VAULT-DUMP-SKIPPED" ]] && sed 's/^/    /' "$tmp/x/VAULT-DUMP-SKIPPED"
+    fi
     return 0
   fi
   local f n=0
@@ -822,6 +1179,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/secrets.sh <command> [options] [path...]
 
+  sync [--dry-run]         reconcile every managed file with the vault, both ways
   check                    op reachable, every ref resolves AND is non-empty
   status [path...]         per-chart: in-sync / drift / not-materialized / NOT MIGRATED
   pull [path...]           materialize values.local.yaml from 1Password
@@ -833,8 +1191,16 @@ Usage: scripts/secrets.sh <command> [options] [path...]
   backup                   age-encrypt everything + vault dump, upload to the NAS, verify
   restore [--verify-only]  recover from the latest NAS archive
 
-Options: --dry-run  --force  --yes  --include-external  --vault NAME
+Options: --dry-run  --force  --yes  --no-external  --vault NAME  --bundle FILE
          --files-only (skip the vault dump)  --keep N (archive retention, default 20)
+
+sync is the unattended verb. It pushes when only the file moved, pulls when only
+the vault moved, and refuses when both did — decided against a recorded marker,
+not against mtimes. Sessions come from scripts/op-session.sh, so it runs with no
+terminal attached.
+
+The standalone app clones under ~/Code are in scope by default; --no-external
+drops them. The submodule checkouts of those same repos are never a source.
 
 The contract is still values.local.yaml. This script only moves it around, and
 no deploy path depends on it — every template carries the op inject one-liner.
@@ -851,7 +1217,10 @@ while [[ $# -gt 0 ]]; do
     --dry-run)          DRY_RUN=1 ;;
     --force)            FORCE=1 ;;
     --yes|-y)           ASSUME_YES=1 ;;
-    --include-external) INCLUDE_EXTERNAL=1 ;;
+    --include-external) INCLUDE_EXTERNAL=1 ;;   # now the default; kept so old
+                                                # invocations keep working
+    --no-external)      INCLUDE_EXTERNAL=0 ;;
+    --bundle)           BUNDLE_FILE="$2"; FROM_CLUSTER=1; shift ;;
     --from-cluster)     FROM_CLUSTER=1 ;;
     --verify-only)      VERIFY_ONLY=1 ;;
     --files-only)       FILES_ONLY=1 ;;
@@ -869,6 +1238,7 @@ SCRATCH="$(mktemp -d /dev/shm/secrets.XXXXXX)"
 chmod 700 "$SCRATCH"
 
 case "$CMD" in
+  sync)    cmd_sync ;;
   check)   cmd_check ;;
   status)  cmd_status "${ARGS[@]+"${ARGS[@]}"}" ;;
   pull)    cmd_pull "${ARGS[@]+"${ARGS[@]}"}" ;;
