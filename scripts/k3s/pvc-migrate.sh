@@ -272,13 +272,39 @@ fi
 # 3. Scale down
 # ------------------------------------------------------------------------------
 scale_everything_down() {
-    for cj in "${CRONJOBS[@]}"; do
+    # Every step here reports what it did. An earlier silent version appeared to
+    # hang for 300s on claude-bridge with the workload still at 1 replica and no
+    # way to see which part had not taken effect. A scale-down that quietly
+    # no-ops is indistinguishable from one that worked, right up until the copy
+    # Job cannot mount the volume.
+    local o cj rc
+    for cj in ${CRONJOBS[@]+"${CRONJOBS[@]}"}; do
         [[ -z "$cj" ]] && continue
-        $K patch "$cj" -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || true
+        if $K patch "$cj" -p '{"spec":{"suspend":true}}' >/dev/null 2>&1; then
+            echo "    suspended $cj"
+        else
+            echo "    [WARN] could not suspend $cj"
+        fi
     done
-    for o in "${OWNERS[@]}"; do
+    for o in ${OWNERS[@]+"${OWNERS[@]}"}; do
         [[ -z "$o" || "$o" == pod/* || "$o" == job/* ]] && continue
-        $K scale "$o" --replicas=0 >/dev/null 2>&1 || true
+        rc=0
+        $K scale "$o" --replicas=0 >/dev/null 2>&1 || rc=$?
+        if [[ "$rc" != "0" ]]; then
+            echo "    [ERROR] 'kubectl scale $o --replicas=0' failed (rc=$rc)"
+            return 1
+        fi
+        # Trust nothing: read the spec back. A scale that reports success but
+        # leaves replicas>0 means something else owns this field.
+        local want
+        want="$($K get "$o" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo '?')"
+        echo "    scaled $o -> ${want}"
+        if [[ "$want" != "0" ]]; then
+            echo "    [ERROR] $o is still at ${want} replicas after scaling to 0."
+            echo "            Something is reconciling it — an operator, a KEDA"
+            echo "            ScaledObject, or a helm release re-applying behind us."
+            return 1
+        fi
     done
 
     local remaining=""
@@ -356,8 +382,17 @@ step "4. Release source PV"
 confirm "Delete pvc/${PVC}? (pv/${SRC_PV} is Retain — data survives)"
 
 $K delete pvc "$PVC" --wait=true
-# Clear the stale claimRef so the PV can be bound again by the temp claim.
-kubectl patch pv "$SRC_PV" --type=merge -p '{"spec":{"claimRef":null}}' >/dev/null
+# Re-point claimRef at the temp claim rather than clearing it to null.
+#
+# Null would work — the temp claim would bind — but it also opens a window from
+# here until step 6 in which ANY PVC of this class and size can take the source
+# volume. Step 5 sits inside that window and creates a PVC by design, so a chart
+# that has not actually been switched to the new class (a values edit that
+# silently did not apply, say) can bind straight onto the data being migrated.
+#
+# Naming the temp claim up front means only that claim can ever bind it.
+kubectl patch pv "$SRC_PV" --type=merge \
+    -p "{\"spec\":{\"claimRef\":{\"namespace\":\"${NAMESPACE}\",\"name\":\"${TMP_CLAIM}\"}}}" >/dev/null
 echo "  [OK] pv/${SRC_PV} is $(kubectl get pv "$SRC_PV" -o jsonpath='{.status.phase}')"
 
 # ------------------------------------------------------------------------------

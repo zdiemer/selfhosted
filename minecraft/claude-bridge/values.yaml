@@ -546,7 +546,11 @@ bridge:
 # ----------------------------------------------------------------------------
 persistence:
   size: 2Gi
-  # storageClass: ""   # unset = cluster default (k3s local-path)
+  # NAS-backed block. Note this does NOT unpin the pod: the nodeSelector below
+  # exists for auth.hostPath (/home/zachd/.claude on zachd-ubuntu), not for this
+  # volume. Migrating it buys backup coverage and survives a rebuild of that
+  # node's disk, not scheduling freedom — that needs the hostPath to go first.
+  storageClass: truenas-iscsi
 
 # ----------------------------------------------------------------------------
 # Resources — Claude Code is an npx-style spawn per request, ~150-300MB while
