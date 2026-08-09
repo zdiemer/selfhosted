@@ -1,0 +1,128 @@
+# The shared media filesystem. One NFS export mounted at /media in every
+# container that touches files, so paths are identical everywhere — that (and
+# being one filesystem) is what makes arr imports instant hardlinks instead
+# of copies that double disk during seeding. Layout:
+#   /media/downloads   qBittorrent writes here
+#   /media/movies      Radarr's root folder, Jellyfin's Movies library
+#   /media/tv          Sonarr's root folder, Jellyfin's Shows library
+media:
+  server: "192.168.4.36"
+  path: /mnt/vault/media
+  mountPath: /media
+
+# linuxserver images: run as this uid/gid via PUID/PGID. Matches the NAS
+# media dirs (1000:1000).
+puid: 1000
+pgid: 1000
+timezone: America/Los_Angeles
+
+apps:
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr
+    tag: "2.5.2"
+    port: 9696
+    host: prowlarr.zachd.duckdns.org
+    # Indexer manager only — never touches media files.
+    media: false
+    configSize: 2Gi
+  sonarr:
+    image: lscr.io/linuxserver/sonarr
+    tag: "4.0.19"
+    port: 8989
+    host: sonarr.zachd.duckdns.org
+    media: true
+    configSize: 5Gi
+  radarr:
+    image: lscr.io/linuxserver/radarr
+    tag: "5.28.0"
+    port: 7878
+    host: radarr.zachd.duckdns.org
+    media: true
+    configSize: 5Gi
+
+qbittorrent:
+  image: lscr.io/linuxserver/qbittorrent
+  tag: "5.2.3"
+  port: 8080
+  host: qbit.zachd.duckdns.org
+  configSize: 2Gi
+
+# gluetun VPN sidecar in the qBittorrent pod. They share a network namespace,
+# so every byte qBittorrent sends leaves via PIA — and gluetun's firewall is a
+# real killswitch: tunnel down means no route out at all, not a leak.
+#
+# This pod deliberately BYPASSES infra/egress-proxy: the entire point is that
+# torrent traffic exits from PIA's address, not the house's. It shows up in
+# the egress inventory as one opaque VPN flow, which is the correct shape.
+gluetun:
+  image: qmcgaw/gluetun
+  tag: "v3.41.3"
+  # PIA is OpenVPN-only in gluetun (its WireGuard needs a manual token dance
+  # and loses port forwarding). Credentials in values.local.yaml.
+  provider: private internet access
+  # Port forwarding only works from some PIA regions; CA ones all do and are
+  # close to SF.
+  serverRegions: CA Vancouver
+  portForwarding: true
+  # Cluster + LAN ranges that may talk THROUGH the firewall (Sonarr/Radarr
+  # reaching the web UI, kubelet probes). k3s defaults: pods 10.42/16,
+  # services 10.43/16.
+  outboundSubnets: 10.42.0.0/16,10.43.0.0/16,192.168.4.0/24
+  # Let cluster peers reach the qBittorrent web UI through gluetun's firewall.
+  inputPorts: "8080"
+  # /dev/net/tun access. NET_ADMIN alone is usually enough because gluetun
+  # mknods the device itself; flip to true if the sidecar logs EPERM opening
+  # the tun device (device-cgroup denial — same story as jellyfin's /dev/dri).
+  privileged: false
+
+persistence:
+  # All four config volumes are SQLite → truenas-iscsi, and small enough that
+  # k8up's default opt-out backup keeps them. The /media NFS mount is not a
+  # PVC and is never backed up from here (re-acquirable by definition).
+  storageClass: truenas-iscsi
+  accessMode: ReadWriteOnce
+
+# Admin UIs with API keys behind them — all four gated behind Authelia
+# forward-auth at the ingress, same pattern as docs/stirling-pdf. (The apps'
+# own auth stays on too; Sonarr/Radarr/Prowlarr refuse to run without it.)
+auth:
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+ingress:
+  enabled: true
+  className: traefik
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  arr:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  qbittorrent:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 4Gi
+  gluetun:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# PIA credentials — values.local.yaml only (op://homelab/media-arr).
+pia:
+  username: ""
+  password: ""

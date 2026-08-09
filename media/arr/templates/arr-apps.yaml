@@ -1,0 +1,104 @@
+{{/*
+One Deployment + Service + config PVC per arr app (prowlarr, sonarr, radarr).
+Identical shape, so a single loop; qBittorrent is different enough (VPN
+sidecar) to live in its own template.
+*/}}
+{{- range $name, $app := .Values.apps }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arr.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "arr.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 8 }}
+        ingress.enabled: "true"
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: "{{ $app.image }}:{{ $app.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: {{ $.Values.puid | quote }}
+            - name: PGID
+              value: {{ $.Values.pgid | quote }}
+            - name: TZ
+              value: {{ $.Values.timezone }}
+          ports:
+            - name: http
+              containerPort: {{ $app.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            {{- if $app.media }}
+            - name: media
+              mountPath: {{ $.Values.media.mountPath }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            {{- toYaml $.Values.resources.arr | nindent 12 }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ include "arr.fullname" $ }}-{{ $name }}-config
+        {{- if $app.media }}
+        - name: media
+          nfs:
+            server: {{ $.Values.media.server | quote }}
+            path: {{ $.Values.media.path | quote }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arr.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "arr.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $app.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "arr.fullname" $ }}-{{ $name }}-config
+  labels:
+    {{- include "arr.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  accessModes:
+    - {{ $.Values.persistence.accessMode }}
+  storageClassName: {{ $.Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ $app.configSize }}
+---
+{{- end }}

@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "jellyfin.fullname" . }}
+  labels:
+    {{- include "jellyfin.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # The config PVC is RWO and (with transcode) the pod is pinned to the GPU
+  # node anyway — a rolling update would just deadlock on the volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "jellyfin.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "jellyfin.selectorLabels" . | nindent 8 }}
+        # Picked up by infra/alloy for ingress-adjacent log shipping.
+        ingress.enabled: "true"
+    spec:
+      {{- if .Values.transcode.enabled }}
+      # nodeSelector, NOT nodeName: nodeName bypasses the scheduler, so a
+      # full node means kubelet-rejected (OutOfcpu) pods that the Deployment
+      # replaces in an infinite churn. With a selector the pod just Pends.
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.transcode.nodeName }}
+      {{- end }}
+      securityContext:
+        fsGroup: {{ .Values.runAsGroup }}
+        {{- if .Values.transcode.enabled }}
+        supplementalGroups:
+          - {{ .Values.transcode.renderGid }}
+        {{- end }}
+      containers:
+        - name: jellyfin
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: {{ .Values.runAsUser }}
+            runAsGroup: {{ .Values.runAsGroup }}
+            {{- if .Values.transcode.enabled }}
+            # Privileged solely to open /dev/dri: the device cgroup denies
+            # host device nodes to unprivileged containers and there is no
+            # GPU device plugin on this cluster. Still runs as uid 1000.
+            privileged: true
+            {{- end }}
+          env:
+            - name: JELLYFIN_PublishedServerUrl
+              value: {{ .Values.publishedServerUrl | quote }}
+          ports:
+            - name: http
+              containerPort: 8096
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: cache
+              mountPath: /cache
+            - name: media
+              mountPath: {{ .Values.media.mountPath }}
+              readOnly: true
+            {{- if .Values.transcode.enabled }}
+            - name: dri
+              mountPath: /dev/dri
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ include "jellyfin.fullname" . }}-config
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ .Values.persistence.cacheSizeLimit }}
+        - name: media
+          nfs:
+            server: {{ .Values.media.server | quote }}
+            path: {{ .Values.media.path | quote }}
+            readOnly: true
+        {{- if .Values.transcode.enabled }}
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        {{- end }}

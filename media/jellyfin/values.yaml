@@ -1,0 +1,85 @@
+image:
+  repository: docker.io/jellyfin/jellyfin
+  tag: "10.11.11"
+  pullPolicy: IfNotPresent
+
+# The media library, mounted read-only straight off the NAS's NFS export
+# (created for this namespace; the SMB `media` share is the same dataset, so
+# desktops see the same files). NFS rather than SMB because the arr stack
+# depends on hardlinks for instant imports, and the whole namespace should
+# see one filesystem. Jellyfin only ever reads it — metadata/artwork live in
+# the config PVC.
+media:
+  server: "192.168.4.36"
+  path: /mnt/vault/media
+  mountPath: /media
+
+# Hardware transcode. zachd-ubuntu-1 is the Ryzen 2200G — the only node with
+# a real GPU (Vega 8, VAAPI H.264/HEVC both directions). Pinning Jellyfin
+# there costs flexibility but buys smooth remote/phone playback of
+# high-bitrate files. The container must be privileged to open /dev/dri:
+# non-privileged pods are denied device nodes by the device cgroup, and this
+# cluster has no GPU device plugin. renderGid is the `render` group on that
+# node (`stat -c %g /dev/dri/renderD128`), so the jellyfin user can open the
+# render node.
+transcode:
+  enabled: true
+  nodeName: zachd-ubuntu-1
+  renderGid: 992
+
+# Jellyfin runs as this uid/gid; the NAS media dirs are owned 1000:1000.
+runAsUser: 1000
+runAsGroup: 1000
+
+service:
+  type: ClusterIP
+  port: 8096
+  # LAN door for smart TVs: a second NodePort Service so TV apps can reach
+  # http://<any-node-ip>:30096 without DNS, hairpin NAT, or TLS quirks.
+  # Same pattern as infra/headlamp's :30100. The DuckDNS ingress stays the
+  # primary (and remote) address.
+  nodePort:
+    enabled: true
+    port: 30096
+
+# Advertised to clients that autodiscover the server.
+publishedServerUrl: https://jellyfin.zachd.duckdns.org
+
+persistence:
+  # /config holds the SQLite databases, metadata, artwork and per-user state.
+  # Artwork for a large library adds up (see games/romm: 50Gi wasn't crazy).
+  # iSCSI, not nfs — SQLite wants real fsync and per-file round-trips are
+  # what made RomM's covers unbearable on nfs.
+  config:
+    size: 30Gi
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+  # /cache (transcodes, image cache) is scratch — emptyDir, node-local, free
+  # to vanish on reschedule.
+  cacheSizeLimit: 20Gi
+
+# NO Authelia forward-auth here, deliberately: TV/phone/desktop Jellyfin apps
+# speak the Jellyfin API directly and cannot answer an HTML login bounce.
+# Jellyfin's own accounts are the gate (plus Quick Connect for TV sign-in).
+ingress:
+  enabled: true
+  className: traefik
+  host: jellyfin.zachd.duckdns.org
+  cloudflareHosts: []
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  # The GPU node runs hot (~87% CPU requested, mostly talaria) — keep the
+  # request small enough to actually fit; VAAPI means playback rarely needs
+  # much CPU anyway.
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    # Software-transcode fallback (when VAAPI can't take a codec) is a CPU
+    # hog; no CPU limit so it can burst, but keep memory bounded.
+    memory: 4Gi

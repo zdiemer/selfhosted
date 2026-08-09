@@ -1,0 +1,12 @@
+apiVersion: v2
+name: jellyseerr
+description: Jellyseerr — request/discovery frontend for Jellyfin. Users sign in with their Jellyfin account, browse, and request; approved requests go to Radarr/Sonarr in media/arr.
+type: application
+version: 0.1.0
+# appVersion tracks the jellyseerr image tag in values.yaml (image.tag).
+appVersion: "2.7.3"
+home: https://docs.jellyseerr.dev
+sources:
+  - https://github.com/fallenbagel/jellyseerr
+maintainers:
+  - name: zachd

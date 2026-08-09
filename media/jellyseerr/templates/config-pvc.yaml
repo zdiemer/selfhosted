@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "jellyseerr.fullname" . }}-config
+  labels:
+    {{- include "jellyseerr.labels" . | nindent 4 }}
+  # Small and irreplaceable (users, request history, settings) — stays in
+  # k8up's default opt-out backup.
+spec:
+  accessModes:
+    - {{ .Values.persistence.config.accessMode }}
+  storageClassName: {{ .Values.persistence.config.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.config.size }}

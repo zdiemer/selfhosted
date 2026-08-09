@@ -1,0 +1,58 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+One Ingress, four hosts — Traefik makes a router per host rule and the
+annotations (cert, forward-auth) apply to all of them. Every host here is an
+admin UI, so unlike jellyfin/jellyseerr they all sit behind Authelia.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "arr.fullname" . }}
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
+    # DuckDNS API can only set TXT at the account's top-level subdomain, so
+    # per-host certs for sub-subdomains fail the ACME challenge. We ride a
+    # wildcard SAN instead — one cert covers every sub-subdomain.
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
+    {{- if .Values.auth.forwardAuth.enabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "arr.fullname" . }}-forwardauth@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range $name, $app := .Values.apps }}
+    - host: {{ $app.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arr.fullname" $ }}-{{ $name }}
+                port:
+                  number: {{ $app.port }}
+    {{- end }}
+    - host: {{ .Values.qbittorrent.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arr.fullname" . }}-qbittorrent
+                port:
+                  number: {{ .Values.qbittorrent.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- range $name, $app := .Values.apps }}
+        - {{ $app.host }}
+        {{- end }}
+        - {{ .Values.qbittorrent.host }}
+  {{- end }}
+{{- end }}

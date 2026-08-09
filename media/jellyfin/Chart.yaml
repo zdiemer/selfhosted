@@ -1,0 +1,12 @@
+apiVersion: v2
+name: jellyfin
+description: Jellyfin — self-hosted media server for the movies/TV library on the NAS. VAAPI hardware transcode on the one node with a GPU; native TV/phone apps sign in with Jellyfin's own accounts.
+type: application
+version: 0.1.0
+# appVersion tracks the jellyfin image tag in values.yaml (image.tag).
+appVersion: "10.11.11"
+home: https://jellyfin.org
+sources:
+  - https://github.com/jellyfin/jellyfin
+maintainers:
+  - name: zachd

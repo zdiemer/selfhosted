@@ -1,0 +1,10 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored.
+#
+# PIA credentials are the p1234567 username + password from
+# https://www.privateinternetaccess.com/account — the same pair the desktop
+# apps use. gluetun does the OpenVPN dance with them; nothing else is needed
+# for port forwarding.
+
+pia:
+  username: "p1234567"
+  password: "xxxxxxxxxxxx"

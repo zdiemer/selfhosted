@@ -1,0 +1,158 @@
+{{/*
+qBittorrent + gluetun. The two containers share the pod's network namespace:
+gluetun owns the routing table and firewall, so qBittorrent's traffic can
+only ever leave through the PIA tunnel — tunnel down = no route out
+(killswitch), never a fallback to the house IP.
+
+gluetun's control server (VPN_PORT_FORWARDING_UP_COMMAND) pushes the
+PIA-forwarded port into qBittorrent over localhost each time it changes, so
+inbound peers work without a static port. Requires qBittorrent's "bypass
+auth for clients on localhost" (set in the web UI once, persisted in the
+config PVC).
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arr.fullname" . }}-qbittorrent
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qbittorrent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 8 }}
+        ingress.enabled: "true"
+    spec:
+      containers:
+        - name: gluetun
+          image: "{{ .Values.gluetun.image }}:{{ .Values.gluetun.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- if .Values.gluetun.privileged }}
+            privileged: true
+            {{- else }}
+            capabilities:
+              add:
+                - NET_ADMIN
+            {{- end }}
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: {{ .Values.gluetun.provider | quote }}
+            - name: OPENVPN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arr.fullname" . }}-pia
+                  key: username
+            - name: OPENVPN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arr.fullname" . }}-pia
+                  key: password
+            - name: SERVER_REGIONS
+              value: {{ .Values.gluetun.serverRegions | quote }}
+            {{- if .Values.gluetun.portForwarding }}
+            - name: VPN_PORT_FORWARDING
+              value: "on"
+            # Push the (dynamic) PIA-forwarded port into qBittorrent whenever
+            # it changes. {{ "{{PORTS}}" }} is expanded by gluetun.
+            - name: VPN_PORT_FORWARDING_UP_COMMAND
+              value: >-
+                /bin/sh -c 'wget -O- --retry-connrefused
+                --post-data "json={\"listen_port\":{{ "{{PORTS}}" }}}"
+                http://127.0.0.1:{{ .Values.qbittorrent.port }}/api/v2/app/setPreferences 2>&1'
+            {{- end }}
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: {{ .Values.gluetun.outboundSubnets | quote }}
+            - name: FIREWALL_INPUT_PORTS
+              value: {{ .Values.gluetun.inputPorts | quote }}
+            - name: TZ
+              value: {{ .Values.timezone }}
+          # gluetun's own health endpoint; restarts the tunnel on failure.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9999
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources.gluetun | nindent 12 }}
+        - name: qbittorrent
+          image: "{{ .Values.qbittorrent.image }}:{{ .Values.qbittorrent.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: {{ .Values.puid | quote }}
+            - name: PGID
+              value: {{ .Values.pgid | quote }}
+            - name: TZ
+              value: {{ .Values.timezone }}
+            - name: WEBUI_PORT
+              value: {{ .Values.qbittorrent.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.qbittorrent.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: {{ .Values.media.mountPath }}
+          # TCP, not HTTP: the web UI 403s unauthenticated requests.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.qbittorrent | nindent 12 }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ include "arr.fullname" . }}-qbittorrent-config
+        - name: media
+          nfs:
+            server: {{ .Values.media.server | quote }}
+            path: {{ .Values.media.path | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arr.fullname" . }}-qbittorrent
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qbittorrent
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.qbittorrent.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "arr.fullname" . }}-qbittorrent-config
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qbittorrent
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.qbittorrent.configSize }}

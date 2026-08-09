@@ -1,0 +1,38 @@
+image:
+  repository: docker.io/fallenbagel/jellyseerr
+  tag: "2.7.3"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5055
+
+persistence:
+  # /app/config: SQLite DB (users, requests) + settings.json. Small,
+  # irreplaceable, iSCSI for the same fsync reasons as every other SQLite
+  # volume here. k8up backs it up by default.
+  config:
+    size: 5Gi
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+
+# No Authelia forward-auth: Jellyseerr authenticates against Jellyfin itself,
+# so household members get one account for both. Adding a second portal in
+# front would just be two logins.
+ingress:
+  enabled: true
+  className: traefik
+  host: requests.zachd.duckdns.org
+  cloudflareHosts: []
+  tls:
+    enabled: true
+    certResolver: duckdns
+    domain: zachd.duckdns.org
+    wildcardSan: "*.zachd.duckdns.org"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
