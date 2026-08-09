@@ -1,0 +1,143 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { approvalSocketPath, config } from "./config.ts";
+import { type ChatState, getChat, updateChat } from "./state.ts";
+
+export interface RunResult {
+  text: string;
+  sessionId?: string;
+  isError: boolean;
+}
+
+const running = new Map<string, ReturnType<typeof spawn>>();
+let activeCount = 0;
+
+export function isRunning(chatKey: string): boolean {
+  return running.has(chatKey);
+}
+
+export function stop(chatKey: string): boolean {
+  const child = running.get(chatKey);
+  if (!child) return false;
+  child.kill("SIGTERM");
+  return true;
+}
+
+export function atCapacity(): boolean {
+  return activeCount >= config.maxConcurrentClaude;
+}
+
+// Each chat gets its own mcp config so approve-mcp knows which chat to ask.
+function mcpConfigPath(chatKey: string): string {
+  const safe = chatKey.replace(/[^A-Za-z0-9]+/g, "-");
+  const p = path.join(config.runtimeDir, `mcp-${safe}.json`);
+  fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    p,
+    JSON.stringify({
+      mcpServers: {
+        gw: {
+          command: "bun",
+          args: [path.join(config.appDir, "src/approve-mcp.ts")],
+          env: { GW_SOCKET: approvalSocketPath, GW_CHAT_KEY: chatKey },
+        },
+      },
+    }),
+    { mode: 0o600 },
+  );
+  return p;
+}
+
+export async function runClaude(
+  chatKey: string,
+  message: string,
+): Promise<RunResult> {
+  const chat: ChatState = getChat(chatKey);
+  const args = ["-p", message, "--output-format", "json"];
+  if (chat.sessionId) args.push("--resume", chat.sessionId);
+  if (chat.auto) {
+    args.push("--permission-mode", "bypassPermissions");
+  } else {
+    // --strict-mcp-config keeps the headless run from loading the workspace's
+    // interactive MCP servers; only the approval relay is wired in.
+    args.push(
+      "--permission-prompt-tool",
+      "mcp__gw__approve",
+      "--mcp-config",
+      mcpConfigPath(chatKey),
+      "--strict-mcp-config",
+      "--allowedTools",
+      config.allowedTools,
+    );
+  }
+
+  activeCount++;
+  try {
+    return await new Promise<RunResult>((resolve) => {
+      const child = spawn("claude", args, {
+        cwd: chat.cwd,
+        env: { ...process.env, HOME: config.home },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      running.set(chatKey, child);
+
+      let out = "";
+      let err = "";
+      child.stdout!.on("data", (d) => (out += d));
+      child.stderr!.on("data", (d) => (err += d));
+
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        err += `\n(timed out after ${config.claudeTimeoutMs / 60000}m)`;
+      }, config.claudeTimeoutMs);
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        running.delete(chatKey);
+        try {
+          const parsed = JSON.parse(out);
+          if (parsed.session_id)
+            updateChat(chatKey, { sessionId: parsed.session_id });
+          resolve({
+            text: parsed.result ?? "(no result text)",
+            sessionId: parsed.session_id,
+            isError: Boolean(parsed.is_error),
+          });
+        } catch {
+          resolve({
+            text:
+              `claude exited ${code}` +
+              (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
+            isError: true,
+          });
+        }
+      });
+    });
+  } finally {
+    activeCount--;
+  }
+}
+
+/** Newest session jsonl for a cwd — claude names project dirs by munging
+ * '/' and '.' to '-'. Used by !resume to pick up a tmux/Happy session. */
+export function latestSessionId(cwd: string): string | undefined {
+  const projectDir = path.join(
+    config.home,
+    ".claude/projects",
+    cwd.replace(/[/.]/g, "-"),
+  );
+  try {
+    const newest = fs
+      .readdirSync(projectDir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => ({
+        id: f.replace(/\.jsonl$/, ""),
+        mtime: fs.statSync(path.join(projectDir, f)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtime - a.mtime)[0];
+    return newest?.id;
+  } catch {
+    return undefined;
+  }
+}

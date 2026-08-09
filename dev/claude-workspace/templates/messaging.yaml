@@ -1,0 +1,21 @@
+# Messaging-gateway credentials/allowlists, fed from values.local.yaml (the
+# 1Password-backed file — see values.local.tpl.yaml). NOT named
+# `*-secret.yaml`: the repo root .gitignore swallows chart templates matching
+# that glob (see README §Conventions).
+{{- if .Values.messaging.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-messaging
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- if .Values.messaging.signal.enabled }}
+  SIGNAL_NUMBER: {{ required "messaging.signal.number is required (E.164, the bot's dedicated number) — set it in values.local.yaml" .Values.messaging.signal.number | quote }}
+  SIGNAL_ALLOWED_SENDERS: {{ required "messaging.signal.allowedSenders is required — the allowlist is the gateway's only auth, and empty means nobody can use it" (join "," .Values.messaging.signal.allowedSenders) | quote }}
+  {{- end }}
+  {{- if .Values.messaging.whatsapp.enabled }}
+  WA_ALLOWED_SENDERS: {{ required "messaging.whatsapp.allowedSenders is required — digits-only numbers, e.g. 15551234567" (join "," .Values.messaging.whatsapp.allowedSenders) | quote }}
+  {{- end }}
+{{- end }}

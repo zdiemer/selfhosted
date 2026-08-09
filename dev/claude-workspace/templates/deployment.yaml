@@ -15,6 +15,12 @@ spec:
       {{- include "claude-workspace.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- if .Values.messaging.enabled }}
+      annotations:
+        # Restart the pod when the messaging Secret's contents change — env
+        # vars are frozen at container start.
+        checksum/messaging: {{ include (print $.Template.BasePath "/messaging.yaml") . | sha256sum }}
+      {{- end }}
       labels:
         {{- include "claude-workspace.labels" . | nindent 8 }}
         {{- if .Values.ingress.enabled }}
@@ -73,6 +79,15 @@ spec:
               {{- end }}
               mkdir -p /home/node/.config/selfhosted
               chmod 700 /home/node/.config/selfhosted
+              {{- if .Values.messaging.enabled }}
+              # Signal registration + gateway state (session map, Baileys
+              # auth keys). Both survive restarts on the PVC — losing either
+              # means re-pairing.
+              mkdir -p /home/node/.local/share/signal-cli
+              chmod 700 /home/node/.local/share/signal-cli
+              mkdir -p /home/node/.config/selfhosted/messaging-gateway
+              chmod 700 /home/node/.config/selfhosted/messaging-gateway
+              {{- end }}
               {{- if .Values.secrets.onePassword.enabled }}
               # Copied off the projected Secret rather than mounted in place:
               # op refuses to use a config directory it cannot write, and a
@@ -343,6 +358,86 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.bakeryWeb | nindent 12 }}
+        {{- end }}
+        {{- if .Values.messaging.enabled }}
+        # Messaging gateway: Signal/WhatsApp → headless `claude -p` in this
+        # same $HOME (subscription creds + session jsonls on the PVC, so chat
+        # can `!resume` a tmux/Happy session). Claude runs are CHILDREN of
+        # this container — claude-sized memory. Outbound-only (Baileys
+        # websocket + the signal-cli unix socket on /tmp): no ports, no
+        # netpol changes. No probes: pre-pairing there is nothing healthy to
+        # probe — same stance as tailscaled below.
+        - name: messaging-gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command: ["bash", "-lc", "cd /opt/messaging-gateway && exec bun run src/main.ts"]
+          env:
+            - name: HOME
+              value: /home/node
+            - name: GW_APP_DIR
+              value: /opt/messaging-gateway
+            - name: GW_SIGNAL_ENABLED
+              value: {{ .Values.messaging.signal.enabled | quote }}
+            - name: GW_WA_ENABLED
+              value: {{ .Values.messaging.whatsapp.enabled | quote }}
+            - name: GW_DEFAULT_CWD
+              value: {{ .Values.messaging.defaultCwd | quote }}
+            - name: GW_APPROVAL_TIMEOUT_SECONDS
+              value: {{ .Values.messaging.approvalTimeoutSeconds | quote }}
+            - name: GW_ALLOWED_TOOLS
+              value: {{ .Values.messaging.allowedTools | quote }}
+          envFrom:
+            # SIGNAL_NUMBER / SIGNAL_ALLOWED_SENDERS / WA_ALLOWED_SENDERS —
+            # the sender allowlist is the gateway's ONLY auth.
+            - secretRef:
+                name: {{ include "claude-workspace.fullname" . }}-messaging
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.messagingGateway | nindent 12 }}
+        {{- if .Values.messaging.signal.enabled }}
+        # signal-cli daemon (native binary, no JVM): JSON-RPC over a unix
+        # socket on the shared /tmp emptyDir — the tailscaled-socket pattern.
+        # Registration state is on the PVC (~/.local/share/signal-cli); the
+        # one-time `signal-cli register/verify` happens from the term
+        # container BEFORE messaging.enabled is flipped on (README).
+        - name: signal-cli
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /tmp/signal-gw
+              exec signal-cli daemon \
+                --socket /tmp/signal-gw/signal-cli.sock \
+                --receive-mode on-connection
+          env:
+            - name: HOME
+              value: /home/node
+          # No probes: with no registered account the daemon is up but
+          # useless, and a probe would flap it before first pairing.
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.signalCli | nindent 12 }}
+        {{- end }}
         {{- end }}
         {{- if .Values.tailscale.enabled }}
         # tailscaled with userspace networking: outbound dials go through its

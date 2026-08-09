@@ -1,7 +1,7 @@
 # claude-workspace
 
 Always-on Claude Code workspace on the cluster, replacing ephemeral SSH
-sessions from the iOS terminal app. One pod, one `$HOME` on a PVC, three ways
+sessions from the iOS terminal app. One pod, one `$HOME` on a PVC, four ways
 in sharing that home:
 
 - **`/term`** — [ttyd](https://github.com/tsl0922/ttyd) running
@@ -24,6 +24,11 @@ in sharing that home:
   subdomain rather than a path (see [Bakery surface](#bakery-surface) for why).
   It runs its own agent against the same `~/code` repos, with state on the
   PVC, behind the same Authelia gate on its own duckdns host.
+- **Signal / WhatsApp** — text the bot and it drives headless `claude -p`
+  in this same `$HOME`; permission prompts round-trip as "reply 1/2/3"
+  messages. The low-bandwidth surface: airline free-messaging wifi and
+  slow data pass Signal/WhatsApp text when nothing else moves. See
+  [Messaging surface](#messaging-surface).
 
 ## What persists, what doesn't
 
@@ -259,6 +264,105 @@ artifacts, and metadata live under `bakery.dataDir`
   deliberately (then `./build.sh`), same as the claude CLI.
 - Turn the whole surface off with `bakery.enabled: false` (drops both
   containers, the two service ports, the ingress host, and the netpol rule).
+
+## Messaging surface
+
+Signal (primary) and WhatsApp (optional) drive headless `claude -p` runs in
+the pod's `$HOME`. Why headless is right *here* when it was wrong for
+CloudCLI: this is the degraded-network fallback, not the primary surface —
+`/term` and Happy keep the full harness, and the one interactive feature that
+matters on a phone (permission prompts) is preserved by relaying it over chat.
+
+```
+you (Signal app) ──Signal servers──▶ signal-cli daemon ──unix socket──▶ ┐
+you (WhatsApp)  ──WA servers──────▶ Baileys (in-process) ─────────────▶ messaging-gateway
+                                                                        │ spawns per message
+                                                          claude -p --resume <session>
+                                                                        │ --permission-prompt-tool
+                                                          approve-mcp ──unix socket──▶ gateway ──▶ "reply 1/2/3"
+```
+
+Everything is outbound (Baileys websocket, signal-cli to Signal's servers):
+no new ingress, no netpol change, nothing new behind or around Authelia. The
+**sender allowlist is the only auth** — anyone on it holds a shell on the
+cluster, so it is your numbers only, set in values.local.yaml (vault item
+`dev-claude-workspace`).
+
+The gateway app lives in-repo at `gateway/` and is baked into the image at
+`/opt/messaging-gateway` (small, single-consumer — same documented exception
+as `web/apartment-watch` and `minecraft/claude-bridge`).
+
+### One-time pairing
+
+The spare number serves both networks. Register **before** flipping
+`messaging.enabled` (the signal-cli daemon crash-loops accountless, and
+registration needs the storage lock the daemon would hold):
+
+```sh
+# Signal — from /term (same image, same $HOME the daemon will use):
+signal-cli -a +1<botnumber> register            # or `register --voice` for a voice call
+signal-cli -a +1<botnumber> verify <sms-code>
+# CAPTCHA required? Follow the URL signal-cli prints, then re-run register
+# with the captcha token it produces.
+
+# Then: add the messaging block to the vault item (see
+# values.local.yaml.example), `scripts/secrets.sh publish` (or `sync` from the
+# pod), flip messaging.enabled: true, ./upgrade.sh.
+
+# WhatsApp (optional, after messaging.whatsapp.enabled: true) — pair by QR:
+kubectl -n claude logs -f deploy/claude-workspace -c messaging-gateway
+# scan the QR from the bot number's phone: WhatsApp → Linked Devices
+```
+
+Both registrations persist on the PVC (`~/.local/share/signal-cli`,
+`~/.config/selfhosted/messaging-gateway/wa-auth/`) — pod restarts reconnect
+without re-pairing.
+
+### Chat commands
+
+`!new` fresh session · `!resume [id]` continue the newest session for the
+current cwd (this is the cross-surface handoff — start in tmux, `!resume`
+from the plane) · `!cwd <repo|path>` switch repo (bare names resolve under
+`~/code/`) · `!auto on|off` per-chat auto mode (`--permission-mode
+bypassPermissions` — no prompts at all; turn it off when you land) · `!stop`
+SIGTERM the running claude · `!status` · `!help`.
+
+Anything else is sent to claude. Replies are the final result only (no
+streaming), prefixed `[repo · session · auto?]`, chunked to ~1.9k (Signal) /
+~2.9k (WhatsApp) chars, max 4 chunks then truncated — bandwidth is the point.
+
+### Permission relay contract
+
+Without auto mode, claude runs with a read-only `--allowedTools` baseline
+(`messaging.allowedTools`); any other tool triggers
+`--permission-prompt-tool mcp__gw__approve` → the `gateway/src/approve-mcp.ts`
+stdio MCP server → the gateway's approvals socket → a chat message. Reply
+`1` allow once, `2` deny, `3` allow that tool for the rest of the session
+(in-memory; resets with the pod, which is the safe direction). No reply for
+`messaging.approvalTimeoutSeconds` (default 5m) denies.
+
+Two claude-CLI dependencies to re-verify on every image bump (the image
+tracks `claude-code@latest` at build time):
+
+- `--permission-prompt-tool` is accepted but **hidden from `--help`** as of
+  2.1.224. If it's ever dropped, the fallback is a `PreToolUse` hook (via
+  `--settings`) pointed at the same approvals socket.
+- `--permission-mode bypassPermissions` spelling.
+
+### Messaging gotchas
+
+- **Baileys ban risk**: unofficial WhatsApp client; Meta bans
+  automation-smelling numbers. Dedicated number, low volume, default-off. A
+  ban costs the number, not the account you actually use.
+- **One surface per session at a time**: chat `!resume` of a session that
+  tmux/Happy is actively driving interleaves jsonl writes. Hand off, don't
+  share.
+- **signal-cli staleness**: Signal's servers reject old clients — when
+  receiving stops working after months of neglect, bump
+  `SIGNAL_CLI_VERSION` in the Dockerfile and rebuild (pinned like ttyd,
+  but it can't rot indefinitely).
+- Turn the whole surface off with `messaging.enabled: false` (drops both
+  containers and the Secret; pairing state stays on the PVC).
 
 ## Day-2 notes
 

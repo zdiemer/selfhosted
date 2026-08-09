@@ -6,6 +6,22 @@
 ingress:
   enabled: true
 
+# Messaging surface (Signal/WhatsApp → headless claude). Enable only AFTER
+# the Signal number is registered from the term container — see README
+# "Messaging surface". The allowlists are the gateway's ONLY auth: anyone on
+# them gets a Claude with a shell on this cluster.
+#
+# messaging:
+#   enabled: true
+#   signal:
+#     number: "+15550001111"          # the bot's dedicated number (E.164)
+#     allowedSenders:
+#       - "+15552223333"              # your Signal number
+#   whatsapp:
+#     enabled: true                   # Baileys, ban risk — see values.yaml
+#     allowedSenders:
+#       - "15552223333"               # digits only (WhatsApp JID user part)
+
 # OPTIONAL — 1Password credentials for the pod itself.
 #
 # Leave this out and the pod still gets every secret: the init container unpacks

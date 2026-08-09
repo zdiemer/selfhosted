@@ -12,7 +12,10 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
-  tag: "v5"
+  # v6: adds the messaging surface — signal-cli (native binary) + the
+  #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
+  #     claude, see `messaging:` below and README "Messaging surface").
+  tag: "v6"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -168,6 +171,46 @@ bakery:
   # PI_WEB_ALLOWED_MODELS, PI_WEB_FAKE_AGENT).
   extraEnv: {}
 
+messaging:
+  # Signal/WhatsApp → headless `claude -p` in this pod's $HOME: the
+  # low-bandwidth surface (airline free-messaging wifi passes Signal/WhatsApp
+  # but not real traffic). Two extra containers: messaging-gateway (bun app
+  # baked at /opt/messaging-gateway) and a signal-cli daemon. Sessions share
+  # ~/.claude with tmux/Happy, so `!resume` in chat continues a session
+  # started at the desk. See README "Messaging surface" for pairing.
+  #
+  # Off until the Signal number is registered (see README) — the daemon
+  # crash-loops with no account, and the gateway would sit idle.
+  enabled: false
+  # Where a fresh chat runs claude. `!cwd <repo>` switches per chat.
+  defaultCwd: /home/node/code/selfhosted
+  # Minutes a permission prompt waits for a 1/2/3 reply before denying — in
+  # seconds. Generous because the whole point is spotty connectivity.
+  approvalTimeoutSeconds: 300
+  # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
+  # else round-trips "Claude wants: … reply 1/2/3" — unless a chat has
+  # `!auto on`, which skips permissions entirely for that chat.
+  allowedTools: >-
+    Read Glob Grep LS WebFetch WebSearch TodoWrite
+    Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)
+  signal:
+    enabled: true
+    # The bot's own number (E.164), registered via `signal-cli register` from
+    # the term container — a dedicated number, NOT a linked device on a
+    # personal account. Secret-ish: set in values.local.yaml.
+    number: ""
+    # ONLY these senders are heard at all (E.164). This gateway is a shell on
+    # the cluster — keep it to your own numbers. values.local.yaml.
+    allowedSenders: []
+  whatsapp:
+    # Baileys speaks the unofficial WhatsApp Web protocol: outbound websocket
+    # only (no ingress), but Meta bans automation-smelling numbers — keep it
+    # on a dedicated number, keep volume low, and expect to re-pair after a
+    # ban. Off by default; Signal is the primary channel.
+    enabled: false
+    # Sender phone numbers, digits only (JID user part, e.g. "15551234567").
+    allowedSenders: []
+
 # How this pod gets the per-chart values.local.yaml files it needs to deploy.
 secrets:
   relay:
@@ -240,3 +283,20 @@ resources:
       memory: 256Mi
     limits:
       memory: 1Gi
+  # The gateway process is tiny, but claude runs are its CHILDREN (same shape
+  # as happyDaemon) — claude-sized ceiling, idle-sized request. The gateway
+  # caps itself at 2 concurrent claude runs (GW_MAX_CONCURRENT).
+  messagingGateway:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 3Gi
+  # Native-image signal-cli daemon: no JVM heap ballooning, but give it room
+  # for attachment buffers and the receive queue.
+  signalCli:
+    requests:
+      cpu: 20m
+      memory: 128Mi
+    limits:
+      memory: 512Mi

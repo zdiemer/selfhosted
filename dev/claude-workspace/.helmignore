@@ -1,0 +1,8 @@
+# Helm stores the packaged chart inside its release Secret (hard 1MiB cap).
+# The gateway app ships in the image, not the chart — keep all of it out.
+gateway/
+Dockerfile
+build.sh
+upgrade.sh
+values.local.yaml
+values.local.tpl.yaml

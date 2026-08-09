@@ -41,6 +41,11 @@ ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 # in unattended from ~/.config/selfhosted/op-password and `secrets.sh sync`
 # works the same here as on the laptop. The relay stays as the bootstrap path.
 ARG OP_VERSION=2.38.1
+# signal-cli (GraalVM native build, no JRE) powers the messaging surface
+# (gateway/ + the signal-cli pod container). Signal's servers reject stale
+# clients, so bump this deliberately but don't let it rot — a too-old client
+# stops receiving. Registration state lives on the PVC (~/.local/share/signal-cli).
+ARG SIGNAL_CLI_VERSION=0.14.7
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
@@ -74,6 +79,9 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
  && rm -f /tmp/op.zip \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
     | tar xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh" \
+ && curl -fsSL "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz" \
+    | tar xz -C /usr/local/bin signal-cli \
+ && chmod 0755 /usr/local/bin/signal-cli \
  && curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \
     | tar xz -C /usr/local/bin --strip-components=1 \
         "tailscale_${TAILSCALE_VERSION}_amd64/tailscale" \
@@ -105,6 +113,16 @@ RUN git clone --filter=blob:none https://github.com/seemethere/bakery /opt/baker
  && git -C /opt/bakery checkout "${BAKERY_REF}" \
  && ( cd /opt/bakery && HOME=/root bun install ) \
  && chown -R 1000:1000 /opt/bakery \
+ && rm -rf /root/.bun/install/cache
+
+# The messaging gateway (Signal/WhatsApp → headless claude, see gateway/ and
+# README "Messaging surface"). In-repo app baked into this image like bakery;
+# deps resolve at build time so the pod never runs a package install. Owned by
+# uid 1000 for symmetry with /opt/bakery, though it runs read-only.
+COPY --chown=1000:1000 gateway /opt/messaging-gateway
+RUN cd /opt/messaging-gateway \
+ && HOME=/root bun install --frozen-lockfile --production \
+ && chown -R 1000:1000 /opt/messaging-gateway/node_modules \
  && rm -rf /root/.bun/install/cache
 
 # UTF-8 so the claude TUI's box-drawing renders in tmux/ttyd.
