@@ -13,6 +13,9 @@ set -euo pipefail
 RELEASE="${RELEASE:-headlamp}"
 NAMESPACE="${NAMESPACE:-headlamp}"
 CHART="${CHART:-headlamp/headlamp}"
+# Pin the chart; bump deliberately.
+# renovate: datasource=helm depName=headlamp registryUrl=https://kubernetes-sigs.github.io/headlamp/
+CHART_VERSION="${CHART_VERSION:-0.40.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
@@ -28,8 +31,8 @@ helm repo update headlamp >/dev/null
 # One namespace per project; created here rather than by the chart.
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
-echo "==> helm upgrade --install ${RELEASE} ${CHART} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES"
+echo "==> helm upgrade --install ${RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
+helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=180s

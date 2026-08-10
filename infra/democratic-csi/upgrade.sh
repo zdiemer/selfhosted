@@ -149,6 +149,11 @@ fi
 # ------------------------------------------------------------------------------
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
+# Chart.lock and charts/*.tgz are gitignored local state; refresh them from
+# Chart.yaml so a merged chart-bump PR actually deploys the new version.
+echo "==> helm dependency update"
+helm dependency update "$HERE" >/dev/null
+
 for driver in iscsi nfs; do
   RELEASE="democratic-csi-${driver}"
   echo ""

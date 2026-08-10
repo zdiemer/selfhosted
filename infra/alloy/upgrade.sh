@@ -13,6 +13,10 @@ set -euo pipefail
 RELEASE="${RELEASE:-alloy}"
 NAMESPACE="${NAMESPACE:-alloy}"
 CHART="${CHART:-grafana/alloy}"
+# Pin the chart — a surprise bump to the cluster-wide log shipper is an outage,
+# not an upgrade. Bump deliberately, reading the chart changelog.
+# renovate: datasource=helm depName=alloy registryUrl=https://grafana.github.io/helm-charts
+CHART_VERSION="${CHART_VERSION:-1.11.1}"
 SECRET="alloy-grafana-cloud"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
@@ -142,8 +146,8 @@ fi
 kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 echo "    ok: config graph resolves"
 
-echo "==> helm upgrade --install ${RELEASE} ${CHART} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES"
+echo "==> helm upgrade --install ${RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
+helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
 
 # The credentials arrive as env vars from a Secret, and env vars are read once
 # at process start. Rewriting the Secret alone leaves every running pod using

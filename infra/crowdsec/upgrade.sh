@@ -13,6 +13,7 @@ RELEASE="${RELEASE:-crowdsec}"
 NAMESPACE="${NAMESPACE:-crowdsec}"
 # Pin the chart: a surprise chart bump is how a quiet log-shipper turns into a
 # pod that won't start. Bump deliberately, reading the chart changelog.
+# renovate: datasource=helm depName=crowdsec registryUrl=https://crowdsecurity.github.io/helm-charts
 CHART_VERSION="${CHART_VERSION:-0.24.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"

@@ -16,6 +16,10 @@ set -euo pipefail
 
 RELEASE="${RELEASE:-mc}"
 NAMESPACE="${NAMESPACE:-minecraft}"
+# Pin the chart — this deploy interrupts a live world; a surprise chart bump
+# should never ride along with a routine values change. Bump deliberately.
+# renovate: datasource=helm depName=minecraft registryUrl=https://itzg.github.io/minecraft-server-charts/
+CHART_VERSION="${CHART_VERSION:-5.1.3}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 LOCAL_VALUES="${HERE}/values.local.yaml"
@@ -62,8 +66,8 @@ if [[ -n "${BACKUP_CTR:-}" ]]; then
   sleep 15
 fi
 
-echo "==> helm upgrade ${RELEASE} itzg/minecraft -n ${NAMESPACE} ${VALUE_ARGS[*]}"
-helm upgrade "$RELEASE" itzg/minecraft -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+echo "==> helm upgrade ${RELEASE} itzg/minecraft@${CHART_VERSION} -n ${NAMESPACE} ${VALUE_ARGS[*]}"
+helm upgrade "$RELEASE" itzg/minecraft --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}-minecraft" --timeout=600s
