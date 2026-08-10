@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: renovate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  # A run that overlaps its successor would fight over branches; one at a time.
+  concurrencyPolicy: Forbid
+  # If the cluster was down at 05:30, run when it comes back — within reason.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      # A wedged run (hung clone, runaway lockfile resolution) dies rather
+      # than blocking next week's.
+      activeDeadlineSeconds: 5400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: renovate
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: renovate
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              envFrom:
+                - secretRef:
+                    name: {{ .Release.Name }}-github
+              env:
+                - name: RENOVATE_CONFIG_FILE
+                  value: /etc/renovate/config.js
+                - name: RENOVATE_BASE_DIR
+                  value: /tmp/renovate
+                - name: LOG_LEVEL
+                  value: {{ .Values.logLevel | quote }}
+                {{- if .Values.dryRun }}
+                - name: RENOVATE_DRY_RUN
+                  value: {{ .Values.dryRun | quote }}
+                {{- end }}
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/renovate
+                  readOnly: true
+                - name: workdir
+                  mountPath: /tmp/renovate
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ .Release.Name }}-config
+            - name: workdir
+              emptyDir: {}
