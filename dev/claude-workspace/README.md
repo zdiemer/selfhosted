@@ -320,16 +320,84 @@ without re-pairing.
 
 ### Chat commands
 
-`!new` fresh session · `!resume [id]` continue the newest session for the
-current cwd (this is the cross-surface handoff — start in tmux, `!resume`
+`!new` / `!clear` fresh session · `!resume [id]` continue the newest session for
+the current cwd (this is the cross-surface handoff — start in tmux, `!resume`
 from the plane) · `!cwd <repo|path>` switch repo (bare names resolve under
 `~/code/`) · `!auto on|off` per-chat auto mode (`--permission-mode
-bypassPermissions` — no prompts at all; turn it off when you land) · `!stop`
-SIGTERM the running claude · `!status` · `!help`.
+bypassPermissions` — no prompts at all; turn it off when you land) ·
+`!model opus|sonnet|haiku|fable|<id>|default` · `!effort
+low|medium|high|xhigh|max|default` · `!stop` SIGTERM the running claude ·
+`!status` · `!help`.
+
+Runs default to **Opus 5 at medium effort** (`messaging.model` /
+`messaging.effort`); `!model` and `!effort` override per chat and persist in the
+state file. `!clear` is `!new` under a name that reads right in a chat — it
+drops the session pointer so the next message starts cold. The transcript itself
+stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
 
 Anything else is sent to claude. Replies are the final result only (no
-streaming), prefixed `[repo · session · auto?]`, chunked to ~1.9k (Signal) /
-~2.9k (WhatsApp) chars, max 4 chunks then truncated — bandwidth is the point.
+streaming), prefixed `[repo · session · auto?]` in a 1:1, chunked to ~1.9k
+(Signal) / ~2.9k (WhatsApp) chars, max 4 chunks then truncated — bandwidth is
+the point. Messages the gateway accepts are marked **read** on the sender's
+side, so a read receipt means "the bot has this", not "a packet arrived".
+
+Every run carries an appended system prompt (`--append-system-prompt`, so Claude
+Code's own prompt still teaches it its tools) explaining the harness: the far
+end is a phone, Markdown is not rendered so asterisks and backticks arrive
+literally, and replies should lead with the answer and stay short. Override with
+`messaging.systemPrompt`.
+
+The bot's Signal profile is set with `signal-cli updateProfile --given-name …`
+(or the daemon's `updateProfile` JSON-RPC while it holds the account lock).
+Without it the account shows as **Unknown** in everyone's client.
+
+### Group chats
+
+Off by default (`messaging.groups.enabled`), and the default is a statement:
+**the allowlist decides who may drive this shell, not who reads the output.**
+In a group, every member sees whatever claude prints. So a group run is a
+different thing from a 1:1 run:
+
+- **The room is the credential.** A group is authorised by ID
+  (`signal.allowedGroups` / `whatsapp.allowedGroups`), and then *every member*
+  may address the bot — the personal `allowedSenders` list is not consulted.
+  This is the point: a shared room is useful only if the people in it can use
+  it. Membership of a listed room does **not** grant a 1:1 conversation; a DM
+  from someone not on `allowedSenders` is still dropped.
+  With no groups listed the feature does nothing — it fails closed.
+- **`!` commands stay owner-only, everywhere.** A room grant is permission to
+  ask the bot things, not to repoint its cwd, switch its model, or wipe its
+  session — which in a shared room would be everyone's settings changed by one
+  person. Non-owner commands are ignored and logged.
+- **Un-allowlisted rooms are dropped, not buffered.** Anyone can add this number
+  to a group; holding context for rooms that will never get an answer is memory
+  spent on strangers' conversations.
+
+- **Mention-gated** (`groups.requireMention`) — the bot answers only when
+  actually tagged: a real @-mention, or a reply to one of its own messages.
+  Structured address only. Matching the bot's *name* in the message text was
+  tried and removed — "claude" comes up in ordinary group conversation, and the
+  bot answering that is the exact failure this gate exists to prevent.
+  ⚠️ Signal mentions carry the sender's **ACI**, not the number, and signal-cli
+  does not expose the account's own ACI over JSON-RPC (`listAccounts` returns
+  the number only). The gateway reads it from
+  `~/.local/share/signal-cli/data/accounts.json` at startup — if that lookup
+  fails it logs `could not resolve own ACI` and **no @-mention will ever match**.
+- **A hard tool ceiling** (`groups.allowedTools`, default `WebFetch
+  WebSearch`) — no filesystem, no shell, no cluster. Anything outside the list
+  is **denied outright, not prompted**: the room would see the prompt, only one
+  member could answer it, and a "3 = allow all" from that member would quietly
+  widen what everyone else can reach for the rest of the session.
+- **The whole room is context** — every message is buffered and handed to the
+  next run, not just the allowlisted sender's. "What did we decide?" is
+  unanswerable otherwise. In memory only, newest `groups.contextLines`.
+- **Rate-limited** (`groups.rateLimit` per `groups.rateWindowMinutes`) — this
+  is a personal Claude subscription, and a group is the one surface where other
+  people can spend it.
+- **No banner** — group replies skip the `[repo · session · auto?]` prefix.
+  That's workspace bookkeeping and means nothing to the rest of the room.
+
+Auto mode is never available in a group, regardless of `!auto`.
 
 ### Permission relay contract
 
@@ -351,6 +419,23 @@ tracks `claude-code@latest` at build time):
 
 ### Messaging gotchas
 
+- **Baileys is pinned EXACTLY, never with a caret.** Upstream published
+  `6.17.16` on 2025-03-04, *after* the 6.7.x line, so semver ranks it above the
+  genuinely newer `6.7.24` (2026-07-29) and `^6.7.x` resolves **backwards** to a
+  year-old client. WhatsApp refuses that client's stale protocol version at the
+  handshake with a `405`, before pairing ever starts — the symptom is a
+  reconnect loop that never prints a QR. The gateway also calls
+  `fetchLatestBaileysVersion()` at connect, because the version baked into the
+  library goes stale between releases and is refused the same way. Bump the pin
+  deliberately; never restore the caret.
+- **Signal identifies senders by ACI (UUID), not phone number.** Phone-number
+  privacy has been the default since 2024, so `sourceNumber` is absent for most
+  senders and the allowlist matches on whatever identifiers the envelope
+  carries. Put both the E.164 number and the UUID in `allowedSenders`. Find the
+  UUID in the daemon log: `kubectl -n claude logs deploy/claude-workspace -c
+  signal-cli` prints `Envelope from: "Name" <uuid>`. The ACI is stable — it
+  survives number changes, re-links, and reinstalls; only deleting the account
+  and re-registering mints a new one.
 - **Baileys ban risk**: unofficial WhatsApp client; Meta bans
   automation-smelling numbers. Dedicated number, low volume, default-off. A
   ban costs the number, not the account you actually use.

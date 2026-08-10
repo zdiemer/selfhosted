@@ -6,6 +6,10 @@ export interface ChatState {
   sessionId?: string;
   cwd: string;
   auto: boolean;
+  /** Per-chat overrides for config.model / config.effort, set with !model and
+   * !effort. Unset means "follow the chart default". */
+  model?: string;
+  effort?: string;
   updatedAt: string;
 }
 

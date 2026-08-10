@@ -391,6 +391,30 @@ spec:
               value: {{ .Values.messaging.approvalTimeoutSeconds | quote }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}
+            - name: GW_MODEL
+              value: {{ .Values.messaging.model | quote }}
+            - name: GW_EFFORT
+              value: {{ .Values.messaging.effort | quote }}
+            {{- with .Values.messaging.systemPrompt }}
+            - name: GW_SYSTEM_PROMPT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: GW_GROUPS_ENABLED
+              value: {{ .Values.messaging.groups.enabled | quote }}
+            - name: GW_GROUPS_REQUIRE_MENTION
+              value: {{ .Values.messaging.groups.requireMention | quote }}
+            - name: GW_GROUP_ALLOWED_TOOLS
+              value: {{ .Values.messaging.groups.allowedTools | quote }}
+            - name: GW_GROUP_CONTEXT_LINES
+              value: {{ .Values.messaging.groups.contextLines | quote }}
+            - name: GW_GROUP_RATE_LIMIT
+              value: {{ .Values.messaging.groups.rateLimit | quote }}
+            - name: GW_GROUP_RATE_WINDOW_MINUTES
+              value: {{ .Values.messaging.groups.rateWindowMinutes | quote }}
+            {{- with .Values.messaging.groups.systemPrompt }}
+            - name: GW_GROUP_SYSTEM_PROMPT
+              value: {{ . | quote }}
+            {{- end }}
           envFrom:
             # SIGNAL_NUMBER / SIGNAL_ALLOWED_SENDERS / WA_ALLOWED_SENDERS —
             # the sender allowlist is the gateway's ONLY auth.

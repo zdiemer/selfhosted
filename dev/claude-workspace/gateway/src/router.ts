@@ -9,8 +9,24 @@ import {
   runClaude,
   stop,
 } from "./claude.ts";
+import {
+  groupRateAllows,
+  groupRateResetMinutes,
+  isGroupChat,
+  recordGroupMessage,
+  takeGroupContext,
+} from "./chat.ts";
 import { config } from "./config.ts";
 import { getChat, updateChat } from "./state.ts";
+
+// Aliases accepted by !model, so a phone doesn't have to type a full model id.
+const MODEL_ALIASES: Record<string, string> = {
+  opus: "claude-opus-5",
+  sonnet: "claude-sonnet-5",
+  haiku: "claude-haiku-4-5",
+  fable: "claude-fable-5",
+};
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 export interface Transport {
   /** Chunk limit per message for this surface. */
@@ -39,14 +55,71 @@ export async function sendTo(chatKey: string, text: string): Promise<void> {
 const queues = new Map<string, string[]>();
 let droppedLog = 0;
 
-export function handleInbound(chatKey: string, text: string): void {
+export interface InboundMeta {
+  /** Display label for the sender, used for group context lines. */
+  sender: string;
+  /**
+   * This message is permitted to drive a run. In a 1:1 that means the sender is
+   * on the personal allowlist; in a group it means the GROUP is allowlisted —
+   * any member of an approved room qualifies.
+   */
+  allowed: boolean;
+  /**
+   * Sender is on the personal allowlist. Required for `!` commands anywhere:
+   * a group grant is permission to ask the bot things, not to reconfigure it.
+   */
+  owner: boolean;
+  /** The bot was tagged in this message (groups only). */
+  mentioned: boolean;
+}
+
+export function handleInbound(
+  chatKey: string,
+  text: string,
+  meta: InboundMeta,
+): void {
   const body = text.trim();
   if (!body) return;
+
+  if (isGroupChat(chatKey)) {
+    // Everything said in the room becomes context, whoever said it — that is
+    // the point of a group, and answering "what did we land on?" needs the
+    // messages the bot was never addressed in.
+    recordGroupMessage(chatKey, meta.sender, body);
+    if (!meta.allowed) return;
+    if (config.groups.requireMention && !meta.mentioned) {
+      // Logged because the silent version of this is genuinely hard to
+      // diagnose: typing "@claude" by hand does NOT create a Signal mention —
+      // only picking the bot from the autocomplete does — and the two are
+      // indistinguishable in the chat UI.
+      console.log(`group: ${meta.sender} not a mention, skipped`);
+      return;
+    }
+    if (!groupRateAllows(chatKey)) {
+      void sendTo(
+        chatKey,
+        `⚠ group limit reached (${config.groups.rateLimit} per ` +
+          `${config.groups.rateWindowMs / 60_000}m); resets in ` +
+          `~${groupRateResetMinutes(chatKey)}m`,
+      );
+      return;
+    }
+  } else if (!meta.allowed) {
+    return;
+  }
 
   // Digit replies feed a pending permission prompt, never claude.
   if (hasPending(chatKey) && answerPending(chatKey, body)) return;
 
   if (body.startsWith("!")) {
+    // Owner-only, everywhere. Membership of an allowlisted group buys the
+    // right to ask the bot things, not to repoint its cwd, switch its model, or
+    // wipe its session — and in a shared room those would be everyone's
+    // settings, changed by one person.
+    if (!meta.owner) {
+      console.log(`group: ignoring ${body.split(/\s+/)[0]} from ${meta.sender}`);
+      return;
+    }
     void handleCommand(chatKey, body);
     return;
   }
@@ -71,13 +144,25 @@ async function drain(chatKey: string): Promise<void> {
   }
   const message = queue[0];
   try {
-    const result = await runClaude(chatKey, message);
-    const chat = getChat(chatKey);
-    const prefix = replyPrefix(chat.cwd, chat.sessionId, chat.auto);
-    await sendTo(
+    const group = isGroupChat(chatKey);
+    const result = await runClaude(
       chatKey,
-      `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
+      message,
+      group ? takeGroupContext(chatKey) : "",
     );
+    // A group reply is just an answer in a conversation — the cwd/session/auto
+    // banner is workspace bookkeeping and means nothing to the other people in
+    // the room, so it stays on the 1:1 surface.
+    if (group) {
+      await sendTo(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
+    } else {
+      const chat = getChat(chatKey);
+      const prefix = replyPrefix(chat.cwd, chat.sessionId, chat.auto);
+      await sendTo(
+        chatKey,
+        `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
+      );
+    }
   } catch (err) {
     await sendTo(chatKey, `⚠ gateway error: ${String(err)}`);
   } finally {
@@ -93,8 +178,43 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
 
   switch (cmd) {
     case "!new":
+    case "!clear":
+      // Drops the session pointer, so the next message starts a run with no
+      // history. The old transcript stays on the PVC under ~/.claude — this
+      // forgets it, it doesn't delete it, and `!resume <id>` can still reach it.
       updateChat(chatKey, { sessionId: undefined });
-      return sendTo(chatKey, "✓ next message starts a fresh session");
+      return sendTo(chatKey, "✓ history cleared — next message starts fresh");
+    case "!model": {
+      if (!arg)
+        return sendTo(
+          chatKey,
+          `model: ${chat.model ?? config.model} (default ${config.model})\n` +
+            `usage: !model ${Object.keys(MODEL_ALIASES).join("|")}|<model-id>|default`,
+        );
+      if (arg === "default") {
+        updateChat(chatKey, { model: undefined });
+        return sendTo(chatKey, `✓ model back to default (${config.model})`);
+      }
+      const model = MODEL_ALIASES[arg] ?? arg;
+      updateChat(chatKey, { model });
+      return sendTo(chatKey, `✓ model ${model} (applies to the next message)`);
+    }
+    case "!effort": {
+      if (!arg)
+        return sendTo(
+          chatKey,
+          `effort: ${chat.effort ?? config.effort} (default ${config.effort})\n` +
+            `usage: !effort ${EFFORT_LEVELS.join("|")}|default`,
+        );
+      if (arg === "default") {
+        updateChat(chatKey, { effort: undefined });
+        return sendTo(chatKey, `✓ effort back to default (${config.effort})`);
+      }
+      if (!EFFORT_LEVELS.includes(arg))
+        return sendTo(chatKey, `usage: !effort ${EFFORT_LEVELS.join("|")}`);
+      updateChat(chatKey, { effort: arg });
+      return sendTo(chatKey, `✓ effort ${arg}`);
+    }
     case "!resume": {
       const id = arg || latestSessionId(chat.cwd);
       if (!id) return sendTo(chatKey, `no sessions found for ${chat.cwd}`);
@@ -134,7 +254,10 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
         [
           `cwd: ${chat.cwd}`,
           `session: ${chat.sessionId ?? "(none)"}`,
-          `auto: ${chat.auto ? "on" : "off"}`,
+          `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
+          isGroupChat(chatKey)
+            ? `group: tools limited to ${config.groups.allowedTools}`
+            : `auto: ${chat.auto ? "on" : "off"}`,
           `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}`,
         ].join("\n"),
       );
@@ -142,7 +265,8 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
     case "!help":
       return sendTo(
         chatKey,
-        "!new · !resume [id] · !cwd <repo|path> · !auto on|off · !stop · !status\n" +
+        "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
+          "!model <name> · !effort <level> · !stop · !status\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it",
       );
     default:
@@ -150,10 +274,33 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
   }
 }
 
-/** Allowlist gate. Logs (rate-limited) and drops anything unknown. */
-export function isAllowed(sender: string, allowed: string[]): boolean {
-  if (allowed.includes(sender)) return true;
+/**
+ * Allowlist gate. Logs (rate-limited) and drops anything unknown.
+ *
+ * Takes several identifiers because one sender can arrive under more than one:
+ * Signal sends an ACI (UUID) and only includes the phone number when the sender
+ * shares it, which phone-number privacy makes the exception rather than the
+ * rule. A match on ANY identifier admits the sender, so an entry in
+ * values.local.yaml may be an E.164 number or a UUID, and listing both survives
+ * either one going missing.
+ */
+export function matchesAllowlist(
+  sender: string | string[],
+  allowed: string[],
+): boolean {
+  const ids = (Array.isArray(sender) ? sender : [sender]).filter(Boolean);
+  return ids.some((id) => allowed.includes(id));
+}
+
+export function isAllowed(
+  sender: string | string[],
+  allowed: string[],
+): boolean {
+  const ids = (Array.isArray(sender) ? sender : [sender]).filter(Boolean);
+  if (matchesAllowlist(ids, allowed)) return true;
   if (droppedLog++ % 20 === 0)
-    console.warn(`dropped message from non-allowlisted sender ${sender}`);
+    console.warn(
+      `dropped message from non-allowlisted sender ${ids.join(" / ") || "(unidentified)"}`,
+    );
   return false;
 }

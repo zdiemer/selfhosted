@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 import { type ChatState, getChat, updateChat } from "./state.ts";
 
@@ -52,11 +53,38 @@ function mcpConfigPath(chatKey: string): string {
 export async function runClaude(
   chatKey: string,
   message: string,
+  contextPrefix = "",
 ): Promise<RunResult> {
   const chat: ChatState = getChat(chatKey);
-  const args = ["-p", message, "--output-format", "json"];
+  const group = isGroupChat(chatKey);
+  const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
+  const args = ["-p", prompt, "--output-format", "json"];
+  args.push("--model", chat.model ?? config.model);
+  args.push("--effort", chat.effort ?? config.effort);
+  // Append rather than replace: Claude Code's own system prompt is what tells
+  // it which tools exist. This only adds what it can't know — that the far end
+  // is a phone, not a terminal.
+  const systemPrompt = group
+    ? `${config.systemPrompt}\n\n${config.groups.systemPrompt}`
+    : config.systemPrompt;
+  if (systemPrompt) args.push("--append-system-prompt", systemPrompt);
   if (chat.sessionId) args.push("--resume", chat.sessionId);
-  if (chat.auto) {
+  if (group) {
+    // Groups never get auto mode and never get an interactive prompt: the room
+    // reads every reply, and only one member is even on the allowlist to
+    // answer. The approval relay is still wired up, but approvals.ts denies
+    // outright for a group key — so this restricted set is a hard ceiling
+    // rather than the starting point of a negotiation.
+    args.push(
+      "--permission-prompt-tool",
+      "mcp__gw__approve",
+      "--mcp-config",
+      mcpConfigPath(chatKey),
+      "--strict-mcp-config",
+      "--allowedTools",
+      config.groups.allowedTools,
+    );
+  } else if (chat.auto) {
     args.push("--permission-mode", "bypassPermissions");
   } else {
     // --strict-mcp-config keeps the headless run from loading the workspace's

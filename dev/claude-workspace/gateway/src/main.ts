@@ -43,7 +43,12 @@ if (process.env.GW_STDIN === "true") {
   });
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (line) =>
-    handleInbound("stdin:local", String(line)),
+    handleInbound("stdin:local", String(line), {
+      sender: "stdin",
+      allowed: true,
+      owner: true,
+      mentioned: true,
+    }),
   );
   console.log("stdin transport ready — type a message:");
 }

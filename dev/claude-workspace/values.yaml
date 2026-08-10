@@ -12,10 +12,24 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v11: groups are allowlisted by ROOM — every member of a listed group may
+  #      address the bot, with `!` commands still owner-only.
+  # v10: read receipts follow the mention gate — in a group the bot only marks
+  #      read what it will actually answer.
+  # v9: group mentions are structured-only — a real @-mention or a reply to the
+  #     bot. Resolves the account's own ACI from the signal-cli account store,
+  #     without which no Signal @-mention can ever match.
+  # v8: messaging gains model/effort switching (!model, !effort, !clear), a
+  #     harness system prompt (plain text, phone-shaped replies), read
+  #     receipts, and mention-gated group chats with their own tool ceiling.
+  # v7: fixes the messaging surface's first contact with both networks — pins
+  #     baileys exactly (a caret resolved *backwards* to a year-old client that
+  #     WhatsApp refuses with a 405) and matches the Signal allowlist on the
+  #     sender's ACI, which is the only identifier Signal actually sends.
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v6"
+  tag: "v11"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -193,6 +207,51 @@ messaging:
   allowedTools: >-
     Read Glob Grep LS WebFetch WebSearch TodoWrite
     Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)
+  # Model and reasoning depth for every run. `!model` / `!effort` override per
+  # chat at runtime; these are the defaults every chat starts from.
+  model: claude-opus-5
+  effort: medium
+  # Appended to Claude Code's own system prompt — it teaches the run that the
+  # far end is a phone (plain text, no Markdown, short replies). Leave empty to
+  # use the gateway's built-in default; set it here to override entirely.
+  systemPrompt: ""
+  groups:
+    # ⚠️ OFF, deliberately, for two reasons.
+    #
+    # Disclosure: every member of a group sees whatever claude prints, so the
+    # sender allowlist decides who may *drive* the bot but not who *reads* it.
+    #
+    # Authority: in a group the ROOM is the credential — every member of a
+    # listed group may address the bot, and the personal sender allowlist is
+    # not consulted. That is deliberate (it is what makes a shared room useful)
+    # and it is bounded: group runs get `allowedTools` only, never auto mode,
+    # and share one rate limit. `!` commands stay owner-only. But everyone in
+    # the room can spend the subscription, so allowlist rooms you'd hand a
+    # metered API key to — see signal.allowedGroups / whatsapp.allowedGroups.
+    #
+    # With no groups listed, this does nothing: it fails closed.
+    enabled: false
+    # Only answer when actually tagged — a real @-mention, or a reply to one of
+    # the bot's own messages. Structured address only: matching the bot's name
+    # in the message text was tried and removed, because "claude" comes up in
+    # ordinary conversation and answering that is the failure this prevents.
+    # Off means it answers every allowlisted message in the room, which no
+    # group tolerates for long.
+    requireMention: true
+    # Groups get their own, much smaller tool set — no filesystem, no shell, no
+    # writes. Anything outside this list is denied outright rather than
+    # prompted: the room would see the prompt, and only one member could answer.
+    allowedTools: WebFetch WebSearch
+    # Lines of surrounding group conversation handed to the model as context.
+    # The whole room's chat is included, not just the allowlisted sender's —
+    # "what did we decide?" is unanswerable otherwise.
+    contextLines: 50
+    # Runs per group per window. This is a personal Claude subscription, and a
+    # group is the one surface where other people can spend it.
+    rateLimit: 20
+    rateWindowMinutes: 60
+    # Extra system prompt for group runs only (empty = gateway default).
+    systemPrompt: ""
   signal:
     enabled: true
     # The bot's own number (E.164), registered via `signal-cli register` from
@@ -201,7 +260,13 @@ messaging:
     number: ""
     # ONLY these senders are heard at all (E.164). This gateway is a shell on
     # the cluster — keep it to your own numbers. values.local.yaml.
+    #
+    # Signal identifies senders by ACI (UUID), not number, under phone-number
+    # privacy — list BOTH. Find the UUID in the daemon log's `Envelope from:`.
     allowedSenders: []
+    # Group IDs whose members may all address the bot (see messaging.groups).
+    # Base64, from the daemon log's `Group info: Id:`. values.local.yaml.
+    allowedGroups: []
   whatsapp:
     # Baileys speaks the unofficial WhatsApp Web protocol: outbound websocket
     # only (no ingress), but Meta bans automation-smelling numbers — keep it
@@ -210,6 +275,9 @@ messaging:
     enabled: false
     # Sender phone numbers, digits only (JID user part, e.g. "15551234567").
     allowedSenders: []
+    # Group JIDs whose members may all address the bot, e.g.
+    # "1234567890-1234567890@g.us". values.local.yaml.
+    allowedGroups: []
 
 # How this pod gets the per-chart values.local.yaml files it needs to deploy.
 secrets:

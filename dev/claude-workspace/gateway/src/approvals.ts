@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 
 // The approve-mcp stdio server (grandchild of this process, via claude) dials
@@ -97,6 +98,20 @@ function handleRequest(
     sock.write(JSON.stringify(verdict) + "\n");
     sock.end();
   };
+
+  // Groups are never asked. Anything outside groups.allowedTools is refused
+  // here rather than relayed: the room would see the prompt, only one member
+  // could answer it, and a "3 = allow all" from that member would quietly widen
+  // what everyone else can reach for the rest of the session.
+  if (isGroupChat(req.chatKey)) {
+    finish({
+      behavior: "deny",
+      message:
+        `${req.toolName} is not available in group chats. ` +
+        "Answer from the conversation, or use WebFetch/WebSearch.",
+    });
+    return;
+  }
 
   if (autoApproved.get(req.chatKey)?.has(req.toolName)) {
     finish({ behavior: "allow", updatedInput: req.input });
