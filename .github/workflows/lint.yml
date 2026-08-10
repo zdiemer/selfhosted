@@ -1,0 +1,29 @@
+# PR sanity for a repo whose deploys are manual: is every chart still
+# renderable, does appVersion mirror the image tag, do the shell scripts
+# parse. This is the check that makes Renovate bump-PRs reviewable.
+#
+# No submodule checkout on purpose: the submodules are private repos with
+# their own CI, and this repo's checks only cover first-party charts.
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: scripts/ci-lint-charts.sh
+      - run: scripts/check-appversion-drift.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # severity=error only: parse errors and outright bugs, not style nits.
+      - run: |
+          git ls-files '*.sh' | xargs shellcheck --severity=error

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared helper library for k3s cluster management scripts.
 # Source this file; do not execute directly.
 
