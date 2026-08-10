@@ -65,7 +65,7 @@ updater:
   # reversible on its own (revert + one tick + TTL). Only after it's verified
   # from a tailnet device — and the Cloudflare paths for the ex-public hosts
   # are confirmed — does the router's port-forward deletion follow. See README.
-  mode: wan-echo
+  mode: tailnet
 
   # tailnet mode only. The updater walks this list in order and sends the first
   # node that is Ready, so a single node going down is repointed within one
