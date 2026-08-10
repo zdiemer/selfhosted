@@ -50,9 +50,12 @@ users: {}
 accessControl:
   default_policy: "two_factor"
   rules:
-    # RomM — friends sign in with TOTP; admins with any 2nd factor.
-    - domain: "romm.zachd.duckdns.org"
-      policy: "two_factor"
+    # NOTE: no RomM rules here, deliberately. RomM's Ingress carries no
+    # forward-auth middleware (it uses its own login + optional OIDC), so a
+    # request for romm.* never reaches Authelia's authz endpoint and any rule
+    # for it would never evaluate. If RomM is ever put behind forward-auth,
+    # default_policy: two_factor already covers it — add an explicit rule only
+    # to loosen it.
     # KeeWeb (browser KeePass client). WebDAV is NOT here — native KeePass
     # apps can't do an OIDC redirect, so webdav.zachd uses its own static
     # Basic auth (see ../keepass/).
@@ -73,8 +76,7 @@ accessControl:
     # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
     # already two_factor, so these are explicit-for-parity rather than strictly
     # required; keeping them mirrors the duckdns hosts as those get retired.
-    - domain: "romm.diemer.codes"
-      policy: "two_factor"
+    # (No romm.diemer.codes here either — same reason as above.)
     - domain: "keepass.diemer.codes"
       policy: "two_factor"
 

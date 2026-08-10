@@ -64,15 +64,20 @@ exemptNamespaces:
   - kube-system
 
 binding:
-  # HOW FAILURES ARE HANDLED. Start at Warn+Audit: a non-conforming Ingress is
-  # still admitted, but the client gets a warning and the API server writes an
-  # audit annotation. That is deliberate — flipping straight to Deny would mean
-  # a foreign repo's next routine deploy fails on a rule its authors have never
-  # read, and whatnowgg redeploys every few hours.
+  # HOW FAILURES ARE HANDLED. Now ENFORCING: a non-conforming Ingress is
+  # rejected at admission (Deny), and the rejection is also written to the audit
+  # log (Audit). This started as Warn+Audit to avoid breaking a foreign repo's
+  # deploy on a rule its authors had never read; it was flipped to Deny once
+  # every live Ingress across all namespaces was verified to pass all three
+  # rules (class=traefik, entrypoint=websecure, certresolver-or-edge-TLS).
   #
-  # Flip to ["Deny"] once the warnings have been quiet for a week. Everything in
-  # the cluster passes as of this chart's first deploy, so the wait is about
-  # catching what redeploys on a slower cycle, not about fixing a backlog.
+  # WATCH-POINT: whatnowgg redeploys its dev env here every few hours from a
+  # separate repo, and its Ingress only pins the entrypoint when TLS is enabled.
+  # It passes today. If a whatnowgg deploy ever starts failing admission, that
+  # is this rule doing its job — not a regression here. `failurePolicy: Ignore`
+  # (see the template) means a policy-evaluation error still fails open, so the
+  # only thing Deny blocks is a genuine rule violation. Revert to [Warn, Audit]
+  # if you need to unblock a foreign deploy in a hurry.
   validationActions:
-    - Warn
+    - Deny
     - Audit
