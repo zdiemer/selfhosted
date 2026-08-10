@@ -43,6 +43,12 @@ Fine-grained PAT scoped to the repos in `repositories:`, permissions:
 Contents RW, Pull requests RW, Issues RW (dependency dashboard),
 Workflows RW (action bumps), Metadata R. It is NOT the laptop's `gh` token.
 
+Commit statuses RW is deliberately not required: the preset nulls
+`statusCheckNames`, because a 403 on the status POST aborts the whole run
+as "repository changed" (found the hard way on first live run). Add the
+permission and remove that block if you ever want stability-days statuses
+on PRs.
+
 ## Rollout / operations
 
 - `dryRun: "full"` in values.yaml logs what would happen without opening PRs.

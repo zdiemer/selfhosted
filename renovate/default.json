@@ -12,6 +12,12 @@
   "branchConcurrentLimit": 10,
   "minimumReleaseAge": "3 days",
   "rangeStrategy": "pin",
+  "statusCheckNames": {
+    "artifactError": null,
+    "configValidation": null,
+    "mergeConfidence": null,
+    "minimumReleaseAge": null
+  },
   "git-submodules": {
     "enabled": false,
     "description": "sync-submodules.sh owns submodule pointers; Renovate must never race it"
