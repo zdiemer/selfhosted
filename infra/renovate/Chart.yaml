@@ -1,0 +1,10 @@
+apiVersion: v2
+name: renovate
+description: >-
+  Self-hosted Renovate as a weekly CronJob — opens version-bump PRs across the
+  zdiemer repos. PRs propose, a human merges, upgrade.sh deploys.
+type: application
+version: 1.0.0
+# appVersion tracks the renovate image tag in values.yaml (image.tag).
+# renovate: image=renovate/renovate
+appVersion: "44.23.0"

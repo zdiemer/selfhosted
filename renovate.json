@@ -1,0 +1,70 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "selfhosted: helm-values covers image.repository/tag pairs in values.yaml; the custom managers cover everything the annotation comments mark — CHART_VERSION pins in upgrade.sh, ARG pins in Dockerfiles, combined repo:tag image strings in values/templates, and Chart.yaml appVersion (same depName as the values tag, so both land in one PR). Deliberately unmanaged: minecraft MODRINTH/MODS (unsortable IDs, moves with the client pack), claude-code@latest, OP_VERSION/BAKERY_REF, kelsey-green's git-sync deploy branch, and everything ghcr.io/zdiemer/*.",
+  "extends": ["local>zdiemer/selfhosted//renovate/default"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "CHART_VERSION pins in values-only upgrade.sh scripts",
+      "managerFilePatterns": ["/(^|/)upgrade\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s*\\nCHART_VERSION=\"\\$\\{CHART_VERSION:-(?<currentValue>[^}\"]+)\\}\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "ARG *_VERSION pins in Dockerfiles",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\nARG [A-Z_]+=(?<currentValue>\\S+)"
+      ],
+      "versioningTemplate": "{{#if versioning}}{{versioning}}{{else}}semver-coerced{{/if}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Annotated combined repo:tag image strings in values files and templates",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*image:\\s*\"?[a-z0-9.\\-/]+:(?<currentValue>[A-Za-z0-9][\\w.\\-]*)\"?"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Chart.yaml appVersion mirrors the chart's primary image tag (scripts/check-appversion-drift.sh enforces the convention)",
+      "managerFilePatterns": ["/(^|/)Chart\\.yaml$/"],
+      "matchStrings": [
+        "# renovate: image=(?<depName>\\S+)\\s*\\nappVersion: \"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "arr stack moves together",
+      "matchFileNames": ["media/arr/**"],
+      "groupName": "arr stack"
+    },
+    {
+      "description": "buildkit lockstep: infra/buildkit image tag + claude-workspace buildctl ARG must match",
+      "matchPackageNames": ["moby/buildkit"],
+      "groupName": "buildkit"
+    },
+    {
+      "description": "claude-workspace tool binaries in one PR",
+      "matchFileNames": ["dev/claude-workspace/Dockerfile"],
+      "groupName": "claude-workspace tools"
+    },
+    {
+      "description": "minecraft deploys only in player-offline windows; PRs on demand via the dashboard",
+      "matchFileNames": ["minecraft/**"],
+      "labels": ["renovate", "needs-offline-window"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "prebackuppod dump-image majors follow the app DB major, manually (pg_dump/mariadb-dump must match their servers)",
+      "matchFileNames": ["infra/k8up/templates/prebackuppods.yaml"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}

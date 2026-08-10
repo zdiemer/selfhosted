@@ -6,7 +6,8 @@ image:
 # RomM requires MariaDB. There is no SQLite option: ROMM_DB_DRIVER defaults to
 # "mariadb" and the app will not start without a reachable server.
 db:
-  image: mariadb:11.4
+  # renovate: datasource=docker depName=mariadb
+  image: mariadb:11.4.12
   name: romm
   user: romm
   password: ""              # values.local.yaml

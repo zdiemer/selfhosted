@@ -1,0 +1,47 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared Renovate defaults for every zdiemer repo. Extended as github>zdiemer/selfhosted//renovate/default. PRs propose; a human merges; deploys stay manual.",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled"
+  ],
+  "labels": ["renovate"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "branchConcurrentLimit": 10,
+  "minimumReleaseAge": "3 days",
+  "rangeStrategy": "pin",
+  "git-submodules": {
+    "enabled": false,
+    "description": "sync-submodules.sh owns submodule pointers; Renovate must never race it"
+  },
+  "packageRules": [
+    {
+      "description": "First-party images: build.sh/upgrade.sh own these, and sync-submodules.sh's pin-advance predicate depends on tag == deployed",
+      "matchPackageNames": ["ghcr.io/zdiemer/**"],
+      "enabled": false
+    },
+    {
+      "description": "DB engines under live data: two-week soak before a PR appears",
+      "matchPackageNames": ["/(^|/)postgres$/", "/(^|/)mariadb$/", "/(^|/)mongo$/", "/(^|/)redis$/"],
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "DB majors never auto-PR — dashboard approval only",
+      "matchPackageNames": ["/(^|/)postgres$/", "/(^|/)mariadb$/", "/(^|/)mongo$/", "/(^|/)redis$/"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "All majors gated behind the dependency dashboard during initial rollout; loosen per-repo once trust is earned",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "GitHub Actions bumps grouped into one PR per repo",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
+  ]
+}

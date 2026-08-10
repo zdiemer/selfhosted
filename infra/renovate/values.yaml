@@ -1,0 +1,42 @@
+# Renovate runner. The -full image ships helm/uv/pipenv/npm via containerbase,
+# so lock-artifact regeneration (Chart.lock, uv.lock, package-lock.json,
+# Pipfile.lock) works without per-run tool installs. Renovate manages its own
+# tag here via the helm-values manager — it PRs its own upgrades.
+image:
+  repository: renovate/renovate
+  tag: "44.23.0-full"
+  pullPolicy: IfNotPresent
+
+# Saturday 05:30 — PRs and the dependency dashboard are waiting with coffee.
+# The weekly cadence IS the schedule; no `schedule:` in renovate config, so
+# there aren't two overlapping schedulers.
+schedule: "30 5 * * 6"
+
+# Onboarding a repo = add it here and redeploy. Explicit list, no autodiscover:
+# what Renovate may touch is visible in git.
+repositories:
+  - zdiemer/selfhosted
+
+# "extract" | "lookup" | "full" — set while rolling out to see what Renovate
+# WOULD do (job logs) without it opening PRs. Empty = live.
+dryRun: "full"
+
+# debug is a firehose; info is enough once trusted.
+logLevel: info
+
+# Renovate adds no co-author trailers; commits/PRs appear as this identity.
+gitAuthor: "Renovate Bot <renovate@users.noreply.github.com>"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    # Lockfile regeneration (npm/uv resolution) is the memory hog.
+    memory: 3Gi
+
+# github.pat comes from values.local.yaml (op://homelab/infra-renovate).
+# Fine-grained PAT, all zdiemer repos Renovate manages:
+#   Contents RW, Pull requests RW, Issues RW, Workflows RW, Metadata R.
+# Same token serves RENOVATE_TOKEN (platform) and GITHUB_COM_TOKEN
+# (release-notes fetching).

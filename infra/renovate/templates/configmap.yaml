@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/name: renovate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  # Runner-level config only. Everything about HOW updates behave (limits,
+  # grouping, gating) lives in-repo: renovate/default.json + each repo's
+  # renovate.json, where it's versioned and reviewable.
+  config.js: |
+    module.exports = {
+      platform: 'github',
+      autodiscover: false,
+      repositories: [
+    {{- range .Values.repositories }}
+        '{{ . }}',
+    {{- end }}
+      ],
+      // A repo without renovate.json gets an onboarding PR instead of
+      // surprise update PRs.
+      onboarding: true,
+      onboardingConfigFileName: 'renovate.json',
+      requireConfig: 'required',
+      gitAuthor: '{{ .Values.gitAuthor }}',
+    };

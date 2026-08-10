@@ -14,6 +14,7 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 LINT_SKIP=(
   infra/democratic-csi
   infra/k8up
+  infra/renovate
 )
 
 # `required` secrets in values.local.yaml block a default render.
@@ -29,6 +30,7 @@ TEMPLATE_SKIP=(
   infra/duckdns
   infra/egress-proxy
   infra/k8up
+  infra/renovate
   media/arr
   web/apartment-watch
   web/kelsey-green
