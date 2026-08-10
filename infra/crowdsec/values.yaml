@@ -1,0 +1,69 @@
+# CrowdSec — detection over the Traefik access log. DETECTION ONLY, today.
+#
+# These are values for the upstream crowdsec/crowdsec chart (no local Chart.yaml
+# — upgrade.sh drives `helm upgrade crowdsec/crowdsec` directly, same wrapper
+# pattern as minecraft/).
+#
+#     traefik pod stdout ──/var/log/containers──▶ agent DaemonSet (parse, match
+#     scenarios) ──▶ LAPI (decisions, PVC-backed) ──▶ nobody, yet
+#
+# WHY NO BOUNCER. The obvious enforcement point — Traefik's CrowdSec plugin —
+# fetches from plugins.traefik.io at every Traefik pod start. With Recreate
+# strategy and a single replica, a failed fetch turns any routine restart into
+# an extended cluster-wide ingress outage. Not worth it. When enforcement is
+# wanted, the right bouncer is Cloudflare's (blocks at the CF edge, zero
+# Traefik involvement) — once DuckDNS is tailnet-only, Cloudflare is the only
+# public HTTP path, so edge blocking is complete coverage anyway.
+#
+# Decisions are still made and visible (`cscli alerts list`, `cscli metrics`
+# in the lapi pod, or the console if enrolled) — they just don't block. That
+# is the point: see what detection fires for a few weeks before letting it
+# cut anyone off.
+
+# k3s runs containerd — the raw-log parser needs to know (docker vs cri format).
+container_runtime: containerd
+
+agent:
+  # Which pod logs the DaemonSet tails from /var/log/containers on each node.
+  # Traefik is the cluster's single ingress choke point, so this one program is
+  # a complete record of external HTTP by construction.
+  acquisition:
+    - namespace: kube-system
+      podName: traefik-*
+      program: traefik
+  env:
+    - name: COLLECTIONS
+      value: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 250Mi
+
+lapi:
+  # Bouncer API keys + the decisions DB live here; losing them means
+  # re-registering everything, so both PVCs stay on (chart default sizes:
+  # 1Gi data / 100Mi config). storageClassName deliberately left at "" —
+  # rendering an empty string is fine in THIS chart (it omits the field);
+  # local-path default applies.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 150Mi
+    limits:
+      memory: 500Mi
+
+  # Console enrollment (app.crowdsec.net) is optional and carries a secret, so
+  # it lives in values.local.yaml:
+  #
+  #   lapi:
+  #     env:
+  #       - name: ENROLL_KEY
+  #         value: "..."
+  #       - name: ENROLL_INSTANCE_NAME
+  #         value: "home-k3s"
+  #
+  # NOTE helm merges maps but REPLACES arrays: values.local.yaml's lapi.env
+  # replaces this one wholesale, which is why this stays empty.
+  env: []
