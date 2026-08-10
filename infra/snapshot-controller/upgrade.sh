@@ -35,6 +35,11 @@ count_snapshots() {
 BEFORE="$(count_snapshots)"
 echo "==> VolumeSnapshots currently in the cluster: ${BEFORE}"
 
+# Chart.lock and charts/*.tgz are gitignored local state; refresh them from
+# Chart.yaml so a merged chart-bump PR actually deploys the new version.
+echo "==> helm dependency update"
+helm dependency update "$HERE" >/dev/null
+
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
 
