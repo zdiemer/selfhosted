@@ -1,0 +1,42 @@
+# Media lane: public HTTPS for Jellyfin, terminated here and reverse-proxied
+# over the tailnet to the cluster. Installed by bootstrap.sh when
+# MEDIA_RELAY=true. Edit the host/upstreams here, in git, and re-run bootstrap.
+#
+#   viewer --TLS--> jellyfin.diemer.codes (this box, Caddy) --Tailscale-->
+#                   <node>:30096 (jellyfin-lan NodePort, etp=Cluster) --> jellyfin pod
+#
+# WHY THIS EXISTS. Jellyfin was on the Cloudflare tunnel, but sustained video
+# through CF's free proxy is a ToS gray area. This is our VPS and our bandwidth,
+# so there's no streaming ceiling — the trade is that family video now transits
+# this box (watch the provider's transfer allowance).
+#
+# WHY THE NODEPORT, NOT THE CLUSTER TRAEFIK. jellyfin-lan already publishes the
+# app on :30096 of every node, and the Service is externalTrafficPolicy: Cluster
+# so any node forwards to the pod wherever it runs. Proxying straight to it skips
+# a second TLS hop and the DuckDNS-name/cert dance that going via Traefik would
+# need. Caddy terminates the only TLS the viewer sees.
+
+{
+	# A real Let's Encrypt cert (this box is publicly reachable on 80/443, and
+	# jellyfin.diemer.codes is a DNS-only A record pointing here). ACME email:
+	email @ACME_EMAIL@
+}
+
+jellyfin.diemer.codes {
+	# Multiple node tailnet IPs for resilience: if one node is down, Caddy's
+	# passive health check (fail_duration) parks it and tries another. Jellyfin
+	# does not autopause, so unlike the Minecraft relay, health checking is safe.
+	reverse_proxy @MEDIA_UPSTREAMS@ {
+		lb_policy first
+		fail_duration 30s
+
+		# Jellyfin leans on websockets (playback state, syncplay); Caddy proxies
+		# them transparently. Pass the real client IP through so Jellyfin's logs
+		# and its "known proxies" handling see the viewer, not this box.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Streams are large and long; don't let Caddy buffer them.
+	encode zstd gzip
+}

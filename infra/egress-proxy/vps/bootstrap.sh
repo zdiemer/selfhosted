@@ -54,6 +54,17 @@ PUBLIC_FALLBACK="${PUBLIC_FALLBACK:-false}"
 # haproxy-minecraft.cfg.template and opens the port in nftables. The backend
 # node list lives in the template — edit it in git, re-run this script.
 MC_RELAY="${MC_RELAY:-false}"
+# Serve jellyfin.diemer.codes from this box (Caddy, real Let's Encrypt cert)
+# and reverse-proxy it over the tailnet to the cluster's jellyfin-lan NodePort,
+# so family video doesn't ride the Cloudflare tunnel (whose free tier restricts
+# streaming). Opens 80/443. The upstreams and host live in the Caddyfile
+# template; MEDIA_NODES lets you override the node list without editing it.
+MEDIA_RELAY="${MEDIA_RELAY:-false}"
+MEDIA_HOST="${MEDIA_HOST:-jellyfin.diemer.codes}"
+ACME_EMAIL="${ACME_EMAIL:-zach.diemer@gmail.com}"
+# Node Tailscale IPs, :30096 = the jellyfin-lan NodePort (etp=Cluster, so any
+# node reaches the pod). Space-separated; Caddy load-balances with failover.
+MEDIA_NODES="${MEDIA_NODES:-100.121.136.39:30096 100.84.179.82:30096 100.118.242.89:30096 100.124.40.81:30096 100.122.194.1:30096}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -156,9 +167,14 @@ if [[ "$MC_RELAY" == "true" ]]; then
 else
   MCR="# minecraft relay disabled (MC_RELAY=false)"
 fi
+if [[ "$MEDIA_RELAY" == "true" ]]; then
+  MEDIA="tcp dport { 80, 443 } accept"
+else
+  MEDIA="# media lane disabled (MEDIA_RELAY=false)"
+fi
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
     -e "s|@PUBLIC_FALLBACK_V4@|${FB4}|" -e "s|@PUBLIC_FALLBACK_V6@|${FB6}|" \
-    -e "s|@MC_RELAY@|${MCR}|" \
+    -e "s|@MC_RELAY@|${MCR}|" -e "s|@MEDIA_RELAY@|${MEDIA}|" \
   "${HERE}/nftables.conf" > /etc/nftables.conf
 # Through the unit, not a bare `nft -f`. Both load the same file, but loading it
 # directly leaves nftables.service reporting `inactive` on a box that is in fact
@@ -218,6 +234,39 @@ if [[ "$MC_RELAY" == "true" ]]; then
 elif systemctl is-active --quiet haproxy 2>/dev/null; then
   echo "==> MC_RELAY=false but haproxy is running — stopping it"
   systemctl disable --now haproxy
+fi
+
+# ---------------------------------------------------------------------------
+# Media lane (Caddy)
+# ---------------------------------------------------------------------------
+if [[ "$MEDIA_RELAY" == "true" ]]; then
+  echo "==> Media lane (Caddy on :443 → tailnet, host ${MEDIA_HOST})"
+  if ! command -v caddy >/dev/null 2>&1; then
+    # Official Caddy apt repo (Cloudsmith). Pinned key path so re-runs are idempotent.
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+      > /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq
+    apt-get install -y -qq caddy >/dev/null
+  fi
+  # Build the space-separated upstream list for the Caddyfile.
+  sed -e "s|@ACME_EMAIL@|${ACME_EMAIL}|g" \
+      -e "s|jellyfin.diemer.codes|${MEDIA_HOST}|g" \
+      -e "s|@MEDIA_UPSTREAMS@|${MEDIA_NODES}|g" \
+    "${HERE}/caddy-media.Caddyfile.template" > /etc/caddy/Caddyfile
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || {
+    echo "FAIL: Caddy rejected the config"; caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; exit 1; }
+  systemctl enable caddy >/dev/null 2>&1 || true
+  systemctl restart caddy
+  systemctl is-active --quiet caddy && echo "    caddy running" || {
+    echo "FAIL: caddy did not start"; journalctl -u caddy -n 30 --no-pager; exit 1; }
+  echo "    NOTE: ${MEDIA_HOST} must be a DNS-only (gray-cloud) A record → this box,"
+  echo "          or the Let's Encrypt challenge and viewer traffic won't reach Caddy."
+elif systemctl is-active --quiet caddy 2>/dev/null; then
+  echo "==> MEDIA_RELAY=false but caddy is running — stopping it"
+  systemctl disable --now caddy
 fi
 
 echo "==> Unattended security upgrades"
