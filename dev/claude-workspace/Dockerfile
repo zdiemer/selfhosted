@@ -11,28 +11,28 @@ ARG TTYD_VERSION=1.7.7
 # Cluster tooling, all pinned static binaries:
 # kubectl tracks the cluster minor (v1.34.x) — bump after scripts/k3s/k3s-upgrade.sh.
 # renovate: datasource=github-tags depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=v1.34.6
+ARG KUBECTL_VERSION=v1.36.3
 # renovate: datasource=github-releases depName=helm/helm
-ARG HELM_VERSION=v3.19.0
+ARG HELM_VERSION=v3.21.3
 # tailscaled runs in-pod with userspace networking (no TUN, no root) so the
 # scripts/k3s maintenance scripts can `tailscale ssh root@<node>`.
 # renovate: datasource=github-releases depName=tailscale/tailscale extractVersion=^v(?<version>.+)$
-ARG TAILSCALE_VERSION=1.88.1
+ARG TAILSCALE_VERSION=1.102.2
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
 # renovate: datasource=github-releases depName=moby/buildkit
-ARG BUILDKIT_VERSION=v0.24.0
+ARG BUILDKIT_VERSION=v0.32.2
 # sops for repos that keep secrets encrypted in-git (talaria's
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
 # renovate: datasource=github-releases depName=getsops/sops
-ARG SOPS_VERSION=v3.10.2
+ARG SOPS_VERSION=v3.13.3
 # GitHub CLI — create repos, open PRs, and push from the workspace (Claude
 # scaffolds new app repos here). Auth is a one-time `gh auth login` persisted on
 # the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
 # the tailscale/docker/happy logins — no token is baked into the image.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.96.0
+ARG GH_VERSION=2.97.0
 # Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
 # harness served under /bakery's own subdomain (see README "Bakery surface").
 # It's a Bun monorepo (server + Vite web); there's no published image, so we
@@ -41,7 +41,7 @@ ARG GH_VERSION=2.96.0
 # gated); BAKERY_REF is pinned to the commit the v3 image was built from
 # (upstream cuts no release tags) — bump deliberately, same as the claude CLI.
 # renovate: datasource=npm depName=bun
-ARG BUN_VERSION=1.2.23
+ARG BUN_VERSION=1.3.14
 ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
