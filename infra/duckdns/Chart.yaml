@@ -5,6 +5,7 @@ type: application
 version: 1.0.0
 # No app image of our own: the updater is a curl one-liner and the rest is
 # config. appVersion tracks the updater image, not a build.
+# renovate: image=curlimages/curl
 appVersion: "8.11.1"
 maintainers:
   - name: zachd

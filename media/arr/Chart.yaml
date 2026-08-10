@@ -4,6 +4,7 @@ description: The acquisition stack behind Jellyfin — Prowlarr (indexers), Sona
 type: application
 version: 0.1.0
 # appVersion tracks the four app image tags in values.yaml; sonarr's leads.
+# renovate: image=lscr.io/linuxserver/sonarr
 appVersion: "4.0.19"
 home: https://wiki.servarr.com
 sources:

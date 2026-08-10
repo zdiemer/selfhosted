@@ -4,6 +4,7 @@ description: Jellyseerr — request/discovery frontend for Jellyfin. Users sign 
 type: application
 version: 0.1.0
 # appVersion tracks the jellyseerr image tag in values.yaml (image.tag).
+# renovate: image=docker.io/fallenbagel/jellyseerr
 appVersion: "2.7.3"
 home: https://docs.jellyseerr.dev
 sources:

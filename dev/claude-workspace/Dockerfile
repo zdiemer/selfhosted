@@ -5,35 +5,43 @@
 FROM node:22-bookworm-slim
 
 # ttyd isn't packaged in bookworm; ship the static release binary. Pinned so
-# rebuilds are reproducible — bump deliberately.
+# rebuilds are reproducible — bump deliberately (Renovate proposes, human merges).
+# renovate: datasource=github-releases depName=tsl0922/ttyd
 ARG TTYD_VERSION=1.7.7
 # Cluster tooling, all pinned static binaries:
 # kubectl tracks the cluster minor (v1.34.x) — bump after scripts/k3s/k3s-upgrade.sh.
+# renovate: datasource=github-tags depName=kubernetes/kubernetes
 ARG KUBECTL_VERSION=v1.34.6
+# renovate: datasource=github-releases depName=helm/helm
 ARG HELM_VERSION=v3.19.0
 # tailscaled runs in-pod with userspace networking (no TUN, no root) so the
 # scripts/k3s maintenance scripts can `tailscale ssh root@<node>`.
+# renovate: datasource=github-releases depName=tailscale/tailscale extractVersion=^v(?<version>.+)$
 ARG TAILSCALE_VERSION=1.88.1
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
+# renovate: datasource=github-releases depName=moby/buildkit
 ARG BUILDKIT_VERSION=v0.24.0
 # sops for repos that keep secrets encrypted in-git (talaria's
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
+# renovate: datasource=github-releases depName=getsops/sops
 ARG SOPS_VERSION=v3.10.2
 # GitHub CLI — create repos, open PRs, and push from the workspace (Claude
 # scaffolds new app repos here). Auth is a one-time `gh auth login` persisted on
 # the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
 # the tailscale/docker/happy logins — no token is baked into the image.
+# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
 ARG GH_VERSION=2.96.0
 # Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
 # harness served under /bakery's own subdomain (see README "Bakery surface").
 # It's a Bun monorepo (server + Vite web); there's no published image, so we
 # vendor the source at a pinned ref and `bun install` at build time. Bun is
-# minor-pinned (upstream ships on `oven/bun:1`); BAKERY_REF is pinned to the
-# commit the v3 image was built from (upstream cuts no release tags) — bump
-# deliberately, same as the claude CLI.
-ARG BUN_VERSION=1.2
+# exact-pinned for reproducible builds (Renovate bumps within 1.x; majors are
+# gated); BAKERY_REF is pinned to the commit the v3 image was built from
+# (upstream cuts no release tags) — bump deliberately, same as the claude CLI.
+# renovate: datasource=npm depName=bun
+ARG BUN_VERSION=1.2.23
 ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
@@ -45,6 +53,7 @@ ARG OP_VERSION=2.38.1
 # (gateway/ + the signal-cli pod container). Signal's servers reject stale
 # clients, so bump this deliberately but don't let it rot — a too-old client
 # stops receiving. Registration state lives on the PVC (~/.local/share/signal-cli).
+# renovate: datasource=github-releases depName=AsamK/signal-cli extractVersion=^v(?<version>.+)$
 ARG SIGNAL_CLI_VERSION=0.14.7
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/

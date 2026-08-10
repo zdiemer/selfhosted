@@ -4,6 +4,7 @@ description: Stirling PDF — self-hosted, locally-processed toolkit for ~50 PDF
 type: application
 version: 0.1.0
 # appVersion tracks the stirling-pdf image tag in values.yaml (image.tag).
+# renovate: image=docker.io/stirlingtools/stirling-pdf
 appVersion: "2.11.0"
 home: https://docs.stirlingpdf.com
 sources:
