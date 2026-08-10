@@ -77,10 +77,22 @@ updater:
     # alpine/kubectl is Alpine-based, so busybox provides `sh` and `wget` — the
     # DuckDNS call uses wget here, not curl, for that reason.
     image: alpine/kubectl:1.34.2
+    # ORDER MATTERS BEYOND READINESS. The A record points every duckdns host at
+    # this node's :443, so a candidate must serve Traefik cleanly on its
+    # tailscale interface — something the node-Ready check can't see. Two traps:
+    #   * `tailscale serve` on :443. tailscaled's own TLS listener then shadows
+    #     Traefik for INBOUND tailnet connections: it works locally on that node
+    #     but every other device gets a TLS internal_error alert (no cert for
+    #     the duckdns SNI). `zachd-ubuntu` (the workstation) runs exactly this,
+    #     so it is deliberately NOT a candidate. Run `tailscale serve status`
+    #     before adding any node here.
+    #   * laptops sleep and roam — poor targets for a stable ingress address,
+    #     so they sit at the end as last-resort fallback only.
+    # zachd-ubuntu-1 and -2 are the stable servers, verified clean — keep first.
     candidates:
-      - { node: zachd-ubuntu,          ip: 100.121.136.39 }
       - { node: zachd-ubuntu-1,        ip: 100.84.179.82 }
       - { node: zachd-ubuntu-2,        ip: 100.118.242.89 }
+      # Fallback only (laptops; verify no `tailscale serve` on :443 first):
       - { node: zachd-ubuntu-laptop,   ip: 100.124.40.81 }
       - { node: zachd-ubuntu-laptop-1, ip: 100.122.194.1 }
       - { node: zachd-ubuntu-laptop-2, ip: 100.81.206.46 }
