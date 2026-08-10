@@ -15,6 +15,15 @@ Chart.lock
 *.secret.yaml
 secrets/
 
+# ...but a chart's templates/ directory is Helm source, never a rendered
+# manifest. A file there named <thing>-secret.yaml holds .Values references and
+# nothing else, and the chart cannot render without it. The rule above had
+# silently excluded three such templates (auth/keepass x2, docs/paperless-ngx):
+# they existed on one laptop, git status never mentioned them, and a fresh
+# clone could not deploy those charts — the same single-copy failure that
+# scripts/secrets.sh exists to prevent, wearing a different hat.
+!**/templates/*-secret.yaml
+
 # Local-only overlays (per-project secrets: tokens, passwords, identities).
 # The ** glob covers every subproject's values.local.yaml.
 **/values.local.yaml
