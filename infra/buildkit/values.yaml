@@ -4,7 +4,7 @@ image:
   # creates itself (rootlesskit). Keep the version in lockstep with
   # BUILDKIT_VERSION in dev/claude-workspace/Dockerfile — client/daemon are
   # compatible across a range, but pinning them equal removes doubt.
-  tag: v0.24.0-rootless
+  tag: v0.32.2-rootless
   pullPolicy: IfNotPresent
 
 service:

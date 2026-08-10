@@ -6,6 +6,6 @@ version: 1.0.0
 # Tracks the moby/buildkit release we deploy. Keep in lockstep with
 # BUILDKIT_VERSION in dev/claude-workspace/Dockerfile (the buildctl client).
 # renovate: image=moby/buildkit
-appVersion: "v0.24.0"
+appVersion: "v0.32.2"
 maintainers:
   - name: zachd
