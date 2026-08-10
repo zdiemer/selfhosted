@@ -20,6 +20,7 @@ chart directory.
 | [`update.sh`](update.sh) | Rolling OS package updates, agents first. `--reboot` to auto-reboot when required. Warns when a reboot would change kernel, and refuses to do it unattended on a node that can't recover from a bad boot |
 | [`kernel.sh`](kernel.sh) | Kernel state per node and boot-failure recovery. `--report` for running vs installed kernels and which nodes are one reboot from changing; `--no-auto-kernel` to stop unattended-upgrades installing kernels; `--protect` for panic auto-reboot and a bounded recordfail wait; `--hold`/`--unhold` |
 | [`k3s-upgrade.sh`](k3s-upgrade.sh) | Rolling k3s version upgrade, agents then server. `--version <ver>`, or latest stable |
+| [`versions-report.sh`](versions-report.sh) | Weekly staleness report: pending apt/security updates, kernel drift, k3s vs stable channel, tailscale spread, reboot-guard coverage. Publishes to the `versions-report` ConfigMap (the status.diemer.codes "Pending Upgrades" panel) and the pinned GitHub issue; run by `scripts/systemd/selfhosted-versions-report.timer`. `--dry-run` prints the markdown. Report-only — acting on it is `update.sh`/`k3s-upgrade.sh`/`kernel.sh`. A tailscale package upgrade restarts tailscaled and can drop the very ssh session driving `update.sh`; apt is idempotent, re-run |
 | [`_common.sh`](_common.sh) | Shared helpers. Sourced, not executed |
 
 ## How they reach the nodes

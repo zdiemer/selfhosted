@@ -79,6 +79,10 @@ spec:
               value: {{ .Values.publish.nodeVersions | quote }}
             - name: PUBLISH_UPTIME
               value: {{ .Values.publish.uptime | quote }}
+            - name: PUBLISH_NODE_UPDATES
+              value: {{ .Values.publish.nodeUpdates | quote }}
+            - name: OWN_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             - name: SERVICE_CHECKS
               value: {{ .Values.serviceChecks | toJson | quote }}
           volumeMounts:

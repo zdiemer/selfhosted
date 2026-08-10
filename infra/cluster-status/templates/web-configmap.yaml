@@ -491,6 +491,46 @@ data:
           }).join('') + '</tbody></table></div></div></div>';
       }
 
+      function nodeUpdates(u) {
+        // Weekly node-lane report (scripts/k3s/versions-report.sh): what apt,
+        // kernel, k3s and tailscale upgrades are waiting. Absent until the
+        // first report publishes its ConfigMap.
+        if (!u || !u.nodes || !u.nodes.length) return '';
+        var behind = 0;
+        u.nodes.forEach(function (n) {
+          if (n.aptPending || n.rebootRequired || n.kernelRunning !== n.kernelNewest ||
+              (u.k3sStable && n.k3s !== u.k3sStable) ||
+              (u.tailscaleLatest && n.tailscale !== u.tailscaleLatest)) behind++;
+        });
+        var drift = function (val, want) {
+          if (!want || val === want) return '<span class="mono" style="font-size:12px">' + esc(val || '—') + '</span>';
+          return '<span class="mono" style="font-size:12px;color:var(--warn)" title="latest: ' + esc(want) + '">' + esc(val || '—') + '</span>';
+        };
+        return '<div class="card"><div class="card-h"><span class="card-t">Pending Upgrades' +
+          (behind ? ' (' + behind + ' node' + (behind > 1 ? 's' : '') + ' behind)' : '') + '</span>' +
+          '<span style="margin-left:auto;font-size:11px;color:var(--muted)" title="' + esc(u.generatedAt || '') + '">reported ' +
+          esc(fmtRel(u.generatedAt) || '—') + '</span></div>' +
+          '<div class="card-c"><div class="sub" style="margin-bottom:8px">k3s stable: <span class="mono">' + esc(u.k3sStable || '?') +
+          '</span> · tailscale latest: <span class="mono">' + esc(u.tailscaleLatest || '?') + '</span></div>' +
+          '<div class="scroll"><table><thead><tr><th>Node</th><th class="r">apt pending (security)</th>' +
+          '<th class="c">Reboot</th><th>Kernel</th><th>k3s</th><th>tailscale</th></tr></thead><tbody>' +
+          u.nodes.map(function (n) {
+            var apt = n.aptPending
+              ? '<span style="' + (n.aptSecurity ? 'color:var(--warn);font-weight:600' : '') + '">' +
+                n.aptPending + ' (' + n.aptSecurity + ')</span>'
+              : '0';
+            var kern = n.kernelRunning === n.kernelNewest
+              ? '<span class="mono" style="font-size:12px">' + esc(n.kernelRunning) + '</span>'
+              : '<span class="mono" style="font-size:12px;color:var(--warn)">' + esc(n.kernelRunning) + ' → ' + esc(n.kernelNewest) + '</span>';
+            return '<tr><td class="mono" style="font-size:12px">' + esc(n.name) + '</td>' +
+              '<td class="r">' + apt + '</td>' +
+              '<td class="c">' + (n.rebootRequired ? '<span style="color:var(--warn);font-weight:600">yes</span>' : 'no') + '</td>' +
+              '<td>' + kern + '</td>' +
+              '<td>' + drift(n.k3s, u.k3sStable) + '</td>' +
+              '<td>' + drift(n.tailscale, u.tailscaleLatest) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div></div>';
+      }
+
       function render(d) {
         var h = '';
         if (d.totals) h += summary(d.totals);
@@ -505,6 +545,7 @@ data:
           h += '<div class="grid g2">' + topPods('Top CPU consumers', d.totals.topCpuPods, 'cpu') +
             topPods('Top RAM consumers', d.totals.topRamPods, 'ram') + '</div>';
         }
+        h += nodeUpdates(d.nodeUpdates);
         h += workloads('Deployments', d.deployments);
         h += workloads('StatefulSets', d.statefulSets);
         h += workloads('DaemonSets', d.daemonSets);

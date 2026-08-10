@@ -1,0 +1,41 @@
+# Weekly node-lane staleness report: pending apt/security updates, kernel
+# drift, k3s vs the stable channel, tailscale spread — the upgrades no
+# Renovate PR can carry. Publishes to the versions-report ConfigMap (the
+# status.diemer.codes "Pending Upgrades" panel) and the pinned GitHub issue.
+#
+# Report-only by design: acting on it stays manual (update.sh --reboot,
+# k3s-upgrade.sh, kernel.sh) — that split is documented in the plan and in
+# scripts/k3s/versions-report.sh itself. SMS stays the failure channel, via
+# OnFailure below.
+#
+# Install (see also scripts/systemd/README.md):
+#     ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-versions-report.{service,timer} ~/.config/systemd/user/
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now selfhosted-versions-report.timer
+
+[Unit]
+Description=Report pending node upgrades (apt, kernel, k3s, tailscale)
+Documentation=file:%h/Code/selfhosted/scripts/k3s/versions-report.sh
+After=network-online.target
+Wants=network-online.target
+OnFailure=selfhosted-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Code/selfhosted
+ExecStart=%h/Code/selfhosted/scripts/k3s/versions-report.sh
+
+Nice=10
+IOSchedulingClass=idle
+# 10 nodes × (apt-get update + simulate) over tailscale ssh; generous.
+TimeoutStartSec=20min
+
+# Needs: tailscale ssh (network), kubectl (~/.kube), gh (~/.config/gh).
+# Writes nothing under the checkout.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

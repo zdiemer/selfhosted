@@ -1,0 +1,17 @@
+# Saturday 07:00 — after Renovate's 05:30 cluster run, so the dependency
+# dashboard and this report land together for one weekend review; clear of
+# the 03:00 secrets backup and the 04:30 submodule sync.
+
+[Unit]
+Description=Weekly node-upgrades report
+Documentation=file:%h/Code/selfhosted/scripts/systemd/README.md
+
+[Timer]
+# One OnCalendar only: they accumulate rather than override.
+OnCalendar=Sat 07:00
+AccuracySec=15min
+Persistent=true
+Unit=selfhosted-versions-report.service
+
+[Install]
+WantedBy=timers.target
