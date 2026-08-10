@@ -65,7 +65,13 @@ ingress:
   enabled: true
   className: traefik
   host: jellyfin.zachd.duckdns.org
-  cloudflareHosts: []
+  # Public path for family devices (TV/phone apps can't answer an Authelia
+  # redirect, and they aren't on the tailnet). Rides the shared infra/cloudflared
+  # tunnel; the hostname must also exist in the tunnel's dashboard config.
+  # Caveat: sustained high-bitrate video through Cloudflare's free proxy is a
+  # ToS gray area — if playback ever starts stalling mysteriously, suspect this.
+  cloudflareHosts:
+    - jellyfin.diemer.codes
   tls:
     enabled: true
     certResolver: duckdns

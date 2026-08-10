@@ -23,7 +23,11 @@ ingress:
   enabled: true
   className: traefik
   host: requests.zachd.duckdns.org
-  cloudflareHosts: []
+  # Public path for the same family users as jellyfin.diemer.codes (Jellyseerr
+  # authenticates against Jellyfin accounts). Hostname must also exist in the
+  # cloudflared tunnel's dashboard config.
+  cloudflareHosts:
+    - requests.diemer.codes
   tls:
     enabled: true
     certResolver: duckdns

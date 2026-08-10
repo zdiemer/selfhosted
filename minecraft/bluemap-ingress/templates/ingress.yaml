@@ -35,9 +35,23 @@ spec:
                 name: {{ .Values.target.service }}
                 port:
                   number: {{ .Values.target.port }}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.target.service }}
+                port:
+                  number: {{ $.Values.target.port }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   # No secretName: no cert-manager and no TLS Secrets in this cluster. Traefik
   # holds the cert in acme.json on a PVC; this list is what it feeds to ACME.
+  # cloudflareHosts stay OUT of this list deliberately: a diemer.codes name in
+  # a DuckDNS DNS-01 order would fail the whole order, wildcard included.
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}

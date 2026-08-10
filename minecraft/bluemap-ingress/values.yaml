@@ -33,6 +33,12 @@ ingress:
   className: traefik
   host: map.zachd.duckdns.org
 
+  # Players aren't on the tailnet, so once *.zachd.duckdns.org stops resolving
+  # publicly the map needs a Cloudflare-tunnel name. Hostname must also exist
+  # in the tunnel's dashboard config (infra/cloudflared README has the drill).
+  cloudflareHosts:
+    - map.diemer.codes
+
   # Public, deliberately. BlueMap is a read-only render of the world — no
   # commands, no player data beyond positions — and gating it behind Authelia
   # would mean handing a login to everyone who plays. If that calculus ever
@@ -47,11 +53,6 @@ ingress:
     # lives at the base name, which DuckDNS handles natively.
     wildcardSan: "*.zachd.duckdns.org"
 
-# NOT SOLVED HERE, and worth knowing: `mc-minecraft-bluemap` is a LoadBalancer
-# service, so klipper-lb also publishes BlueMap on port 8100 of *every* node IP.
-# Anyone on the LAN reaches it without passing through Traefik at all, which
-# means those requests never appear in the access log either.
-#
-# The fix is `service.type: ClusterIP` in the minecraft values — but that is the
-# upstream chart, and a `helm upgrade` there restarts the server. Do it in an
-# offline window, not while people are playing.
+# RESOLVED (was stale here for a while): `mc-minecraft-bluemap` is ClusterIP
+# now — minecraft/values.yaml flipped it, verified live — so this Ingress is
+# the only way to reach BlueMap and every request lands in the access log.
