@@ -76,6 +76,10 @@ spec:
               value: {{ .Values.gluetun.inputPorts | quote }}
             - name: TZ
               value: {{ .Values.timezone }}
+            - name: DOT
+              value: {{ ternary "on" "off" .Values.gluetun.dot | quote }}
+            - name: DNS_ADDRESS
+              value: {{ .Values.gluetun.dnsAddress | quote }}
             - name: HTTP_CONTROL_SERVER_ADDRESS
               value: ":{{ .Values.gluetun.controlPort }}"
           # gluetun's control server, asked for the tunnel's actual state.

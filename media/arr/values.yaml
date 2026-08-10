@@ -76,6 +76,18 @@ gluetun:
   outboundSubnets: 10.42.0.0/16,10.43.0.0/16,192.168.4.0/24
   # Let cluster peers reach the qBittorrent web UI through gluetun's firewall.
   inputPorts: "8080"
+  # gluetun's DNS-over-TLS forwarder, deliberately off. With it on, gluetun
+  # listens on 127.0.0.1:53 and rewrites the pod's SHARED resolv.conf (kubelet
+  # bind-mounts one file into every container) to point at itself. curl in the
+  # netns resolved fine through it, but qBittorrent — libtorrent and Qt both —
+  # got "Host not found (authoritative)" for every name, so no tracker
+  # announces, no DHT bootstrap, and every torrent stalled at 0 peers.
+  # With DOT off, gluetun points resolv.conf straight at dnsAddress instead.
+  # Those queries still leave through the tunnel, so PIA sees them and the
+  # house resolver does not — the no-leak property is unchanged. It also drops
+  # the in-memory blocklist build that OOMKilled this container at 512Mi.
+  dot: false
+  dnsAddress: 1.1.1.1
   # gluetun's HTTP control server — what the liveness probe asks. 8000 is
   # gluetun's own default; it is a value here only so the probe port and the
   # server port cannot drift apart again (they were 9999 and 8000, and the
