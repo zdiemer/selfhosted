@@ -15,15 +15,15 @@ jobs:
   charts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v4.4.0
+      - uses: azure/setup-helm@v4.3.1
       - run: scripts/ci-lint-charts.sh
       - run: scripts/check-appversion-drift.sh
 
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
       # severity=error only: parse errors and outright bugs, not style nits.
       - run: |
           git ls-files '*.sh' | xargs shellcheck --severity=error
