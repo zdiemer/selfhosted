@@ -41,7 +41,7 @@ updater:
   # this bounds how long a residential IP change can black-hole the domain.
   schedule: "*/5 * * * *"
   # renovate: datasource=docker depName=curlimages/curl
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.21.0
 
   # WHERE zachd.duckdns.org POINTS. This is the security switch for the whole
   # DuckDNS surface, so it changes the mode, never a secret — safe in git.
