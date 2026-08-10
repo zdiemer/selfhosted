@@ -58,7 +58,7 @@ keeweb:
     # lscr.io/linuxserver/keeweb if you want a more actively maintained
     # build.
     repository: antelle/keeweb
-    tag: "latest"
+    tag: "1.18.7"
     pullPolicy: IfNotPresent
   service:
     port: 80

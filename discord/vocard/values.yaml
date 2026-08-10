@@ -50,8 +50,10 @@ images:
     tag: "8"
     pullPolicy: IfNotPresent
   spotifyTokener:
+    # Upstream publishes no version tags, only the master branch tag. Pinning
+    # the digest keeps restarts deterministic; Renovate refreshes the digest.
     repository: ghcr.io/topi314/spotify-tokener
-    tag: "master"
+    tag: "master@sha256:7841fa6144bd27b75b3ffc5d89c8201f833e0b9e2d3e8b4d5af8371504fd43f8"
     pullPolicy: IfNotPresent
 
 # ----------------------------------------------------------------------------
