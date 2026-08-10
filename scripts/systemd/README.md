@@ -1,6 +1,6 @@
 # Timers
 
-Three systemd **user** timers keep the secret plumbing honest without anyone
+Four systemd **user** timers keep the plumbing honest without anyone
 driving it:
 
 | Timer | When | What |
@@ -8,8 +8,9 @@ driving it:
 | `selfhosted-secrets-sync` | every 15 min | reconcile every `values.local.yaml` with 1Password, both directions |
 | `selfhosted-secrets-backup` | Sun 03:00 | age-encrypted archive + vault dump to `//192.168.4.36/backups/selfhosted-secrets` |
 | `selfhosted-submodules-sync` | daily 04:30 | move submodule pins to the commits the cluster is actually running |
+| `selfhosted-versions-report` | Sat 07:00 | node-lane staleness report (apt/kernel/k3s/tailscale) → versions-report ConfigMap (status.diemer.codes panel) + pinned GitHub issue |
 
-All three fail loudly: `OnFailure=selfhosted-alert@%n.service` texts through
+All fail loudly: `OnFailure=selfhosted-alert@%n.service` texts through
 `infra/sms-relay`. A scheduled job that fails silently is worse than no job,
 because you stop checking.
 

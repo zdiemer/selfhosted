@@ -34,6 +34,8 @@ data:
     PUBLISH_EVENTS = os.environ.get("PUBLISH_EVENTS", "true") == "true"
     PUBLISH_NODE_VERSIONS = os.environ.get("PUBLISH_NODE_VERSIONS", "true") == "true"
     PUBLISH_UPTIME = os.environ.get("PUBLISH_UPTIME", "true") == "true"
+    PUBLISH_NODE_UPDATES = os.environ.get("PUBLISH_NODE_UPDATES", "true") == "true"
+    OWN_NAMESPACE = os.environ.get("OWN_NAMESPACE", "infra")
     SERVICE_CHECKS = json.loads(os.environ.get("SERVICE_CHECKS", "[]"))
     TOP_N = 5
 
@@ -731,6 +733,20 @@ data:
             except Exception as e:
                 log("k8s_events_api_error", error=e)
 
+        # scripts/k3s/versions-report.sh publishes the node-lane upgrade
+        # backlog (apt/kernel/k3s/tailscale drift) into this ConfigMap weekly.
+        # Absent ConfigMap = feature quietly off; the page hides the panel.
+        node_updates = None
+        if PUBLISH_NODE_UPDATES:
+            try:
+                cm = api_get(f"/api/v1/namespaces/{OWN_NAMESPACE}/configmaps/versions-report")
+                node_updates = json.loads(cm.get("data", {}).get("report.json", "null"))
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    log("versions_report_error", error=e)
+            except Exception as e:
+                log("versions_report_error", error=e)
+
         services = []
         if PUBLISH_UPTIME:
             for check in SERVICE_CHECKS:
@@ -779,6 +795,7 @@ data:
             "daemonSets": daemonsets,
             "recentEvents": events,
             "services": services,
+            "nodeUpdates": node_updates,
         }
 
 

@@ -72,10 +72,17 @@ web:
 #   uptime        — the serviceChecks results below. Names and up/down only;
 #                   the probed URL is never written into status.json (several
 #                   point at ClusterIPs and LAN hosts, and this page is public).
+#   nodeUpdates   — the weekly node-lane report scripts/k3s/versions-report.sh
+#                   writes into the versions-report ConfigMap: pending apt and
+#                   security-update counts, kernel drift, k3s vs stable,
+#                   tailscale spread. Same CVE-exposure caveat as nodeVersions —
+#                   it advertises exactly how far behind each node is. The two
+#                   flags should move together.
 publish:
   events: true
   nodeVersions: true
   uptime: true
+  nodeUpdates: true
 
 # HTTP endpoints the collector probes each cycle, for services whose failure is
 # invisible in pod status — a Running pod whose upstream is unreachable still
