@@ -145,6 +145,44 @@ Replace it:
 That is the whole handover. **Nothing moves onto this exit on its own** — a
 service switches when you change its `lane` to `vps` in `values.yaml`.
 
+## The Minecraft relay (`MC_RELAY=true`)
+
+A second, unrelated job this box can do: forward public `:25565` to the
+cluster's Minecraft server over the tailnet, so friends keep playing after the
+home router stops forwarding ports.
+
+```
+player --TCP 25565--> minecraft.diemer.codes (this box) --haproxy--> tailnet --> any cluster node --> mc pod
+```
+
+`minecraft.diemer.codes` is a **DNS-only (gray-cloud) A record** at the VPS
+public IP — Cloudflare's free plan proxies HTTP only, not raw game TCP, so the
+name must resolve straight to the box. haproxy (`haproxy-minecraft.cfg.template`)
+listens on 25565 and forwards to every cluster node's tailnet address; the
+`mc-minecraft` Service is `externalTrafficPolicy: Cluster`, so whichever node
+receives the connection routes it on to the pod wherever it currently runs.
+
+Enable it by re-running bootstrap with the flag:
+
+```sh
+scp -r infra/egress-proxy/vps/ root@<vps>:/tmp/egress-vps
+ssh root@<vps> 'MC_RELAY=true bash /tmp/egress-vps/bootstrap.sh'
+```
+
+**No health checks on the backends, on purpose.** The server autopauses its JVM
+when idle and wakes on any TCP connection — a periodic health probe looks
+exactly like a player joining, so `check` would keep it awake forever and undo
+the autopause. The cost is that haproxy only learns a node is dead when a real
+connection to it fails: `retries 3` + `option redispatch` then move that one
+join to another node, a few seconds of delay in the rare node-down case. The
+node list is static (tailnet IPs don't churn); if the cluster gains or loses a
+node, edit the template and re-run bootstrap.
+
+This is orthogonal to the proxy lane above — a box can run either, both, or
+neither. The relay port is a plain `tcp dport 25565 accept` (game clients can't
+authenticate to a firewall); the Minecraft server's own whitelist is the access
+control.
+
 ## Security posture
 
 - **Proxy auth is the control.** An open proxy on a public IP is found by
