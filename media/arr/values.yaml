@@ -34,7 +34,13 @@ apps:
     configSize: 5Gi
   radarr:
     image: lscr.io/linuxserver/radarr
-    tag: "5.28.0"
+    # 6.x, not 5.28: qBittorrent 5.1 changed a successful login from 200 "Ok."
+    # to 204 No Content, and Radarr 5.28 reads that as an authentication
+    # failure — the download client cannot be added at all. Fixed upstream in
+    # 6.2.1. Sonarr 4.0.19 already carries the same fix, which is why only
+    # Radarr was affected. Crossing the 5→6 boundary is one-way (DB migrations);
+    # done while the install was empty.
+    tag: "6.3.0"
     port: 7878
     host: radarr.zachd.duckdns.org
     media: true
