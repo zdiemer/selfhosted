@@ -4,6 +4,7 @@ description: RomM — self-hosted ROM manager with EmulatorJS, backed by an SMB-
 type: application
 version: 0.2.0
 # appVersion tracks the RomM image tag in values.yaml (image.tag).
+# renovate: image=rommapp/romm
 appVersion: "5.0.0"
 home: https://romm.app
 sources:

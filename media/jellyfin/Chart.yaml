@@ -4,6 +4,7 @@ description: Jellyfin — self-hosted media server for the movies/TV library on 
 type: application
 version: 0.1.0
 # appVersion tracks the jellyfin image tag in values.yaml (image.tag).
+# renovate: image=docker.io/jellyfin/jellyfin
 appVersion: "10.11.11"
 home: https://jellyfin.org
 sources:

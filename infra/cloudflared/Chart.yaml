@@ -5,6 +5,7 @@ type: application
 version: 1.0.0
 # No app image of our own: this chart runs stock cloudflared. appVersion tracks
 # the connector image, not a build.
+# renovate: image=cloudflare/cloudflared
 appVersion: "2026.6.1"
 maintainers:
   - name: zachd
