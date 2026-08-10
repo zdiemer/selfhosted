@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the stirling-pdf image tag in values.yaml (image.tag).
 # renovate: image=docker.io/stirlingtools/stirling-pdf
-appVersion: "2.11.0"
+appVersion: "2.14.3"
 home: https://docs.stirlingpdf.com
 sources:
   - https://github.com/Stirling-Tools/Stirling-PDF

@@ -5,7 +5,7 @@ image:
   # actually work. Drop the suffix (`:2.11.0`) for the slim image if you only
   # need the pure-PDF tools and want a smaller pull. `:2.11.0-ultra-lite` is the
   # minimal build (no conversion, no login).
-  tag: "2.11.0-fat"
+  tag: "2.14.3-fat"
   pullPolicy: IfNotPresent
 
 service:
