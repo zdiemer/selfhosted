@@ -8,12 +8,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.ts";
-import {
-  handleInbound,
-  isAllowed,
-  matchesAllowlist,
-  registerTransport,
-} from "./router.ts";
+import { handleInbound, matchesAllowlist, registerTransport } from "./router.ts";
 
 // Baileys speaks the real WhatsApp Web protocol over an outbound websocket —
 // no ingress, no webhook. Auth keys persist on the PVC so a pod restart
@@ -110,6 +105,16 @@ async function connect(): Promise<void> {
         );
         return;
       }
+      if (code === DisconnectReason.restartRequired) {
+        // WhatsApp closes the socket with 515 the moment pairing succeeds and
+        // expects an immediate reconnect. That is the handshake completing, not
+        // a failure, so it must neither wait nor consume a backoff step —
+        // pairing after a run of failures would otherwise stall for the full
+        // 5-minute cap at the exact moment it started working.
+        console.log("whatsapp: restart required after pairing; reconnecting");
+        setTimeout(() => void connect(), 1_000);
+        return;
+      }
       const wait = reconnectDelay;
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
       console.warn(
@@ -120,36 +125,84 @@ async function connect(): Promise<void> {
   });
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
-    if (type !== "notify") return;
+    // History-sync batches arrive as "append" and are not live traffic.
+    if (type !== "notify") {
+      console.log(`wa: ignoring ${messages.length} ${type} message(s)`);
+      return;
+    }
     for (const m of messages) {
       const jid = m.key.remoteJid;
-      if (!jid || m.key.fromMe) continue;
+      // Every branch below used to drop the message silently, which made "the
+      // bot ignored me" indistinguishable from "nothing ever arrived" — the
+      // failure this surface has now hit on both networks. Say why, always.
+      const skip = (reason: string): void =>
+        console.log(`wa: skip (${reason}) jid=${jid ?? "?"}`);
+
+      if (!jid) {
+        skip("no remoteJid");
+        continue;
+      }
+      if (m.key.fromMe) {
+        skip("own message");
+        continue;
+      }
       const group = jid.endsWith("@g.us");
-      if (!group && !jid.endsWith("@s.whatsapp.net")) continue; // no channels
-      if (group && !config.groups.enabled) continue;
+      // A DM arrives as a phone JID or as a LID depending on the sender's
+      // client. Anything else — channels, broadcasts, status — is not a chat.
+      if (!group && !jid.endsWith("@s.whatsapp.net") && !jid.endsWith("@lid")) {
+        skip("not a direct chat or group");
+        continue;
+      }
+      if (group && !config.groups.enabled) {
+        skip("groups disabled");
+        continue;
+      }
       // Un-allowlisted rooms are dropped outright, not buffered — anyone can
       // add this number to a group.
-      if (group && !config.whatsapp.allowedGroups.includes(jid)) continue;
+      if (group && !config.whatsapp.allowedGroups.includes(jid)) {
+        skip("group not allowlisted");
+        continue;
+      }
       const text =
         m.message?.conversation ?? m.message?.extendedTextMessage?.text;
-      if (!text) continue;
+      if (!text) {
+        // Also where an undecryptable message lands: Baileys still emits it,
+        // with no plaintext to read.
+        skip("no text payload");
+        continue;
+      }
 
-      // In a group the chat is the room but the sender is the participant.
-      const senderJid = group ? (m.key.participant ?? "") : jid;
-      const senderNumber = senderJid.replace(/@.*$/, "");
-      // In a group the room is the credential; the sender still decides `owner`,
-      // which is what gates `!` commands.
-      const owner = group
-        ? matchesAllowlist(senderNumber, config.whatsapp.allowedSenders)
-        : isAllowed(senderNumber, config.whatsapp.allowedSenders);
+      // WhatsApp is migrating phone JIDs (<number>@s.whatsapp.net) to LIDs
+      // (<id>@lid), and which one arrives depends on the sender's client.
+      // Newer Baileys carries the phone form alongside the LID in the *Pn /
+      // *Alt key fields, so match on every identifier present — the same
+      // number-or-ACI problem the Signal side has.
+      const k = m.key as unknown as Record<string, string | undefined>;
+      const bare = (j?: string): string =>
+        (j ?? "").replace(/:.*$/, "").replace(/@.*$/, "");
+      const ids = (
+        group
+          ? [k.participant, k.participantPn, k.participantAlt]
+          : [k.remoteJid, k.senderPn, k.remoteJidAlt]
+      )
+        .map(bare)
+        .filter(Boolean);
+
+      // In a group the room is the credential; the sender still decides
+      // `owner`, which is what gates `!` commands.
+      const owner = matchesAllowlist(ids, config.whatsapp.allowedSenders);
       const allowed = group ? true : owner;
+      if (!allowed) {
+        skip(`sender not allowlisted (ids: ${ids.join(",") || "none"})`);
+        continue;
+      }
 
       const mentioned = group ? mentionsBot(m) : true;
       // Only acknowledge what the bot will act on — in a group, mentions only.
-      if (allowed && mentioned) void markRead(m.key);
+      if (mentioned) void markRead(m.key);
 
       handleInbound(`wa:${jid}`, text, {
-        sender: m.pushName || senderNumber,
+        sender: m.pushName || ids[0] || "unknown",
         allowed,
         owner,
         mentioned,
