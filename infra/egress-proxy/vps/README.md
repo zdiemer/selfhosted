@@ -220,6 +220,13 @@ control.
 - **No destination allowlist here.** This box sees one authenticated client and
   has already lost the context of which service made the request. Filtering
   belongs on the cluster side, where the client authenticates by name.
+- **`PUBLIC_FALLBACK` must stay `false` once DuckDNS is tailnet-only.** When
+  `infra/duckdns` runs in `tailnet` mode, `zachd.duckdns.org` resolves to a
+  `100.x` address, so `egress-allow-home` fills `home_v4` with a tailnet IP. No
+  rule consults the set while the fallback is off, so this is harmless — but
+  turning the fallback back on would open the proxy port to a CGNAT range, not
+  the house. If this box ever needs a public proxy listener again, flip DuckDNS
+  back to `wan-echo` first.
 
 ## Verify
 

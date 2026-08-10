@@ -86,6 +86,60 @@ kubectl -n infra logs -l app.kubernetes.io/name=duckdns --tail=20   # expect "�
 dig +short zachd.duckdns.org                                        # expect the house's IP
 ```
 
+## Public or tailnet-only (`updater.mode`)
+
+`updater.mode` decides what the A record points at, and with it whether
+`*.zachd.duckdns.org` is reachable from the public internet at all.
+
+- **`wan-echo`** (default, original behaviour) — send an empty `ip=`; DuckDNS
+  records the request's source, i.e. the house's public IP. Every
+  `*.zachd.duckdns.org` host is then reachable from the internet through
+  whatever the router forwards.
+- **`tailnet`** — send the first Ready cluster node's **Tailscale (100.x)**
+  address instead. The names still resolve and still serve, but only to devices
+  on the tailnet: `100.x` is CGNAT, unroutable from the public internet. This is
+  the private/admin tier, and it's what lets the home router close its 80/443
+  forwards entirely — the public path becomes Cloudflare-tunnel-only.
+
+`tailnet` mode swaps the updater image for one with `kubectl` (`alpine/kubectl`)
+and grants it a read-only `nodes` ClusterRole, so it can skip a node that isn't
+Ready. It walks `updater.tailnet.candidates` in order — stable, so the record
+doesn't flap between healthy nodes, but a dead lead node is skipped within one
+tick. Keep that list matching `kubectl get nodes`.
+
+**ACME is unaffected by the mode.** DNS-01 is outbound only: Traefik POSTs the
+TXT record to the DuckDNS API and lego verifies it via 1.1.1.1/8.8.8.8. The A
+record and any inbound port play no part in issuance or renewal, so the wildcard
+keeps renewing after the cutover.
+
+### Cutover runbook (wan-echo → tailnet)
+
+The mode flip is safe and reversible on its own; closing the router is the step
+that isn't. Do them separately, and only after the Cloudflare paths for anything
+that used to be public via DuckDNS are confirmed working.
+
+1. **Prereqs.** Every host that must stay publicly reachable is already on the
+   Cloudflare tunnel and verified from off-LAN (jellyfin/requests/map, plus the
+   Minecraft relay at `minecraft.diemer.codes`). See the plan.
+2. Set `updater.mode: tailnet` in `values.yaml`, `./upgrade.sh`.
+3. Wait one tick, then `dig +short zachd.duckdns.org @1.1.1.1` → expect a `100.x`
+   address. From a tailnet device on cellular, load e.g.
+   `https://docs.zachd.duckdns.org` and complete an Authelia login (session
+   cookies and certs are unchanged — same names). From a non-tailnet network,
+   the same URL must now fail to connect.
+4. **Soak 24–48h.** The tailnet path is the only way you reach these now; be sure.
+5. **MANUAL, at the router:** delete the port-forwards for 80, 443 and 25565.
+   From an external host, `curl --max-time 5 https://<old-WAN-IP>` must time out;
+   `*.diemer.codes` and `minecraft.diemer.codes` must still work.
+
+Rollback at any point: `updater.mode: wan-echo`, `./upgrade.sh`, re-add the
+router forwards. Propagates within one tick plus the ~60s DuckDNS TTL.
+
+> The egress VPS's `egress-allow-home` set will now resolve `zachd.duckdns.org`
+> to a `100.x` address. Harmless while `PUBLIC_FALLBACK=false` (nothing consults
+> the set), but it must **stay** false in this mode — see
+> [`../egress-proxy/vps/README.md`](../egress-proxy/vps/README.md).
+
 ## Editing the Traefik config
 
 It isn't here any more — see [`../traefik`](../traefik). That chart's

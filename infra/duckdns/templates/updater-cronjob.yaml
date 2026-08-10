@@ -22,6 +22,11 @@ spec:
             {{- include "duckdns.selectorLabels" . | nindent 12 }}
         spec:
           restartPolicy: OnFailure
+          {{- if eq .Values.updater.mode "tailnet" }}
+          # tailnet mode reads node readiness to pick a target; wan-echo needs
+          # no API access, so the SA is only attached in that mode.
+          serviceAccountName: {{ include "duckdns.fullname" . }}-updater
+          {{- end }}
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -29,7 +34,11 @@ spec:
               type: RuntimeDefault
           containers:
             - name: updater
+              {{- if eq .Values.updater.mode "tailnet" }}
+              image: {{ .Values.updater.tailnet.image }}
+              {{- else }}
               image: {{ .Values.updater.image }}
+              {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -43,7 +52,54 @@ spec:
                     secretKeyRef:
                       name: {{ include "duckdns.secretName" . }}
                       key: token
+                {{- if eq .Values.updater.mode "tailnet" }}
+                # kubectl's discovery cache wants a writable HOME; the root FS
+                # is read-only, so point it at the emptyDir below.
+                - name: HOME
+                  value: /tmp
+                {{- end }}
               command:
+                {{- if eq .Values.updater.mode "tailnet" }}
+                - /bin/sh
+                - -c
+                # Point the A record at the first Ready node's Tailscale IP.
+                # Walking a fixed order (not load-balancing) keeps the record
+                # stable while still failing over off a dead node within a tick.
+                # DuckDNS returns HTTP 200 with a "KO" body on a bad token, so
+                # the body is the real result — exit non-zero if it isn't "OK".
+                - |
+                  set -eu
+                  ip=""
+                  while read -r node candidate; do
+                    [ -n "$node" ] || continue
+                    status="$(kubectl get node "$node" \
+                      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+                      2>/dev/null || true)"
+                    if [ "$status" = "True" ]; then
+                      ip="$candidate"
+                      echo "target: $node ($ip)"
+                      break
+                    fi
+                    echo "skip: $node (Ready=${status:-unknown})"
+                  done <<'CANDIDATES'
+                  {{- range .Values.updater.tailnet.candidates }}
+                  {{ .node }} {{ .ip }}
+                  {{- end }}
+                  CANDIDATES
+                  [ -n "$ip" ] || { echo "no Ready candidate node — refusing to update"; exit 1; }
+                  # busybox wget (no curl in this image): retry by hand, and
+                  # read the body — a bad token still returns HTTP 200 "KO".
+                  url="https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=${ip}"
+                  resp=""
+                  n=0
+                  while [ "$n" -lt 3 ]; do
+                    resp="$(wget -q -T 15 -O - "$url" || true)"
+                    [ "$resp" = "OK" ] && break
+                    n=$((n + 1)); sleep 5
+                  done
+                  echo "duckdns update ${DUCKDNS_DOMAIN} -> ${ip}: ${resp}"
+                  [ "${resp}" = "OK" ]
+                {{- else }}
                 - sh
                 - -c
                 # An empty `ip=` is the whole trick: DuckDNS records whatever
@@ -61,6 +117,17 @@ spec:
                     "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=")"
                   echo "duckdns update ${DUCKDNS_DOMAIN}: ${resp}"
                   [ "${resp}" = "OK" ]
+                {{- end }}
               resources:
                 {{- toYaml .Values.updater.resources | nindent 16 }}
+              {{- if eq .Values.updater.mode "tailnet" }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              {{- end }}
+          {{- if eq .Values.updater.mode "tailnet" }}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+          {{- end }}
 {{- end }}

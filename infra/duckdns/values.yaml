@@ -41,12 +41,60 @@ updater:
   # this bounds how long a residential IP change can black-hole the domain.
   schedule: "*/5 * * * *"
   image: curlimages/curl:8.11.1
+
+  # WHERE zachd.duckdns.org POINTS. This is the security switch for the whole
+  # DuckDNS surface, so it changes the mode, never a secret — safe in git.
+  #
+  #   wan-echo  the original behaviour: send an empty ip= and let DuckDNS
+  #             record the request's source, i.e. the house's public IP.
+  #             Every *.zachd.duckdns.org host is then reachable from the
+  #             public internet (through whatever the router forwards).
+  #
+  #   tailnet   send a cluster node's Tailscale (100.x) address instead. The
+  #             names still resolve and still serve — but only to devices on
+  #             the tailnet, because 100.x is CGNAT and unroutable from the
+  #             public internet. This is what lets the home router close its
+  #             80/443 forwards: the public path becomes Cloudflare-only, and
+  #             *.zachd.duckdns.org becomes the private/admin tier.
+  #
+  # ACME is unaffected either way — DNS-01 is outbound (Traefik POSTs the TXT
+  # record to DuckDNS and lego verifies via 1.1.1.1/8.8.8.8); the A record and
+  # inbound ports play no part in issuance or renewal.
+  #
+  # CUTOVER IS NOT JUST THIS FLAG. Flipping to tailnet and applying is safe and
+  # reversible on its own (revert + one tick + TTL). Only after it's verified
+  # from a tailnet device — and the Cloudflare paths for the ex-public hosts
+  # are confirmed — does the router's port-forward deletion follow. See README.
+  mode: wan-echo
+
+  # tailnet mode only. The updater walks this list in order and sends the first
+  # node that is Ready, so a single node going down is repointed within one
+  # tick rather than black-holing the domain — while a stable order avoids
+  # flapping the record between healthy nodes. Names must match `kubectl get
+  # nodes`; the image switches to one with kubectl (see below).
+  tailnet:
+    # Needs BOTH kubectl (read node readiness) and an HTTP client in one image.
+    # alpine/kubectl is Alpine-based, so busybox provides `sh` and `wget` — the
+    # DuckDNS call uses wget here, not curl, for that reason.
+    image: alpine/kubectl:1.34.2
+    candidates:
+      - { node: zachd-ubuntu,          ip: 100.121.136.39 }
+      - { node: zachd-ubuntu-1,        ip: 100.84.179.82 }
+      - { node: zachd-ubuntu-2,        ip: 100.118.242.89 }
+      - { node: zachd-ubuntu-laptop,   ip: 100.124.40.81 }
+      - { node: zachd-ubuntu-laptop-1, ip: 100.122.194.1 }
+      - { node: zachd-ubuntu-laptop-2, ip: 100.81.206.46 }
+      - { node: zachd-ubuntu-laptop-3, ip: 100.74.215.87 }
+      - { node: zachd-ubuntu-laptop-4, ip: 100.93.49.109 }
+      - { node: zachd-ubuntu-laptop-5, ip: 100.116.117.82 }
+      - { node: zachd-ubuntu-laptop-6, ip: 100.109.25.85 }
+
   resources:
     requests:
       cpu: 10m
       memory: 16Mi
     limits:
-      memory: 32Mi
+      memory: 64Mi
 
 # The TLS half USED TO LIVE HERE. It now lives in infra/traefik, which owns the
 # HelmChartConfig that teaches k3s's bundled Traefik to answer a DuckDNS DNS-01

@@ -1,0 +1,40 @@
+{{- if and .Values.updater.enabled (eq .Values.updater.mode "tailnet") }}
+{{/*
+tailnet mode only: the updater reads node Ready conditions to choose which
+node's Tailscale IP to publish. wan-echo needs no API access, so none of this
+renders in that mode. Read-only, cluster-scoped (nodes are not namespaced),
+and nothing more — get/list on nodes is the whole grant.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "duckdns.fullname" . }}-updater
+  labels:
+    {{- include "duckdns.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "duckdns.fullname" . }}-updater-node-reader
+  labels:
+    {{- include "duckdns.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "duckdns.fullname" . }}-updater-node-reader
+  labels:
+    {{- include "duckdns.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "duckdns.fullname" . }}-updater-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "duckdns.fullname" . }}-updater
+    namespace: {{ .Release.Namespace }}
+{{- end }}
