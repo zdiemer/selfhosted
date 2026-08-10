@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Shared Renovate defaults for every zdiemer repo. Extended as github>zdiemer/selfhosted//renovate/default. PRs propose; a human merges; deploys stay manual.",
+  "description": "Shared Renovate defaults for every zdiemer repo. Extended as github>zdiemer/selfhosted//renovate/default. PRs propose; a human merges; deploys stay manual. prHourlyLimit is off because runs are weekly — prConcurrentLimit is the real throttle (5 open, refills as PRs merge).",
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
@@ -8,7 +8,7 @@
   ],
   "labels": ["renovate"],
   "prConcurrentLimit": 5,
-  "prHourlyLimit": 2,
+  "prHourlyLimit": 0,
   "branchConcurrentLimit": 10,
   "minimumReleaseAge": "3 days",
   "rangeStrategy": "pin",
