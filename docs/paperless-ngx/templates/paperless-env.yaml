@@ -40,12 +40,14 @@ stringData:
     ('*'). The kubelet health probe hits the pod by IP, and a pinned ALLOWED_HOSTS
     would reject that Host as DisallowedHost, so the pod would never go Ready.
     Traefik and the tunnel already constrain which hostnames reach this service.
+
+    Always trust at least the DuckDNS ingress host — not gated on cloudflareHosts,
+    or dropping the last tunnel host would silently un-trust the duckdns origin
+    too and every login/POST would 400.
   */}}
-  {{- if .Values.ingress.cloudflareHosts }}
   {{- $origins := list }}
   {{- range prepend .Values.ingress.cloudflareHosts .Values.ingress.host }}{{ $origins = append $origins (printf "https://%s" .) }}{{- end }}
   PAPERLESS_CSRF_TRUSTED_ORIGINS: {{ join "," $origins | quote }}
-  {{- end }}
 
   {{- if .Values.paperless.tikaEnabled }}
   PAPERLESS_TIKA_ENABLED: "1"

@@ -145,8 +145,11 @@ ingress:
   # for these is terminated at Cloudflare, so they are NOT added to the ACME cert
   # list. A list — add more domains here to serve this app on them too. NOTE:
   # Paperless also needs each origin in its trusted-origins config (see below).
-  cloudflareHosts:
-    - docs.diemer.codes
+  #
+  # Emptied deliberately: personal documents are tailnet-only now
+  # (docs.zachd.duckdns.org over Tailscale). Adding Authelia forward-auth
+  # instead would break the mobile app's token auth, so the tailnet IS the gate.
+  cloudflareHosts: []
   tls:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain

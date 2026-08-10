@@ -20,8 +20,11 @@ webdav:
     # Additional hosts published via the Cloudflare tunnel (infra/cloudflared). TLS
     # for these is terminated at Cloudflare, so they are NOT added to the ACME cert
     # list. A list — add more domains here to serve this app on them too.
-    cloudflareHosts:
-      - webdav.diemer.codes
+    #
+    # Emptied deliberately: the .kdbx WebDAV endpoint is tailnet-only now
+    # (webdav.zachd.duckdns.org over Tailscale) — its static HTTP Basic auth was
+    # never meant to be the sole guard on the public internet.
+    cloudflareHosts: []
     tls:
       certResolver: duckdns
       # Wildcard SAN trick — see games/romm/README.md §Follow-up A.
