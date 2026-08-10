@@ -12,5 +12,5 @@ beautifulsoup4==4.15.0
 PyYAML==6.0.3
 
 # The run-page web view (src/web.py), served from the same image.
-fastapi==0.115.6
+fastapi==0.141.1
 uvicorn==0.34.0
