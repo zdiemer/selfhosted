@@ -54,7 +54,11 @@ login:
 1. **qBittorrent**: temporary password is in the container log
    (`kubectl -n media logs deploy/arr-qbittorrent -c qbittorrent`). Set a
    real one, then Options → Web UI → **bypass authentication for clients on
-   localhost** (gluetun's port-forward push depends on it). Downloads →
+   localhost** (gluetun's port-forward push depends on it). The push only fires
+   when the forwarded port changes or the tunnel comes back up, so if you enable
+   the bypass after the pod is already running, its first attempt has already
+   403'd — `kubectl -n media rollout restart deploy/arr-qbittorrent` to re-fire
+   it, then check the listen port matches `/v1/portforward`. Downloads →
    default save path `/media/downloads`; enable categories `movies` → 
    `/media/downloads/movies`, `tv` → `/media/downloads/tv`.
 2. **Prowlarr**: add your indexers. Settings → Apps → add Sonarr and Radarr

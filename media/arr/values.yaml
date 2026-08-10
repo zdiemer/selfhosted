@@ -70,6 +70,11 @@ gluetun:
   outboundSubnets: 10.42.0.0/16,10.43.0.0/16,192.168.4.0/24
   # Let cluster peers reach the qBittorrent web UI through gluetun's firewall.
   inputPorts: "8080"
+  # gluetun's HTTP control server — what the liveness probe asks. 8000 is
+  # gluetun's own default; it is a value here only so the probe port and the
+  # server port cannot drift apart again (they were 9999 and 8000, and the
+  # kubelet killed the container every 90s).
+  controlPort: 8000
   # /dev/net/tun access. NET_ADMIN alone is usually enough because gluetun
   # mknods the device itself; flip to true if the sidecar logs EPERM opening
   # the tun device (device-cgroup denial — same story as jellyfin's /dev/dri).
@@ -119,8 +124,11 @@ resources:
     requests:
       cpu: 50m
       memory: 128Mi
+    # 1Gi, not 512Mi: gluetun builds its DNS-over-TLS blocklists in memory at
+    # startup and OOMKilled (137) on every boot at 512Mi. Steady state is well
+    # under 128Mi — the limit only has to survive that one spike.
     limits:
-      memory: 512Mi
+      memory: 1Gi
 
 # PIA credentials — values.local.yaml only (op://homelab/media-arr).
 pia:

@@ -45,5 +45,10 @@ echo "==> Pods"
 $K get pods -l app.kubernetes.io/instance="${RELEASE}"
 
 echo "==> VPN egress IP (must be PIA, not the house)"
-$K exec "deploy/${RELEASE}-qbittorrent" -c gluetun -- wget -qO- https://ipinfo.io/ip || true
+# Asked of the qbittorrent container, not gluetun: it is the one whose traffic
+# the tunnel exists to hide, so it is the honest test of the shared netns. (It
+# is also the one that works — gluetun's busybox wget cannot do HTTPS through
+# gluetun's own DNS server and exits 4 no matter the tunnel state, which made
+# this check silently useless.)
+$K exec "deploy/${RELEASE}-qbittorrent" -c qbittorrent -- curl -s --max-time 15 https://ipinfo.io/ip || true
 echo

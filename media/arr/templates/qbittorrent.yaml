@@ -26,6 +26,8 @@ spec:
       {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/pia: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 8 }}
         ingress.enabled: "true"
@@ -74,11 +76,19 @@ spec:
               value: {{ .Values.gluetun.inputPorts | quote }}
             - name: TZ
               value: {{ .Values.timezone }}
-          # gluetun's own health endpoint; restarts the tunnel on failure.
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: ":{{ .Values.gluetun.controlPort }}"
+          # gluetun's control server, asked for the tunnel's actual state.
+          # /v1/openvpn/status returns 200 {"status":"running"} only while the
+          # tunnel is up, so a persistent failure means the killswitch has
+          # sealed the pod off and restarting the container is the right move.
+          # (Bare / on the control server is a 404 — always a failed probe.)
+          # gluetun's internal healthcheck already restarts the tunnel on its
+          # own; this is the outer loop for when that cannot recover.
           livenessProbe:
             httpGet:
-              path: /
-              port: 9999
+              path: /v1/openvpn/status
+              port: {{ .Values.gluetun.controlPort }}
             initialDelaySeconds: 60
             periodSeconds: 30
             failureThreshold: 3
