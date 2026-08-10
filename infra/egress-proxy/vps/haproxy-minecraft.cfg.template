@@ -1,0 +1,58 @@
+# Minecraft relay: public :25565 on this box → tailnet → any cluster node.
+# Installed by bootstrap.sh when MC_RELAY=true; @SSH-substituted values none —
+# edit the server list here, in git, and re-run bootstrap to apply.
+#
+# WHY THIS EXISTS. The home router no longer forwards any port, and
+# zachd.duckdns.org resolves to a tailnet address the public internet can't
+# route. Friends connect to minecraft.diemer.codes (a DNS-only record on this
+# VPS — Cloudflare can't proxy raw TCP on the free plan), and this haproxy
+# carries the connection over WireGuard to the cluster. The home IP never
+# appears anywhere public.
+#
+# The mc-minecraft Service is externalTrafficPolicy: Cluster, so EVERY node's
+# :25565 forwards to the pod wherever it currently runs — the server list below
+# needs no updating when the pod moves. `balance first` keeps all traffic on
+# the first reachable node instead of spraying connections.
+#
+# NO HEALTH CHECKS, DELIBERATELY. The server autopauses when idle, and wakes on
+# any TCP connection — a periodic probe looks exactly like a player joining,
+# so `check` here would mean the JVM never sleeps again. The cost: haproxy
+# only discovers a dead node when a real connection fails, eating a few
+# seconds of `retries` + `option redispatch` before landing on a live one.
+# Rare (a node down) and cheap (one slow join), so the trade goes this way.
+
+global
+  log /dev/log local0
+  maxconn 512
+
+defaults
+  mode tcp
+  log global
+  option tcplog
+  timeout connect 3s
+  # Minecraft sessions are long-lived idle-ish TCP; anything short here kicks
+  # players mid-game.
+  timeout client 4h
+  timeout server 4h
+  retries 3
+  option redispatch
+
+frontend minecraft
+  bind :25565
+  default_backend mc_nodes
+
+backend mc_nodes
+  balance first
+  # Tailnet addresses of every cluster node, stable-machine order (the three
+  # desktops first, then the laptop fleet). Tailscale IPs don't churn; if a
+  # node joins or leaves the cluster, update this list and re-run bootstrap.
+  server zachd-ubuntu          100.121.136.39:25565
+  server zachd-ubuntu-1        100.84.179.82:25565
+  server zachd-ubuntu-2        100.118.242.89:25565
+  server zachd-ubuntu-laptop   100.124.40.81:25565
+  server zachd-ubuntu-laptop-1 100.122.194.1:25565
+  server zachd-ubuntu-laptop-2 100.81.206.46:25565
+  server zachd-ubuntu-laptop-3 100.74.215.87:25565
+  server zachd-ubuntu-laptop-4 100.93.49.109:25565
+  server zachd-ubuntu-laptop-5 100.116.117.82:25565
+  server zachd-ubuntu-laptop-6 100.109.25.85:25565

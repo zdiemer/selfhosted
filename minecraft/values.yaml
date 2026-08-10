@@ -125,8 +125,15 @@ minecraftServer:
 
   # Service — expose 25565 via LoadBalancer. k3s's klipper-lb binds this port
   # directly on node IPs, so the "external IP" column will show the node IPs.
+  #
+  # Cluster, not Local: friends arrive through the egress VPS relay
+  # (infra/egress-proxy/vps/haproxy-minecraft.cfg.template), which targets
+  # every node's tailnet address. With Local only the node hosting the pod
+  # answers, so the relay would break each time the pod moves; with Cluster
+  # every node forwards to the pod wherever it is. The cost — losing the
+  # client source IP — was already paid the moment traffic came via a relay.
   serviceType: LoadBalancer
-  externalTrafficPolicy: Local
+  externalTrafficPolicy: Cluster
 
   # Auto-pause suspends the JVM when no players are online. Bigger win on a
   # modded server than on Paper (~3-4GB idle vs 6G active).

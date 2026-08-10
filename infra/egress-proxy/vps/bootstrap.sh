@@ -49,6 +49,11 @@ TLS_HOP="${TLS_HOP:-false}"
 #
 # Set true if this box is NOT on a tailnet. SSH is unaffected either way.
 PUBLIC_FALLBACK="${PUBLIC_FALLBACK:-false}"
+# Relay public :25565 over the tailnet to the cluster's Minecraft server, so
+# friends keep playing after the home router stops forwarding ports. Renders
+# haproxy-minecraft.cfg.template and opens the port in nftables. The backend
+# node list lives in the template — edit it in git, re-run this script.
+MC_RELAY="${MC_RELAY:-false}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -146,8 +151,14 @@ else
   FB4="# public fallback disabled (PUBLIC_FALLBACK=false) — tailnet only"
   FB6="# the home_v4/home_v6 sets are still refreshed, but nothing consults them"
 fi
+if [[ "$MC_RELAY" == "true" ]]; then
+  MCR="tcp dport 25565 accept"
+else
+  MCR="# minecraft relay disabled (MC_RELAY=false)"
+fi
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
     -e "s|@PUBLIC_FALLBACK_V4@|${FB4}|" -e "s|@PUBLIC_FALLBACK_V6@|${FB6}|" \
+    -e "s|@MC_RELAY@|${MCR}|" \
   "${HERE}/nftables.conf" > /etc/nftables.conf
 # Through the unit, not a bare `nft -f`. Both load the same file, but loading it
 # directly leaves nftables.service reporting `inactive` on a box that is in fact
@@ -188,6 +199,26 @@ systemctl daemon-reload
 systemctl enable --now egress-allow-home.timer >/dev/null 2>&1
 HOME_DDNS="$HOME_DDNS" /usr/local/sbin/egress-allow-home || {
   echo "    WARN: could not resolve ${HOME_DDNS} yet — the timer will retry"; }
+
+# ---------------------------------------------------------------------------
+# Minecraft relay
+# ---------------------------------------------------------------------------
+if [[ "$MC_RELAY" == "true" ]]; then
+  echo "==> Minecraft relay (haproxy on :25565 → tailnet)"
+  apt-get install -y -qq haproxy >/dev/null
+  # Wholesale, not appended: this box runs haproxy for exactly one job, and a
+  # config assembled from fragments is how two jobs end up fighting later.
+  cp "${HERE}/haproxy-minecraft.cfg.template" /etc/haproxy/haproxy.cfg
+  haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null || {
+    echo "FAIL: haproxy rejected the config"; haproxy -c -f /etc/haproxy/haproxy.cfg; exit 1; }
+  systemctl enable haproxy >/dev/null 2>&1 || true
+  systemctl restart haproxy
+  systemctl is-active --quiet haproxy && echo "    haproxy running" || {
+    echo "FAIL: haproxy did not start"; journalctl -u haproxy -n 30 --no-pager; exit 1; }
+elif systemctl is-active --quiet haproxy 2>/dev/null; then
+  echo "==> MC_RELAY=false but haproxy is running — stopping it"
+  systemctl disable --now haproxy
+fi
 
 echo "==> Unattended security upgrades"
 dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
