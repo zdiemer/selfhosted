@@ -10,6 +10,7 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 0,
   "branchConcurrentLimit": 10,
+  "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "3 days",
   "rangeStrategy": "pin",
   "statusCheckNames": {
