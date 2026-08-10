@@ -60,6 +60,16 @@ for chart_yaml in $(find . -mindepth 3 -maxdepth 4 -name Chart.yaml -not -path "
   d=${d%/Chart.yaml}
   is_submodule "$d" && continue
 
+  # Chart.lock / charts/*.tgz are gitignored, so a clean checkout must fetch
+  # declared dependencies before the chart can render. This also makes a
+  # chart-bump PR prove the new version actually resolves from its repo.
+  if grep -q "^dependencies:" "$chart_yaml" && ! in_list "$d" "${LINT_SKIP[@]}"; then
+    if ! helm dependency update "$d" >/tmp/dep-out 2>&1; then
+      echo "FAIL helm dependency update $d"; cat /tmp/dep-out; fail=1
+      continue
+    fi
+  fi
+
   if ! in_list "$d" "${LINT_SKIP[@]}"; then
     if ! helm lint "$d" --quiet >/tmp/lint-out 2>&1; then
       echo "FAIL helm lint $d"; cat /tmp/lint-out; fail=1
