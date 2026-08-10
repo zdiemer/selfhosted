@@ -1,0 +1,39 @@
+{{/*
+Edge-wide rate limit, applied at the websecure ENTRYPOINT (helmchartconfig.yaml
+names it under ports.websecure.middlewares), so it covers every router in the
+cluster without touching any per-app Ingress. Entrypoint middlewares are static
+config, so allowCrossNamespace is not involved — but the reference and this
+object must move in lockstep: if the entrypoint names a middleware that does
+not exist, EVERY router on websecure errors. That is why this lives in the
+same chart as the HelmChartConfig (helm applies both synchronously, before
+helm-controller's async Traefik redeploy) and why it renders into
+kube-system, the namespace the @kubernetescrd reference encodes — same
+cross-namespace trick as infra/duckdns's token Secret.
+
+Never delete this object while rateLimit.enabled still references it; disable
+the flag (which drops both together) and let upgrade.sh restart Traefik.
+*/}}
+{{- if .Values.rateLimit.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: edge-ratelimit
+  namespace: {{ .Values.helmChart.namespace }}
+  labels:
+    {{- include "traefik-config.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    average: {{ .Values.rateLimit.average }}
+    burst: {{ .Values.rateLimit.burst }}
+    sourceCriterion:
+      {{- /*
+        CF-Connecting-IP is authoritative on the Cloudflare path: the CF edge
+        overwrites it, so clients cannot spoof their bucket. On the direct
+        path the header is absent and every request shares ONE bucket — which
+        also means a direct-path attacker can dodge buckets by inventing the
+        header. Acceptable: limits are sized so the shared bucket never
+        bothers legitimate LAN/tailnet use, and once the router closes
+        (DuckDNS → tailnet-only) the direct path stops being internet-facing.
+      */}}
+      requestHeaderName: CF-Connecting-IP
+{{- end }}

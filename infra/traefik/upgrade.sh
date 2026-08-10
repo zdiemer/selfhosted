@@ -28,9 +28,13 @@ command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
 render() { helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"; }
+# The chart renders more than one document now (the edge-ratelimit Middleware
+# joined the HelmChartConfig), and everything below that parses rendered YAML
+# line-by-line assumes exactly one. Scope those to the one template they mean.
+render_hcc() { render -s templates/helmchartconfig.yaml; }
 
-HCC_NAME="$(render | awk '/^  name:/ {print $2; exit}')"
-HCC_NS="$(render | awk '/^  namespace:/ {print $2; exit}')"
+HCC_NAME="$(render_hcc | awk '/^  name:/ {print $2; exit}')"
+HCC_NS="$(render_hcc | awk '/^  namespace:/ {print $2; exit}')"
 HCC_NAME="${HCC_NAME:-traefik}"
 HCC_NS="${HCC_NS:-kube-system}"
 
@@ -54,7 +58,7 @@ fi
 # will catch a typo inside it — a malformed overlay is simply ignored by
 # helm-controller, and Traefik silently keeps its old config or drops to
 # defaults. Parse it here, where the failure is loud.
-render | python3 -c '
+render_hcc | python3 -c '
 import sys, yaml
 doc = yaml.safe_load(sys.stdin)
 vc  = doc["spec"]["valuesContent"]
@@ -67,11 +71,20 @@ if v.get("updateStrategy", {}).get("type") == "Recreate":
 print("==> valuesContent parses; safety assertions pass")
 ' || { echo "rendered valuesContent is not valid — refusing to apply"; exit 1; }
 
+# If the websecure entrypoint references the edge-ratelimit middleware, the
+# Middleware object must ship in the same render — an entrypoint naming a
+# missing middleware errors EVERY router on websecure, which is the one
+# failure mode worse than an outage window.
+if render_hcc | grep -q 'edge-ratelimit@kubernetescrd'; then
+  render | grep -q 'name: edge-ratelimit' \
+    || { echo "entrypoint references edge-ratelimit but the chart does not render the Middleware — refusing to apply"; exit 1; }
+fi
+
 # Say plainly whether Traefik is about to restart, and show exactly what changes.
 REDEPLOY=0
 if kubectl get helmchartconfig "$HCC_NAME" -n "$HCC_NS" >/dev/null 2>&1; then
   live="$(kubectl get helmchartconfig "$HCC_NAME" -n "$HCC_NS" -o jsonpath='{.spec.valuesContent}')"
-  rendered="$(render | awk '/valuesContent:/{f=1;next} f' | sed 's/^    //')"
+  rendered="$(render_hcc | awk '/valuesContent:/{f=1;next} f' | sed 's/^    //')"
   if [[ "$live" != "$rendered" ]]; then
     REDEPLOY=1
     echo

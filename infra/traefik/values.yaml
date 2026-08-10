@@ -170,6 +170,11 @@ accessLog:
         # The real client IP: klipper-lb + the Cloudflare tunnel both mean
         # ClientHost is frequently an internal hop, not the actual origin.
         X-Forwarded-For: keep
+        # Cloudflare's authoritative client IP (the CF edge overwrites it, so
+        # unlike XFF it can't be client-spoofed on that path). It's also what
+        # the edge-ratelimit middleware buckets on — keep it visible so a 429
+        # in the log can be attributed to a source.
+        CF-Connecting-IP: keep
 
 # CAVEAT worth knowing before adding a service: Traefik's `RequestPath` field
 # includes the query string, and these logs go to a third party. Nothing here
@@ -185,6 +190,36 @@ accessLog:
 # second, unencrypted way in. infra/ingress-policy enforces the pinning.
 httpsRedirect:
   enabled: true
+
+# Which upstream hops Traefik believes about X-Forwarded-* / CF-Connecting-IP.
+# Both ingress paths arrive via an internal hop — cloudflared pods (pod CIDR)
+# and klipper-lb SNAT (pod + node CIDRs) — so without this the real client IP
+# never reaches Traefik, and any IP-based middleware buckets the whole
+# internet into one address. These are the live cluster CIDRs: pods
+# 10.42.0.0/16, node LAN 192.168.4.0/24.
+#
+# Do NOT add public CIDRs here: trusting a range means believing whatever
+# X-Forwarded-For it sends, and everything outside these two ranges is either
+# Cloudflare (which we read via CF-Connecting-IP instead) or an attacker.
+forwardedHeaders:
+  trustedIPs:
+    - 10.42.0.0/16
+    - 192.168.4.0/24
+
+# Edge-wide rate limit, applied at the websecure entrypoint so every router in
+# the cluster gets it without per-chart edits (templates/middleware.yaml has
+# the full design notes, including why buckets key on CF-Connecting-IP).
+#
+# Sizing: per-source req/s sustained (average) with a burst allowance. 25/100
+# is deliberately generous — a Jellyfin seek storm, a busy SPA, or the Happy
+# websocket handshake sit far below it, while a scanner walking the URL space
+# at hundreds of req/s hits 429s quickly. All direct-path (non-Cloudflare)
+# traffic shares ONE bucket, so don't tighten this without remembering that
+# bucket covers every tailnet/LAN client combined.
+rateLimit:
+  enabled: true
+  average: 25
+  burst: 100
 
 # NOT configured here, deliberately:
 #   * The dashboard (`--api.dashboard=true` is on, but the `traefik` entrypoint

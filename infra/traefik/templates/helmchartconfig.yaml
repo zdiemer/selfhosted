@@ -38,13 +38,40 @@ spec:
         Recreate is rejected by the API server. Helm merges null as a delete.
       */}}
       rollingUpdate: {{ .Values.updateStrategy.rollingUpdate | default "null" }}
-    {{- if .Values.httpsRedirect.enabled }}
+    {{- if or .Values.httpsRedirect.enabled .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled }}
     ports:
+      {{- if .Values.httpsRedirect.enabled }}
       web:
         redirections:
           entryPoint:
             to: websecure
             scheme: https
+      {{- end }}
+      {{- if or .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled }}
+      websecure:
+        {{- with .Values.forwardedHeaders.trustedIPs }}
+        {{- /*
+          Without this, Traefik discards X-Forwarded-For / CF-Connecting-IP
+          from every hop it doesn't trust — and BOTH ingress paths arrive via
+          an internal hop (cloudflared pods on the pod CIDR, klipper-lb SNAT
+          on pod/node CIDRs), so the real client IP was invisible.
+        */}}
+        forwardedHeaders:
+          trustedIPs:
+            {{- range . }}
+            - {{ . | quote }}
+            {{- end }}
+        {{- end }}
+        {{- if .Values.rateLimit.enabled }}
+        {{- /*
+          Entrypoint-level middleware: applies to every router on websecure.
+          The Middleware object itself is templates/middleware.yaml — same
+          chart on purpose, see the header comment there.
+        */}}
+        middlewares:
+          - {{ .Values.helmChart.namespace }}-edge-ratelimit@kubernetescrd
+        {{- end }}
+      {{- end }}
     {{- end }}
     logs:
       general:
