@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the Authelia image tag in values.yaml (image.tag).
 # renovate: image=authelia/authelia
-appVersion: "4.38.17"
+appVersion: "4.39.20"
 home: https://www.authelia.com
 sources:
   - https://github.com/authelia/authelia
