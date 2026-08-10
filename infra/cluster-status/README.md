@@ -29,6 +29,46 @@ against the previous sample, held in memory. A CronJob starts fresh every run, s
 it would never have a previous sample and every rate would be `null` forever. The
 collector has to be a long-lived process.
 
+## Service checks (uptime)
+
+Pod status answers "is the process running", which is not the same question as
+"does the service work". `infra/sms-relay` is the case that motivated this: its
+pod can be `1/1 Running` and its `/api/health` green while the Android phone
+that actually puts messages on the air is asleep, off wifi, or between IP
+addresses — every other section of this page stays green through all of it.
+
+`serviceChecks` in values is a list of HTTP endpoints the collector probes once
+per cycle, in series, inside the scrape loop:
+
+```yaml
+serviceChecks:
+  - name: SMS relay
+    url: http://sms-relay.infra.svc.cluster.local:8000/api/health
+    expectStatus: 200
+    timeoutSeconds: 5
+```
+
+Keep `timeoutSeconds` well under `collector.intervalSeconds` — a hung check
+delays the whole scrape, and an unreachable host burns the full timeout (a dead
+ClusterIP port takes the entire budget before it gives up).
+
+A check distinguishes three outcomes, because they mean different things:
+`ok` (answered as expected), a `status` code (**reachable but unhealthy** — the
+service is up and wrong), and a `reason` like `URLError` (**unreachable** — no
+answer at all).
+
+**The URL is never published.** `status.json` carries the display name and the
+result only. Checks legitimately point at ClusterIPs and LAN addresses, and this
+page is public — publishing the target would hand the internet an internal host
+inventory. Turn the whole section off with `publish.uptime: false`.
+
+**Why the phone itself isn't checked.** Probing the Android gateway directly
+would need its basic-auth credentials in this collector, and it would publish
+"the owner's phone is off the network" to the open internet — a fact about a
+person, not about the cluster. The relay's own health endpoint is the right
+altitude. (If that ever changes: the gateway app answers `/health` with a **500**
+and reports real status on `/` instead, so point any such check at `/`.)
+
 ## Why nothing serves from an API
 
 **This page is public.** nginx only ever serves two files off local disk, so

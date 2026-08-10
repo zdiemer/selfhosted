@@ -33,6 +33,8 @@ data:
     INTERVAL = float(os.environ.get("INTERVAL_SECONDS", "15"))
     PUBLISH_EVENTS = os.environ.get("PUBLISH_EVENTS", "true") == "true"
     PUBLISH_NODE_VERSIONS = os.environ.get("PUBLISH_NODE_VERSIONS", "true") == "true"
+    PUBLISH_UPTIME = os.environ.get("PUBLISH_UPTIME", "true") == "true"
+    SERVICE_CHECKS = json.loads(os.environ.get("SERVICE_CHECKS", "[]"))
     TOP_N = 5
 
 
@@ -656,6 +658,42 @@ data:
         return out
 
 
+    def check_service(check):
+        # Probe one HTTP endpoint and report whether it answered as expected.
+        #
+        # ⚠️ The URL is NEVER published — only the display name and the result.
+        # Checks legitimately point at in-cluster ClusterIPs and LAN addresses
+        # (the SMS relay's backend is a phone on the house network), and this
+        # page is public. Publishing the target would hand the internet an
+        # internal host inventory.
+        name = check.get("name") or "service"
+        expect = int(check.get("expectStatus", 200))
+        timeout = float(check.get("timeoutSeconds", 5))
+        started = time.monotonic()
+        try:
+            req = urllib.request.Request(check["url"], method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                code = r.status
+                r.read(2048)
+        except urllib.error.HTTPError as e:
+            # An HTTP error is still an answer — a 500 means the service is up
+            # and unhealthy, which reads differently from unreachable.
+            code = e.code
+        except Exception as e:
+            return {
+                "name": name,
+                "ok": False,
+                "reason": type(e).__name__,
+                "latencyMs": round((time.monotonic() - started) * 1000),
+            }
+        return {
+            "name": name,
+            "ok": code == expect,
+            "status": code,
+            "latencyMs": round((time.monotonic() - started) * 1000),
+        }
+
+
     def collect():
         nodes = api_get("/api/v1/nodes")["items"]
 
@@ -693,6 +731,17 @@ data:
             except Exception as e:
                 log("k8s_events_api_error", error=e)
 
+        services = []
+        if PUBLISH_UPTIME:
+            for check in SERVICE_CHECKS:
+                if not check.get("url"):
+                    continue
+                try:
+                    services.append(check_service(check))
+                except Exception as e:
+                    # A malformed check must not cost the whole scrape.
+                    log("service_check_error", name=check.get("name"), error=e)
+
         result = []
         totals = Totals()
         for node in nodes:
@@ -729,6 +778,7 @@ data:
             "statefulSets": statefulsets,
             "daemonSets": daemonsets,
             "recentEvents": events,
+            "services": services,
         }
 
 

@@ -77,6 +77,10 @@ spec:
               value: {{ .Values.publish.events | quote }}
             - name: PUBLISH_NODE_VERSIONS
               value: {{ .Values.publish.nodeVersions | quote }}
+            - name: PUBLISH_UPTIME
+              value: {{ .Values.publish.uptime | quote }}
+            - name: SERVICE_CHECKS
+              value: {{ .Values.serviceChecks | toJson | quote }}
           volumeMounts:
             - name: data
               mountPath: /data

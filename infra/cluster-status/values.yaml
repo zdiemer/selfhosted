@@ -67,9 +67,35 @@ web:
 #
 # Flip either to false and the collector never writes the field at all, so it
 # can't leak even if the page or ingress is later misconfigured.
+#   uptime        — the serviceChecks results below. Names and up/down only;
+#                   the probed URL is never written into status.json (several
+#                   point at ClusterIPs and LAN hosts, and this page is public).
 publish:
   events: true
   nodeVersions: true
+  uptime: true
+
+# HTTP endpoints the collector probes each cycle, for services whose failure is
+# invisible in pod status — a Running pod whose upstream is unreachable still
+# shows green in every other section of this page.
+#
+# Each entry: name (published), url (NEVER published), expectStatus (default
+# 200), timeoutSeconds (default 5). Keep timeouts well under
+# collector.intervalSeconds — checks run in series, inside the scrape loop.
+#
+# ⚠️ Probe the service, not its backend. sms-relay's own health endpoint is the
+# right target; the Android gateway phone behind it is deliberately NOT checked
+# here. That would need the gateway's basic-auth credentials in this collector,
+# and it would publish "the owner's phone is off the network" to the internet —
+# a fact about a person, not about the cluster. If you ever do add it, note the
+# gateway app answers /health with a 500 and reports real status on / instead.
+serviceChecks:
+  - name: SMS relay
+    # Cluster-internal Service address, so the check works with no ingress,
+    # no TLS, and no dependency on DNS or the tunnel being up.
+    url: http://sms-relay.infra.svc.cluster.local:8000/api/health
+    expectStatus: 200
+    timeoutSeconds: 5
 
 ingress:
   enabled: true

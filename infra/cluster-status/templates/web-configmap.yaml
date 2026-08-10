@@ -26,8 +26,17 @@ data:
         return 200 "ok\n";
       }
 
+      # The page shell must revalidate on every load. It carries all the
+      # rendering logic, and it is served with no content hash in the URL — so
+      # without an explicit header a browser applies *heuristic* caching (a
+      # fraction of the Last-Modified age) and can keep showing an old shell for
+      # hours after a deploy. The symptom is the worst kind: status.json is
+      # no-store and therefore current, so the page renders fresh data through
+      # stale code and simply omits whatever the new version added. no-cache
+      # still allows a 304, so this costs a conditional request, not a re-download.
       location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
       }
     }
   index.html: |
@@ -456,9 +465,36 @@ data:
           }).join('') + '</div></div>';
       }
 
+      function services(list) {
+        // Endpoint health for things whose failure is invisible in pod status:
+        // a Running pod whose upstream is unreachable still looks green above.
+        // Only the display name and the result are published — never the URL
+        // that was probed (see the collector's check_service).
+        if (!list || !list.length) return '';
+        var down = list.filter(function (s) { return !s.ok; }).length;
+        return '<div class="card"><div class="card-h"><span class="card-t"' +
+          (down ? ' style="color:var(--destructive)"' : '') + '>Services' +
+          (down ? ' (' + down + ' down)' : '') + '</span></div>' +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Service</th>' +
+          '<th class="c">State</th><th class="c">Detail</th><th class="r">Latency</th>' +
+          '</tr></thead><tbody>' +
+          list.map(function (s) {
+            var c = s.ok ? 'var(--ok)' : 'var(--destructive)';
+            // A reachable-but-unhealthy service reports its HTTP code; an
+            // unreachable one reports why the connection failed.
+            var detail = s.reason ? s.reason : ('HTTP ' + (s.status == null ? '—' : s.status));
+            return '<tr><td>' + esc(s.name) + '</td>' +
+              '<td class="c" style="color:' + c + '">' + (s.ok ? 'up' : 'down') + '</td>' +
+              '<td class="c mono" style="font-size:12px;color:var(--muted)">' + esc(detail) + '</td>' +
+              '<td class="r mono" style="font-size:12px">' +
+              (s.latencyMs == null ? '—' : s.latencyMs + 'ms') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div></div>';
+      }
+
       function render(d) {
         var h = '';
         if (d.totals) h += summary(d.totals);
+        h += services(d.services);
         // Surfaced high, right under the summary: if anything is wrong it should
         // be the first thing you see, not buried below the node list.
         h += problemPods(d.problemPods);
