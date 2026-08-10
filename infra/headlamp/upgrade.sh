@@ -15,7 +15,7 @@ NAMESPACE="${NAMESPACE:-headlamp}"
 CHART="${CHART:-headlamp/headlamp}"
 # Pin the chart; bump deliberately.
 # renovate: datasource=helm depName=headlamp registryUrl=https://kubernetes-sigs.github.io/headlamp/
-CHART_VERSION="${CHART_VERSION:-0.40.0}"
+CHART_VERSION="${CHART_VERSION:-0.44.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
