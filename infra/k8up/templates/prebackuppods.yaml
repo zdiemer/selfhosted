@@ -45,7 +45,8 @@ spec:
         - name: dump
           # Matches the server's major version. pg_dump refuses to dump a server
           # newer than itself, so this tracks docs/paperless-ngx's postgres image.
-          image: postgres:16-alpine
+          # renovate: datasource=docker depName=postgres
+          image: postgres:16.14-alpine
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:
@@ -75,7 +76,9 @@ spec:
       # Backup sits with PreBackupPodReady=True and no job ever created.
       containers:
         - name: dump
-          image: mariadb:11
+          # Tracks games/romm's mariadb 11.4 server.
+          # renovate: datasource=docker depName=mariadb
+          image: mariadb:11.4.12
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:
@@ -103,7 +106,8 @@ spec:
       # Backup sits with PreBackupPodReady=True and no job ever created.
       containers:
         - name: dump
-          image: mongo:7
+          # renovate: datasource=docker depName=mongo
+          image: mongo:7.0.39
           command: ["sleep", "infinity"]
           env:
             # This secret uses hyphenated keys, which are not valid shell
@@ -170,7 +174,8 @@ spec:
           # PostgreSQL 15 here, NOT 16 like paperless. pg_dump refuses to dump a
           # server newer than itself, and silently produces a dump the older
           # server cannot restore if it is older — so this tracks the server.
-          image: postgres:15-alpine
+          # renovate: datasource=docker depName=postgres
+          image: postgres:15.18-alpine
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:

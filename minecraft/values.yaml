@@ -39,11 +39,11 @@
 #   kubectl -n minecraft exec -it deploy/mc-minecraft -- rcon-cli
 # ============================================================================
 
-# java17 covers MC 1.20.1 (Prominence II's current line). Do NOT bump to
-# java21 until the modpack itself moves to a 1.21.x Fabric build.
+# -java17 covers MC 1.20.1 (Prominence II's current line). Do NOT move off
+# the -java17 suffix until the modpack itself moves to a 1.21.x Fabric build.
 image:
   repository: itzg/minecraft-server
-  tag: java17
+  tag: 2026.8.0-java17
   pullPolicy: IfNotPresent
 
 # Critical: never run two pods against the same world. Recreate = old pod dies
@@ -202,6 +202,10 @@ minecraftServer:
 # drop in a broken mod set mid-session. To bump: pick a new version ID from
 # https://modrinth.com/modpack/prominence-2-fabric/versions (the ID after
 # the slug in the URL, e.g. `9r2hKvJH` for 3.9.27).
+#
+# Renovate deliberately does NOT manage this block: Modrinth version IDs and
+# CurseForge CDN URLs aren't orderable versions, and pack + sideloaded mods
+# must move in lockstep with the client pack. Bumps here stay manual.
 extraEnv:
   MODRINTH_MODPACK: "prominence-2-fabric"
   # Pin to 3.9.27 (released 2026-05-10). Note the env var is
@@ -370,7 +374,7 @@ mcbackup:
   enabled: true
   image:
     repository: itzg/mc-backup
-    tag: latest
+    tag: 2026.8.0
   pullPolicy: IfNotPresent
 
   # Hourly backups; prune anything older than 2 days locally.
