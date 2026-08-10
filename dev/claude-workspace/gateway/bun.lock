@@ -1,18 +1,19 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "messaging-gateway",
       "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.12.0",
+        "@modelcontextprotocol/sdk": "1.30.0",
         "@whiskeysockets/baileys": "6.7.24",
-        "qrcode-terminal": "^0.12.0",
-        "zod": "^3.24.0",
+        "qrcode-terminal": "0.12.0",
+        "zod": "3.25.76",
       },
       "devDependencies": {
-        "@types/node": "^22",
-        "@types/qrcode-terminal": "^0.12.2",
-        "typescript": "^5.7.0",
+        "@types/node": "22.20.1",
+        "@types/qrcode-terminal": "0.12.2",
+        "typescript": "5.9.3",
       },
     },
   },
@@ -261,7 +262,7 @@
 
     "keyv": ["keyv@5.6.0", "", { "dependencies": { "@keyv/serialize": "^1.1.1" } }, "sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw=="],
 
-    "libsignal": ["libsignal@github:whiskeysockets/libsignal-node#bcea72d", { "dependencies": { "curve25519-js": "^0.0.4", "protobufjs": "^7.5.5" } }, "WhiskeySockets-libsignal-node-bcea72d"],
+    "libsignal": ["libsignal@github:whiskeysockets/libsignal-node#bcea72d", { "dependencies": { "curve25519-js": "^0.0.4", "protobufjs": "^7.5.5" } }, "WhiskeySockets-libsignal-node-bcea72d", "sha512-zKDaKfYGwQ/ALHPan2W2KZq/6njngElVNcqQQmQy0rl3fZbaqjiIchbPaJyCVwkTwHx1+s3Li1U/tf+f+AbCQA=="],
 
     "long": ["long@5.3.2", "", {}, "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="],
 
