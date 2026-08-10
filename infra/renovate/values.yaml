@@ -17,9 +17,10 @@ schedule: "30 5 * * 6"
 repositories:
   - zdiemer/selfhosted
 
-# "extract" | "lookup" | "full" — set while rolling out to see what Renovate
-# WOULD do (job logs) without it opening PRs. Empty = live.
-dryRun: "full"
+# "extract" | "lookup" | "full" — set to see what Renovate WOULD do (job
+# logs) without it opening PRs. Empty = live. The rollout dry-run was
+# reviewed 2026-08-10 (110 deps, all managers firing) before going live.
+dryRun: ""
 
 # debug is a firehose; info is enough once trusted.
 logLevel: info
