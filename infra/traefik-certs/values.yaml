@@ -1,0 +1,102 @@
+# Renews the wildcard certificate into a Secret, so that Traefik does not have
+# to hold ACME state itself.
+#
+# WHY THIS CHART EXISTS
+# Traefik used to own the certificate: it ran the ACME DNS-01 challenge and
+# persisted the result to acme.json on a ReadWriteOnce local-path PVC. That
+# single file dictated the entire availability story of the cluster's ingress —
+# one replica (two pods cannot share the volume, and two Traefiks racing on one
+# acme.json corrupt it), `Recreate` rollouts (so every config change was a
+# cluster-wide gap, not a rolling one), and a hard pin to whichever node held
+# the local-path volume (so that node could never be drained without taking all
+# ingress down).
+#
+# Moving issuance out here makes Traefik stateless. It reads a Secret; it never
+# writes one. That is what lets infra/traefik run three spread replicas behind a
+# PodDisruptionBudget and roll with maxUnavailable: 0.
+#
+# HOW IT AVOIDS BEING PINNED ITSELF
+# No PVC anywhere. lego's data directory — its ACME account key and the issued
+# cert — is tarred into a Secret between runs and restored on the next one. The
+# account key is the part that genuinely must persist: losing it means
+# re-registering with Let's Encrypt every time, straight into a rate limit.
+
+# The certificate. Both names go on one cert, matching what Traefik's
+# certresolver produced, because every Ingress in this repo pins
+# `router.tls.domains` to exactly this pair.
+#
+# DuckDNS can only set a TXT record at the account's own subdomain, so a cert
+# for `foo.zachd.duckdns.org` cannot be validated on its own — sub-subdomains
+# ride the wildcard SAN instead. That constraint is why the wildcard is not
+# optional here.
+domains:
+  main: zachd.duckdns.org
+  sans:
+    - "*.zachd.duckdns.org"
+
+acme:
+  email: zach.diemer@gmail.com
+  # Let's Encrypt production. Point at the staging directory when testing
+  # issuance changes — its rate limits are far looser, and a staging cert is
+  # untrusted by browsers, which makes an accidental cutover obvious rather
+  # than subtle.
+  server: https://acme-v02.api.letsencrypt.org/directory
+  # Renew when the cert has fewer than this many days left. Let's Encrypt certs
+  # are 90 days, so 30 leaves two full weekly attempts of slack before anything
+  # is user-visible.
+  renewDays: 30
+  # Resolve the challenge TXT against public resolvers rather than the
+  # cluster's, which knows nothing about duckdns.org.
+  resolvers:
+    - 1.1.1.1:53
+    - 8.8.8.8:53
+  # DuckDNS propagates fast, but ACME fails the order outright if it checks too
+  # early. These buy patience, not speed.
+  propagationTimeout: 300
+  pollingInterval: 10
+
+# The DuckDNS API token, owned by infra/duckdns and already rendered by that
+# chart into kube-system (a secretKeyRef cannot cross namespaces, which is why
+# it renders twice). Referenced by name here, never copied — rotating it is
+# that chart's job.
+tokenSecret:
+  name: duckdns-token
+  key: token
+
+# Where the issued certificate lands. infra/traefik names this Secret in its
+# tlsStore, so the two must agree; renaming it on one side alone means Traefik
+# quietly falls back to its self-signed default certificate on every host.
+certSecret:
+  name: traefik-wildcard-tls
+
+schedule:
+  # Weekly. A 90-day cert with a 30-day renewal threshold gives roughly eight
+  # attempts before expiry, so a couple of failed runs are recoverable without
+  # anyone noticing. Daily would just be eight times the log noise.
+  cron: "17 4 * * 1"
+  # A stuck run must not overlap the next one — two legos racing on the same
+  # account key is the failure this is built to avoid.
+  concurrencyPolicy: Forbid
+  # ACME orders can be slow when propagation lags. Past this, something is
+  # wrong and the job should fail loudly rather than hang until next week.
+  activeDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+images:
+  # Does the ACME work. The binary lives at /lego, NOT on PATH — the image has
+  # a busybox shell, which is what lets the job branch between first issuance
+  # and renewal without a wrapper image of our own.
+  # renovate: datasource=docker depName=goacme/lego
+  lego: goacme/lego:v4.29.0
+  # Reads and writes the two Secrets. Alpine-based, so it brings the shell and
+  # tar the state handling needs. Same image infra/duckdns uses.
+  # renovate: datasource=docker depName=alpine/kubectl
+  kubectl: alpine/kubectl:1.36.2
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

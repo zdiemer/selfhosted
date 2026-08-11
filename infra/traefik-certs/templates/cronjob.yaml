@@ -1,0 +1,208 @@
+{{/*
+Three stages, deliberately as init containers plus one main container, because
+init containers are the only ordering primitive a pod has — regular containers
+start in parallel, which would race the publish against the issuance.
+
+  restore  (kubectl) : lego state Secret -> emptyDir
+  issue    (lego)    : first-issue or renew, in that emptyDir
+  publish  (kubectl) : emptyDir -> lego state Secret + the TLS Secret
+
+Nothing here touches a volume that outlives the pod, which is the entire point:
+the thing that renews the cluster's certificate must not be pinned to a node,
+because the node it is pinned to is the one you eventually need to drain.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "traefik-certs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "traefik-certs.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule.cron | quote }}
+  concurrencyPolicy: {{ .Values.schedule.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.schedule.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.schedule.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.schedule.activeDeadlineSeconds }}
+      # One attempt. A failed renewal is not urgent — the existing cert has
+      # weeks left by construction — and retrying an ACME order that failed
+      # for a real reason just burns rate limit.
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "traefik-certs.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "traefik-certs.fullname" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            # ---------------------------------------------------------------
+            # 1. Restore lego's state from the Secret.
+            # ---------------------------------------------------------------
+            # Absent on the very first run, which is not an error: the issue
+            # step below branches on whether a certificate came back.
+            - name: restore
+              image: {{ .Values.images.kubectl }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  if kubectl get secret "$STATE_SECRET" >/dev/null 2>&1; then
+                    echo "==> restoring lego state from $STATE_SECRET"
+                    kubectl get secret "$STATE_SECRET" \
+                      -o "jsonpath={.data['lego\.tar\.gz']}" \
+                      | base64 -d \
+                      | tar xzf - -C /state
+                    echo "==> restored:"
+                    find /state -type f | sed 's/^/    /'
+                  else
+                    echo "==> no $STATE_SECRET yet; this is a first issuance"
+                  fi
+              env:
+                - name: STATE_SECRET
+                  value: {{ include "traefik-certs.stateSecretName" . }}
+              volumeMounts:
+                - name: state
+                  mountPath: /state
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+
+            # ---------------------------------------------------------------
+            # 2. Issue or renew.
+            # ---------------------------------------------------------------
+            # The lego image ships a busybox shell with the binary at /lego
+            # (not on PATH), which is what makes this branch possible without
+            # building an image of our own. `renew` on a cert that does not
+            # exist is an error, and `run` on one that does is a needless
+            # re-issue straight into the rate limit — so the branch is load
+            # bearing, not defensive.
+            - name: issue
+              image: {{ .Values.images.lego }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  CERT="/state/.lego/certificates/${MAIN_DOMAIN}.crt"
+                  set -- --accept-tos \
+                         --email "$ACME_EMAIL" \
+                         --server "$ACME_SERVER" \
+                         --path /state/.lego \
+                         --dns duckdns \
+                  {{- /*
+                    Repeated flag rather than a comma-joined value: lego
+                    declares --dns.resolvers as a StringSlice, and repeating it
+                    is the form its own docs use.
+                  */}}
+                  {{- range .Values.acme.resolvers }}
+                         --dns.resolvers {{ . | quote }} \
+                  {{- end }}
+                         --domains "$MAIN_DOMAIN" \
+                  {{- range .Values.domains.sans }}
+                         --domains {{ . | quote }} \
+                  {{- end }}
+
+                  if [ -f "$CERT" ]; then
+                    echo "==> renewing if within {{ .Values.acme.renewDays }} days of expiry"
+                    # --no-random-sleep: the sleep exists to spread load from
+                    # many hosts renewing on the same cron minute. There is one
+                    # host here, and the wait only makes the job look hung.
+                    /lego "$@" renew --days {{ .Values.acme.renewDays }} --no-random-sleep
+                  else
+                    echo "==> no certificate in state; requesting a new one"
+                    /lego "$@" run
+                  fi
+
+                  echo "==> certificate on disk:"
+                  ls -l /state/.lego/certificates/ | sed 's/^/    /'
+              env:
+                - name: MAIN_DOMAIN
+                  value: {{ .Values.domains.main | quote }}
+                - name: ACME_EMAIL
+                  value: {{ .Values.acme.email | quote }}
+                - name: ACME_SERVER
+                  value: {{ .Values.acme.server | quote }}
+                # lego's duckdns provider reads the token and its timing knobs
+                # from the environment; they are not CLI flags.
+                - name: DUCKDNS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.tokenSecret.name }}
+                      key: {{ .Values.tokenSecret.key }}
+                - name: DUCKDNS_PROPAGATION_TIMEOUT
+                  value: {{ .Values.acme.propagationTimeout | quote }}
+                - name: DUCKDNS_POLLING_INTERVAL
+                  value: {{ .Values.acme.pollingInterval | quote }}
+              volumeMounts:
+                - name: state
+                  mountPath: /state
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+
+          containers:
+            # ---------------------------------------------------------------
+            # 3. Publish the result.
+            # ---------------------------------------------------------------
+            # State first, certificate second. If the pod dies between the two,
+            # having saved the account key and lost nothing is recoverable; the
+            # reverse would mean re-registering with Let's Encrypt.
+            #
+            # `create --dry-run=client | apply` rather than `create`, so a run
+            # that finds the Secret already there updates it instead of failing
+            # — which is every run after the first.
+            - name: publish
+              image: {{ .Values.images.kubectl }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  CRT="/state/.lego/certificates/${MAIN_DOMAIN}.crt"
+                  KEY="/state/.lego/certificates/${MAIN_DOMAIN}.key"
+                  if [ ! -f "$CRT" ] || [ ! -f "$KEY" ]; then
+                    echo "no certificate produced; refusing to publish" >&2
+                    exit 1
+                  fi
+
+                  echo "==> saving lego state to $STATE_SECRET"
+                  tar czf /tmp/lego.tar.gz -C /state .lego
+                  kubectl create secret generic "$STATE_SECRET" \
+                    --from-file=lego.tar.gz=/tmp/lego.tar.gz \
+                    --dry-run=client -o yaml | kubectl apply -f -
+
+                  echo "==> publishing certificate to $CERT_SECRET"
+                  kubectl create secret tls "$CERT_SECRET" \
+                    --cert="$CRT" --key="$KEY" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+
+                  # Traefik watches the Secret and picks up a new certificate
+                  # without restarting, so there is deliberately no rollout
+                  # here — restarting ingress to install a cert would give back
+                  # the outage this whole change exists to remove.
+                  echo "==> done; Traefik will pick this up without a restart"
+              env:
+                - name: MAIN_DOMAIN
+                  value: {{ .Values.domains.main | quote }}
+                - name: STATE_SECRET
+                  value: {{ include "traefik-certs.stateSecretName" . }}
+                - name: CERT_SECRET
+                  value: {{ include "traefik-certs.certSecretName" . }}
+              volumeMounts:
+                - name: state
+                  mountPath: /state
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: state
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

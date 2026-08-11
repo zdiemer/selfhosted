@@ -56,23 +56,30 @@ spec:
     {{- end }}
 
     {{- if .Values.rules.requireCertResolver.enabled }}
+    {{- $tls := .Values.rules.requireCertResolver.tlsAnnotation }}
     {{- /*
-      Either a certresolver, or an explicit statement that TLS ends at
-      Cloudflare's edge. The exemption is an annotation rather than a namespace
-      carve-out so that "deliberately edge-terminated" stays distinguishable
-      from "someone forgot" — which is the whole reason the rule exists.
+      Three accepted forms: a certresolver, `router.tls: "true"` (which now
+      picks up the cluster-wide default certificate from infra/traefik's
+      TLSStore), or an explicit statement that TLS ends at Cloudflare's edge.
+
+      The edge exemption is an annotation rather than a namespace carve-out so
+      that "deliberately edge-terminated" stays distinguishable from "someone
+      forgot" — which is the whole reason the rule exists.
     */}}
     - expression: >-
         has(object.metadata.annotations) && (
           '{{ $cr }}' in object.metadata.annotations ||
+          ('{{ $tls }}' in object.metadata.annotations &&
+           object.metadata.annotations['{{ $tls }}'] == 'true') ||
           ('{{ $edge }}' in object.metadata.annotations &&
            object.metadata.annotations['{{ $edge }}'] == 'true')
         )
       message: >-
-        Ingress must set {{ $cr }} so Traefik has a real certificate for the
-        host, or declare {{ $edge }}: "true" if TLS deliberately terminates at
-        the Cloudflare edge. Without either, Traefik falls back to its
-        self-signed default certificate.
+        Ingress must set {{ $tls }}: "true" (which picks up the cluster default
+        wildcard certificate), or name a certresolver in {{ $cr }}, or declare
+        {{ $edge }}: "true" if TLS deliberately terminates at the Cloudflare
+        edge. Without one of those, Traefik falls back to its self-signed
+        default certificate.
       reason: Invalid
     {{- end }}
 ---

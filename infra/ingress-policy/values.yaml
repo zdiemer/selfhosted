@@ -37,10 +37,27 @@ rules:
     enabled: true
     entrypoint: websecure
 
-  # 3. Require a certresolver, so Traefik has a real certificate for the host
-  #    rather than falling back to its self-signed default.
+  # 3. Require that the host gets a real certificate rather than Traefik's
+  #    self-signed default. There are now three ways to satisfy that, and the
+  #    third is new:
+  #
+  #      a. a certresolver annotation — how it worked when Traefik ran ACME
+  #         itself. Nothing in this repo does this any more, but the rule still
+  #         accepts it so a chart from another repo is not broken by our change;
+  #      b. the edge-termination annotation below, for Cloudflare-fronted hosts;
+  #      c. `router.tls: "true"` alone, which is now sufficient because
+  #         infra/traefik sets a cluster-wide default certificate (the wildcard
+  #         maintained by infra/traefik-certs) via a TLSStore. Any router on
+  #         `websecure` picks it up without naming anything.
+  #
+  #    Without (c) this rule would flag all 26 Ingresses the moment they dropped
+  #    their certresolver annotations — turning the signal it exists to provide
+  #    into noise everyone learns to ignore.
   requireCertResolver:
     enabled: true
+    # The annotation that satisfies (c). Kept as a value rather than hardcoded
+    # because it is the same key rule 2 pins, and they must not drift.
+    tlsAnnotation: traefik.ingress.kubernetes.io/router.tls
 
 # THE ONE LEGITIMATE EXEMPTION from rule 3.
 #

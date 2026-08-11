@@ -3,28 +3,27 @@
 # WHAT THIS CHART IS. k3s ships Traefik as a managed HelmChart and owns the
 # install. We do not. This chart owns exactly one object — a HelmChartConfig
 # named `traefik` in kube-system — which k3s's helm-controller merges into that
-# release. Everything Traefik-wide is set here: the ACME certresolver, the
-# http->https redirect, the ACME storage PVC, the update strategy, and access
-# logging.
+# release. Everything Traefik-wide is set here: the default certificate, the
+# http->https redirect, the scale and rollout strategy, and access logging.
 #
 # WHY IT'S SEPARATE FROM infra/duckdns. It used to live there, because the
-# certresolver needs the DuckDNS token and that chart owns the token. But the
-# object is Traefik's whole config overlay, not a DNS concern, and the moment
-# access logging arrived the mismatch stopped being cosmetic. duckdns still
-# owns the token Secret (in both `infra` and `kube-system`); this chart only
-# *references* it by name. That coupling is real:
+# certresolver needed the DuckDNS token and that chart owns the token. Traefik
+# no longer runs ACME at all — infra/traefik-certs does, and reads that token
+# instead — but the split still stands on its own: this object is Traefik's
+# whole config overlay, not a DNS concern.
 #
-#   * Renaming the Secret in infra/duckdns breaks Traefik's certresolver.
-#   * Traefik reads DUCKDNS_TOKEN as an env var at pod start and never
-#     refreshes it. Rotating the token means `kubectl rollout restart
-#     deployment traefik -n kube-system`, or everything looks healthy for ~60
-#     days until a renewal quietly fails.
+# CHANGES HERE ARE NO LONGER AN OUTAGE, AND THAT IS NEW. This file used to open
+# by saying every change was a cluster-wide ingress outage, because a
+# ReadWriteOnce acme.json forced one replica and a `Recreate` rollout. Issuance
+# has moved out (see defaultCertificate below), so Traefik is stateless: three
+# replicas, spread across nodes, rolling with maxUnavailable 0, behind a
+# PodDisruptionBudget. helm-controller still redeploys Traefik whenever
+# `valuesContent` changes — it just does so without a gap now.
 #
-# EVERY CHANGE HERE IS A CLUSTER-WIDE INGRESS OUTAGE. helm-controller redeploys
-# Traefik whenever valuesContent changes, and with `updateStrategy: Recreate`
-# (below) that is a real gap, not a rolling one. Issued certs survive — acme.json
-# is on the PVC — so it is downtime, not a re-issue. upgrade.sh diffs the live
-# config against the rendered one and makes you look at it first.
+# What replaced the outage is a quieter failure mode worth knowing: if the
+# certificate Secret goes missing, Traefik keeps serving, on its own self-signed
+# default. Every host gets a browser warning and nothing crashes. upgrade.sh
+# checks for the Secret before it applies anything.
 
 # The k3s-managed Traefik release: chart name + namespace. The HelmChartConfig
 # must match both exactly or helm-controller silently ignores it — no error,
@@ -34,77 +33,86 @@ helmChart:
   namespace: kube-system
 
 # ---------------------------------------------------------------------------
-# TLS / ACME
+# TLS
 # ---------------------------------------------------------------------------
-# The certresolver's name. Every ingress in this repo hardcodes `duckdns` in its
-# `ingress.tls.certResolver`, so renaming this means editing all of them AND
-# forces a full re-issue of every cert. Don't, casually.
-acme:
-  enabled: true
-  certResolver: duckdns
-  email: zach.diemer@gmail.com
-  provider: duckdns
-
-  # The Secret holding the DuckDNS token, created by the infra/duckdns chart
-  # into this namespace (a secretKeyRef cannot cross namespaces, which is why
-  # that chart renders it twice). Change it there, not here.
-  tokenSecret:
-    name: duckdns-token
-    key: token
-
-  # Resolve the TXT record against public resolvers rather than the cluster's
-  # own DNS, which knows nothing about duckdns.org.
-  resolvers:
-    - 1.1.1.1:53
-    - 8.8.8.8:53
-  # DuckDNS propagates fast, but ACME will fail the order outright if it checks
-  # too early — these three knobs buy patience, not speed.
-  #
-  # delayBeforeChecks renders as `...dnschallenge.propagation.delaybeforechecks`.
-  # The old flat `...dnschallenge.delaybeforecheck` (singular) is deprecated and
-  # Traefik has been warning about it on every start:
-  #   "delayBeforeCheck is now deprecated, please use
-  #    propagation.delayBeforeChecks instead."
-  # It still works today, but deprecated ACME flags are exactly the kind of
-  # thing that disappears in a k3s bump and takes cluster-wide TLS with it.
-  delayBeforeChecks: 30s
-  # These two stay env vars (DUCKDNS_PROPAGATION_TIMEOUT / _POLLING_INTERVAL) —
-  # they belong to lego's duckdns provider, not to Traefik's ACME config, so
-  # they are not part of the propagation.* group above.
-  propagationTimeout: 300
-  pollingInterval: 10
-
-# Where Traefik persists acme.json (issued certs + the ACME account key).
-# PVC-backed on purpose: without it every Traefik restart re-registers and
-# re-issues, walking straight into Let's Encrypt rate limits.
+# There is no certresolver here any more, and no ACME at all. Issuance moved to
+# infra/traefik-certs, which renews the wildcard into a Secret on a schedule;
+# Traefik just reads it. See the defaultCertificate block below for what that
+# bought and what it costs.
 #
-# This is also why replicaCount stays at 1 and why the strategy must be
-# Recreate: the volume is ReadWriteOnce on local-path storage, so two pods can
-# never hold it at once. Scaling Traefik out is a real project — it needs RWX
-# storage or an entirely different cert store.
-acmeStorage:
-  size: 128Mi
-  path: /data
+# The DuckDNS token that used to be read here as DUCKDNS_TOKEN is now read by
+# that chart's CronJob instead. infra/duckdns still owns the Secret and still
+# renders it into this namespace, so nothing changes on its side — but Traefik
+# no longer needs a rollout restart when the token rotates, because Traefik no
+# longer reads it.
+
+# Traefik no longer holds any ACME state. It reads a certificate out of a
+# Secret and never writes one.
+#
+# WHAT THIS REPLACED, AND WHY. Traefik used to run the DNS-01 challenge itself
+# and persist the result to acme.json on a ReadWriteOnce local-path PVC. That
+# one file set the availability ceiling for the whole cluster's ingress:
+#
+#   * one replica, because two pods cannot hold an RWO volume and two Traefiks
+#     racing on one acme.json corrupt it;
+#   * `Recreate` rollouts, so every change here was a cluster-wide gap;
+#   * and a hard pin to whichever node held the local-path volume, so that node
+#     could never be drained without taking all ingress down with it.
+#
+# The old comment here called scaling out "a real project needing RWX storage
+# or an entirely different cert store". It was the second one: infra/traefik-
+# certs renews the wildcard into this Secret on a schedule, which makes Traefik
+# stateless and everything below possible.
+#
+# THE COUPLING IS REAL AND SILENT. If this Secret is missing or renamed,
+# Traefik does not fail — it serves its own self-signed default certificate on
+# every host, which is a browser warning everywhere rather than an outage. The
+# name must match infra/traefik-certs' `certSecret.name`.
+defaultCertificate:
+  secretName: traefik-wildcard-tls
+
+# ---------------------------------------------------------------------------
+# Scale
+# ---------------------------------------------------------------------------
+# Three, not two. Traefik is the single ingress choke point, so this is the one
+# place where surviving a node loss *during* a rollout is worth the extra pod —
+# with minAvailable 2 below, a drain and a rollout can overlap without dropping
+# below a working pair. Each replica is ~50Mi, which the cluster can afford
+# where a second tika could not.
+replicaCount: 3
+
+# How many must stay up during a voluntary disruption (a drain; not a crash).
+# 2 of 3 leaves headroom for exactly one node going away at a time, which is
+# how scripts/k3s rolls the fleet.
+minAvailable: 2
+
+# Held open after SIGTERM so the Endpoints removal reaches kube-proxy and the
+# klipper-lb DaemonSet before the pod stops accepting connections. Traefik
+# drains its own in-flight requests after that, within the grace period below.
+preStopSleepSeconds: 10
+terminationGracePeriodSeconds: 90
 
 # ---------------------------------------------------------------------------
 # Rollout strategy
 # ---------------------------------------------------------------------------
-# THE KEY IS `updateStrategy`, NOT `deployment.strategy`.
+# THE KEY IS `updateStrategy`, NOT `deployment.strategy`. That is still true
+# and still the thing to get wrong: an earlier version of this config set
+# `deployment.strategy.type`, which the Traefik chart does not read, so the
+# live Deployment quietly sat on the chart default for as long as that config
+# existed. Setting a key the chart ignores looks identical to setting one it
+# honours.
 #
-# This config previously set `deployment.strategy.type: Recreate`, which the
-# Traefik chart does not read — the live Deployment sat on the chart default
-# (RollingUpdate, maxSurge 1, maxUnavailable 0) for as long as that config
-# existed. Nothing looked wrong because a rollout only wedges when the new pod
-# lands on a *different* node than the old one: maxSurge 1 starts the
-# replacement before the original terminates, both want the same ReadWriteOnce
-# local-path volume, and the new pod blocks on FailedAttachVolume until
-# something gives.
-#
-# rollingUpdate is explicitly nulled because the chart default sets it, and
-# Kubernetes rejects a Deployment carrying rollingUpdate alongside Recreate.
+# Recreate is gone with the PVC that forced it. Nothing is shared between
+# replicas any more, so this rolls: maxSurge 1 brings a new pod up before an
+# old one goes, and maxUnavailable 0 means the cluster never drops below three
+# working Traefiks during a config change. That is the difference between
+# "every change here is a cluster-wide outage" — which is what the header of
+# this file used to say — and a change nobody notices.
 updateStrategy:
-  type: Recreate
-  rollingUpdate: null
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
 
 # ---------------------------------------------------------------------------
 # Access logging

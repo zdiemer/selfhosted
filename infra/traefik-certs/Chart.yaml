@@ -1,0 +1,11 @@
+apiVersion: v2
+name: traefik-certs
+description: Renews the *.zachd.duckdns.org wildcard into a Secret, so Traefik holds no ACME state and can run more than one replica
+type: application
+version: 1.0.0
+# No app image of our own: this is lego plus kubectl and a shell script.
+# appVersion tracks the lego image, which is what actually does the work.
+# renovate: image=goacme/lego
+appVersion: "4.29.0"
+maintainers:
+  - name: zachd

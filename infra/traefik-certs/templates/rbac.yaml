@@ -1,0 +1,53 @@
+{{/*
+The job reads and writes exactly two Secrets in this namespace: the lego state
+and the issued certificate. Scoped with resourceNames so a compromise of this
+service account cannot read the DuckDNS token it is handed, Authelia's session
+secret, or anything else in kube-system — which is a busy namespace to be
+granted blanket secret access in.
+
+`create` cannot be restricted by resourceName (the object does not exist yet at
+admission time, so the API server has no name to match), which is why create is
+a separate rule. get/patch/update are the narrow ones, and those are what an
+attacker would actually want.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "traefik-certs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "traefik-certs.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "traefik-certs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "traefik-certs.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "traefik-certs.stateSecretName" . }}
+      - {{ include "traefik-certs.certSecretName" . }}
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "traefik-certs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "traefik-certs.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "traefik-certs.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "traefik-certs.fullname" . }}
+    namespace: {{ .Release.Namespace }}

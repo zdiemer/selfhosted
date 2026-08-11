@@ -3,13 +3,17 @@
 # config overlay.
 #
 # READ THIS BEFORE RUNNING. helm-controller redeploys Traefik whenever
-# `valuesContent` changes, and `updateStrategy: Recreate` (plus a ReadWriteOnce
-# acme.json volume) means the old pod is fully gone before the new one starts.
-# That is a cluster-wide ingress OUTAGE of roughly 10-30s: every host in the
-# cluster, every repo, not just this one.
+# `valuesContent` changes. That used to mean a cluster-wide ingress outage of
+# 10-30s, because a ReadWriteOnce acme.json forced one replica and a `Recreate`
+# rollout. It does not any more: issuance moved to infra/traefik-certs, so
+# Traefik is stateless, runs three spread replicas, and rolls with
+# maxUnavailable 0.
 #
-# Issued certs survive — acme.json lives on the PVC — so this is downtime, not a
-# re-issue, and it does not spend Let's Encrypt rate limit.
+# WHAT CAN STILL GO WRONG is quieter. Traefik now gets its certificate from a
+# Secret; if that Secret is missing it does not fail, it serves its own
+# self-signed default on every host — a browser warning everywhere, with
+# nothing crashing to tell you. So this script refuses to apply unless the
+# Secret exists. Run infra/traefik-certs/seed.sh first on a fresh cutover.
 #
 # The script diffs live vs rendered and refuses to proceed silently. Set
 # YES=1 to skip the prompt (for non-interactive runs you have already reviewed).
@@ -37,6 +41,30 @@ HCC_NAME="$(render_hcc | awk '/^  name:/ {print $2; exit}')"
 HCC_NS="$(render_hcc | awk '/^  namespace:/ {print $2; exit}')"
 HCC_NAME="${HCC_NAME:-traefik}"
 HCC_NS="${HCC_NS:-kube-system}"
+
+# The default certificate must exist BEFORE Traefik is told to read it.
+# Applying without it does not fail — Traefik falls back to a self-signed cert
+# and every host in the cluster starts throwing browser warnings, with no error
+# anywhere to point at. Cheaper to refuse here.
+CERT_SECRET="$(python3 -c "
+import yaml; print(yaml.safe_load(open('${VALUES}'))['defaultCertificate']['secretName'])")"
+if ! kubectl -n "$HCC_NS" get secret "$CERT_SECRET" >/dev/null 2>&1; then
+  cat >&2 <<EOF
+FAIL: Secret ${CERT_SECRET} does not exist in ${HCC_NS}.
+
+Traefik reads its default certificate from that Secret. Applying this config
+without it would leave every host on Traefik's self-signed default.
+
+  infra/traefik-certs/seed.sh        # copy the cert out of the live acme.json
+  infra/traefik-certs/upgrade.sh     # install the renewal CronJob
+
+then re-run this.
+EOF
+  exit 1
+fi
+echo "==> default certificate (${CERT_SECRET}):"
+kubectl -n "$HCC_NS" get secret "$CERT_SECRET" -o jsonpath='{.data.tls\.crt}' | base64 -d \
+  | openssl x509 -noout -subject -enddate -ext subjectAltName 2>/dev/null | sed 's/^/    /'
 
 # One namespace per project; created manually, never chart-managed.
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"

@@ -4,16 +4,15 @@ release lets us overlay values onto it without owning the install — the
 helm-controller merges this in and redeploys Traefik whenever `valuesContent`
 changes.
 
-Keep edits deliberate: every change here is a cluster-wide ingress OUTAGE.
-`updateStrategy: Recreate` plus a ReadWriteOnce acme.json volume means the old
-pod must be fully gone before the new one starts. upgrade.sh diffs this against
-the live object and makes you confirm.
+Edits here are no longer an outage — Traefik is stateless since issuance moved
+to infra/traefik-certs, so it runs three spread replicas and rolls with
+maxUnavailable 0. Still worth keeping deliberate: this is every route into the
+cluster, and upgrade.sh diffs against the live object and makes you confirm.
 
 The whole body is a YAML string, so it is plain text templating rather than
 structured values — mind the indentation, and remember `helm lint` cannot see
 inside it. `helm template ... | yq .spec.valuesContent` is the real check.
 */}}
-{{- $r := .Values.acme.certResolver }}
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -23,21 +22,75 @@ metadata:
     {{- include "traefik-config.labels" . | nindent 4 }}
 spec:
   valuesContent: |-
+    {{- /*
+      No PVC. This is the change the rest of the file depends on: Traefik holds
+      no ACME state, so nothing forces one replica or a Recreate rollout.
+
+      Stated explicitly rather than dropped. helm-controller recomputes the
+      release's values from scratch each reconcile (HelmChart's valuesContent
+      merged with this one), so omitting the key would fall back to the chart
+      default and happen to be false too — but "happens to match the upstream
+      default" is not a property to depend on for the thing that decides
+      whether ingress can be drained.
+    */}}
     persistence:
-      enabled: true
-      size: {{ .Values.acmeStorage.size }}
-      path: {{ .Values.acmeStorage.path }}
-      accessMode: ReadWriteOnce
+      enabled: false
     deployment:
       kind: Deployment
+      replicas: {{ .Values.replicaCount }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- /*
+        Endpoint removal races SIGTERM here as it does anywhere else, but the
+        blast radius is the whole cluster's ingress: klipper-lb's DaemonSet and
+        kube-proxy both have to notice this pod is going before it stops
+        answering, or in-flight requests to every host become connection
+        errors. Traefik's own graceful shutdown handles what is already
+        in-flight after that.
+      */}}
+      lifecycle:
+        preStop:
+          sleep:
+            seconds: {{ .Values.preStopSleepSeconds }}
     updateStrategy:
       type: {{ .Values.updateStrategy.type }}
-      {{- /*
-        Explicitly null, not omitted: the Traefik chart's own default sets
-        rollingUpdate, and a Deployment carrying rollingUpdate alongside
-        Recreate is rejected by the API server. Helm merges null as a delete.
-      */}}
-      rollingUpdate: {{ .Values.updateStrategy.rollingUpdate | default "null" }}
+      rollingUpdate:
+        maxSurge: {{ .Values.updateStrategy.rollingUpdate.maxSurge }}
+        maxUnavailable: {{ .Values.updateStrategy.rollingUpdate.maxUnavailable }}
+    {{- /*
+      A drain must never be able to take the ingress below a working pair.
+      Safe to demand here precisely because replicas > 1 — the same budget
+      against a single replica would block every drain in the cluster forever.
+    */}}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: {{ .Values.minAvailable }}
+    {{- /*
+      Hard spread, not a preference: three replicas on two nodes would mean a
+      single drain could still cost two of them. The Traefik chart's own pod
+      labels are what the selector has to match — `app.kubernetes.io/instance`
+      is `<release>-<namespace>`, which for the k3s-managed release is
+      `traefik-kube-system`, not `traefik`.
+    */}}
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        matchLabelKeys:
+          - pod-template-hash
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: {{ .Values.helmChart.name }}
+            app.kubernetes.io/instance: {{ .Values.helmChart.name }}-{{ .Values.helmChart.namespace }}
+    {{- /*
+      The default certificate, from the Secret infra/traefik-certs maintains.
+      `websecure` already has `http.tls=true` cluster-wide, so every router on
+      it picks this up without naming anything — which is what lets the
+      Ingresses drop their per-host certresolver annotations entirely.
+    */}}
+    tlsStore:
+      default:
+        defaultCertificate:
+          secretName: {{ .Values.defaultCertificate.secretName }}
     {{- if or .Values.httpsRedirect.enabled .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled }}
     ports:
       {{- if .Values.httpsRedirect.enabled }}
@@ -108,28 +161,20 @@ spec:
               {{ $k }}: {{ $v }}
               {{- end }}
         {{- end }}
-    {{- if .Values.acme.enabled }}
-    additionalArguments:
-      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge=true"
-      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.provider={{ .Values.acme.provider }}"
-      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.resolvers={{ join "," .Values.acme.resolvers }}"
-      - "--certificatesresolvers.{{ $r }}.acme.dnschallenge.propagation.delaybeforechecks={{ .Values.acme.delayBeforeChecks }}"
-      - "--certificatesresolvers.{{ $r }}.acme.email={{ .Values.acme.email }}"
-      - "--certificatesresolvers.{{ $r }}.acme.storage={{ .Values.acmeStorage.path }}/acme.json"
-    env:
-      {{- /*
-        The token Secret is created by the infra/duckdns chart, into this
-        namespace as well as its own — secretKeyRef cannot cross namespaces.
-        Traefik reads this once at pod start and never re-reads it, so a token
-        rotation needs a rollout restart or renewals fail ~60 days later.
-      */}}
-      - name: DUCKDNS_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: {{ .Values.acme.tokenSecret.name }}
-            key: {{ .Values.acme.tokenSecret.key }}
-      - name: DUCKDNS_PROPAGATION_TIMEOUT
-        value: "{{ .Values.acme.propagationTimeout }}"
-      - name: DUCKDNS_POLLING_INTERVAL
-        value: "{{ .Values.acme.pollingInterval }}"
-    {{- end }}
+    {{- /*
+      The certresolver used to be declared here, with the DuckDNS token handed
+      in as DUCKDNS_TOKEN. Both are gone: infra/traefik-certs runs the ACME
+      challenge now and Traefik only reads the resulting Secret, so this
+      release needs no ACME arguments, no provider credentials, and no restart
+      when the token rotates.
+
+      Both keys are simply absent now rather than emitted empty. Values are
+      recomputed from scratch on each reconcile, so absent means the chart
+      default (empty) — there is no stale previous value to overwrite.
+
+      If a certresolver is ever reintroduced here, delete infra/traefik-certs
+      in the same change. Two things issuing for the same names is not an error
+      either of them can detect; it just consumes Let's Encrypt's duplicate
+      certificate limit twice as fast and leaves you guessing which one served
+      the cert you are looking at.
+    */}}
