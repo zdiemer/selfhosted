@@ -29,6 +29,11 @@ spec:
         logging.zachd/external-ingress: "true"
         {{- end }}
     spec:
+      # Covers the preStop sleeps plus letting the long-lived terminal and
+      # bakery connections close rather than reset. Nothing here flushes to
+      # disk on exit — the home PVC is written continuously — so this is
+      # about the request path, not durability.
+      terminationGracePeriodSeconds: 45
       {{- if .Values.rbac.clusterAdmin }}
       # Cluster ops seat: kubectl/helm in the pod authenticate as this SA
       # (cluster-admin — see rbac.yaml and the values warning).
@@ -175,6 +180,12 @@ spec:
             # fallback — see happy.serverUrl in values.yaml.
             - name: HAPPY_SERVER_URL
               value: {{ .Values.happy.serverUrl | quote }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the container is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: term
               containerPort: {{ .Values.service.termPort }}
@@ -287,6 +298,12 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the container is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: bakery-api
               containerPort: {{ .Values.service.bakeryServerPort }}
@@ -335,6 +352,12 @@ spec:
             - name: VITE_PI_WEB_AUTH_TOKEN
               value: {{ .Values.bakery.authToken | quote }}
             {{- end }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the container is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: bakery-web
               containerPort: {{ .Values.service.bakeryWebPort }}

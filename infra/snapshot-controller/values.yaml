@@ -28,6 +28,16 @@ snapshot-controller:
     nodeSelector: {}
     affinity: {}
 
+    # Read by scripts/ci-lint-availability.sh, which requires a preStop hook on
+    # anything carrying a readinessProbe. That rule uses the probe as a proxy
+    # for "a Service routes to this", and here it does not: no Service selects
+    # this pod at all. The probe reports leader-election health to the kubelet,
+    # so there is no Endpoints propagation to wait out and a preStop sleep would
+    # only slow the shutdown down.
+    podAnnotations:
+      availability.zachd/prestop-exempt: >-
+        leader-elected controller; no Service selects this pod
+
     # Small and steady — it watches objects and calls the CSI driver, it never
     # touches volume data. The limit is a guard against a runaway watch loop on
     # the 3.7GB nodes, not a real expectation.

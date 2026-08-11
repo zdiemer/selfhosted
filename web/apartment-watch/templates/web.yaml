@@ -4,11 +4,19 @@ The run-page view. Same image as the CronJob — it's the same code reading the
 same database — just a different entrypoint, so there's nothing extra to build
 or keep in sync.
 
-It mounts the SAME PVC as the CronJob. That's ReadWriteOnce, which permits
-several pods so long as they're on one node, and local-path pins them there by
-node affinity anyway. The web process opens SQLite read-only (`mode=ro`) and
-the store runs in WAL, so a reader alongside the single writer is safe; a stray
-write from here could corrupt the dedup history that stops duplicate alerts.
+It mounts the SAME PVC as the CronJob. The web process opens SQLite read-only
+(`mode=ro`) and the store runs in WAL, so a reader alongside the single writer
+is safe; a stray write from here could corrupt the dedup history that stops
+duplicate alerts.
+
+That co-mount used to be guaranteed by local-path pinning both pods to one
+node. It is not any more — the claim is on truenas-iscsi (values.yaml
+persistence.storageClassName), where ReadWriteOnce means single-node ATTACH
+rather than node-scoped sharing. So the CronJob and this Deployment can only
+co-mount when the scheduler happens to place them together, and when it does
+not, whichever starts second blocks on FailedAttachVolume until the other
+exits. Recreate below keeps that from wedging a rollout; the CronJob overlap
+is bounded because the job is short and this pod is long-lived.
 */}}
 apiVersion: apps/v1
 kind: Deployment
@@ -38,6 +46,9 @@ spec:
         logging.zachd/external-ingress: "true"
         {{- end }}
     spec:
+      # Covers the preStop sleep. The web view is read-only over the scraper's
+      # SQLite; the CronJob that writes it is a separate workload.
+      terminationGracePeriodSeconds: 30
       {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
       imagePullSecrets:
         {{- with .Values.imagePullSecrets }}
@@ -62,6 +73,12 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 8080

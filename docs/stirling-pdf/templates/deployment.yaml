@@ -31,10 +31,21 @@ spec:
       # Avoid k8s' legacy service-link env injection clobbering Stirling's own
       # *_PORT-style config with `tcp://...` Service URLs.
       enableServiceLinks: false
+      # Covers the preStop sleep plus finishing whatever operation is in
+      # flight. Stirling's work is request-scoped — an OCR or a merge running
+      # when the pod dies is simply a failed upload for the user — so this does
+      # not need the 60s the databases take.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: stirling-pdf
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 8080

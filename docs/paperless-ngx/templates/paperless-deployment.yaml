@@ -33,10 +33,21 @@ spec:
       # `tcp://...` URL (the paperless Service's clusterIP), which paperless-ngx
       # tries to bind as its listening port and crashes. Disable the injection.
       enableServiceLinks: false
+      # Covers the preStop sleep below plus the Celery workers finishing the
+      # OCR task they are on. Killed at the 30s default mid-consume, a document
+      # can be left half-ingested in the media volume with no matching database
+      # row. See "Availability conventions" in the root README.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: paperless
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 8000

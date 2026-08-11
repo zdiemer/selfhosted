@@ -14,6 +14,11 @@ spec:
     metadata:
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        # Read by scripts/ci-lint-availability.sh — see infra/cloudflared for
+        # the full reasoning. The probe reports tunnel health; no Service
+        # routes here, so there is no Endpoints race to wait out.
+        availability.zachd/prestop-exempt: >-
+          outbound-only connector; nothing routes to it through a Service
       labels:
         {{- include "kelsey-green.cloudflaredSelectorLabels" . | nindent 8 }}
     spec:

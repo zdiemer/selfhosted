@@ -38,6 +38,10 @@ spec:
       #   [emerg] invalid host in "tcp://10.43.214.72:8080" of the "listen" directive
       # Nothing needs those vars — we address the DB by DNS.
       enableServiceLinks: false
+      # Covers the preStop sleep plus letting an in-flight ROM download or a
+      # save-state write from an EmulatorJS session finish rather than being
+      # cut. See "Availability conventions" in the root README.
+      terminationGracePeriodSeconds: 45
       # RomM crashes rather than retries if the database isn't up yet.
       initContainers:
         - name: wait-for-db
@@ -80,6 +84,13 @@ spec:
         - name: romm
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down — including mid-download of a ROM,
+          # or mid-save-write from an EmulatorJS session.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 8080

@@ -28,6 +28,9 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
+      # Covers the preStop sleep plus letting the relay's open client
+      # connections close rather than reset.
+      terminationGracePeriodSeconds: 45
       securityContext:
         runAsUser: 1000          # `node` user from the upstream base image
         runAsGroup: 1000
@@ -75,6 +78,15 @@ spec:
             # config probe; the rootfs is read-only, so park it on /tmp.
             - name: HOME
               value: /tmp
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the server is shutting down. That matters more than usual for
+          # this one: the relay carries long-lived client connections, and a
+          # request landing on a dying pod is a visible disconnect rather than a
+          # retried page load.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

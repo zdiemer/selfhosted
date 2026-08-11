@@ -41,6 +41,14 @@ spec:
               value: {{ $.Values.pgid | quote }}
             - name: TZ
               value: {{ $.Values.timezone }}
+          # Endpoint removal races SIGTERM. These talk to each other over
+          # ClusterIP Services as well as being reached through Traefik, so a
+          # dying pod can be handed a request from Prowlarr or Jellyseerr just
+          # as easily as from a browser.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: {{ $app.port }}

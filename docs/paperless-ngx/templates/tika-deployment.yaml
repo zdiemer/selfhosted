@@ -25,10 +25,19 @@ spec:
         {{- include "paperless.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: tika
     spec:
+      # Enough to finish the extraction in flight; a dropped one is a failed
+      # document ingest paperless has to retry.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: tika
           image: "{{ .Values.tika.image.repository }}:{{ .Values.tika.image.tag }}"
           imagePullPolicy: {{ .Values.tika.image.pullPolicy }}
+          # Reached over a ClusterIP Service by paperless; endpoint removal
+          # races SIGTERM the same as for an ingress-facing pod.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 9998

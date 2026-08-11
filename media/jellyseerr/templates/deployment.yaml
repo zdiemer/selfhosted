@@ -18,6 +18,8 @@ spec:
         {{- include "jellyseerr.selectorLabels" . | nindent 8 }}
         ingress.enabled: "true"
     spec:
+      # Covers the preStop sleep plus flushing its SQLite request database.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: jellyseerr
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -25,6 +27,12 @@ spec:
           env:
             - name: TZ
               value: America/Los_Angeles
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 5055

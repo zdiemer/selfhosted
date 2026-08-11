@@ -13,6 +13,12 @@ spec:
     metadata:
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        # Read by scripts/ci-lint-availability.sh. The readiness probe here
+        # reports the tunnel's own health; no Service routes to this pod, so
+        # there is no Endpoints propagation to wait out and a preStop sleep
+        # would only delay the shutdown cloudflared already does correctly.
+        availability.zachd/prestop-exempt: >-
+          outbound-only connector; nothing routes to it through a Service
       labels:
         {{- include "cloudflared.selectorLabels" . | nindent 8 }}
     spec:

@@ -19,6 +19,11 @@ jobs:
       - uses: azure/setup-helm@v4.3.1
       - run: scripts/ci-lint-charts.sh
       - run: scripts/check-appversion-drift.sh
+      # The availability conventions (root README) fail silently by nature — a
+      # `preferred` spread the scheduler declines and a PDB that permanently
+      # blocks a drain both render without complaint. This inspects the rendered
+      # manifests, which is the only place they are visible.
+      - run: scripts/ci-lint-availability.sh
       # Grafana dashboards are pushed to a SaaS API, not rendered by helm, so
       # ci-lint-charts.sh never sees them. A missing uid does not even fail at
       # push time — Grafana just creates a second copy of the dashboard.

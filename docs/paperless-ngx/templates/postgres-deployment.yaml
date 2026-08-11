@@ -35,6 +35,13 @@ spec:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          # Endpoint removal races SIGTERM: paperless can still be handed this
+          # pod's address while it is shutting down, which surfaces as a
+          # connection error in the app rather than anything visible here.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: postgres
               containerPort: 5432

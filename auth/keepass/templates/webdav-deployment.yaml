@@ -23,10 +23,21 @@ spec:
         logging.zachd/external-ingress: "true"
         {{- end }}
     spec:
+      # Covers the preStop sleep plus finishing a PUT in flight. This is where
+      # the .kdbx actually lives, and a write cut in half is the vault — so this
+      # is the one half of the chart where the grace period is not cosmetic.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: webdav
           image: "{{ .Values.webdav.image.repository }}:{{ .Values.webdav.image.tag }}"
           imagePullPolicy: {{ .Values.webdav.image.pullPolicy }}
+          # Endpoint removal races SIGTERM. A client saving the vault can be
+          # handed this pod while it is going away, and a truncated PUT here is
+          # worse than a failed one.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 80

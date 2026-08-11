@@ -115,6 +115,13 @@ spec:
               value: {{ .Values.timezone }}
             - name: WEBUI_PORT
               value: {{ .Values.qbittorrent.port | quote }}
+          # Endpoint removal races SIGTERM, so Sonarr/Radarr can be handed this
+          # pod's address while it is shutting down — which shows up as a failed
+          # "send to download client" rather than anything visible here.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: {{ .Values.qbittorrent.port }}

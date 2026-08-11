@@ -99,6 +99,51 @@ repo stays the full index of what runs on the cluster. Clone with
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.
+- **Availability conventions.** Written down once here because they repeat in
+  nearly every chart, and because most of them are the kind of thing that looks
+  optional until a node drain proves otherwise.
+
+  *A pod behind a Service gets a `preStop` sleep.* Removing a pod from a
+  Service's Endpoints and sending it SIGTERM are concurrent, not ordered, so
+  Traefik can still be routing to a pod that has already begun shutting down and
+  those requests become 502s. `maxUnavailable: 0` does not help — it guarantees
+  a Ready *replacement*, not that this pod stopped receiving traffic. 3s for
+  singletons, 5s for the multi-replica tier. Use the native
+  `lifecycle.preStop.sleep` action rather than `exec: sh -c sleep`: most images
+  here have read-only roots and several have no shell. It needs k8s ≥ 1.30.
+
+  *`terminationGracePeriodSeconds` is set explicitly wherever it matters.* The
+  30s default is not enough for anything that flushes on exit — databases,
+  SQLite-backed apps, qBittorrent's resume data, and above all Minecraft, where
+  a world save cut in half is real corruption. It must exceed the `preStop`
+  sleep plus the app's own shutdown.
+
+  *PDBs exist only where `replicas >= 2`, and are gated on it in the template.*
+  A `minAvailable: 1` budget against a single-replica Deployment can never be
+  satisfied by evicting that replica, so `kubectl drain` blocks forever rather
+  than failing. Singletons are therefore deliberately unprotected by a budget;
+  [`scripts/k3s/drain-preflight.sh`](scripts/k3s/drain-preflight.sh) reports
+  what a drain will gap instead of pretending to prevent it.
+
+  *Spread is `DoNotSchedule`, not a preference.* A `preferred` podAntiAffinity
+  is a hint the scheduler may decline, so "the replicas are spread" becomes a
+  prediction rather than a property — and it fails silently. With 10 nodes and
+  2–3 replicas nothing makes spreading unsatisfiable. Always include
+  `matchLabelKeys: [pod-template-hash]`, or a rollout measures its surge pod
+  against the pods it is replacing, finds every node full, and stalls.
+
+  *`Recreate` vs `RollingUpdate` follows the volume, not taste.* A single-writer
+  RWO volume means `Recreate` — and on `truenas-iscsi` that is not a
+  preference: RWO there is single-node *attach*, so a surge pod on another node
+  blocks on `FailedAttachVolume` and the rollout wedges rather than fails.
+  Charts with no volume, or with genuinely shared state, roll with
+  `maxUnavailable: 0` — which is only meaningful if the container has a
+  readiness probe, so add one before relying on it.
+
+  *Downtime claims need a number.*
+  [`scripts/measure-gap.sh`](scripts/measure-gap.sh) polls a host while an
+  upgrade or drain runs and reports the outage windows. Two "zero-downtime"
+  rollouts in this repo were silently broken before it existed.
 - **Apps we write ourselves live in their own repo**, added back here as a
   submodule so this repo still lists everything on the cluster. The app repo owns
   its chart *and* its source together — `Chart.yaml` `appVersion` tracks

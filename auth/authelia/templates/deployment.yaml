@@ -30,6 +30,10 @@ spec:
       # overrides, so those injected vars collide with `server.address` and
       # crash the binary. Disable the legacy service-link injection.
       enableServiceLinks: false
+      # Covers the preStop sleep plus letting in-flight forward-auth checks
+      # answer. Authelia holds nothing that needs flushing — its SQLite writes
+      # are per-request — so this is about the request path, not durability.
+      terminationGracePeriodSeconds: 30
       # Authelia's forward-auth middleware sits in front of ~8 services, so
       # every one of them 401s while this pod is gone. That makes it a
       # platform-core dependency, not the platform-app it silently inherited
@@ -45,6 +49,14 @@ spec:
           # `args` without `command` replaces CMD entirely, so the entrypoint
           # ends up `exec`-ing the literal "--config=..." string and dies with
           # "illegal option --".
+          # Endpoint removal races SIGTERM, and this pod is on the request path
+          # for every gated service — Traefik calls /api/authz/forward-auth
+          # before it proxies anything. A forward-auth request landing on a
+          # dying pod fails the whole request, not just an asset on the page.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 9091

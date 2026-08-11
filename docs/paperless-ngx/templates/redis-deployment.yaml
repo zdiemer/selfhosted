@@ -19,6 +19,11 @@ spec:
         {{- include "paperless.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
+      # Deliberately the short end of the range. This Redis persists nothing
+      # (see the --save "" args below), so there is no flush to wait for — the
+      # grace period only has to cover the preStop sleep and letting paperless's
+      # open connections close rather than reset.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
@@ -30,6 +35,12 @@ spec:
             - ""
             - "--appendonly"
             - "no"
+          # Reached through a ClusterIP Service by paperless, so endpoint
+          # removal races SIGTERM here the same as for an ingress-facing pod.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: redis
               containerPort: 6379

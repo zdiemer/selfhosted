@@ -25,6 +25,9 @@ spec:
       labels:
         {{- include "vocard.labels" $ctx | nindent 8 }}
     spec:
+      # Covers the preStop sleep; this holds nothing and has no
+      # shutdown work of its own.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: spotify-tokener
           image: "{{ .Values.images.spotifyTokener.repository }}:{{ .Values.images.spotifyTokener.tag }}"
@@ -36,6 +39,13 @@ spec:
           env:
             - name: SPOTIFY_TOKENER_ADDR
               value: "0.0.0.0:49152"
+          # Endpoint removal races SIGTERM, so the bot can be handed this pod
+          # while it is going away — which is a failed Spotify resolve in
+          # Discord, the exact gap maxUnavailable: 0 above is meant to close.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           # maxUnavailable: 0 above is only worth anything if "available" means
           # something. With no probe a pod counts as Ready the moment the
           # container starts, so the rollout would tear down the old pod while

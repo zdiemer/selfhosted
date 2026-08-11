@@ -54,6 +54,14 @@ spec:
           env:
             - name: JELLYFIN_PublishedServerUrl
               value: {{ .Values.publishedServerUrl | quote }}
+          # Endpoint removal races SIGTERM. This one is reached two ways —
+          # through Traefik and through the LAN NodePort the TVs use — and
+          # neither is ordered against the shutdown, so a client can be handed
+          # this pod while it is going away.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 8096

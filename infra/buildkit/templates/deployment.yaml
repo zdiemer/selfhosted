@@ -38,6 +38,11 @@ spec:
         container.apparmor.security.beta.kubernetes.io/buildkitd: unconfined
     spec:
       automountServiceAccountToken: false
+      # Covers the preStop sleep plus letting buildkitd write out its cache
+      # metadata. A build cut off mid-flight is only a failed build the caller
+      # retries, but a cache left inconsistent costs every later build a rebuild
+      # of layers it already had.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: buildkitd
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -55,6 +60,13 @@ spec:
               type: Unconfined
             appArmorProfile:
               type: Unconfined
+          # Endpoint removal races SIGTERM: a buildctl client can be handed this
+          # pod's address while the daemon is going away, which surfaces as a
+          # connection reset partway through a build.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: buildkitd
               containerPort: {{ .Values.service.port }}

@@ -81,6 +81,13 @@ spec:
       containers:
         - name: mariadb
           image: "{{ .Values.db.image }}"
+          # Endpoint removal races SIGTERM: romm can still be handed this pod's
+          # address while mysqld is shutting down, which surfaces as a database
+          # error in the app rather than anything visible here.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: mysql
               containerPort: 3306

@@ -37,6 +37,31 @@ spec:
             checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         spec:
           restartPolicy: Never
+          {{- if .Values.web.enabled }}
+          # Land on whichever node the web pod is on, because both mount the
+          # same ReadWriteOnce claim.
+          #
+          # On local-path that was automatic — the PV carried a node affinity
+          # and there was only one candidate. On truenas-iscsi it is not: RWO
+          # there means single-node ATTACH, so a job scheduled anywhere other
+          # than the web pod's node blocks on FailedAttachVolume until that pod
+          # exits, which for a long-lived Deployment is never. The job would
+          # then sit Pending until activeDeadlineSeconds killed it, and the
+          # daily scrape would silently stop happening.
+          #
+          # It has worked so far only because the scheduler happened to co-locate
+          # them; nothing required it. requiredDuringScheduling makes the thing
+          # that must be true actually enforced. If the web pod is disabled
+          # there is no second mounter and no constraint to apply.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      {{- include "apartment-watch.selectorLabels" . | nindent 22 }}
+                      app.kubernetes.io/component: web
+          {{- end }}
           {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
           imagePullSecrets:
             {{- with .Values.imagePullSecrets }}

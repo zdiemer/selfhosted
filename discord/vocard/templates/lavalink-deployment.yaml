@@ -23,10 +23,20 @@ spec:
         # Restart the pod when application.yml changes. Lavalink doesn't hot-reload.
         checksum/config: {{ include (print $.Template.BasePath "/lavalink-configmap.yaml") . | sha256sum }}
     spec:
+      # Covers the preStop sleep plus letting the bot's audio websocket close
+      # cleanly rather than reset mid-track.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: lavalink
           image: "{{ .Values.images.lavalink.repository }}:{{ .Values.images.lavalink.tag }}"
           imagePullPolicy: {{ .Values.images.lavalink.pullPolicy }}
+          # Endpoint removal races SIGTERM: the bot holds a websocket to
+          # lavalink for audio, and a reconnect handed to a dying pod stalls
+          # playback rather than failing over.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 2333

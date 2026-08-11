@@ -27,6 +27,13 @@ spec:
         - name: mongo
           image: "{{ .Values.images.mongo.repository }}:{{ .Values.images.mongo.tag }}"
           imagePullPolicy: {{ .Values.images.mongo.pullPolicy }}
+          # Endpoint removal races SIGTERM: the bot can be handed this pod's
+          # address while mongod is shutting down, which surfaces as a failed
+          # command in Discord rather than anything visible here.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: mongo
               containerPort: 27017

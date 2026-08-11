@@ -35,10 +35,19 @@ spec:
         logging.zachd/external-ingress: "true"
         {{- end }}
     spec:
+      # Covers the preStop sleep; keeweb serves static assets and holds nothing,
+      # so there is no shutdown work beyond that.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: keeweb
           image: "{{ .Values.keeweb.image.repository }}:{{ .Values.keeweb.image.tag }}"
           imagePullPolicy: {{ .Values.keeweb.image.pullPolicy }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the container is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: 80
