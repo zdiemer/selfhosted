@@ -1,0 +1,39 @@
+{{/*
+Two budgets, because this chart runs two independent Deployments: the nginx+
+git-sync pods that serve the site, and the cloudflared connectors that publish
+it. They fail independently — losing both connectors leaves the site reachable
+on DuckDNS, losing both nginx pods does not — so a single budget spanning them
+would be wrong in both directions.
+
+Each is gated on its own replicaCount > 1. That gate is load-bearing:
+minAvailable: 1 against a single replica cannot be satisfied by evicting it, so
+the drain blocks indefinitely rather than failing. Scaling either side back to 1
+must drop its budget with it.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kelsey-green.fullname" . }}
+  labels:
+    {{- include "kelsey-green.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "kelsey-green.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.cloudflared.enabled (gt (int .Values.cloudflared.replicaCount) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kelsey-green.fullname" . }}-cloudflared
+  labels:
+    {{- include "kelsey-green.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "kelsey-green.cloudflaredSelectorLabels" . | nindent 6 }}
+{{- end }}

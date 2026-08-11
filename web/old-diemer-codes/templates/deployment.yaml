@@ -28,18 +28,34 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      # Explicit rather than the inherited 30s default, because the preStop
+      # sleep below eats into it: this has to cover the sleep plus nginx's own
+      # SIGQUIT drain, and a reader should not have to know the default to see
+      # that it does.
+      terminationGracePeriodSeconds: 30
       # Spread the two replicas so a single node going away doesn't take the
-      # site with it. Preferred, not required: a 10-node cluster will honour it,
-      # and a one-node emergency should still schedule.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "old-diemer-codes.selectorLabels" . | nindent 20 }}
+      # site with it.
+      #
+      # This was preferred rather than required, on the reasoning that a 10-node
+      # cluster will honour it anyway and a one-node emergency should still
+      # schedule. The first half is the problem: "will honour it anyway" is a
+      # prediction, not a guarantee, and a hint the scheduler declines leaves
+      # both replicas on one node with nothing reporting that the spread the
+      # replica count exists for is no longer in effect. Required, with the
+      # accompanying PDB, is what makes a drain provably safe.
+      #
+      # matchLabelKeys scopes the skew to one pod-template-hash so a rollout
+      # spreads the new ReplicaSet against itself rather than deadlocking
+      # against the outgoing pods.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "old-diemer-codes.selectorLabels" . | nindent 14 }}
       containers:
         - name: nginx
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -53,6 +69,21 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Removing a pod from a Service's Endpoints and sending it SIGTERM are
+          # concurrent, not ordered: Traefik can still be routing to this pod
+          # when nginx starts shutting down, and those requests become 502s.
+          # maxUnavailable: 0 does not help — it guarantees a replacement is
+          # Ready, not that this pod has stopped receiving traffic. Holding the
+          # container open for a few seconds lets the Endpoints update reach
+          # Traefik before nginx goes anywhere.
+          #
+          # The native sleep action rather than `exec: sh -c sleep`, which this
+          # image cannot run: its root filesystem is read-only and it is a
+          # distroless-style nginx-unprivileged build.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: 8080

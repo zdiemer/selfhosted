@@ -22,16 +22,33 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       # Spread connectors across nodes so a single node drain never takes the
-      # tunnel fully offline.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "cloudflared.selectorLabels" . | nindent 20 }}
+      # tunnel fully offline. This is the claim the comment always made; as a
+      # preferred podAntiAffinity it was a hint the scheduler could decline,
+      # which would put both connectors on one node and make the claim false
+      # with nothing reporting it. DoNotSchedule enforces it — and with 10
+      # nodes and 2 replicas there is no state where that is unsatisfiable.
+      #
+      # matchLabelKeys scopes the skew to one pod-template-hash so a rollout
+      # spreads the incoming ReplicaSet against itself rather than stalling
+      # against the pods it is replacing.
+      #
+      # No preStop sleep here, unlike the ingress-facing pods: nothing routes to
+      # this via a Service. cloudflared dials out and the edge decides what to
+      # send it, so the drain that matters is the one cloudflared performs
+      # itself on SIGTERM — it unregisters from the edge and lets in-flight
+      # requests finish. The grace period is what has to be long enough for
+      # that; 30s is cloudflared's own default drain window, and cutting it
+      # short is what turns a rollout into a handful of edge-side 502s.
+      terminationGracePeriodSeconds: 45
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "cloudflared.selectorLabels" . | nindent 14 }}
       containers:
         - name: cloudflared
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

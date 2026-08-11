@@ -76,6 +76,11 @@ spec:
         runAsUser: 13
         runAsGroup: 13
         fsGroup: 13
+      # Longer than the web tier's 30s: squid's own shutdown gives in-flight
+      # tunnels time to finish before it exits, and a CONNECT tunnel carrying a
+      # long scrape or an upload is exactly the traffic that should not be cut
+      # mid-request. Covers the preStop sleep on top of that.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: squid
           image: {{ .Values.image }}
@@ -88,6 +93,16 @@ spec:
           # container non-root with a read-only root filesystem.
           command: ["/usr/sbin/squid"]
           args: ["-N", "-f", "/etc/squid/squid.conf"]
+          # Clients reach this through a ClusterIP Service, so endpoint removal
+          # races SIGTERM the same way it does for an ingress-facing pod: a
+          # service can open a CONNECT tunnel to a squid that is already
+          # shutting down, and it surfaces as a failed outbound request in the
+          # client rather than as anything visible here. Hold the container open
+          # while the Endpoints update propagates.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             {{- range $laneName, $lane := (include "egress-proxy.activeLanes" . | fromYaml) }}
             - name: lane-{{ $laneName | trunc 10 | trimSuffix "-" }}

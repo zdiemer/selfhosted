@@ -1,0 +1,29 @@
+{{/*
+A PodDisruptionBudget caps how many pods a VOLUNTARY disruption may remove at
+once. `kubectl drain` is a voluntary disruption; a node losing power is not, so
+this bounds planned maintenance and says nothing about crashes.
+
+Gated on replicaCount > 1, and that gate is the important part. A PDB demanding
+minAvailable: 1 against a single-replica Deployment can never be satisfied by
+evicting that replica, so the drain blocks — forever, not with an error. Scaling
+this chart back to 1 must therefore drop the PDB with it rather than quietly
+wedging the next node drain, which is why this is a template condition and not a
+value someone has to remember to flip.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cluster-status.fullname" . }}
+  labels:
+    {{- include "cluster-status.labels" . | nindent 4 }}
+spec:
+  # minAvailable rather than maxUnavailable: it is expressed in the units that
+  # matter here ("the status page keeps answering"), and it stays correct if
+  # replicaCount grows, where a fixed maxUnavailable would silently permit a
+  # larger and larger fraction to go at once.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "cluster-status.selectorLabels" . | nindent 6 }}
+{{- end }}

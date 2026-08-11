@@ -30,17 +30,35 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      # Explicit rather than inherited: it has to cover the web container's
+      # preStop sleep plus nginx's SIGQUIT drain. The collector sidecar has no
+      # shutdown work of its own — it writes a JSON file on an interval — so it
+      # is not the constraint here.
+      terminationGracePeriodSeconds: 30
       # Spread across nodes: a status page that goes down with one node isn't
       # much of a status page.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "cluster-status.selectorLabels" . | nindent 20 }}
+      #
+      # This was a preferred podAntiAffinity, which is a hint the scheduler is
+      # free to ignore — and "currently spread" then depends on scheduling
+      # order rather than on anything enforcing it. DoNotSchedule makes it a
+      # constraint: with 10 nodes and 2 replicas there is no plausible state
+      # where spreading them is unsatisfiable, so the soft form bought nothing
+      # except the chance to silently not apply.
+      #
+      # matchLabelKeys confines the skew calculation to a single
+      # pod-template-hash, so during a rollout the new ReplicaSet spreads
+      # against its own pods rather than against the outgoing ones. Without it
+      # the surge pod is measured against pods that are about to disappear, can
+      # find every node "full", and the rollout stalls.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "cluster-status.selectorLabels" . | nindent 14 }}
       volumes:
         - name: data
           emptyDir: {}
@@ -103,6 +121,13 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while nginx is shutting down. Holding the container open covers the
+          # propagation window. Native sleep action — read-only root, no shell.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}

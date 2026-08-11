@@ -35,15 +35,24 @@ spec:
         fsGroup: 65533
         seccompProfile:
           type: RuntimeDefault
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "kelsey-green.selectorLabels" . | nindent 20 }}
+      # Explicit rather than the inherited default: it has to cover the nginx
+      # preStop sleep below plus nginx's own SIGQUIT drain.
+      terminationGracePeriodSeconds: 30
+      # Hard spread rather than the preferred podAntiAffinity this used to
+      # carry: with 10 nodes and 2 replicas nothing makes spreading them
+      # unsatisfiable, so a hint only bought the chance to silently not apply
+      # and leave both replicas on one node. matchLabelKeys scopes the skew to
+      # one pod-template-hash so a rollout spreads the incoming ReplicaSet
+      # against itself instead of stalling against the outgoing pods.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "kelsey-green.selectorLabels" . | nindent 14 }}
       containers:
         - name: nginx
           image: "{{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}"
@@ -55,6 +64,17 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Endpoint removal and SIGTERM race: Traefik can still be routing here
+          # when nginx begins shutting down, and those in-flight requests become
+          # 502s. maxUnavailable: 0 guarantees a Ready replacement exists, not
+          # that this pod has stopped receiving traffic — only holding the
+          # container open long enough for the Endpoints update to propagate
+          # does that. Native sleep action; the image has a read-only root and
+          # no shell to exec.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: 8080

@@ -22,15 +22,24 @@ spec:
         runAsUser: 65532
         seccompProfile:
           type: RuntimeDefault
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "kelsey-green.cloudflaredSelectorLabels" . | nindent 20 }}
+      # Hard spread — same reasoning as the site Deployment next door. Both
+      # connectors on one node means one drain takes kelsey.green off the
+      # Cloudflare path entirely.
+      #
+      # No preStop sleep: nothing routes here through a Service. The drain that
+      # matters is cloudflared's own on SIGTERM, so the grace period just has to
+      # be long enough to let it unregister from the edge and finish in-flight
+      # requests rather than dropping them.
+      terminationGracePeriodSeconds: 45
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "kelsey-green.cloudflaredSelectorLabels" . | nindent 14 }}
       containers:
         - name: cloudflared
           image: "{{ .Values.cloudflared.image.repository }}:{{ .Values.cloudflared.image.tag }}"

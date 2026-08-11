@@ -1,0 +1,24 @@
+{{/*
+Bounds voluntary disruption (drains, not crashes). This one matters more than
+most: every service that opted into a lane routes its outbound traffic through
+here, so both squids going at once is a cluster-wide egress stall, not a
+degraded page.
+
+Gated on replicaCount > 1 deliberately: minAvailable: 1 against a single replica
+is unsatisfiable by evicting it, so the drain blocks indefinitely rather than
+failing. Scaling down has to take the PDB with it.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "egress-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "egress-proxy.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "egress-proxy.selectorLabels" . | nindent 6 }}
+{{- end }}
