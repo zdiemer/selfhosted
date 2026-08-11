@@ -22,6 +22,20 @@ media:
 # cluster has no GPU device plugin. renderGid is the `render` group on that
 # node (`stat -c %g /dev/dri/renderD128`), so the jellyfin user can open the
 # render node.
+# DRAINING zachd-ubuntu-1 TAKES JELLYFIN DOWN, and that is accepted rather than
+# overlooked — scripts/k3s/drain-preflight.sh reports this pod as unmovable, so
+# the reasoning belongs next to the cause.
+#
+# The pin is a hardware fact, not a scheduling preference: this is the only node
+# with a usable GPU, and the pod additionally hostPath-mounts /dev/dri, which
+# exists nowhere else. Relaxing it needs a second machine with a render node —
+# at which point label both and switch this to a label selector rather than a
+# hostname.
+#
+# Setting transcode.enabled: false unpins the pod immediately (no nodeSelector,
+# no /dev/dri mount) at the cost of CPU-only transcoding, which this fleet
+# cannot do for high-bitrate files. That is the lever if the node ever needs a
+# long maintenance window rather than a quick drain.
 transcode:
   enabled: true
   nodeName: zachd-ubuntu-1

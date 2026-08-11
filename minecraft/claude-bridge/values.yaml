@@ -595,6 +595,25 @@ tolerations:
 #   - You must have run `claude login` on this host at least once.
 #   - If you wipe ~/.claude, the bridge breaks until you re-authenticate.
 #   - Pinned to zachd-ubuntu via nodeSelector below; don't reschedule it.
+#
+# WHY THIS IS STILL PINNED, when the whole point of the storage migration was
+# that nothing should be. scripts/k3s/drain-preflight.sh names this pod as one
+# of the few that cannot move, so it is worth writing down that it is a
+# considered "no" rather than something nobody got to:
+#
+# The directory mount IS the token-refresh mechanism (see above). A Secret
+# would be a point-in-time copy, and Claude Code rotates its OAuth token every
+# few hours — so the pod would authenticate fine and then silently stop working
+# within ~8h, which is a worse failure than being pinned. The cluster secret
+# relay (scripts/secrets.sh) does not help: it is a bootstrap path for chart
+# values.local.yaml files, pushed from a machine with `op`, not a continuous
+# sync of a rotating credential.
+#
+# Unpinning would mean building that sync — something on the host writing the
+# refreshed credential into a Secret on a timer. That is real machinery with
+# its own quiet failure mode, for a Minecraft chat bridge. The honest trade is
+# to leave it pinned and let the preflight say so, and to note that draining
+# zachd-ubuntu costs this pod until the node returns.
 # ----------------------------------------------------------------------------
 auth:
   hostPath: /home/zachd/.claude
