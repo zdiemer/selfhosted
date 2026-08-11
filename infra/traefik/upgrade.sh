@@ -31,7 +31,14 @@ VALUE_ARGS=(-f "$VALUES")
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-render() { helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"; }
+# "$@" is load-bearing: without it `render -s templates/...` below silently
+# drops the -s and renders the whole chart. render_hcc was added precisely to
+# scope the YAML assertions to one document and never did, because the flag
+# never reached helm — the assertions then failed on "expected a single
+# document" the first time a second template joined the chart. Same shape as
+# the strategy keys elsewhere in this repo: a fix that reads as applied and
+# isn't.
+render() { helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" "$@"; }
 # The chart renders more than one document now (the edge-ratelimit Middleware
 # joined the HelmChartConfig), and everything below that parses rendered YAML
 # line-by-line assumes exactly one. Scope those to the one template they mean.
@@ -146,15 +153,24 @@ helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --c
 
 if [[ "$REDEPLOY" == "1" ]]; then
   # helm-controller runs the actual Traefik upgrade as a Job, asynchronously —
-  # `helm upgrade` returning says nothing about Traefik itself. Wait for the
-  # proxy to come back rather than declaring success while ingress is still down.
+  # `helm upgrade` returning says nothing about Traefik itself.
+  #
+  # `sleep 5` used to stand in for that, and it is not enough: the Job takes
+  # tens of seconds to start, so `rollout status` ran against a Deployment that
+  # had not been touched yet, found it perfectly rolled out, and reported
+  # success. The cutover to three replicas "passed" this check while Traefik
+  # was still a single Recreate pod on the old config.
+  #
+  # Wait for the Job first, then the Deployment.
+  echo "==> waiting for helm-controller to apply the config"
+  kubectl -n "$HCC_NS" wait --for=condition=complete job/helm-install-traefik --timeout=300s \
+    || echo "    (no helm-install job completed in time; checking the deployment anyway)" >&2
   echo "==> waiting for Traefik to come back"
-  sleep 5
-  kubectl -n "$HCC_NS" rollout status deployment/traefik --timeout=180s
+  kubectl -n "$HCC_NS" rollout status deployment/traefik --timeout=300s
 
   echo "==> verifying the config actually landed"
   kubectl -n "$HCC_NS" get deploy traefik \
-    -o jsonpath='    updateStrategy: {.spec.strategy.type}{"\n"}'
+    -o jsonpath='    replicas: {.spec.replicas}  strategy: {.spec.strategy.type}{"\n"}'
   kubectl -n "$HCC_NS" get pods -l app.kubernetes.io/name=traefik \
     -o jsonpath='    pod: {.items[0].metadata.name}{"\n"}'
 fi
