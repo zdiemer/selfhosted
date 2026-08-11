@@ -48,8 +48,34 @@ image:
 
 # Critical: never run two pods against the same world. Recreate = old pod dies
 # completely before new pod starts. RollingUpdate WILL corrupt your world.
-strategy:
-  type: Recreate
+#
+# THE KEY IS `strategyType`, NOT `strategy.type`. This used to say
+# `strategy: {type: Recreate}`, which the itzg chart does not read — its
+# deployment template renders `type: {{ .Values.strategyType }}`. Nothing was
+# broken, because `strategyType: Recreate` is also the chart's own default, so
+# the live Deployment happened to be correct for as long as that was true. The
+# guard protecting the world from a two-pod overlap was therefore a no-op
+# riding on an upstream default, exactly the way infra/traefik's
+# `deployment.strategy` was before it moved to `updateStrategy`. Set the key
+# the chart actually reads, so a future upstream default change can't quietly
+# turn this into a RollingUpdate.
+strategyType: Recreate
+
+# The chart's deployment template has no `terminationGracePeriodSeconds` or
+# `priorityClassName` of its own, but it does splice `extraPodSpec` verbatim
+# into the pod spec, which is enough for both.
+extraPodSpec:
+  # Prominence II is ~400 mods over a large world. On SIGTERM the itzg
+  # entrypoint announces, saves, and stops the server — the k8s default of 30s
+  # can hard-kill that mid-save, and a half-written region file is exactly the
+  # corruption `Recreate` above exists to avoid. A drain is the common case:
+  # it is the one shutdown nobody is watching. 300s is well past a full save
+  # and costs nothing when the save finishes early, since the kubelet proceeds
+  # as soon as the container exits.
+  terminationGracePeriodSeconds: "300"
+  # The world is irreplaceable and the server is the whole point of the node it
+  # sits on; it should not be evicted to make room for a stateless web app.
+  priorityClassName: "platform-core"
 
 # ----------------------------------------------------------------------------
 # Minecraft server configuration

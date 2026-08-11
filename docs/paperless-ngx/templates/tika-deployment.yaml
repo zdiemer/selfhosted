@@ -8,6 +8,13 @@ metadata:
     app.kubernetes.io/component: tika
 spec:
   replicas: 1
+  # Explicit rather than inherited — same reasoning as gotenberg next door:
+  # stateless HTTP extractor, no volume, so it surges cleanly.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "paperless.selectorLabels" . | nindent 6 }}

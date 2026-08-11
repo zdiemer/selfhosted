@@ -32,6 +32,11 @@ spec:
         {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 8 }}
         ingress.enabled: "true"
     spec:
+      # qBittorrent writes resume data for every active torrent on shutdown.
+      # Hard-killed at 30s with a busy queue it loses that, and the torrents
+      # come back needing a full recheck of data already on disk — hours of
+      # disk I/O to recover from a shutdown that had 30 more seconds to spare.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: gluetun
           image: "{{ .Values.gluetun.image }}:{{ .Values.gluetun.tag }}"

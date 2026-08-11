@@ -21,6 +21,16 @@ spec:
         {{- include "paperless.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
     spec:
+      # Paperless is unusable without its database, so this outranks the
+      # stateless tier when the scheduler has to make room. platform-core is
+      # the class for exactly this; without naming one it silently inherits
+      # platform-app (globalDefault) and sits level with every web frontend.
+      priorityClassName: platform-core
+      # 30s is the k8s default and it is not enough for a database. A drain
+      # sends SIGTERM and then hard-kills at the deadline mid-checkpoint; the
+      # next start then has to recover, which is slower than shutting down
+      # cleanly would have been and is the window where corruption lives.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"

@@ -24,6 +24,12 @@ spec:
         {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 8 }}
         ingress.enabled: "true"
     spec:
+      # Every arr app keeps its state in SQLite on /config. SQLite finishes a
+      # WAL checkpoint on clean shutdown; killed at the 30s default mid-write
+      # it leaves the -wal file to be recovered on next start, and these apps
+      # are mid-write far more often than their idle look suggests (RSS feeds,
+      # queue updates, import scans all run on timers).
+      terminationGracePeriodSeconds: 60
       containers:
         - name: {{ $name }}
           image: "{{ $app.image }}:{{ $app.tag }}"

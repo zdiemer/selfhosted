@@ -45,6 +45,30 @@ spec:
       # their egress stops. Not platform-core — it holds no state, and a restart
       # costs a reconnect rather than a recovery.
       priorityClassName: platform-app
+      # replicaCount is 2 for availability, but until this block existed nothing
+      # made the scheduler honour that: both squids could sit on one node, and a
+      # single drain took the cluster's whole egress path with it. The other
+      # two-replica charts at least had a soft podAntiAffinity; this one — the
+      # egress choke point — had nothing.
+      #
+      # DoNotSchedule rather than ScheduleAnyway: with 10 nodes and 2 replicas
+      # there is no plausible state where "spread these two" is unsatisfiable,
+      # so a soft preference here only buys the chance to silently not apply.
+      #
+      # matchLabelKeys scopes the skew calculation to one pod-template-hash, so
+      # during a rollout the incoming ReplicaSet is spread among its own pods
+      # rather than against the outgoing ones. Without it the surge pod counts
+      # against the old pods' placement and can find every node "full", which
+      # turns DoNotSchedule into a stuck rollout.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "egress-proxy.selectorLabels" . | nindent 14 }}
       securityContext:
         runAsNonRoot: true
         # uid 13 is `proxy` in the Ubuntu image, and owns /var/log/squid and

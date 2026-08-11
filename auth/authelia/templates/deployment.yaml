@@ -30,6 +30,12 @@ spec:
       # overrides, so those injected vars collide with `server.address` and
       # crash the binary. Disable the legacy service-link injection.
       enableServiceLinks: false
+      # Authelia's forward-auth middleware sits in front of ~8 services, so
+      # every one of them 401s while this pod is gone. That makes it a
+      # platform-core dependency, not the platform-app it silently inherited
+      # from the globalDefault — it must not be the thing evicted to make room
+      # for one of the apps that depends on it.
+      priorityClassName: platform-core
       containers:
         - name: authelia
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

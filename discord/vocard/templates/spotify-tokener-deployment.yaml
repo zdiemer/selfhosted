@@ -8,6 +8,15 @@ metadata:
     {{- include "vocard.labels" $ctx | nindent 4 }}
 spec:
   replicas: 1
+  # Explicit rather than inherited. This is a stateless token endpoint with no
+  # volume, so it surges to a second pod and drains the first with no gap —
+  # which matters because the bot asks it to resolve every Spotify URL, and a
+  # gap here is a user-visible "couldn't play that" in Discord.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "vocard.selectorLabels" $ctx | nindent 6 }}
@@ -27,6 +36,18 @@ spec:
           env:
             - name: SPOTIFY_TOKENER_ADDR
               value: "0.0.0.0:49152"
+          # maxUnavailable: 0 above is only worth anything if "available" means
+          # something. With no probe a pod counts as Ready the moment the
+          # container starts, so the rollout would tear down the old pod while
+          # the new one was still binding its socket — the exact gap the
+          # strategy is there to prevent. tcpSocket rather than httpGet: the
+          # upstream image exposes no documented health path, and "is it
+          # listening" is the whole question here.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.spotifyTokener.resources | nindent 12 }}
 {{- end }}

@@ -8,6 +8,16 @@ metadata:
     app.kubernetes.io/component: gotenberg
 spec:
   replicas: 1
+  # Explicit rather than inherited. Gotenberg is a stateless converter reached
+  # only over HTTP by paperless — no volume, no shared state — so it can surge
+  # to a second pod and drain the first with no gap. Left implicit this was
+  # RollingUpdate 25%/25% by default, which at one replica rounds to "take the
+  # only pod down first".
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "paperless.selectorLabels" . | nindent 6 }}

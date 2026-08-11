@@ -16,6 +16,13 @@ spec:
       labels:
         {{- include "vocard.labels" $ctx | nindent 8 }}
     spec:
+      # The bot stores every guild's playlists and settings here and will not
+      # start without it, so it outranks the stateless tier for scheduling.
+      priorityClassName: platform-core
+      # mongod on SIGTERM finishes in-flight writes and closes its storage
+      # engine cleanly. The 30s default can hard-kill that mid-way on a drain,
+      # which costs an unclean-shutdown recovery on the next start.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: mongo
           image: "{{ .Values.images.mongo.repository }}:{{ .Values.images.mongo.tag }}"

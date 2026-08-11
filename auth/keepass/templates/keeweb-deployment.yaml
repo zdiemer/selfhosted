@@ -6,6 +6,18 @@ metadata:
     {{- include "keepass.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # Explicit, because the absence of a strategy block reads exactly like a
+  # deliberate choice while actually meaning "whatever RollingUpdate 25%/25%
+  # does". keeweb is a static web UI with no volume — it holds nothing, and
+  # the vault it opens is fetched by the browser from webdav — so surging to
+  # a second pod before the first goes away is free and makes this the one
+  # half of this chart that upgrades without a gap. Contrast webdav next door,
+  # which is Recreate because it does hold the RWO volume.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "keepass.keeweb.selectorLabels" . | nindent 6 }}

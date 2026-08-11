@@ -20,6 +20,11 @@ spec:
         # Picked up by infra/alloy for ingress-adjacent log shipping.
         ingress.enabled: "true"
     spec:
+      # Jellyfin keeps its library, playback positions and user data in SQLite
+      # and flushes on shutdown. 30s also hard-kills any in-flight transcode
+      # ffmpeg children, leaving their temp segments behind on the config
+      # volume. 60s lets it close out and clean up.
+      terminationGracePeriodSeconds: 60
       {{- if .Values.transcode.enabled }}
       # nodeSelector, NOT nodeName: nodeName bypasses the scheduler, so a
       # full node means kubelet-rejected (OutOfcpu) pods that the Deployment

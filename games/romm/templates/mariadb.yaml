@@ -70,6 +70,14 @@ spec:
         {{- include "romm.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: db
     spec:
+      # RomM has no SQLite fallback (see the note at the top of this file), so
+      # the app is dead without this. platform-core rather than the silently
+      # inherited platform-app default.
+      priorityClassName: platform-core
+      # InnoDB needs to flush its buffer pool and finish its redo log on the
+      # way out. The 30s default hard-kills mid-flush on a drain, turning a
+      # clean shutdown into a crash recovery on the next start.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: mariadb
           image: "{{ .Values.db.image }}"
