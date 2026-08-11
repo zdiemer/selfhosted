@@ -13,9 +13,19 @@ image:
 schedule: "30 5 * * 6"
 
 # Onboarding a repo = add it here and redeploy. Explicit list, no autodiscover:
-# what Renovate may touch is visible in git.
+# what Renovate may touch is visible in git. Excluded on purpose:
+# diemer.codes (frozen 2019 archive) and beedle (not a git repo).
 repositories:
   - zdiemer/selfhosted
+  - zdiemer/sms-relay
+  - zdiemer/gamedex
+  - zdiemer/money
+  - zdiemer/whatnowgg
+  - zdiemer/talaria
+  - zdiemer/smitele-bot
+  - zdiemer/kelsey-dot-green
+  - zdiemer/romnas
+  - zdiemer/simplescraper
 
 # "extract" | "lookup" | "full" — set to see what Renovate WOULD do (job
 # logs) without it opening PRs. Empty = live. The rollout dry-run was
