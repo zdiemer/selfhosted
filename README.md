@@ -143,7 +143,23 @@ repo stays the full index of what runs on the cluster. Clone with
   *Downtime claims need a number.*
   [`scripts/measure-gap.sh`](scripts/measure-gap.sh) polls a host while an
   upgrade or drain runs and reports the outage windows. Two "zero-downtime"
-  rollouts in this repo were silently broken before it existed.
+  rollouts in this repo were silently broken before it existed. One caveat it
+  now warns about: on an Authelia-gated host the forward-auth middleware answers
+  before Traefik routes anywhere, so an unauthenticated probe measures Authelia
+  rather than the service behind it.
+- **Ingresses do not name a certresolver.** They set
+  `traefik.ingress.kubernetes.io/router.tls: "true"` and pick up the cluster-wide
+  default certificate from Traefik's TLSStore — the wildcard that
+  [`infra/traefik-certs/`](infra/traefik-certs/) renews into a Secret. Traefik
+  itself no longer runs ACME at all.
+
+  The constraint that shaped all of this still holds and is worth knowing before
+  adding a host: **DuckDNS can only write a TXT record at the account's own
+  subdomain**, so a per-host cert for `foo.zachd.duckdns.org` cannot answer its
+  own DNS-01 challenge. Every sub-subdomain rides the wildcard SAN instead.
+  That is why the wildcard is not optional, and why per-Ingress
+  `router.tls.domains.*` annotations used to exist — they are gone now because
+  one default certificate covers every host.
 - **Apps we write ourselves live in their own repo**, added back here as a
   submodule so this repo still lists everything on the cluster. The app repo owns
   its chart *and* its source together — `Chart.yaml` `appVersion` tracks

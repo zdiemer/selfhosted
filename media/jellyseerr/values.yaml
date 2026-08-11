@@ -30,9 +30,6 @@ ingress:
     - requests.diemer.codes
   tls:
     enabled: true
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 resources:
   requests:

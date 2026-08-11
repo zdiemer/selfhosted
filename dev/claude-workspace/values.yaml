@@ -115,9 +115,6 @@ ingress:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
     # certs must ride a wildcard SAN. See infra/duckdns.
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 happy:
   # Relay URL for the happy CLI (HAPPY_SERVER_URL on the term container).

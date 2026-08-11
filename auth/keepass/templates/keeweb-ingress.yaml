@@ -8,9 +8,6 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.keeweb.ingress.tls.certResolver }}
-    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.keeweb.ingress.tls.domain | quote }}
-    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.keeweb.ingress.tls.wildcardSan | quote }}
     # Authelia forward-auth — every request hits /api/authz/forward-auth before
     # reaching KeeWeb. policy=two_factor for keepass.zachd is set in
     # ../authelia/values.yaml access_control.rules.

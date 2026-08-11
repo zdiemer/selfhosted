@@ -170,10 +170,7 @@ ingress:
     - auth.diemer.codes
   tls:
     enabled: true
-    certResolver: duckdns
     # See RomM README §DuckDNS follow-up for why the wildcard SAN is needed.
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 resources:
   requests:

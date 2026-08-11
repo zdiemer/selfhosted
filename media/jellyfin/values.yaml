@@ -118,9 +118,6 @@ ingress:
   cloudflareHosts: []
   tls:
     enabled: true
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 resources:
   # The GPU node runs hot (~87% CPU requested, mostly talaria) — keep the

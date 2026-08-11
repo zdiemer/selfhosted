@@ -45,13 +45,10 @@ ingress:
   # changes, add a forwardauth middleware the way docs/stirling-pdf does.
   tls:
     enabled: true
-    certResolver: duckdns
-    domain: zachd.duckdns.org
     # Mandatory, not an optimisation: DuckDNS stores one TXT record, at the
     # account's top-level subdomain, so a per-host DNS-01 challenge for
     # `map.zachd.duckdns.org` can never be answered. The wildcard challenge
     # lives at the base name, which DuckDNS handles natively.
-    wildcardSan: "*.zachd.duckdns.org"
 
 # RESOLVED (was stale here for a while): `mc-minecraft-bluemap` is ClusterIP
 # now — minecraft/values.yaml flipped it, verified live — so this Ingress is

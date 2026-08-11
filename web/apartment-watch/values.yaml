@@ -69,9 +69,6 @@ ingress:
     - homes.diemer.codes
   tls:
     enabled: true
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 smsRelay:
   # In-cluster, so this bypasses the ingress and Authelia entirely.

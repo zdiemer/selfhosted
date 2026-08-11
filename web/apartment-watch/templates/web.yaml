@@ -142,11 +142,6 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
-    # DuckDNS can only set TXT at the account's top-level subdomain, so
-    # per-host certs for sub-subdomains fail ACME. Ride the wildcard SAN.
-    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
-    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

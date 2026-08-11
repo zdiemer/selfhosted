@@ -121,9 +121,6 @@ ingress:
   className: traefik
   tls:
     enabled: true
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 resources:
   arr:

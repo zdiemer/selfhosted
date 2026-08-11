@@ -8,13 +8,6 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.ingress.tls.enabled }}
-    traefik.ingress.kubernetes.io/router.tls.certresolver: {{ .Values.ingress.tls.certResolver }}
-    # Ride the wildcard SAN — DuckDNS can only write TXT at the top-level, so a
-    # per-host cert for status.zachd.duckdns.org can't answer its challenge.
-    traefik.ingress.kubernetes.io/router.tls.domains.0.main: {{ .Values.ingress.tls.domain | quote }}
-    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: {{ .Values.ingress.tls.wildcardSan | quote }}
-    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

@@ -56,9 +56,6 @@ ingress:
     enabled: true
     # DuckDNS can only write TXT at the account top-level, so sub-subdomain certs
     # ride the wildcard SAN. Mirrors every other service in this repo.
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 # nginx serving ~2 MB of static files to approximately nobody.
 resources:

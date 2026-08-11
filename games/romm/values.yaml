@@ -352,9 +352,6 @@ ingress:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
     # certs must ride a wildcard SAN. See README §DuckDNS follow-up.
-    certResolver: duckdns
-    domain: zachd.duckdns.org
-    wildcardSan: "*.zachd.duckdns.org"
 
 resources:
   requests:

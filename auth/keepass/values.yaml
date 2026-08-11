@@ -25,11 +25,6 @@ webdav:
     # (webdav.zachd.duckdns.org over Tailscale) — its static HTTP Basic auth was
     # never meant to be the sole guard on the public internet.
     cloudflareHosts: []
-    tls:
-      certResolver: duckdns
-      # Wildcard SAN trick — see games/romm/README.md §Follow-up A.
-      domain: zachd.duckdns.org
-      wildcardSan: "*.zachd.duckdns.org"
   persistence:
     # Holds the .kdbx file(s). 1Gi is wildly more than needed; KeePass DBs
     # are typically <1MB.
@@ -81,10 +76,6 @@ keeweb:
     # `<namespace>-<release>-forwardauth@kubernetescrd`. If you renamed
     # the Authelia Helm release or namespace, update accordingly.
     middleware: "auth-authelia-forwardauth@kubernetescrd"
-    tls:
-      certResolver: duckdns
-      domain: zachd.duckdns.org
-      wildcardSan: "*.zachd.duckdns.org"
   # Optional: mount a KeePass key file into KeeWeb's static-asset directory
   # so any authenticated browser can fetch it once. Reachable at
   # https://<keeweb host>/<filename>; gated by the same Authelia forward-auth

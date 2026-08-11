@@ -16,7 +16,6 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    # No router.tls.certresolver — public TLS ends at Cloudflare and the tunnel
     # dials in with No TLS Verify. See values.yaml.
     #
     # Say so out loud. infra/ingress-policy requires every Ingress to name a
