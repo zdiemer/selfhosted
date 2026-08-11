@@ -36,6 +36,12 @@ spec:
               env:
                 - name: RENOVATE_CONFIG_FILE
                   value: /etc/renovate/config.js
+                # The -full image ships one toolchain per language; repos that
+                # pin another (smitele-bot's Pipfile wants python 3.11) need
+                # containerbase to fetch it at run time or lockfile
+                # regeneration fails with artifactErrors.
+                - name: RENOVATE_BINARY_SOURCE
+                  value: install
                 - name: RENOVATE_BASE_DIR
                   value: /tmp/renovate
                 - name: LOG_LEVEL
