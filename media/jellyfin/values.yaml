@@ -3,16 +3,31 @@ image:
   tag: "10.11.11"
   pullPolicy: IfNotPresent
 
-# The media library, mounted read-only straight off the NAS's NFS export
-# (created for this namespace; the SMB `media` share is the same dataset, so
-# desktops see the same files). NFS rather than SMB because the arr stack
-# depends on hardlinks for instant imports, and the whole namespace should
-# see one filesystem. Jellyfin only ever reads it — metadata/artwork live in
-# the config PVC.
+# The media library, mounted straight off the NAS's NFS export (created for
+# this namespace; the SMB `media` share is the same dataset, so desktops see
+# the same files). NFS rather than SMB because the arr stack depends on
+# hardlinks for instant imports, and the whole namespace should see one
+# filesystem. Metadata and artwork are never written here — they live in the
+# config PVC.
 media:
   server: "192.168.4.36"
   path: /mnt/vault/media
   mountPath: /media
+  # Read-write so "Delete from disk" in the Jellyfin UI actually works. This
+  # was read-only until deleting a show meant opening Sonarr every time.
+  #
+  # Understand what it widens: Jellyfin is deliberately NOT behind Authelia
+  # (TV apps can't answer a forward-auth bounce), so its own accounts are the
+  # only gate on an rw mount of the whole library. Deletion additionally
+  # requires the per-user "Allow media deletion" policy, which is OFF for
+  # every user by default — leave it off for everyone but the admin account
+  # and that stays the real gate. Jellyfin deletes for real (unlink, no
+  # trash), and the arr apps will happily re-download whatever vanishes
+  # unless the series/movie is removed there too.
+  #
+  # Set back to true to restore the old posture; nothing else depends on the
+  # mount being writable.
+  readOnly: false
 
 # Hardware transcode. zachd-ubuntu-1 is the Ryzen 2200G — the only node with
 # a real GPU (Vega 8, VAAPI H.264/HEVC both directions). Pinning Jellyfin

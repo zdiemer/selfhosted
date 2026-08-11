@@ -60,7 +60,9 @@ login:
    403'd — `kubectl -n media rollout restart deploy/arr-qbittorrent` to re-fire
    it, then check the listen port matches `/v1/portforward`. Downloads →
    default save path `/media/downloads`; enable categories `movies` → 
-   `/media/downloads/movies`, `tv` → `/media/downloads/tv`.
+   `/media/downloads/movies`, `tv` → `/media/downloads/tv`, and set
+   **Default Torrent Management Mode: Automatic** or the category save paths
+   are decorative (see below).
 2. **Prowlarr**: add your indexers. Settings → Apps → add Sonarr and Radarr
    (their URLs + API keys from Settings → General); Prowlarr then syncs
    indexers into both.
@@ -74,6 +76,53 @@ login:
 Sonarr/Radarr reach qBittorrent *through* gluetun's firewall:
 `FIREWALL_INPUT_PORTS=8080` admits the web UI, `FIREWALL_OUTBOUND_SUBNETS`
 covers the k3s pod/service ranges for the return path.
+
+## qBittorrent queueing and seeding
+
+These live in the config PVC, not in this chart — qBittorrent has no env-var
+surface for them, so they are set once in Options and written down here.
+Options → BitTorrent → Torrent Queueing:
+
+| Setting | Value | Why |
+|---|---|---|
+| Maximum active downloads | 5 | 3 was the default and it queues a season pack behind two movies. 10 works too, it just splits the same line 10 ways and every item finishes late instead of some finishing early. |
+| Maximum active uploads | 10 | Seeders shouldn't starve each other once the count grows. |
+| Maximum active torrents | 30 | **This is the one that bites.** Seeding torrents count against it, and nothing here ever stops seeding, so a total of 5 means that after five completed grabs the sixth download never starts — it sits queued forever while five permanent seeders hold every slot. Raise it well past the download limit, or set −1. |
+| Do not count slow torrents | on | Idle seeders stop consuming active slots at all, which is the real fix for the row above. |
+
+**Seeding is unlimited, deliberately.** No ratio limit, no seeding-time
+limit, no share-limit action — torrents seed until removed by hand. That is
+close to free here: Sonarr/Radarr import by hardlink, so the file in
+`/media/downloads` and the one in `/media/tv` are the same inode and the
+seeding copy costs no extra bytes. Deleting the torrent *with data* just
+drops one of the two links; the library keeps the file. The cost is upload
+bandwidth and the active-torrent slots above, not disk.
+
+If disk ever does become the pressure, the lever is Options → BitTorrent →
+Share Limits (ratio 2.0 / 30 days, action "Remove torrent" — *not* "Remove
+torrent and files", which would unlink the download-side copy while Sonarr
+still believes it owns it).
+
+## "This directory does not appear to exist" in Sonarr
+
+> Remote download client qBittorrent places downloads in /media/downloads/tv
+> but this directory does not appear to exist. Likely missing or incorrect
+> remote path mapping.
+
+Not a path mapping problem — the paths are genuinely identical on both sides
+(one NFS export at `/media` everywhere). The cause is that qBittorrent's
+**Default Torrent Management Mode is Manual**, so a torrent added by Sonarr
+uses the *global* save path `/media/downloads` and ignores the `tv`
+category's `/media/downloads/tv` entirely. The category reports that path to
+Sonarr over the API, Sonarr looks for it, and it has never been created.
+
+Downloads keep working throughout — Sonarr tracks the torrent's actual
+`content_path` — which is why this reads as a false alarm. Fix it properly by
+setting Options → Downloads → **Default Torrent Management Mode: Automatic**;
+new torrents then land in the category folder and the warning clears.
+Existing torrents stay Manual (nothing gets moved) unless you switch them
+individually. Creating the two directories by hand also silences the warning,
+but leaves every file piling up in the root of `/media/downloads`.
 
 ## If gluetun crash-loops with a tun EPERM
 

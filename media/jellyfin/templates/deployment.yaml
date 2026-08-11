@@ -72,7 +72,7 @@ spec:
               mountPath: /cache
             - name: media
               mountPath: {{ .Values.media.mountPath }}
-              readOnly: true
+              readOnly: {{ .Values.media.readOnly }}
             {{- if .Values.transcode.enabled }}
             - name: dri
               mountPath: /dev/dri
@@ -98,11 +98,14 @@ spec:
         - name: cache
           emptyDir:
             sizeLimit: {{ .Values.persistence.cacheSizeLimit }}
+        # Both here and on the volumeMount: readOnly on the volume wins, so
+        # flipping only one of the two leaves the mount read-only and the
+        # delete button still fails with EROFS.
         - name: media
           nfs:
             server: {{ .Values.media.server | quote }}
             path: {{ .Values.media.path | quote }}
-            readOnly: true
+            readOnly: {{ .Values.media.readOnly }}
         {{- if .Values.transcode.enabled }}
         - name: dri
           hostPath:
