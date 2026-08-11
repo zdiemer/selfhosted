@@ -1,0 +1,140 @@
+# node-exporter — host-level metrics for all 9 nodes.
+#
+# VALUES-ONLY. There is no chart here; this file is passed to the upstream
+# prometheus-community/prometheus-node-exporter chart, the same arrangement as
+# infra/crowdsec and infra/alloy. upgrade.sh does the `helm repo add`.
+#
+# WHY THIS EXISTS AS ITS OWN CHART, AND NOT AS AN ALLOY COMPONENT.
+# Alloy ships a built-in `prometheus.exporter.unix` that does the same job, and
+# folding it in would mean one less release. It would also mean giving Alloy
+# hostPath mounts of /proc, /sys and /, plus hostNetwork and hostPID — and
+# infra/alloy is deliberately built the other way round: it reads container
+# logs through the Kubernetes API precisely so it has NO host bindings at all
+# (see that chart's README). Quietly abandoning that to save a release is a bad
+# trade. Host access lives here, in the chart whose entire job is host access.
+#
+# WHY hostNetwork IS ON (and what it costs). The netdev collector reads
+# /proc/net/dev, and /proc/net resolves inside the READING process's network
+# namespace — so a pod on the cluster network reports its own veth, not the
+# node's NIC, no matter how /proc is mounted. hostNetwork is the only way to
+# get real node throughput, which is the entire reason this chart exists:
+# Minecraft (:25565 LoadBalancer) and Jellyfin (:30096 NodePort) never traverse
+# Traefik, so node NIC counters are the ONLY place that traffic is visible.
+#
+# The cost is that :9100 is then reachable unauthenticated from the LAN. That
+# is an accepted exposure here, not an oversight: the LAN/tailnet is already
+# the trust boundary for every *.zachd.duckdns.org service, and node-exporter
+# publishes load averages and disk usage, not credentials. No firewall rule
+# opens it to the internet.
+#
+# NOT a violation of the no-node-binding rule: a DaemonSet runs on every node
+# by definition. Nothing here pins a workload to one machine.
+
+# ---------------------------------------------------------------------------
+# Collectors
+# ---------------------------------------------------------------------------
+# THIS IS THE SERIES BUDGET, and it is the most important block in the file.
+#
+# Grafana Cloud's free tier caps active series at 10k, and node-exporter's
+# defaults produce roughly 600-800 series per node. Times nine nodes that is
+# 5-7k — most of the budget, spent on one exporter, for metrics nobody reads.
+#
+# --collector.disable-defaults flips the model from "everything unless
+# excluded" to "nothing unless asked for", which is the only version that stays
+# correct as the exporter adds collectors upstream.
+#
+# MEASURED, not estimated: the ten collectors below export ~570 series per node,
+# of which Alloy's keep-list ships ~180 — about 1.8k across the ten nodes.
+# node_cpu_seconds_total is over half of that on its own (cores x 8 modes, so
+# 96 series on a 12-core box) and it stays, because iowait and steal are the
+# two numbers that explain a slow node when the CPU average looks fine.
+#
+# Both filters exist on purpose: this one stops the work happening, Alloy's
+# stops it being billed.
+extraArgs:
+  - --collector.disable-defaults
+
+  # cpu       per-core seconds by mode — the only way to see steal/iowait
+  # meminfo   available vs cached, not just "used"
+  # loadavg   three numbers that catch what a CPU average hides
+  # filesystem  disk fill, which is what actually takes this cluster down
+  # netdev    node NIC bytes — the Minecraft/Jellyfin blind spot, see above
+  # diskstats io saturation behind a slow PVC
+  # hwmon     temperatures; several of these nodes are laptops
+  # stat      context switches, boot time, forks
+  # time      clock offset — quietly breaks TLS and TOTP when it drifts
+  # uname     kernel version, so the versions-report can be cross-checked
+  - --collector.cpu
+  - --collector.meminfo
+  - --collector.loadavg
+  - --collector.filesystem
+  - --collector.netdev
+  - --collector.diskstats
+  - --collector.hwmon
+  - --collector.stat
+  - --collector.time
+  - --collector.uname
+
+  # CARDINALITY TRAP #1. netdev enumerates EVERY interface, and on a k3s node
+  # that means one veth per pod — ~20 pods per node, each with ~10 metrics,
+  # each churning to a new interface name every time a pod restarts. That is
+  # both a series explosion and unbounded churn, which is worse: churn burns
+  # the active-series budget with series nobody will ever query again.
+  #
+  # Excluded by name rather than kept by name because the interesting set (eth0,
+  # enp*, wlp*, bond*) differs across these nine machines, and a keep-list would
+  # silently miss a node's NIC. flannel.1/cni0 are the cluster overlay — pod
+  # traffic, already visible in Traefik; tailscale0 is the tailnet, which is
+  # real traffic but double-counts what the physical NIC already carried.
+  #
+  # Fully anchored on both ends. An earlier draft had `lo$` as one branch of an
+  # alternation followed by `.*`, which matches only because `.*` is allowed to
+  # be empty — correct by accident, and the kind of thing that stops being
+  # correct the next time someone adds a branch.
+  - --collector.netdev.device-exclude=^(lo|veth.*|cali.*|cni.*|flannel.*|docker.*|br-.*|kube-.*|tailscale.*)$
+
+  # CARDINALITY TRAP #2, the same shape: loop devices (one per snap package),
+  # device-mapper, ram disks and optical drives. All present, none informative.
+  - --collector.diskstats.device-exclude=^(ram|loop|fd|dm-|sr|md)\d+$
+
+  # Filesystem: skip pseudo/virtual mounts and, critically, the per-container
+  # overlay and kubelet bind mounts. On a busy node those are hundreds of mount
+  # points that appear and vanish with pods — trap #1 again, wearing a hat.
+  - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/kubelet/.+|var/lib/docker/.+|var/lib/rancher/.+|snap/.+)($|/)
+  - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$
+
+# ---------------------------------------------------------------------------
+# Placement
+# ---------------------------------------------------------------------------
+# Run on the control-plane nodes too. Three of the ten are control-plane, and
+# "the node that fills its disk" is exactly as likely to be one of those — a
+# node-metrics DaemonSet that skips a third of the fleet is worse than none,
+# because the gap is invisible on the dashboard.
+tolerations:
+  - effect: NoSchedule
+    operator: Exists
+
+# Small enough to be free. node-exporter is a stateless reader of /proc; if it
+# is using real memory something is wrong.
+resources:
+  requests:
+    cpu: 10m
+    memory: 24Mi
+  limits:
+    memory: 64Mi
+
+# The upstream chart ships a ServiceMonitor behind this flag. There is no
+# Prometheus Operator in this cluster and no CRD for it, so leaving it on would
+# fail the install outright. Alloy discovers these pods directly — see the
+# `node_exporter` scrape job in infra/alloy/values.yaml.
+prometheus:
+  monitor:
+    enabled: false
+
+# NOT SET, deliberately: priorityClassName. Nothing in this repo names one —
+# every workload inherits the `platform-app` globalDefault (see
+# infra/priority-classes) — and infra/alloy doesn't name one either. There is a
+# real argument that a metrics DaemonSet should outrank apps precisely when a
+# node is under pressure, but `platform-core` is documented as being for
+# stateful services whose eviction loses data, and node-exporter is neither.
+# Inheriting the default keeps this consistent with the rest of the cluster.

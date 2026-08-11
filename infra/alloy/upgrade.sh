@@ -6,11 +6,21 @@
 # credentials Secret out of values.local.yaml, because the upstream chart has no
 # way to create one and the token must not end up in a ConfigMap.
 #
+# TWO RELEASES from this one directory, the way infra/democratic-csi does:
+#
+#   alloy        values.yaml        DaemonSet — logs + every pod-local scrape
+#   alloy-probe  values-probe.yaml  Deployment, 1 replica — blackbox probes
+#
+# The split is not cosmetic: probe targets are static URLs with no node to be
+# local to, so on a DaemonSet all nine pods would probe all sixteen hostnames.
+# See values-probe.yaml.
+#
 # Nothing here touches ingress. Alloy only reads.
 
 set -euo pipefail
 
 RELEASE="${RELEASE:-alloy}"
+PROBE_RELEASE="${PROBE_RELEASE:-alloy-probe}"
 NAMESPACE="${NAMESPACE:-alloy}"
 CHART="${CHART:-grafana/alloy}"
 # Pin the chart — a surprise bump to the cluster-wide log shipper is an outage,
@@ -20,6 +30,7 @@ CHART_VERSION="${CHART_VERSION:-1.11.1}"
 SECRET="alloy-grafana-cloud"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
+PROBE_VALUES="${HERE}/values-probe.yaml"
 LOCAL_VALUES="${HERE}/values.local.yaml"
 
 # Materialize values.local.yaml from 1Password when it's missing and a template
@@ -107,8 +118,42 @@ helm repo update grafana >/dev/null
 #
 # `alloy validate` resolves the component graph, so it catches exactly that
 # class of mistake. Verified to fail (exit 1) on a dangling reference.
-echo "==> Validating the rendered Alloy config"
-RENDERED_CFG="$(helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" | python3 -c "
+#
+# Both releases go through this, in one throwaway pod — starting a pod per
+# release doubles the slowest part of the script for no extra safety.
+VPOD="alloy-validate-$$"
+VALIDATE_STARTED=0
+
+start_validator() {
+  local image
+  image="$(helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" | python3 -c "
+import sys, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get('kind') in ('DaemonSet', 'Deployment'):
+        print(d['spec']['template']['spec']['containers'][0]['image']); break
+")"
+  [[ -n "$image" ]] || { echo "FAIL: could not determine the Alloy image"; exit 1; }
+
+  kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$NAMESPACE" run "$VPOD" --image="$image" --restart=Never \
+    --command -- sleep 300 >/dev/null
+  for _ in $(seq 1 40); do
+    sleep 3
+    [[ "$(kubectl -n "$NAMESPACE" get pod "$VPOD" -o jsonpath='{.status.phase}' 2>/dev/null)" == "Running" ]] && break
+  done
+  VALIDATE_STARTED=1
+}
+
+cleanup_validator() {
+  [[ "$VALIDATE_STARTED" -eq 1 ]] || return 0
+  kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+}
+trap cleanup_validator EXIT
+
+# validate_config <release> <values-file>
+validate_config() {
+  local rel="$1" vals="$2" cfg out
+  cfg="$(helm template "$rel" "$CHART" -n "$NAMESPACE" -f "$vals" | python3 -c "
 import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):
     if d and d.get('kind') == 'ConfigMap':
@@ -116,38 +161,32 @@ for d in yaml.safe_load_all(sys.stdin):
             if k.endswith('.alloy'):
                 sys.stdout.write(v)
 ")"
-VALIDATE_IMAGE="$(helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" | python3 -c "
-import sys, yaml
-for d in yaml.safe_load_all(sys.stdin):
-    if d and d.get('kind') == 'DaemonSet':
-        print(d['spec']['template']['spec']['containers'][0]['image']); break
-")"
+  if [[ -z "$cfg" ]]; then
+    echo "FAIL: could not find the rendered Alloy config for ${rel}."
+    exit 1
+  fi
 
-if [[ -z "$RENDERED_CFG" ]]; then
-  echo "FAIL: could not find the rendered Alloy config in the chart output."
-  exit 1
-fi
+  printf '%s' "$cfg" | kubectl -n "$NAMESPACE" exec -i "$VPOD" -- sh -c 'cat > /tmp/config.alloy'
+  if ! out="$(kubectl -n "$NAMESPACE" exec "$VPOD" -- alloy validate /tmp/config.alloy 2>&1)"; then
+    echo "FAIL: Alloy rejected the rendered config for ${rel}. Nothing has been applied."
+    sed 's/^/      /' <<<"$out" | tail -25
+    exit 1
+  fi
+  echo "    ok: ${rel} config graph resolves"
+}
 
-VPOD="alloy-validate-$$"
-kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found >/dev/null 2>&1 || true
-kubectl -n "$NAMESPACE" run "$VPOD" --image="$VALIDATE_IMAGE" --restart=Never \
-  --command -- sleep 180 >/dev/null
-for _ in $(seq 1 40); do
-  sleep 3
-  [[ "$(kubectl -n "$NAMESPACE" get pod "$VPOD" -o jsonpath='{.status.phase}' 2>/dev/null)" == "Running" ]] && break
-done
-printf '%s' "$RENDERED_CFG" | kubectl -n "$NAMESPACE" exec -i "$VPOD" -- sh -c 'cat > /tmp/config.alloy'
-if ! VOUT="$(kubectl -n "$NAMESPACE" exec "$VPOD" -- alloy validate /tmp/config.alloy 2>&1)"; then
-  echo "FAIL: Alloy rejected the rendered config. Nothing has been applied."
-  sed 's/^/      /' <<<"$VOUT" | tail -25
-  kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  exit 1
-fi
-kubectl -n "$NAMESPACE" delete pod "$VPOD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-echo "    ok: config graph resolves"
+echo "==> Validating the rendered Alloy configs"
+start_validator
+validate_config "$RELEASE" "$VALUES"
+validate_config "$PROBE_RELEASE" "$PROBE_VALUES"
+cleanup_validator
+VALIDATE_STARTED=0
 
 echo "==> helm upgrade --install ${RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
+
+echo "==> helm upgrade --install ${PROBE_RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
+helm upgrade --install "$PROBE_RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$PROBE_VALUES"
 
 # The credentials arrive as env vars from a Secret, and env vars are read once
 # at process start. Rewriting the Secret alone leaves every running pod using
@@ -157,8 +196,33 @@ if kubectl -n "$NAMESPACE" get daemonset "$RELEASE" >/dev/null 2>&1; then
   echo "==> restarting so the credential Secret is re-read"
   kubectl -n "$NAMESPACE" rollout restart daemonset/"$RELEASE" >/dev/null
 fi
+if kubectl -n "$NAMESPACE" get deployment "$PROBE_RELEASE" >/dev/null 2>&1; then
+  kubectl -n "$NAMESPACE" rollout restart deployment/"$PROBE_RELEASE" >/dev/null
+fi
 
-kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=300s
+# Ten nodes rolled one at a time, each waiting on a readiness probe: the old
+# 300s was tight enough that a healthy deploy timed out at 9/10 and skipped
+# every check below it.
+kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=900s
+kubectl -n "$NAMESPACE" rollout status deployment/"${PROBE_RELEASE}" --timeout=300s
+
+# The locality filter in values.yaml is only correct if this DaemonSet actually
+# reaches every node — a pod missing from a node means that node's logs and
+# metrics are silently dropped rather than picked up by a neighbour. That
+# depends entirely on controller.tolerations, which is one careless edit away
+# from being removed, so assert it here rather than trusting it.
+NODES="$(kubectl get nodes --no-headers | wc -l)"
+SCHED="$(kubectl -n "$NAMESPACE" get daemonset "$RELEASE" -o jsonpath='{.status.desiredNumberScheduled}')"
+echo "==> node coverage: ${SCHED}/${NODES}"
+if [[ "$SCHED" != "$NODES" ]]; then
+  echo
+  echo "FAIL: Alloy is scheduled on ${SCHED} of ${NODES} nodes."
+  echo "      Every scrape and log tier filters to the LOCAL node, so the"
+  echo "      node(s) without a pod are now a silent blind spot — not covered"
+  echo "      by anyone. Check controller.tolerations in values.yaml against:"
+  kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints --no-headers | sed 's/^/        /'
+  exit 1
+fi
 
 # Bad credentials do not stop the pod — Alloy starts cleanly, tails happily, and
 # simply fails every push, so "Running" proves nothing and neither does the log
@@ -166,16 +230,29 @@ kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=300s
 #
 # Ask Alloy's own counters instead. sent_bytes_total > 0 is the only statement
 # that actually means "logs are landing in Grafana Cloud".
+#
+# ⚠️  THIS MUST SUM ACROSS EVERY POD, not sample one.
+#
+# It used to read `.items[0]` and that was fine when all nine pods shipped all
+# the same logs. With the locality filter it is wrong: a pod ships only what is
+# scheduled beside it, so an Alloy on a node running no Traefik, no Authelia, no
+# cloudflared, no egress-proxy and a quiet CrowdSec agent legitimately reports
+# sent_bytes=0 forever. Measured right after this change: one pod at 0, one at
+# 3.4 MB, the rest scattered between. Sampling one pod would fail a perfectly
+# healthy deploy roughly one time in ten, at random.
 echo "==> verifying delivery (Alloy's own counters, 30s)"
 sleep 30
-AP="$(kubectl -n "$NAMESPACE" get pods -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)"
+IPS="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="$RELEASE" \
+       -o jsonpath='{range .items[*]}{.status.podIP} {end}' 2>/dev/null)"
 M="$(kubectl run "alloy-verify-$$" -n "$NAMESPACE" --rm -i --restart=Never --quiet \
       --image=curlimages/curl:8.11.1 --command -- \
-      curl -s --max-time 15 "http://${AP}:12345/metrics" 2>/dev/null || true)"
+      sh -c "for ip in ${IPS}; do curl -s --max-time 10 http://\$ip:12345/metrics; done" 2>/dev/null || true)"
 
 SENT="$(  awk -F' ' '/^loki_write_sent_bytes_total/{s+=$2} END{print s+0}'    <<<"$M")"
 DROPPED="$(awk -F' ' '/^loki_write_dropped_entries_total/{s+=$2} END{print s+0}' <<<"$M")"
+SHIPPERS="$(awk -F' ' '/^loki_write_sent_bytes_total/{if ($2+0 > 0) n++} END{print n+0}' <<<"$M")"
 CODES="$(grep -o 'status_code="[0-9]*"' <<<"$M" | sort -u | tr '\n' ' ')"
+echo "    ${SHIPPERS} of ${SCHED} pods have shipped something"
 
 echo "    loki sent_bytes=${SENT}  dropped_entries=${DROPPED}"
 echo "    push status codes seen: ${CODES:-none yet}"

@@ -1,0 +1,246 @@
+# alloy-probe — blackbox probes of the public hostnames.
+#
+# A SECOND RELEASE from this same directory, installed by the same upgrade.sh,
+# the way infra/democratic-csi installs an iSCSI and an NFS release from one
+# chart dir. Values-only against the upstream grafana/alloy chart, same as
+# values.yaml.
+#
+# WHY THIS CANNOT LIVE IN THE DAEMONSET.
+# Every other target in values.yaml is a pod, so the locality filter there
+# ("only scrape pods on my node") makes each target the responsibility of
+# exactly one Alloy. Probe targets are not pods — they are static URLs — so
+# there is nothing to be local to. All nine DaemonSet pods would probe all
+# sixteen hostnames every interval: nine times the outbound traffic through
+# Cloudflare, and nine copies of every series racing each other into
+# remote_write.
+#
+# A one-replica Deployment is the whole fix. It also reschedules when its node
+# goes away, which the alternative (pinning probes to a named node in the
+# DaemonSet config) would not.
+#
+# WHAT THIS MEASURES, AND WHAT IT DOESN'T.
+# The probe leaves the cluster, resolves the public name, goes through
+# Cloudflare (or the VPS relay), and comes back — so it genuinely exercises the
+# public path end to end, including DNS, the tunnel and TLS. What it cannot do
+# is survive the outage it is meant to detect: if the cluster is down, the
+# prober is down, and the dashboard shows "no data" rather than "everything is
+# down". Truly external checks (Grafana Cloud Synthetic Monitoring, or anything
+# hosted off-cluster) are the answer to that, and are worth adding later. This
+# is the version that costs nothing and needs no extra account setup.
+
+controller:
+  type: deployment
+  replicas: 1
+
+alloy:
+  listenPort: 12345
+
+  # Same Secret as the DaemonSet — it already lives in this namespace.
+  extraEnv:
+    - name: GC_PROM_URL
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: promUrl } }
+    - name: GC_PROM_USER
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: promUser } }
+    - name: GC_TOKEN
+      valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: token } }
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      memory: 192Mi
+
+  configMap:
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      prometheus.exporter.blackbox "public" {
+        config = `
+      modules:
+        http_edge:
+          prober: http
+          timeout: 8s
+          http:
+            # DELIBERATELY BROAD. Most of these hostnames sit behind Authelia
+            # forward-auth, so an unauthenticated probe gets a 302 to the portal
+            # (or a 401) — which is the service working correctly. Treating only
+            # 2xx as success would show every gated service as permanently down.
+            #
+            # What this asserts is "the public path reaches something that
+            # answered". Application correctness is a different question, and
+            # the Traefik 5xx panels answer it.
+            valid_status_codes: [200, 204, 301, 302, 303, 307, 308, 401, 403]
+            follow_redirects: false
+            # Blackbox prefers IPv6 by default and these names resolve to both.
+            # Preferring v4 with fallback keeps a v6 path problem from reading
+            # as an outage.
+            preferred_ip_protocol: ip4
+            ip_protocol_fallback: true
+        tcp_connect:
+          prober: tcp
+          timeout: 8s
+          tcp:
+            preferred_ip_protocol: ip4
+            ip_protocol_fallback: true
+      `
+
+        // ---- Cloudflare Tunnel hostnames -----------------------------------
+        // Taken from the live tunnel config (cloudflared logs its ingress rules
+        // on every config push). The hostname -> service map lives in the
+        // Cloudflare dashboard, not in this repo, so this list is the one place
+        // it is written down in git — it WILL drift if a hostname is added
+        // there and not here. That is a known cost of the tunnel design.
+        //
+        // One block per line is not a style choice: River terminates statements
+        // on newlines, so `target { a = 1, b = 2 }` is a syntax error.
+        target {
+          name    = "auth"
+          address = "https://auth.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "keepass"
+          address = "https://keepass.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "pdf"
+          address = "https://pdf.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "games"
+          address = "https://games.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "romm"
+          address = "https://romm.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "old"
+          address = "https://old.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "status"
+          address = "https://status.diemer.codes"
+          module  = "http_edge"
+        }
+        // /term, not /. This Ingress routes ONLY that path on this host, so a
+        // probe of / gets Traefik's own 404 and reports the service down when
+        // it is perfectly healthy. Verified: /term answers 302 to the Authelia
+        // portal, which http_edge counts as reachable. It is the only probed
+        // hostname with a non-root path.
+        target {
+          name    = "claude"
+          address = "https://claude.diemer.codes/term"
+          module  = "http_edge"
+        }
+        target {
+          name    = "happy"
+          address = "https://happy.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "homes"
+          address = "https://homes.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "smite"
+          address = "https://smite.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "requests"
+          address = "https://requests.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "map"
+          address = "https://map.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "talaria"
+          address = "https://talaria.deals"
+          module  = "http_edge"
+        }
+
+        // ---- Paths that BYPASS Traefik entirely ----------------------------
+        // These two are the reason this file earns its series budget. Both are
+        // served through the VPS relays over Tailscale, neither traverses
+        // Traefik, so neither appears in the access log, the rate limiter, or
+        // CrowdSec. Before this, nothing anywhere would have noticed either of
+        // them being down.
+        target {
+          name    = "jellyfin"
+          address = "https://jellyfin.diemer.codes"
+          module  = "http_edge"
+        }
+        target {
+          name    = "minecraft"
+          address = "minecraft.diemer.codes:25565"
+          module  = "tcp_connect"
+        }
+      }
+
+      prometheus.scrape "blackbox" {
+        targets    = prometheus.exporter.blackbox.public.targets
+        forward_to = [prometheus.relabel.blackbox.receiver]
+
+        // Slower than the 60s used elsewhere. These probes leave the house and
+        // land on Cloudflare's edge and a $6 VPS; there is no value in asking
+        // sixteen times a minute what changes on the order of minutes, and a
+        // 2-minute interval halves both the series churn and the noise floor.
+        scrape_interval = "120s"
+        scrape_timeout  = "30s"
+      }
+
+      prometheus.relabel "blackbox" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // WITHOUT THIS, EVERY TARGET LOOKS IDENTICAL.
+        //
+        // The blackbox exporter component sets `instance` to the component's
+        // own name — literally "prometheus.exporter.blackbox.public" for all
+        // sixteen targets — and puts the target name in `job`, as
+        // "integrations/blackbox/<name>". So `probe_success{instance=...}` is
+        // useless for telling hosts apart, which is the entire point of the
+        // availability dashboard. Rewrite instance to the target name.
+        rule {
+          source_labels = ["job"]
+          regex         = "integrations/blackbox/(.+)"
+          target_label  = "instance"
+          replacement   = "$1"
+        }
+
+        // The full blackbox output is ~20 series per target; sixteen targets
+        // would be ~320 for information mostly nobody reads (probe_ip_protocol,
+        // probe_http_version, content length...). These six answer every panel
+        // on the availability dashboard.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "probe_(success|duration_seconds|http_status_code|ssl_earliest_cert_expiry|http_duration_seconds|dns_lookup_time_seconds)"
+          action        = "keep"
+        }
+      }
+
+      prometheus.remote_write "grafana_cloud" {
+        endpoint {
+          url = sys.env("GC_PROM_URL")
+          basic_auth {
+            username = sys.env("GC_PROM_USER")
+            password = sys.env("GC_TOKEN")
+          }
+        }
+        external_labels = {
+          cluster = "home-k3s",
+        }
+      }

@@ -1,0 +1,152 @@
+# kube-state-metrics — the state of Kubernetes objects as Prometheus series.
+#
+# VALUES-ONLY. There is no chart here; this file is passed to the upstream
+# prometheus-community/kube-state-metrics chart, the same arrangement as
+# infra/node-exporter, infra/crowdsec and infra/alloy. upgrade.sh does the
+# `helm repo add`.
+#
+# WHAT IT ANSWERS THAT NOTHING ELSE HERE DOES. Before this, "did last night's
+# backup run", "is a CronJob quietly failing", "how full is that PVC" and "what
+# is CrashLooping" had no source at all — infra/cluster-status polls the API for
+# a live snapshot and keeps no history, so a job that failed at 02:00 and was
+# retried by 02:05 left no trace anywhere. Most of the value here is in the
+# CronJobs: apartment-watch, renovate, duckdns, money and seven smitele-bot
+# schedules, none of which are watched by anything today.
+#
+# One Deployment, one replica. This is a read-only reflector of the API server;
+# if it dies you lose metrics, not state, and it rebuilds its whole world on
+# restart. No PVC, nothing to lose.
+
+# ---------------------------------------------------------------------------
+# THE SERIES BUDGET
+# ---------------------------------------------------------------------------
+# Unfiltered KSM against this cluster is roughly 15-20k series on its own —
+# more than DOUBLE the entire 10k Grafana Cloud free tier, from one exporter.
+# Two filters bring it to ~1.5k, and it matters which one does the work:
+#
+#   collectors      stops KSM WATCHING the resource at all (less API load, less
+#                   memory, fewer informers)
+#   metricAllowlist stops it EXPORTING the series
+#
+# Filtering here rather than in Alloy's relabel rules is deliberate: dropping a
+# series after it has been generated, serialized and scraped costs CPU on both
+# ends and memory in KSM's cache, and it means a scrape config change can
+# silently reopen the firehose. Cut it at the source; Alloy's keep-list is a
+# second gate, not the first.
+
+# Watch only what something on a dashboard actually asks about. Notably absent:
+# secrets, configmaps, endpointslices, leases and replicasets — leases alone are
+# hundreds of series that change every few seconds and answer nothing, and
+# replicasets multiply every Deployment by its rollout history.
+collectors:
+  - cronjobs
+  - daemonsets
+  - deployments
+  - jobs
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
+  - pods
+  - statefulsets
+  - storageclasses
+
+# Of what remains, export only these families. `pods` is the dangerous one —
+# ~150 pods times KSM's ~25 pod metrics is ~3.7k series by itself, so only four
+# pod families survive, all of them about something being WRONG.
+#
+# Keep this list and the dashboards in sync in one direction only: a panel that
+# needs a new metric adds it here first. Adding a metric costs series forever;
+# a panel with no data is a five-minute fix.
+metricAllowlist:
+  # Nodes — is the fleet up, and is anything cordoned.
+  # `capacity` is deliberately absent: allocatable is what the scheduler
+  # actually has to work with, and carrying both doubles ~8 resource series
+  # per node to say almost the same thing.
+  - kube_node_info
+  - kube_node_status_condition
+  - kube_node_spec_unschedulable
+  - kube_node_status_allocatable
+
+  # Pods — restarts, why a container is stuck, and what phase it is in.
+  #
+  # kube_pod_status_phase is the single largest family here: 247 pods x 5
+  # phases = ~1235 series. Alloy drops the `Running` and `Succeeded` values on
+  # the way out (~494 of them), because a Running count says nothing a Pending
+  # count doesn't say better. It is kept at all because nothing else can answer
+  # "how many pods are stuck Pending".
+  #
+  # terminated_reason is NOT kept: waiting_reason covers the case you can still
+  # do something about (CrashLoopBackOff, ImagePullBackOff), and restarts_total
+  # covers the history.
+  - kube_pod_container_status_restarts_total
+  - kube_pod_container_status_waiting_reason
+  - kube_pod_status_phase
+
+  # Workloads — the "N of M replicas" panels, and the DaemonSet coverage check
+  # that catches node-exporter or Alloy missing a node.
+  - kube_deployment_status_replicas_available
+  - kube_deployment_status_replicas_unavailable
+  - kube_deployment_spec_replicas
+  - kube_daemonset_status_desired_number_scheduled
+  - kube_daemonset_status_number_ready
+  - kube_daemonset_status_number_unavailable
+  - kube_statefulset_status_replicas_ready
+  - kube_statefulset_replicas
+
+  # Storage — PVC fill comes from kubelet volume stats (see infra/alloy); these
+  # supply the denominator, the bound/pending state, and which StorageClass a
+  # claim landed on, so local-path can be told apart from truenas-iscsi on the
+  # dashboard.
+  #
+  # PV-level phase is NOT kept: 49 PVs x 5 phases is 245 series that duplicate
+  # what the PVC side already says, since every PV here is bound to exactly one
+  # claim.
+  - kube_persistentvolumeclaim_info
+  - kube_persistentvolumeclaim_status_phase
+  - kube_persistentvolumeclaim_resource_requests_storage_bytes
+
+  # CronJobs — the highest-value metrics in this file, and the cheapest:
+  # kube_cronjob_status_last_successful_time is ONE series per CronJob, and
+  # `time() - that` is the entire "is anything quietly broken" panel.
+  - kube_cronjob_info
+  - kube_cronjob_spec_suspend
+  - kube_cronjob_status_last_successful_time
+  - kube_cronjob_status_last_schedule_time
+  - kube_cronjob_next_schedule_time
+
+  # Jobs — ONLY the failure counter.
+  #
+  # Job metrics are the churniest thing KSM produces: a new Job object per
+  # CronJob run, each with its own series, retained until the history limit
+  # rotates it out. There are 79 Job objects right now, and `complete`,
+  # `succeeded`, `start_time` and `owner` together were ~550 series that say
+  # what last_successful_time above says in one.
+  #
+  # `failed` stays because "the run happened and it failed" is genuinely
+  # different from "no successful run recently" — a suspended CronJob and a
+  # crashing one look identical through last_successful_time alone.
+  - kube_job_status_failed
+
+# NOT SET, deliberately: metricLabelsAllowlist. It adds every matching
+# Kubernetes label as a Prometheus label, which is how KSM installations
+# usually blow their series budget by accident. Nothing here needs it.
+
+# ---------------------------------------------------------------------------
+# The rest
+# ---------------------------------------------------------------------------
+# No Prometheus Operator in this cluster and no ServiceMonitor CRD, so leaving
+# this on would fail the install outright. Alloy discovers the pod directly —
+# see the `kube_state_metrics` scrape job in infra/alloy/values.yaml.
+prometheus:
+  monitor:
+    enabled: false
+
+# KSM holds an in-memory cache of every object it watches. The collector list
+# above keeps that small, but `pods` and `jobs` still dominate and job objects
+# accumulate between CronJob history cleanups.
+resources:
+  requests:
+    cpu: 20m
+    memory: 96Mi
+  limits:
+    memory: 256Mi

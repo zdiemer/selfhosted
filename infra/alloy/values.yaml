@@ -1,9 +1,14 @@
-# Grafana Alloy — ships logs and metrics for the cluster's external ingress to
-# Grafana Cloud.
+# Grafana Alloy — ships logs and metrics for the cluster to Grafana Cloud.
 #
 # VALUES-ONLY. There is no chart here; this file is passed to the upstream
 # `grafana/alloy` chart, the same arrangement as infra/headlamp and minecraft/.
 # upgrade.sh does the `helm repo add` and creates the credentials Secret.
+#
+# It installs TWO releases from this one directory, the way infra/democratic-csi
+# does:
+#   alloy        this file            DaemonSet, one per node
+#   alloy-probe  values-probe.yaml    Deployment, exactly one, for blackbox
+# See values-probe.yaml for why the probes cannot live in the DaemonSet.
 #
 # WHY GRAFANA CLOUD AND NOT SELF-HOSTED LOKI. The free tier covers this many
 # times over (50 GB/month, 14-day retention, 10k series), and self-hosting Loki
@@ -18,9 +23,25 @@
 
 # What the collector is: one pod per node, reading container logs through the
 # Kubernetes API rather than a hostPath mount of /var/log. That keeps it free of
-# host bindings entirely.
+# host bindings entirely. (infra/node-exporter is the deliberate opposite — see
+# that chart for why host access lives there and not here.)
 controller:
   type: daemonset
+
+  # ⚠️  LOAD-BEARING FOR CORRECTNESS, NOT JUST COVERAGE.
+  #
+  # Everything below filters targets to the local node, so this DaemonSet must
+  # actually reach every node or the filter turns into a silent blind spot.
+  # Before this toleration the DaemonSet ran on 9 of 10 nodes: `zachd-ubuntu`
+  # carries the control-plane NoSchedule taint, and it is not empty — a CoreDNS
+  # replica, both CSI node plugins, and anything else that tolerates the taint
+  # live there.
+  #
+  # Remove this and the per-node filter starts dropping that node's telemetry
+  # without any error, anywhere. Keep the two together.
+  tolerations:
+    - effect: NoSchedule
+      operator: Exists
 
 alloy:
   # Alloy's own agent-management/UI port. Nothing needs to reach it from
@@ -30,6 +51,9 @@ alloy:
   # Credentials arrive as env vars from the Secret upgrade.sh builds out of
   # values.local.yaml. They are never written into this ConfigMap — the config
   # references them with sys.env() so the rendered ConfigMap stays safe to read.
+  #
+  # K8S_NODE_NAME is NOT listed here: the upstream chart already injects it from
+  # spec.nodeName. The locality filter below depends on it.
   extraEnv:
     - name: GC_LOKI_URL
       valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: lokiUrl } }
@@ -42,12 +66,15 @@ alloy:
     - name: GC_TOKEN
       valueFrom: { secretKeyRef: { name: alloy-grafana-cloud, key: token } }
 
+  # Raised from 256Mi when this went from one scrape job to nine. Eight extra
+  # jobs plus their relabel pipelines on a 256Mi limit is an OOMKill loop on a
+  # DaemonSet, which looks like a flapping cluster rather than a tight limit.
   resources:
     requests:
-      cpu: 25m
-      memory: 128Mi
+      cpu: 50m
+      memory: 192Mi
     limits:
-      memory: 256Mi
+      memory: 512Mi
 
   configMap:
     content: |-
@@ -60,13 +87,40 @@ alloy:
         role = "pod"
       }
 
+      // ======================================================================
+      // LOCALITY — what makes this a DaemonSet instead of nine copies of itself
+      //
+      // discovery.kubernetes returns every pod in the CLUSTER, to every Alloy.
+      // Nothing about being a DaemonSet changes that. Before this filter, all
+      // nine pods tailed all the same logs and shipped them all: measured at
+      // ~100 MB sent per pod over three days, nine times over, for ~100 MB of
+      // actual data. Loki deduplicates identical (stream, timestamp, line)
+      // entries so the stored volume was right, but the egress, the API load
+      // and the ingest metering were all 9x — the README's "0.3-1 GB/month"
+      // estimate was quietly running at ~8 GB/month.
+      //
+      // Filtering to the local node makes each pod responsible for exactly the
+      // pods scheduled beside it. Union across the DaemonSet is complete
+      // coverage, exactly once — but ONLY because controller.tolerations above
+      // puts a pod on every node. That coupling is the fragile part.
+      // ======================================================================
+      discovery.relabel "local_pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          regex         = sys.env("K8S_NODE_NAME")
+          action        = "keep"
+        }
+      }
+
       // ----------------------------------------------------------------------
       // WHAT GETS SHIPPED
       //
-      // Only pods that genuinely have external ingress. This is the setting that
-      // keeps us inside the free tier: the cluster runs ~150 pods, and blanket
-      // shipping would plausibly exceed 50 GB/month on talaria's Elasticsearch
-      // and Logstash alone. The allowlist below lands at roughly 0.3-1 GB/month.
+      // Only pods that genuinely have external ingress, plus the security
+      // plane. This is the setting that keeps us inside the free tier: the
+      // cluster runs ~150 pods, and blanket shipping would plausibly exceed
+      // 50 GB/month on talaria's Elasticsearch and Logstash alone.
       // ----------------------------------------------------------------------
 
       // Tier 1 — the ingress plane itself. This is COMPLETE coverage of external
@@ -74,7 +128,7 @@ alloy:
       // Traefik, so its access log is the whole record no matter which namespace
       // or repo owns the workload behind it.
       discovery.relabel "ingress_plane" {
-        targets = discovery.kubernetes.pods.targets
+        targets = discovery.relabel.local_pods.output
 
         rule {
           source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
@@ -91,7 +145,7 @@ alloy:
       // `ingress.enabled`, so a service that turns its ingress off stops
       // shipping and a new service starts shipping, both with no change here.
       discovery.relabel "ingress_backends" {
-        targets = discovery.kubernetes.pods.targets
+        targets = discovery.relabel.local_pods.output
 
         rule {
           source_labels = ["__meta_kubernetes_pod_label_logging_zachd_external_ingress"]
@@ -118,12 +172,39 @@ alloy:
       // Not covered by tier 2's label: the proxy has no Ingress and never will,
       // so it cannot be double-shipped by the concat below.
       discovery.relabel "egress_plane" {
-        targets = discovery.kubernetes.pods.targets
+        targets = discovery.relabel.local_pods.output
 
         rule {
           source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
           separator     = "/"
           regex         = "infra/egress-proxy"
+          action        = "keep"
+        }
+      }
+
+      // Tier 4 — the security plane. CrowdSec is the cluster's entire
+      // intrusion-detection story and none of it used to leave the pod: the
+      // only way to read a detection was `cscli` in a shell. The line that
+      // matters looks like
+      //
+      //   msg="Ip 203.0.113.77 performed 'crowdsecurity/http-crawl-non_statics'
+      //        (44 events over 1.5s) at ..."
+      //
+      // which carries the source IP — something the Prometheus metrics
+      // deliberately cannot, since an IP is unbounded cardinality.
+      //
+      // AGENTS ONLY, NOT THE LAPI. The LAPI logs every agent heartbeat and
+      // every kubelet probe: measured at 22 lines/minute, ~32k lines/day, all
+      // of it `GET /v1/heartbeat 200`. That is pure cost. The agents are silent
+      // unless something actually happens, which is exactly the property you
+      // want from a security log.
+      discovery.relabel "security_plane" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_type"]
+          separator     = "/"
+          regex         = "crowdsec/agent"
           action        = "keep"
         }
       }
@@ -135,6 +216,7 @@ alloy:
           discovery.relabel.ingress_plane.output,
           discovery.relabel.ingress_backends.output,
           discovery.relabel.egress_plane.output,
+          discovery.relabel.security_plane.output,
         )
 
         // Promote a deliberately small label set. Every distinct combination is
@@ -151,8 +233,25 @@ alloy:
           source_labels = ["__meta_kubernetes_pod_container_name"]
           target_label  = "container"
         }
+
+        // `app` comes from one of two labels, and ORDER MATTERS HERE.
+        //
+        // The crowdsec chart does not set app.kubernetes.io/name at all — its
+        // pods carry k8s-app=crowdsec instead. So k8s-app is applied first as a
+        // fallback, and the standard label overwrites it where present.
+        //
+        // Both rules use regex "(.+)" rather than the default "(.*)". With the
+        // default, an empty source value still matches and sets the target to
+        // the empty string, which DELETES a label that the previous rule just
+        // set — so the fallback would be wiped out for every crowdsec pod.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+          regex         = "(.+)"
+          target_label  = "app"
+        }
         rule {
           source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          regex         = "(.+)"
           target_label  = "app"
         }
       }
@@ -236,6 +335,36 @@ alloy:
           }
         }
 
+        // CrowdSec detections. The line filter is what keeps this to the
+        // detections themselves; the same container also logs tail management
+        // ("Re-opening moved/deleted file", the inotify-on-symlink warning),
+        // which still ships unparsed and is worth having when acquisition
+        // breaks.
+        stage.match {
+          selector = "{app=\"crowdsec\"} |= \"performed\""
+
+          // crowdsec writes logfmt with the interesting part inside the quoted
+          // msg field, so the value has to be dug out of the message text.
+          stage.regex {
+            expression = "Ip (?P<source_ip>\\S+) performed '(?P<scenario>[^']+)'"
+          }
+
+          // ONLY scenario becomes a label. It is bounded by the installed
+          // collections (crowdsecurity/traefik + http-cve +
+          // base-http-scenarios — a few dozen names, and the set only changes
+          // when COLLECTIONS does).
+          //
+          // source_ip is extracted but deliberately NOT promoted: it is the
+          // entire internet. It stays in the line, where `| regexp` or a
+          // `topk` over the parsed field costs no series at all — which is
+          // exactly how the "top attacking IPs" panel is built.
+          stage.labels {
+            values = {
+              scenario = "",
+            }
+          }
+        }
+
         forward_to = [loki.write.grafana_cloud.receiver]
       }
 
@@ -252,16 +381,29 @@ alloy:
         }
       }
 
-      // ----------------------------------------------------------------------
+      // ======================================================================
       // METRICS
       //
-      // Traefik has been exporting Prometheus metrics on :9100 this whole time
-      // with nothing scraping them. k3s passes --metrics.prometheus=true by
-      // default; we scrape the pod IP directly, so that port never needs to
-      // reach the Service, let alone the LoadBalancer.
-      // ----------------------------------------------------------------------
+      // Every job below discovers from local_pods, so each target is scraped by
+      // exactly one Alloy — the one sharing its node. Singleton targets
+      // (kube-state-metrics, k8up) are therefore scraped once cluster-wide with
+      // no coordination and no leader election: whichever Alloy is next to them
+      // does it.
+      //
+      // Each job has its own keep-list. The free tier caps ACTIVE SERIES at
+      // 10k for the whole stack, and an unfiltered scrape of any one of these
+      // can spend most of that alone. The budget is documented in
+      // infra/grafana-dashboards/README.md and enforced by a dashboard panel
+      // and an alert, because a series budget nobody watches is a series budget
+      // nobody has.
+      // ======================================================================
+
+      // ---- Traefik ---------------------------------------------------------
+      // k3s passes --metrics.prometheus=true by default; we scrape the pod IP
+      // directly, so that port never needs to reach the Service, let alone the
+      // LoadBalancer.
       discovery.relabel "traefik_metrics" {
-        targets = discovery.kubernetes.pods.targets
+        targets = discovery.relabel.local_pods.output
 
         rule {
           source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
@@ -282,21 +424,414 @@ alloy:
 
       prometheus.scrape "traefik" {
         targets         = discovery.relabel.traefik_metrics.output
-        forward_to      = [prometheus.relabel.trim.receiver]
+        forward_to      = [prometheus.relabel.traefik.receiver]
         scrape_interval = "60s"
       }
 
-      prometheus.relabel "trim" {
+      prometheus.relabel "traefik" {
         forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 
         // Histogram buckets are the bulk of Traefik's series count and the free
-        // tier allows 10k. Request duration percentiles are nice; they are not
-        // worth spending the entire budget on. Drop this rule if the count
-        // turns out to have room.
+        // tier allows 10k. They stay dropped — and unlike when this rule was
+        // written, there is now a strictly better source for percentiles: the
+        // access log carries a per-request `Duration`, so
+        //
+        //   quantile_over_time(0.95, {app="traefik"} | json | unwrap Duration [5m])
+        //
+        // gives p50/p95/p99 at ZERO series cost. Re-enabling buckets would buy
+        // nothing and cost hundreds of series.
         rule {
           source_labels = ["__name__"]
           regex         = ".*_bucket"
           action        = "drop"
+        }
+      }
+
+      // ---- node-exporter ---------------------------------------------------
+      // Host CPU/memory/disk/NIC. The NIC counters are the ONLY visibility into
+      // Minecraft (:25565 LoadBalancer) and Jellyfin (:30096 NodePort), neither
+      // of which traverses Traefik. See infra/node-exporter.
+      discovery.relabel "node_exporter" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "infra/prometheus-node-exporter"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:9100"
+        }
+        // Every node panel groups by this. The pod name is meaningless here —
+        // it changes on every restart and nobody thinks in node-exporter pods.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "node_exporter" {
+        targets         = discovery.relabel.node_exporter.output
+        forward_to      = [prometheus.relabel.node_exporter.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "node_exporter" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // Second gate. The exporter's own --collector.disable-defaults already
+        // did the real work; this stops a chart bump that re-enables defaults
+        // from being billed before anyone notices.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "node_(cpu_seconds_total|load[0-9]+|memory_(MemTotal|MemAvailable|MemFree|Cached|Buffers|SwapTotal|SwapFree)_bytes|filesystem_(size|avail|free)_bytes|filesystem_readonly|network_(receive|transmit)_(bytes|packets|errs|drop)_total|disk_(read|written)_bytes_total|disk_io_time_seconds_total|hwmon_temp_celsius|boot_time_seconds|context_switches_total|time_seconds|timex_offset_seconds|uname_info|scrape_collector_success)"
+          action        = "keep"
+        }
+      }
+
+      // ---- kube-state-metrics ---------------------------------------------
+      // CronJob success, backup freshness, pod restarts, PVC state. See
+      // infra/kube-state-metrics — the allowlist there is the primary filter;
+      // this is the second gate.
+      discovery.relabel "kube_state_metrics" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "infra/kube-state-metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:8080"
+        }
+      }
+
+      prometheus.scrape "kube_state_metrics" {
+        targets         = discovery.relabel.kube_state_metrics.output
+        forward_to      = [prometheus.relabel.kube_state_metrics.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "kube_state_metrics" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // `Running` and `Succeeded` are ~150 series that say nothing a Pending
+        // count doesn't say better. Only the phases that mean something is
+        // wrong are worth a series each.
+        rule {
+          source_labels = ["__name__", "phase"]
+          separator     = "/"
+          regex         = "kube_pod_status_phase/(Running|Succeeded)"
+          action        = "drop"
+        }
+      }
+
+      // ---- CrowdSec --------------------------------------------------------
+      // Both agents and the LAPI: the agents carry the scenario counters, the
+      // LAPI carries cs_alerts. (Logs are agents-only — see tier 4 above — but
+      // metrics from the LAPI are a handful of series with no heartbeat noise.)
+      discovery.relabel "crowdsec_metrics" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_k8s_app"]
+          separator     = "/"
+          regex         = "crowdsec/crowdsec"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:6060"
+        }
+        // agent | lapi — worth keeping, since the two export disjoint metrics
+        // and a panel that mixes them reads as gaps.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_type"]
+          target_label  = "component"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "crowdsec" {
+        targets         = discovery.relabel.crowdsec_metrics.output
+        forward_to      = [prometheus.relabel.crowdsec.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "crowdsec" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // ⚠️  DO NOT "SIMPLIFY" THIS INTO A labeldrop OF `source`.
+        //
+        // Several crowdsec metrics carry source="/var/log/containers/traefik-
+        // <pod>_kube-system_traefik-<container-id>.log", which changes on every
+        // Traefik restart. The obvious fix is to drop the label — and it is
+        // wrong: the agent tails TWO such files at once (the current Traefik
+        // pod and the one it replaced), so dropping `source` collapses two
+        // distinct series into one identity with two different values at the
+        // same timestamp. remote_write then rejects or silently discards one of
+        // them, and the counter reads low forever.
+        //
+        // Instead, the keep-list below simply excludes the metrics where
+        // `source` appears AND the cardinality is real:
+        //
+        //   cs_node_hits_*        name x stage x source — by far the biggest
+        //   cs_bucket_poured_total  redundant with cs_bucket_instantiation_total
+        //   cs_filesource_hits_total, cs_parsing_time_seconds_*
+        //
+        // What survives with a `source` label is cs_parser_hits_{ok,ko}_total,
+        // which has no parser-name dimension at all — literally one series per
+        // tailed file, two today. That is affordable, and ko is the canary that
+        // tells you the Traefik parser stopped matching after a log-format
+        // change, which is otherwise completely silent.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "cs_(alerts|buckets|bucket_(overflowed|instantiation|underflowed)_total|parser_hits_(ok|ko)_total|lapi_route_requests_total|info)"
+          action        = "keep"
+        }
+      }
+
+      // ---- cloudflared -----------------------------------------------------
+      // The tunnel has been exporting on :2000 since it was deployed, used only
+      // as a liveness probe target. It is the other half of the ingress story:
+      // requests that Cloudflare accepted but never delivered to Traefik are
+      // invisible in the access log and visible here.
+      discovery.relabel "cloudflared_metrics" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "infra/cloudflared"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:2000"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "cloudflared" {
+        targets         = discovery.relabel.cloudflared_metrics.output
+        forward_to      = [prometheus.relabel.cloudflared.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "cloudflared" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // ha_connections is the one to alert on: four is healthy, zero means
+        // every diemer.codes hostname is down while the cluster looks fine.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "cloudflared_tunnel_(total_requests|request_errors|ha_connections|concurrent_requests_per_tunnel|response_by_code|server_locations)"
+          action        = "keep"
+        }
+      }
+
+      // ---- CoreDNS ---------------------------------------------------------
+      // DNS is the failure nobody instruments until it breaks everything at
+      // once. SERVFAIL rate and cache hit ratio are the two numbers worth
+      // having.
+      discovery.relabel "coredns_metrics" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_k8s_app"]
+          separator     = "/"
+          regex         = "kube-system/kube-dns"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:9153"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "coredns" {
+        targets         = discovery.relabel.coredns_metrics.output
+        forward_to      = [prometheus.relabel.coredns.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "coredns" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        rule {
+          source_labels = ["__name__"]
+          regex         = "coredns_(dns_requests_total|dns_responses_total|cache_hits_total|cache_misses_total|cache_entries|forward_requests_total|forward_responses_total|panics_total|plugin_enabled)"
+          action        = "keep"
+        }
+        // Histograms here are per-zone-per-bucket and add nothing a rate over
+        // the counters doesn't.
+        rule {
+          source_labels = ["__name__"]
+          regex         = ".*_bucket"
+          action        = "drop"
+        }
+      }
+
+      // ---- k8up ------------------------------------------------------------
+      // Backup job outcomes. kube-state-metrics covers the Job objects; these
+      // are k8up's own view, which distinguishes backup from prune from check.
+      discovery.relabel "k8up_metrics" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "k8up/k8up"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:8080"
+        }
+      }
+
+      prometheus.scrape "k8up" {
+        targets         = discovery.relabel.k8up_metrics.output
+        forward_to      = [prometheus.relabel.k8up.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "k8up" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        rule {
+          source_labels = ["__name__"]
+          regex         = "k8up_.*"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__name__"]
+          regex         = ".*_bucket"
+          action        = "drop"
+        }
+      }
+
+      // ---- kubelet ---------------------------------------------------------
+      // PVC fill percentage. kube-state-metrics knows what was REQUESTED; only
+      // the kubelet knows what is actually USED, and "the volume is full" is
+      // the single most common way a service here falls over.
+      //
+      // Scraped directly at :10250 rather than through the API server proxy.
+      // The kubelet delegates authz to the API server, which checks
+      // nodes/metrics — already granted by the chart's default clusterRules, so
+      // this needs no RBAC changes. Going through /api/v1/nodes/<n>/proxy would
+      // have needed nodes/proxy, which is not granted, and would put every
+      // scrape through the control plane.
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.relabel "kubelet" {
+        targets = discovery.kubernetes.nodes.targets
+
+        // Same locality rule as the pods, for the same reason: without it each
+        // of the nine Alloys scrapes all ten kubelets.
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          regex         = sys.env("K8S_NODE_NAME")
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "kubelet" {
+        targets           = discovery.relabel.kubelet.output
+        forward_to        = [prometheus.relabel.kubelet.receiver]
+        scrape_interval   = "60s"
+        scheme            = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+        tls_config {
+          ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+          // The kubelet serving cert is self-signed against the node's own
+          // name/IP and is not issued by the cluster CA, so verification cannot
+          // succeed here. The connection is still authenticated in the
+          // direction that matters — the bearer token proves us to the kubelet,
+          // and the target is a node IP on the cluster network.
+          insecure_skip_verify = true
+        }
+      }
+
+      prometheus.relabel "kubelet" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        // Volume stats ONLY. The full kubelet endpoint is thousands of series
+        // (every runtime operation, every probe, the whole Go runtime, and on
+        // some versions cAdvisor's per-container set) — comfortably the entire
+        // free tier from one endpoint.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "kubelet_volume_stats_(used_bytes|capacity_bytes|available_bytes|inodes|inodes_used)"
+          action        = "keep"
+        }
+      }
+
+      // ---- Alloy itself ----------------------------------------------------
+      // A BAD TOKEN DOES NOT STOP THE POD. Alloy starts cleanly and fails every
+      // push, so `Running` proves nothing and the first sign of trouble is a
+      // dashboard that is quietly missing a day. upgrade.sh checks this once at
+      // deploy time; these series check it continuously.
+      discovery.relabel "alloy_self" {
+        targets = discovery.relabel.local_pods.output
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = "/"
+          regex         = "alloy/alloy"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label  = "__address__"
+          replacement   = "$1:12345"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "alloy_self" {
+        targets         = discovery.relabel.alloy_self.output
+        forward_to      = [prometheus.relabel.alloy_self.receiver]
+        scrape_interval = "60s"
+      }
+
+      prometheus.relabel "alloy_self" {
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+        rule {
+          source_labels = ["__name__"]
+          regex         = "(loki_write_(sent_bytes_total|dropped_bytes_total|sent_entries_total|dropped_entries_total|request_duration_seconds_count)|prometheus_remote_write_wal_samples_appended_total|prometheus_remote_storage_(samples_total|samples_failed_total|samples_dropped_total|samples_pending|highest_timestamp_in_seconds|queue_highest_sent_timestamp_seconds)|alloy_build_info|up)"
+          action        = "keep"
         }
       }
 

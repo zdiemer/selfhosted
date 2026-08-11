@@ -1,0 +1,35 @@
+# Copy to values.local.yaml (gitignored) and fill in. This never belongs in git.
+#
+# This project pushes dashboards to Grafana Cloud over its HTTP API. It deploys
+# NOTHING to the cluster, so unlike every other values.local.yaml here, helm
+# never reads this file — upgrade.sh does.
+#
+# WHY THIS IS NOT THE ALLOY TOKEN. infra/alloy's token is an *Access Policy*
+# token scoped `logs:write` + `metrics:write`. It can push data into the stack
+# and do nothing else: it cannot create a dashboard and cannot run a query.
+# Dashboards need a token issued by the Grafana instance itself.
+#
+# HOW TO GET IT
+#   1. Open https://<stack>.grafana.net
+#   2. Administration -> Users and access -> Service accounts -> Add service account
+#   3. Name it `selfhosted-dashboards`, role **Admin**
+#         Editor is not enough: writing alert rules via
+#         /api/v1/provisioning/alert-rules and reading /api/datasources (which is
+#         how upgrade.sh resolves datasource UIDs instead of hardcoding them)
+#         both require Admin.
+#   4. "Add service account token" -> copy the glsa_... string shown once
+#
+# The token is a password with full control of the Grafana instance. It is not
+# the same kind of string as the alloy `glc_` token and the two are not
+# interchangeable in either direction.
+
+grafana:
+  # The GRAFANA instance, not grafana.com and not the Prometheus/Loki push
+  # endpoints. No trailing slash.
+  #   right:  https://zachd.grafana.net
+  #   wrong:  https://grafana.com/orgs/zachd
+  #   wrong:  https://prometheus-prod-67-prod-us-west-0.grafana.net
+  url: "https://REPLACE_ME.grafana.net"
+
+  # The service-account token from step 4. Starts with `glsa_`.
+  token: "glsa_000000000000000000000000000000000000000"

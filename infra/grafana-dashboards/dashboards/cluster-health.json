@@ -1,0 +1,491 @@
+{
+  "uid": "home-cluster-health",
+  "title": "Cluster Health",
+  "description": "Nodes, workloads, storage, scheduled work and the telemetry pipeline's own health — including the Grafana Cloud free-tier budget this whole setup is designed around.",
+  "tags": ["selfhosted", "kubernetes"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-12h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "type": "constant",
+        "query": "home-k3s",
+        "current": { "text": "home-k3s", "value": "home-k3s" },
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Nodes",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Nodes ready",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(kube_node_status_condition{cluster=\"$cluster\", condition=\"Ready\", status=\"true\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 8 }, { "color": "green", "value": 10 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "stat",
+      "title": "Cordoned",
+      "description": "[may-be-empty] Nodes marked unschedulable. Non-zero during maintenance, otherwise a leftover.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(kube_node_spec_unschedulable{cluster=\"$cluster\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "stat",
+      "title": "Pods pending",
+      "description": "[may-be-empty] Usually an unschedulable resource request or a PVC that will not bind.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(kube_pod_status_phase{cluster=\"$cluster\", phase=\"Pending\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 5 }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "stat",
+      "title": "Restarts (1h)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{cluster=\"$cluster\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "orange", "value": 20 }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Fullest volume",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "max(100 * kubelet_volume_stats_used_bytes{cluster=\"$cluster\"} / kubelet_volume_stats_capacity_bytes{cluster=\"$cluster\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 85 }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU used",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "100 - (avg by (node) (rate(node_cpu_seconds_total{cluster=\"$cluster\", mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 8, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory used",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes{cluster=\"$cluster\"} / node_memory_MemTotal_bytes{cluster=\"$cluster\"})",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 8, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Root filesystem used",
+      "description": "A full node disk is the most common way this cluster falls over.",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "100 * (1 - node_filesystem_avail_bytes{cluster=\"$cluster\", mountpoint=\"/\"} / node_filesystem_size_bytes{cluster=\"$cluster\", mountpoint=\"/\"})",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "custom": { "fillOpacity": 8, "lineWidth": 1, "thresholdsStyle": { "mode": "dashed" } },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 85 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Load average (1m)",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "node_load1{cluster=\"$cluster\"}",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Temperature",
+      "description": "[may-be-empty] Most of this fleet is laptops. Not every machine exposes hwmon sensors.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "max by (node) (node_hwmon_temp_celsius{cluster=\"$cluster\"})",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": { "fillOpacity": 0, "lineWidth": 1 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Workloads",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Containers not starting",
+      "description": "[may-be-empty] CrashLoopBackOff, ImagePullBackOff, CreateContainerConfigError. An empty table is the healthy state.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "kube_pod_container_status_waiting_reason{cluster=\"$cluster\"} > 0",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "cluster": true, "job": true, "instance": true, "uid": true }, "renameByName": { "Value": "count" } } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "Most-restarted containers (24h)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "topk(15, sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{cluster=\"$cluster\"}[24h])) > 0)",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "restarts" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "restarts", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "row",
+      "title": "Storage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "collapsed": false
+    },
+    {
+      "type": "bargauge",
+      "title": "Volume fill",
+      "description": "Used vs capacity, straight from the kubelet. kube-state-metrics only knows what was REQUESTED — this is what is actually on disk.",
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sort_desc(100 * sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{cluster=\"$cluster\"}) / sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes{cluster=\"$cluster\"}))",
+          "instant": true,
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 85 }] }
+        },
+        "overrides": []
+      },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "table",
+      "title": "Claims by storage class",
+      "description": "Which volumes are on the survival tier (local-path, node-pinned, no snapshots) versus TrueNAS iSCSI/NFS.",
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (namespace, persistentvolumeclaim, storageclass) (kube_persistentvolumeclaim_info{cluster=\"$cluster\"})",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "Value": true } } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "row",
+      "title": "Scheduled work — CronJobs and backups",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Hours since last successful run",
+      "description": "The highest-value panel here. Covers apartment-watch, renovate, duckdns, money's SimpleFIN sync, the smitele-bot collectors and every k8up backup Schedule — none of which had any monitoring at all before. A CronJob that quietly stopped working shows up here and nowhere else.",
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sort_desc((time() - kube_cronjob_status_last_successful_time{cluster=\"$cluster\"}) / 3600)",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "cluster": true, "job": true, "instance": true, "uid": true, "concurrency_policy": true }, "renameByName": { "Value": "hours since success" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "hours since success", "desc": true }] } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "h", "decimals": 1 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "hours since success" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 26 }, { "color": "red", "value": 48 }] } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Failed jobs",
+      "description": "[may-be-empty] A run that happened and failed — different from \"no recent success\", which a suspended CronJob also produces.",
+      "gridPos": { "h": 5, "w": 10, "x": 14, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (namespace) (kube_job_status_failed{cluster=\"$cluster\"} > 0)",
+          "legendFormat": "{{namespace}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "lineWidth": 1, "drawStyle": "bars" }, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "k8up backup activity",
+      "description": "[may-be-empty] Backups run one namespace per night; a flat line during the day is expected.",
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (namespace) (k8up_jobs_total{cluster=\"$cluster\"})",
+          "legendFormat": "{{namespace}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "row",
+      "title": "DNS",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "CoreDNS queries by response code",
+      "description": "SERVFAIL is the one to watch. DNS is the failure that breaks everything at once and gets diagnosed last.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (rcode) (rate(coredns_dns_responses_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{rcode}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "CoreDNS cache hit ratio",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "100 * sum(rate(coredns_cache_hits_total{cluster=\"$cluster\"}[5m])) / clamp_min(sum(rate(coredns_cache_hits_total{cluster=\"$cluster\"}[5m])) + sum(rate(coredns_cache_misses_total{cluster=\"$cluster\"}[5m])), 0.0001)",
+          "legendFormat": "cache hit %"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 15, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "type": "row",
+      "title": "Telemetry pipeline — and the free-tier budget",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Active series",
+      "description": "The constraint the entire observability design bends around. The free tier caps this at 10k, and every keep-list in infra/alloy, infra/node-exporter and infra/kube-state-metrics exists to stay under it.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "__USAGE_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__USAGE_UID__" },
+          "expr": "max(grafanacloud_instance_active_series)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "max": 10000,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 7000 }, { "color": "red", "value": 9000 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Log delivery to Grafana Cloud",
+      "description": "A bad token does NOT stop Alloy — it starts cleanly, tails happily and fails every push. A flat line here is the only symptom. Summed across the DaemonSet: individual pods legitimately sit at zero, because each ships only what is scheduled on its own node.",
+      "gridPos": { "h": 5, "w": 10, "x": 6, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(loki_write_sent_bytes_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "shipped"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "fillOpacity": 20, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Metric samples rejected",
+      "description": "[may-be-empty] Non-zero means remote_write is refusing samples — usually a series-limit breach or duplicate timestamps from a bad relabel rule. Should be flat zero.",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(prometheus_remote_storage_samples_failed_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "failed/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "lineWidth": 1, "drawStyle": "bars" }, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    }
+  ]
+}

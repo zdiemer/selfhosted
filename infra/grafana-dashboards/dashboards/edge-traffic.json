@@ -1,0 +1,384 @@
+{
+  "uid": "home-edge-traffic",
+  "title": "Edge Traffic — In & Out",
+  "description": "Everything crossing the cluster boundary: HTTP through Traefik, proxied egress through Squid, and raw NIC throughput for the paths that bypass both.",
+  "tags": ["selfhosted", "network"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "type": "constant",
+        "query": "home-k3s",
+        "current": { "text": "home-k3s", "value": "home-k3s" },
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Ingress — HTTP through Traefik",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Requests / sec",
+      "description": "Every external HTTP request traverses Traefik, so this is the whole ingress rate by construction.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{cluster=\"$cluster\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Inbound",
+      "description": "Request bytes arriving at the entrypoint.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(traefik_entrypoint_requests_bytes_total{cluster=\"$cluster\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "color": { "mode": "fixed", "fixedColor": "blue" } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Outbound",
+      "description": "Response bytes leaving the entrypoint. Normally far larger than inbound — this is a serving cluster, not a receiving one.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(traefik_entrypoint_responses_bytes_total{cluster=\"$cluster\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "color": { "mode": "fixed", "fixedColor": "green" } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Open connections",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(traefik_open_connections{cluster=\"$cluster\"})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Cloudflare tunnel connections",
+      "description": "Four is healthy. Zero means every diemer.codes hostname is unreachable while the cluster itself looks perfectly fine.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(cloudflared_tunnel_ha_connections{cluster=\"$cluster\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingress throughput by entrypoint",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (entrypoint) (rate(traefik_entrypoint_responses_bytes_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{entrypoint}} out"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "-sum by (entrypoint) (rate(traefik_entrypoint_requests_bytes_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{entrypoint}} in"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 20, "lineWidth": 1, "gradientMode": "opacity", "axisCenteredZero": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests / sec by hostname",
+      "description": "From the Traefik access log. RequestHost is a Loki label, so this slice is free.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (RequestHost) (rate({cluster=\"$cluster\", app=\"traefik\"}[5m]))",
+          "queryType": "range",
+          "legendFormat": "{{RequestHost}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 15, "lineWidth": 1, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Response latency (p50 / p95 / p99)",
+      "description": "Computed from the access log's per-request Duration field, NOT from histogram buckets — infra/alloy drops those to protect the series budget, and this is strictly better: full precision, zero series cost. `| json Duration=...` extracts one field rather than all of them: a bare `| json` promotes every field to a label and blows past Loki's 500-series query limit. `by ()` collapses the per-host/per-status streams into one true global quantile.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "quantile_over_time(0.50, {cluster=\"$cluster\", app=\"traefik\"} | json Duration=\"Duration\" | unwrap Duration [5m]) by () / 1000000",
+          "queryType": "range",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "quantile_over_time(0.95, {cluster=\"$cluster\", app=\"traefik\"} | json Duration=\"Duration\" | unwrap Duration [5m]) by () / 1000000",
+          "queryType": "range",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "quantile_over_time(0.99, {cluster=\"$cluster\", app=\"traefik\"} | json Duration=\"Duration\" | unwrap Duration [5m]) by () / 1000000",
+          "queryType": "range",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "fillOpacity": 0, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "table",
+      "title": "Top hostnames by bytes served",
+      "description": "Unwraps DownstreamContentSize out of the access log. This is the honest answer to \"what is actually using my upstream bandwidth\" for anything behind Traefik.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(15, sum by (RequestHost) (sum_over_time({cluster=\"$cluster\", app=\"traefik\"} | json DownstreamContentSize=\"DownstreamContentSize\" | unwrap DownstreamContentSize [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "bytes served" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "bytes served", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "row",
+      "title": "Egress — outbound through the Squid proxy",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes out by service",
+      "description": "Only opted-in services route through infra/egress-proxy (today: smitele-bot and apartment-watch). This is not all cluster egress — it is all *proxied* egress.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (svc) (sum_over_time({cluster=\"$cluster\", app=\"egress-proxy\"} |= \"svc=\" | logfmt | unwrap bytes_out [5m]))",
+          "queryType": "range",
+          "legendFormat": "{{svc}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 20, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "table",
+      "title": "Top egress destinations",
+      "description": "`dst` and `url` are deliberately NOT Loki labels — one stream per destination is a cardinality bomb (a single apartment-watch run touches ~70 hosts). Aggregating at query time costs no series.",
+      "gridPos": { "h": 8, "w": 8, "x": 12, "y": 22 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(15, sum by (url) (count_over_time({cluster=\"$cluster\", app=\"egress-proxy\"} |= \"svc=\" | logfmt [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "requests" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "requests", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "stat",
+      "title": "Egress denied (403 / 407)",
+      "description": "[may-be-empty] The two documented ways the proxy breaks a service: 403 is an allowedHosts list that is too tight, 407 is a credential that has not landed. Zero is the healthy value.",
+      "gridPos": { "h": 8, "w": 4, "x": 20, "y": 22 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (status) (count_over_time({cluster=\"$cluster\", app=\"egress-proxy\", status=~\"403|407\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "textMode": "value_and_name" }
+    },
+    {
+      "type": "row",
+      "title": "Whole-host — including everything that bypasses Traefik",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Node NIC throughput",
+      "description": "The only place Minecraft (:25565 LoadBalancer) and Jellyfin (:30096 NodePort via the VPS Caddy relay) are visible at all — neither traverses Traefik, so neither appears in any panel above. Pod veth interfaces are excluded at the exporter.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (node) (rate(node_network_receive_bytes_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{node}} rx"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "-sum by (node) (rate(node_network_transmit_bytes_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{node}} tx"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 10, "lineWidth": 1, "axisCenteredZero": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Cloudflare Tunnel",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Tunnel requests and errors",
+      "description": "The other half of the ingress story: a request Cloudflare accepted but failed to deliver to Traefik never reaches the access log, so it is invisible everywhere except here.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(cloudflared_tunnel_total_requests{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "requests/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(rate(cloudflared_tunnel_request_errors{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "errors/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 15, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tunnel responses by status code",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (status_code) (rate(cloudflared_tunnel_response_by_code{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{status_code}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    }
+  ]
+}

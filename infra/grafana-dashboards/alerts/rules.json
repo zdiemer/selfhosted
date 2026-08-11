@@ -1,0 +1,1030 @@
+[
+  {
+    "uid": "sh-node-notready",
+    "title": "Node not Ready",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A node has been NotReady for 10 minutes. Everything on it has been rescheduled or is stranded."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum(kube_node_status_condition{cluster=\"home-k3s\", condition=\"Ready\", status=\"true\"}) < 10",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-node-disk",
+    "title": "Node root filesystem above 85%",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A node is running out of root disk. This is the most common way this cluster falls over."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{cluster=\"home-k3s\", mountpoint=\"/\"} / node_filesystem_size_bytes{cluster=\"home-k3s\", mountpoint=\"/\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  85
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-pvc-full",
+    "title": "Volume above 85% full",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A PersistentVolumeClaim is nearly full. local-path volumes cannot be expanded \u2014 that one needs a migration, not a resize."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "100 * kubelet_volume_stats_used_bytes{cluster=\"home-k3s\"} / kubelet_volume_stats_capacity_bytes{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  85
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-cronjob-overdue",
+    "title": "CronJob overdue",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A CronJob's next scheduled run passed over an hour ago and never happened. Covers apartment-watch, renovate, duckdns, money and the smitele-bot collectors."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(time() - kube_cronjob_next_schedule_time{cluster=\"home-k3s\"}) and on(namespace, cronjob) (kube_cronjob_spec_suspend{cluster=\"home-k3s\"} == 0)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  3600
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-job-failed",
+    "title": "Job failed",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A Job ran and failed. Distinct from 'overdue' \u2014 this one executed."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum by (namespace, job_name) (kube_job_status_failed{cluster=\"home-k3s\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-crowdsec-spike",
+    "title": "CrowdSec overflow spike",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "CrowdSec crossed more scenario thresholds in 15 minutes than a normal day produces. Detection only \u2014 nothing was blocked."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum(increase(cs_bucket_overflowed_total{cluster=\"home-k3s\"}[15m]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  20
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-crowdsec-parser-broken",
+    "title": "CrowdSec parser failing",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "30m",
+    "isPaused": false,
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "CrowdSec is failing to parse the Traefik log. Detection has effectively stopped, and the security dashboard will look reassuringly empty."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "100 * sum(rate(cs_parser_hits_ko_total{cluster=\"home-k3s\"}[15m])) / clamp_min(sum(rate(cs_parser_hits_ok_total{cluster=\"home-k3s\"}[15m])) + sum(rate(cs_parser_hits_ko_total{cluster=\"home-k3s\"}[15m])), 0.0001)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  10
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-cert-expiring",
+    "title": "TLS certificate expiring",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "1h",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A public certificate expires in under 14 days."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "min((probe_ssl_earliest_cert_expiry{cluster=\"home-k3s\"} - time()) / 86400)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  14
+                ],
+                "type": "lt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-probe-down",
+    "title": "Public hostname unreachable",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "A public hostname has failed its probe for 5 minutes. Includes the Minecraft and Jellyfin VPS relays, which have no other monitoring at all."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "probe_success{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  1
+                ],
+                "type": "lt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-tunnel-down",
+    "title": "Cloudflare Tunnel has no connections",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "cloudflared has zero HA connections to the Cloudflare edge. Every diemer.codes hostname is unreachable while the cluster itself looks healthy."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum(cloudflared_tunnel_ha_connections{cluster=\"home-k3s\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  1
+                ],
+                "type": "lt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-alloy-stalled",
+    "title": "Log delivery stalled",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "No logs have reached Grafana Cloud in an hour. Alloy fails pushes silently \u2014 Running proves nothing \u2014 so a flat line here is the only symptom."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum(increase(loki_write_sent_bytes_total{cluster=\"home-k3s\"}[1h]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  1
+                ],
+                "type": "lt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-series-budget",
+    "title": "Active series approaching the free-tier cap",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "30m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Active series are above 8k of the 10k free-tier cap. Once it is hit, Grafana Cloud refuses new series and the gaps look like broken exporters."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__USAGE_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "max(grafanacloud_instance_active_series)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  8000
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-5xx",
+    "title": "Elevated 5xx",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "More than 5% of requests to a hostname are failing with 5xx."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__LOKI_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "max(100 * sum by (RequestHost) (count_over_time({cluster=\"home-k3s\", app=\"traefik\", DownstreamStatus=~\"5..\"}[10m])) / sum by (RequestHost) (count_over_time({cluster=\"home-k3s\", app=\"traefik\"}[10m])))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200,
+          "queryType": "instant"
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  5
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

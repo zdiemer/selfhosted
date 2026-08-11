@@ -1,18 +1,33 @@
-# alloy — ingress logs and metrics to Grafana Cloud
+# alloy — logs and metrics to Grafana Cloud
 
-Grafana Alloy as a DaemonSet, shipping the cluster's **external ingress** logs
-and Traefik's metrics to Grafana Cloud's free tier.
+Grafana Alloy shipping the cluster's logs and metrics to Grafana Cloud's free
+tier. Values-only against the upstream `grafana/alloy` chart, the same
+arrangement as [`infra/headlamp`](../headlamp) and [`minecraft/`](../../minecraft).
 
-Values-only against the upstream `grafana/alloy` chart, the same arrangement as
-[`infra/headlamp`](../headlamp) and [`minecraft/`](../../minecraft).
+**Two releases from this one directory**, the way
+[`infra/democratic-csi`](../democratic-csi) does:
+
+| Release | Values | Shape | Job |
+|---|---|---|---|
+| `alloy` | `values.yaml` | DaemonSet, every node | logs + every pod-local scrape |
+| `alloy-probe` | `values-probe.yaml` | Deployment, 1 replica | blackbox probes of the public hostnames |
 
 ```
 Traefik access log ─┐
-cloudflared        ─┼─▶ Alloy (DaemonSet) ─▶ Grafana Cloud  (Loki + Prometheus)
-Authelia           ─┤
-ingress backends   ─┘
-Traefik :9100 metrics ─┘
+cloudflared        ─┤
+Authelia           ─┼─▶ Alloy (DaemonSet) ─▶ Grafana Cloud  (Loki + Prometheus)
+ingress backends   ─┤                              ▲
+egress proxy       ─┤                              │
+CrowdSec agents    ─┘                              │
+                                                   │
+Traefik · node-exporter · kube-state-metrics ──────┤
+CrowdSec · cloudflared · CoreDNS · k8up ───────────┤
+kubelet volume stats · Alloy itself ───────────────┤
+                                                   │
+16 public hostnames ─▶ Alloy-probe (Deployment) ───┘
 ```
+
+Consumed by [`infra/grafana-dashboards`](../grafana-dashboards).
 
 ## Why this exists
 
@@ -100,20 +115,96 @@ The stream selector also carries a line filter (`|= "svc="`), because the same
 container writes squid's `cache_log` to stderr. Those lines still ship, just
 unparsed — which is what you want when something goes wrong at startup.
 
+**Tier 4 — the security plane.** `crowdsec`, **agents only**. CrowdSec is the
+cluster's entire intrusion-detection story and none of it used to leave the pod:
+the only way to read a detection was `cscli` in a shell. The line that matters
+looks like
+
+```
+msg="Ip 203.0.113.77 performed 'crowdsecurity/http-crawl-non_statics' (44 events over 1.5s) at ..."
+```
+
+and carries the **source IP** — something the Prometheus metrics deliberately
+cannot, since an IP is unbounded cardinality. `scenario` is promoted to a label
+(bounded by the installed collections); the IP stays in the line.
+
+The LAPI is excluded on purpose: it logs every agent heartbeat and every kubelet
+probe, measured at 22 lines/minute — ~32k lines/day of `GET /v1/heartbeat 200`.
+Its *metrics* are still scraped, which is where `cs_alerts` comes from. The
+agents are silent unless something actually happens, which is exactly the
+property you want from a security log.
+
+## Locality — the rule that makes this a DaemonSet rather than nine copies
+
+`discovery.kubernetes` returns every pod in the **cluster**, to **every** Alloy.
+Nothing about being a DaemonSet changes that, and before the locality filter all
+nine pods tailed the same logs and shipped them all: measured at ~100 MB sent
+per pod over three days, nine times over, for ~100 MB of actual data. Loki
+deduplicates identical `(stream, timestamp, line)` entries so the stored volume
+was right, but egress, API load and ingest metering were all 9×. The README's
+"0.3–1 GB/month" estimate was quietly running at roughly 8 GB.
+
+`discovery.relabel "local_pods"` keeps only targets whose
+`__meta_kubernetes_pod_node_name` matches this pod's own `K8S_NODE_NAME` (an env
+var the upstream chart already injects). Every tier and every scrape job derives
+from it, so each target is handled by exactly one Alloy — including
+cluster-singletons like kube-state-metrics, which need no leader election
+because whichever Alloy shares their node picks them up.
+
+> ⚠️ **This is only correct because `controller.tolerations` puts a pod on every
+> node.** Before that toleration the DaemonSet ran on 9 of 10 — `zachd-ubuntu`
+> carries the control-plane `NoSchedule` taint and is *not* empty (a CoreDNS
+> replica, both CSI node plugins). With locality filtering, a node without an
+> Alloy is a silent blind spot rather than a gap someone else covers. `upgrade.sh`
+> asserts scheduled-vs-node-count and fails the deploy if they diverge.
+
 ## Cardinality discipline
 
 Every distinct label combination is a Loki stream, and the free tier caps active
-series at 10k. Promoted to labels: `namespace`, `pod`, `container`, `app`, plus
-`RequestHost` (~20 values) and `DownstreamStatus` (~10).
+series at 10k for the whole stack. Promoted to labels: `namespace`, `pod`,
+`container`, `app`, plus `RequestHost` (~20 values) and `DownstreamStatus` (~10)
+from Traefik, `svc`/`lane`/`status` from the egress proxy, and `scenario` from
+CrowdSec.
 
-**Deliberately not promoted:** `ClientHost`, `X-Forwarded-For`, `RequestPath`.
-Those are unbounded — one stream per client IP or per URL would exhaust the
-budget immediately. They stay as fields in the log line and are still fully
-queryable with `| json`, which costs no series at all.
+**Deliberately not promoted:** `ClientHost`, `X-Forwarded-For`, `RequestPath`,
+`url`, `dst`, and CrowdSec's `source_ip`. Those are unbounded — one stream per
+client IP or per URL would exhaust the budget immediately. They stay as fields
+in the log line and are still fully queryable with `| json` / `| logfmt` /
+`| regexp`, which costs no series at all. The dashboards' "top attacking IP"
+and "top destination" panels are built exactly that way.
 
-On the metrics side, `*_bucket` series are dropped: Traefik's histograms are the
-bulk of its series count, and duration percentiles aren't worth the whole
-budget. Drop that rule if the count turns out to have room.
+`app` deserves a note: it is set from `k8s-app` **first** and then from
+`app.kubernetes.io/name`, because the CrowdSec chart sets only the former. Both
+rules use `regex = "(.+)"` rather than the default `(.*)`, since a rule matching
+an empty value sets the target to the empty string — which would *delete* the
+fallback the previous rule just set.
+
+### The metrics side
+
+Each of the nine scrape jobs carries its own keep-list. Measured contributions:
+
+| Job | Series | Note |
+|---|---|---|
+| node-exporter | ~1,800 | ~180 of ~570 exported, ×10 nodes |
+| kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded` phases dropped here |
+| Traefik | ~800 | `*_bucket` dropped |
+| CoreDNS, kubelet, cloudflared, k8up, Alloy, CrowdSec | ~700 | |
+| blackbox probes | ~100 | 6 metrics × 16 targets |
+
+`*_bucket` stays dropped, and there is now a strictly better source for
+percentiles than re-enabling it: the access log carries a per-request `Duration`,
+so `quantile_over_time(0.95, {app="traefik"} | json | unwrap Duration [5m])`
+gives p50/p95/p99 at full precision and **zero series cost**.
+
+> ⚠️ **Do not "simplify" the CrowdSec keep-list into a `labeldrop` of `source`.**
+> Several CrowdSec metrics carry a `source` label holding the full container-log
+> path including the container ID, which churns on every Traefik restart —
+> dropping the label is the obvious fix and it is wrong. The agent tails **two**
+> such files at once (the current Traefik pod and the one it replaced), so
+> dropping `source` collapses two distinct series into one identity with two
+> values at the same timestamp; remote_write then discards one and the counter
+> reads low forever. The keep-list excludes the metrics where `source` appears
+> *and* the cardinality is real (`cs_node_hits_*` above all) instead.
 
 ## Deploy
 
@@ -126,9 +217,17 @@ cp values.local.yaml.example values.local.yaml    # then add the Grafana Cloud t
 `values.local.yaml` (so the token never lands in the rendered ConfigMap, which
 is readable by anyone with namespace access), then installs.
 
-It also greps the log for delivery failures afterwards, because **a bad token
-does not stop the pod**: Alloy starts cleanly and simply fails every push, so
-`Running` proves nothing.
+It validates **both** rendered configs with `alloy validate` in a throwaway pod
+before applying anything (a dangling component reference is valid YAML and fails
+only at startup), installs both releases, then checks delivery afterwards —
+because **a bad token does not stop the pod**: Alloy starts cleanly and simply
+fails every push, so `Running` proves nothing.
+
+The delivery check **sums across every pod** rather than sampling one. With the
+locality filter, an Alloy on a node running no Traefik, no Authelia, no
+cloudflared, no egress-proxy and a quiet CrowdSec agent legitimately reports
+`sent_bytes=0` forever; sampling `.items[0]` would fail a healthy deploy about
+one time in ten, at random.
 
 ## Verify
 
@@ -139,8 +238,8 @@ does not stop the pod**: Alloy starts cleanly and simply fails every push, so
 # a pod with NO external ingress must be absent
 {cluster="home-k3s", namespace="default"}      # talaria workers: expect nothing
 
-# metrics arriving
-traefik_service_requests_total{cluster="home-k3s"}
+# the security plane (tier 4)
+{cluster="home-k3s", app="crowdsec"} |= "performed"
 
 # egress: who is talking to what, and how much
 {cluster="home-k3s", app="egress-proxy"} | logfmt
@@ -150,9 +249,31 @@ sum by (svc) (count_over_time({cluster="home-k3s", app="egress-proxy"}[1h]))
 {cluster="home-k3s", app="egress-proxy", status=~"403|407"}
 ```
 
-Note that the access-log queries can only be run from Grafana — the token in
-`values.local.yaml` is deliberately write-only (`logs:write`), so the push side
-can be verified from a shell but the read side cannot.
+Every scrape job should be producing data:
+
+```promql
+traefik_service_requests_total{cluster="home-k3s"}
+count by (node) (node_cpu_seconds_total{cluster="home-k3s"})   # expect 10 rows
+kube_cronjob_status_last_successful_time{cluster="home-k3s"}
+cs_bucket_overflowed_total{cluster="home-k3s"}
+cloudflared_tunnel_ha_connections{cluster="home-k3s"}
+coredns_dns_responses_total{cluster="home-k3s"}
+kubelet_volume_stats_used_bytes{cluster="home-k3s"}
+probe_success{cluster="home-k3s"}                              # from alloy-probe
+```
+
+**Cardinality regression check**, 30 minutes and again 24 hours after any change
+to a keep-list. If anything CrowdSec-shaped or `veth`-shaped is near the top, a
+label escaped:
+
+```promql
+topk(15, count by (__name__) ({__name__=~".+", cluster="home-k3s"}))
+count({__name__=~".+", cluster="home-k3s"})                    # against the 10k cap
+```
+
+Note that these can only be run from Grafana — the token in `values.local.yaml`
+is deliberately write-only. Reading needs the separate service-account token in
+[`infra/grafana-dashboards`](../grafana-dashboards).
 
 Then check the monthly projection at grafana.com → your stack → Billing/Usage
 after 24h. Budget is 50 GB/month.
@@ -177,14 +298,22 @@ entries, so they are not billed twice.
 
 ## Known gaps
 
-Requests that never reach Traefik are invisible here, because there is nothing
-to log them:
+Requests that never reach Traefik have **no access log anywhere**:
 
-- `mc-minecraft` — LoadBalancer TCP 25565
-- `mc-minecraft-bluemap` — LoadBalancer `:8100` on **every** node IP, so BlueMap
-  is reachable on the LAN without passing through Traefik at all
-- `headlamp` — NodePort 30100, cluster-admin token
+| Path | Exposure | Now partly covered by |
+|---|---|---|
+| `mc-minecraft` — LoadBalancer TCP `:25565` | public, via the VPS haproxy relay | a `tcp_connect` probe (up/down only) and node NIC counters (bytes only) |
+| Jellyfin — NodePort `:30096` | public, via the VPS Caddy relay | an HTTP probe and node NIC counters |
+| `headlamp` — NodePort `:30100`, **cluster-admin** ServiceAccount | LAN/tailnet | nothing |
 
-The BlueMap one is fixable (`service.type: ClusterIP` in the minecraft values)
-but restarts the server, so it wants an offline window. See
+Neither relay ships its own log: haproxy writes to VPS syslog and Caddy keeps
+its access log on the VPS. The haproxy relay also does not preserve source IP,
+so even that log could not attribute a connection.
+
+What the additions in this chart *do* buy is that these paths are no longer
+completely invisible — `node_network_*` counts their bytes and the probes in
+`alloy-probe` notice when they stop answering. Neither is a request log.
+
+**Fixed since this was first written:** BlueMap's `:8100` LoadBalancer on every
+node IP is now `ClusterIP`, so `map.*` through Traefik is the only door. See
 [`minecraft/bluemap-ingress`](../../minecraft/bluemap-ingress).

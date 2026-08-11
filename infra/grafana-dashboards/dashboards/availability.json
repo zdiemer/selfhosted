@@ -1,0 +1,230 @@
+{
+  "uid": "home-slo",
+  "title": "Service Availability",
+  "description": "Is each public hostname actually answering, from outside the cluster? Probe-driven, so it covers the two services that bypass Traefik entirely and are invisible on every other dashboard.",
+  "tags": ["selfhosted", "slo"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "type": "constant",
+        "query": "home-k3s",
+        "current": { "text": "home-k3s", "value": "home-k3s" },
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Reachability — from a prober inside the cluster, out through the public path",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Currently up",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "probe_success{cluster=\"$cluster\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "up", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "textMode": "value_and_name", "orientation": "horizontal" }
+    },
+    {
+      "type": "table",
+      "title": "Uptime over the selected range",
+      "description": "The fraction of probes that succeeded. Probes run every 2 minutes, so a single 5-minute blip is visible but small.",
+      "gridPos": { "h": 11, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sort(100 * avg_over_time(probe_success{cluster=\"$cluster\"}[$__range]))",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "cluster": true, "job": true }, "renameByName": { "Value": "uptime %", "instance": "service" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "uptime %", "desc": false }] } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "decimals": 2 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "uptime %" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 95 }, { "color": "green", "value": 99.5 }] } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Probe response time",
+      "gridPos": { "h": 11, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "probe_duration_seconds{cluster=\"$cluster\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "TLS",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false
+    },
+    {
+      "type": "bargauge",
+      "title": "Certificate expiry — as seen from outside",
+      "description": "What the public actually gets. For diemer.codes hostnames this is Cloudflare's edge certificate, not the cluster's; jellyfin.diemer.codes is the VPS Caddy's own Let's Encrypt cert.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sort((probe_ssl_earliest_cert_expiry{cluster=\"$cluster\"} - time()) / 86400)",
+          "instant": true,
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 14 }, { "color": "green", "value": 30 }] }
+        },
+        "overrides": []
+      },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "bargauge",
+      "title": "Traefik's own certificates",
+      "description": "The cluster-side wildcard from the DuckDNS ACME DNS-01 resolver. Distinct from the panel on the left: this is the cert Traefik serves, which for Cloudflare-fronted hostnames the public never sees.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sort((traefik_tls_certs_not_after{cluster=\"$cluster\"} - time()) / 86400)",
+          "instant": true,
+          "legendFormat": "{{cn}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 14 }, { "color": "green", "value": 30 }] }
+        },
+        "overrides": []
+      },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "row",
+      "title": "Serving quality — for the services behind Traefik",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Success rate by hostname",
+      "description": "Reachability and correctness are different questions. A probe can succeed against a hostname that is returning 500s to every real user — this panel is the second question, from the access log.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sort(100 * sum by (RequestHost) (count_over_time({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus!~\"5..\"}[$__range])) / sum by (RequestHost) (count_over_time({cluster=\"$cluster\", app=\"traefik\"}[$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "non-5xx %" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "non-5xx %", "desc": false }] } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "decimals": 2 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "non-5xx %" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 99 }, { "color": "green", "value": 99.9 }] } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "5xx rate by hostname",
+      "description": "[may-be-empty] Flat zero is the expected state.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (RequestHost) (rate({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=~\"5..\"}[5m]))",
+          "queryType": "range",
+          "legendFormat": "{{RequestHost}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 25, "lineWidth": 1, "drawStyle": "bars", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Coverage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "collapsed": false
+    },
+    {
+      "type": "text",
+      "title": "What these probes do and do not prove",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 39 },
+      "options": {
+        "mode": "markdown",
+        "content": "**What is probed.** The sixteen public hostnames on the Cloudflare Tunnel, plus the two paths that bypass Traefik entirely — `jellyfin.diemer.codes` (VPS Caddy → NodePort `:30096`) and a TCP connect to `minecraft.diemer.codes:25565` (VPS haproxy). Those last two have no access log anywhere; a probe is the *only* signal they exist.\n\n**`*.zachd.duckdns.org` is deliberately not probed.** Since `infra/duckdns` moved to `updater.mode: tailnet`, those names resolve to a Tailscale `100.x` address that cluster pods cannot reach. A probe would report a permanent, meaningless outage.\n\n**A successful probe means \"the edge answered\", not \"the service works.\"** The `http_edge` module accepts 2xx, 3xx, 401 and 403, because most of these hostnames sit behind Authelia forward-auth and correctly answer an unauthenticated probe with a 302 to the portal. Application correctness is the *Serving quality* row above, and the 5xx panels on **Edge Traffic**.\n\n**The prober shares the cluster's fate.** It runs as a one-replica Deployment in the `alloy` namespace (`infra/alloy/values-probe.yaml`). If the cluster is down, the prober is down too, and these panels go to *No data* rather than to *DOWN*. **Treat a gap here as an outage, not as silence.** A genuinely external checker — Grafana Cloud Synthetic Monitoring, or anything hosted off-cluster — is the fix, and is not set up yet.\n\n**Why a prober at all, when Traefik metrics exist?** Traefik can only report on requests that arrived. If DNS breaks, the tunnel drops, or a certificate expires, the access log goes quiet — which is indistinguishable from a quiet night. The probe asks the question rather than waiting for someone else to."
+      }
+    }
+  ]
+}

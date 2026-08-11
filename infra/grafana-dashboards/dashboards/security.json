@@ -1,0 +1,361 @@
+{
+  "uid": "home-security",
+  "title": "Security & Intrusion",
+  "description": "What is probing the cluster, what CrowdSec made of it, and which requests were refused. Read the coverage-gaps panel at the bottom before trusting a quiet day.",
+  "tags": ["selfhosted", "security"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "type": "constant",
+        "query": "home-k3s",
+        "current": { "text": "home-k3s", "value": "home-k3s" },
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "CrowdSec — detection",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Scenario overflows (24h)",
+      "description": "An overflow is CrowdSec deciding a threshold was crossed — the closest thing here to \"an attack was detected\". Detection only: infra/crowdsec runs with no bouncer, so nothing was blocked.",
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(increase(cs_bucket_overflowed_total{cluster=\"$cluster\"}[24h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 25 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Active alerts",
+      "description": "[may-be-empty] From the CrowdSec LAPI. Zero is the normal state.",
+      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum(cs_alerts{cluster=\"$cluster\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "stat",
+      "title": "Parser failure rate",
+      "description": "The canary nobody thinks to watch. If Traefik's log format changes, CrowdSec silently stops matching and this dashboard goes quiet — which looks exactly like 'no attacks'. Anything sustained above ~1% means the parser, not the internet, went quiet.",
+      "gridPos": { "h": 4, "w": 6, "x": 10, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "100 * sum(rate(cs_parser_hits_ko_total{cluster=\"$cluster\"}[1h])) / clamp_min(sum(rate(cs_parser_hits_ok_total{cluster=\"$cluster\"}[1h])) + sum(rate(cs_parser_hits_ko_total{cluster=\"$cluster\"}[1h])), 0.0001)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 10 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "stat",
+      "title": "Rate-limit trips (429)",
+      "description": "[may-be-empty] Traefik's edge rate limiter firing — 159 trips in the last 7 days, but often none for hours at a stretch. Buckets key on CF-Connecting-IP, so these attribute to a source cleanly ONLY on the Cloudflare path: every direct/tailnet client shares one bucket, and a direct-path client can dodge bucketing entirely by inventing the header.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum(count_over_time({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=\"429\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 100 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Scenario activity",
+      "description": "Buckets filling, by scenario. These are the collections installed in infra/crowdsec: crowdsecurity/traefik, http-cve, base-http-scenarios.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (name) (rate(cs_bucket_instantiation_total{cluster=\"$cluster\"}[10m]))",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Overflows by scenario",
+      "description": "[may-be-empty] The subset that actually crossed a threshold.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
+          "expr": "sum by (name) (increase(cs_bucket_overflowed_total{cluster=\"$cluster\"}[10m]))",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "lineWidth": 1, "drawStyle": "bars", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "table",
+      "title": "Top detected source IPs",
+      "description": "Pulled out of the CrowdSec log line at query time. source_ip is deliberately NOT a Loki label — it is the entire internet — so it is re-extracted here with | regexp, which costs no series.",
+      "gridPos": { "h": 9, "w": 10, "x": 0, "y": 13 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(15, sum by (source_ip) (count_over_time({cluster=\"$cluster\", app=\"crowdsec\"} |= \"performed\" | regexp \"Ip (?P<source_ip>\\\\S+) performed\" [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "detections" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "detections", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "logs",
+      "title": "CrowdSec detections",
+      "description": "[may-be-empty] The raw detection lines, carrying the source IP and the scenario. This is the detail the metrics deliberately cannot hold.",
+      "gridPos": { "h": 9, "w": 14, "x": 10, "y": 13 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "{cluster=\"$cluster\", app=\"crowdsec\"} |= \"performed\"",
+          "queryType": "range"
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true }
+    },
+    {
+      "type": "row",
+      "title": "HTTP attack surface — from the Traefik access log",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Refused and failed requests by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (DownstreamStatus) (rate({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=~\"4..|5..\"}[5m]))",
+          "queryType": "range",
+          "legendFormat": "{{DownstreamStatus}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Known-bad path probes",
+      "description": "[may-be-empty] Requests for things that do not exist here and never did: /.env, WordPress, phpMyAdmin, /.git, /vendor. Nothing legitimate asks for these, so any non-zero line is somebody walking the URL space.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum(rate({cluster=\"$cluster\", app=\"traefik\"} |~ \"(?i)(\\\\.env|wp-login|wp-admin|wp-content|phpmyadmin|/\\\\.git|/vendor/|xmlrpc\\\\.php|/\\\\.aws|/actuator|/solr/|/cgi-bin/)\"[5m]))",
+          "queryType": "range",
+          "legendFormat": "scanner probes/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 30, "lineWidth": 1, "drawStyle": "bars" }, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "type": "table",
+      "title": "Top source IPs by 4xx",
+      "description": "ClientHost is already the real client IP: infra/traefik sets forwardedHeaders.trustedIPs for the pod and node CIDRs, so Traefik resolves it through the cloudflared and klipper-lb hops rather than logging the internal address.",
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 31 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(15, sum by (ClientHost) (count_over_time({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=~\"4..\"} | json ClientHost=\"ClientHost\" [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "4xx requests" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "4xx requests", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "Top 404 paths",
+      "description": "What people are looking for and not finding. RequestPath includes the query string.",
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 31 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(15, sum by (RequestPath) (count_over_time({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=\"404\"} | json RequestPath=\"RequestPath\" [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "404s" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "404s", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "Top user agents on 4xx",
+      "description": "Scanners rarely bother to disguise themselves. A recognisable tool name here is a free identification.",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 31 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "topk(10, sum by (request_User_Agent) (count_over_time({cluster=\"$cluster\", app=\"traefik\", DownstreamStatus=~\"4..\"} | json [$__range])))",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "requests" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "requests", "desc": true }] } }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "row",
+      "title": "Authentication",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Authelia failures and regulation bans",
+      "description": "[may-be-empty] BEST-EFFORT, not exact. auth/authelia sets no log.format, so its logs ship as unstructured text and these are regex matches over raw lines. Setting `log.format: json` in auth/authelia/templates/configuration.yaml would make this precise — it is a separate change because it touches the auth service.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum(rate({cluster=\"$cluster\", app=\"authelia\"} |~ \"(?i)(authentication failed|invalid credentials|user not found)\"[5m]))",
+          "queryType": "range",
+          "legendFormat": "auth failures/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum(rate({cluster=\"$cluster\", app=\"authelia\"} |~ \"(?i)(regulation|banned)\"[5m]))",
+          "queryType": "range",
+          "legendFormat": "regulation bans/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 25, "lineWidth": 1, "drawStyle": "bars" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests to the un-gated webhook",
+      "description": "[may-be-empty] sms-relay's /api/v1/inbound is the one public POST endpoint with no forward-auth — it authenticates by HMAC over the body instead, on its own Ingress specifically to escape Authelia. A rise in non-2xx here is signature failures, i.e. someone poking it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
+          "expr": "sum by (DownstreamStatus) (rate({cluster=\"$cluster\", app=\"traefik\"} | json | RequestPath =~ \"/api/v1/inbound.*\" [5m]))",
+          "queryType": "range",
+          "legendFormat": "{{DownstreamStatus}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 25, "lineWidth": 1, "drawStyle": "bars", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "row",
+      "title": "Coverage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "collapsed": false
+    },
+    {
+      "type": "text",
+      "title": "What this dashboard cannot see",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 50 },
+      "options": {
+        "mode": "markdown",
+        "content": "Every HTTP panel above is built on the Traefik access log, which is **complete coverage of external HTTP by construction** — every ingress route is pinned to the `websecure` entrypoint by the `infra/ingress-policy` admission policy, so nothing can quietly route around it.\n\nThat guarantee stops at HTTP. These paths never touch Traefik and are **invisible here**:\n\n| Path | Exposure | What is missing |\n|---|---|---|\n| **Minecraft `:25565`** | Public, via the VPS haproxy relay | No request log at all. The relay does not preserve source IP, so even the VPS log cannot attribute a connection. Access control is the Minecraft whitelist. |\n| **Jellyfin** | Public, via the VPS Caddy relay → NodePort `:30096` | Caddy's access log stays on the VPS and is not shipped. No rate limit, no CrowdSec. Auth is Jellyfin accounts. |\n| **headlamp `:30100`** | NodePort, LAN/tailnet only | No ingress, no logging. The ServiceAccount behind it is **cluster-admin** — the login page is the only gate. |\n\nTwo further caveats on what *is* shown:\n\n- **429s attribute to a source only on the Cloudflare path.** The rate limiter buckets on `CF-Connecting-IP`; direct (tailnet/LAN) clients have no such header and therefore share a single bucket.\n- **CrowdSec blocks nothing.** `infra/crowdsec` runs deliberately without a bouncer — the Traefik plugin fetches from `plugins.traefik.io` at pod start, which would turn a routine Traefik restart into an ingress outage. Everything here is detection.\n\nA quiet dashboard means *nothing was detected on the paths that are watched*. Check the **parser failure rate** stat above before reading it as \"nothing happened\"."
+      }
+    }
+  ]
+}
