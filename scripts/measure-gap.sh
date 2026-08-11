@@ -16,11 +16,22 @@
 #
 # WHAT COUNTS AS DOWN
 # A response — any response — means the service answered, so 3xx and 4xx are UP.
-# An unauthenticated request to an Authelia-gated host correctly returns 302,
-# and a 404 means routing works and the app is serving. DOWN is: no HTTP
-# response at all (connection refused, reset, timeout) or a 5xx, because with
-# no ready endpoints behind it Traefik synthesises a 503. That is exactly the
-# window a user experiences as "the site is down".
+# A 404 means routing works and the app is serving. DOWN is: no HTTP response at
+# all (connection refused, reset, timeout) or a 5xx, because with no ready
+# endpoints behind it Traefik synthesises a 503. That is exactly the window a
+# user experiences as "the site is down".
+#
+# THE FORWARD-AUTH TRAP, which cost a wrong measurement before it was caught.
+# On an Authelia-gated host, the forward-auth middleware runs BEFORE Traefik
+# routes to the backend. An unauthenticated probe gets a 302 to the login page
+# from Authelia and never touches the service at all — so the run measures
+# Authelia's availability and reports a serene 0.0s no matter what the backend
+# is doing. stirling-pdf, a single-replica Recreate deployment, "measured" zero
+# downtime across a full pod replacement this way.
+#
+# So: this warns when a probe looks gated. To measure a gated service for real,
+# probe past the middleware — port-forward its Service, or curl the ClusterIP
+# from inside the cluster — rather than its public hostname.
 #
 # USAGE
 #   # watch for 60s while you do something else
@@ -89,6 +100,33 @@ poll() {
         sleep "$interval"
     done
 }
+
+# Check for the forward-auth trap up front, while there is still time to point
+# the run somewhere useful. A 302 whose Location is a different host is the
+# signature: the request was answered by the auth layer, not by the thing being
+# measured.
+for u in "${URLS[@]}"; do
+    loc=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 5 "$u" 2>/dev/null || true)
+    if [[ -n "$loc" ]]; then
+        target_host=$(printf '%s' "$u"   | awk -F/ '{print $3}')
+        loc_host=$(printf '%s' "$loc"    | awk -F/ '{print $3}')
+        if [[ -n "$loc_host" && "$loc_host" != "$target_host" ]]; then
+            cat >&2 <<EOF
+
+WARNING: ${u}
+  redirects to ${loc_host}, which looks like a forward-auth gate.
+
+  If so, this run measures THAT service, not the one behind it: the middleware
+  answers before Traefik ever routes to the backend, so a backend that is
+  entirely down still reports no gap.
+
+  To measure the real thing, probe past the middleware — port-forward its
+  Service and point this at localhost.
+
+EOF
+        fi
+    fi
+done
 
 PIDS=()
 for i in "${!URLS[@]}"; do
