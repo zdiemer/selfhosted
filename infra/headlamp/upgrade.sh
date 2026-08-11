@@ -32,7 +32,7 @@ helm repo update headlamp >/dev/null
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> helm upgrade --install ${RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
+helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES" --cleanup-on-fail
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=180s

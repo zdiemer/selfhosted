@@ -75,7 +75,7 @@ if kubectl get ingress "$NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
 fi
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 # Prove Traefik actually routes the Host header, rather than trusting that the
 # object exists. A 502 here usually means BlueMap isn't enabled in the pod

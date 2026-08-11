@@ -41,7 +41,7 @@ fi
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 echo "==> Waiting for ${RELEASE} rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=120s

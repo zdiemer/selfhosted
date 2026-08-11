@@ -39,7 +39,7 @@ command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
 echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
 
 for d in bot lavalink; do
   echo "==> Waiting for ${RELEASE}-${d} rollout"

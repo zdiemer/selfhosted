@@ -44,7 +44,7 @@ fi
 echo "    ok: ${SVC}:${PORT} exists"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 # Prove Traefik routes the Host header without waiting on Cloudflare. This is the
 # in-cluster half working end to end; the tunnel half is dashboard config.

@@ -96,6 +96,15 @@ assert v["logs"]["access"]["fields"]["headers"]["defaultmode"] == "drop", \
 if v.get("updateStrategy", {}).get("type") == "Recreate":
     assert v["updateStrategy"].get("rollingUpdate") is None, \
         "Recreate strategy cannot carry rollingUpdate"
+# The default certificate is the whole reason Traefik can be stateless. Losing
+# this key does not fail anything — Traefik just serves a self-signed cert on
+# every host — so assert it is present rather than trusting the template.
+assert v.get("tlsStore", {}).get("default", {}).get("defaultCertificate", {}).get("secretName"), \
+    "tlsStore.default.defaultCertificate.secretName is required; without it every host gets a self-signed cert"
+# Persistence coming back would silently reintroduce the RWO volume that forced
+# one replica and made every change here an outage.
+assert v.get("persistence", {}).get("enabled") is False, \
+    "persistence must stay disabled; a PVC here re-pins Traefik to one node"
 print("==> valuesContent parses; safety assertions pass")
 ' || { echo "rendered valuesContent is not valid — refusing to apply"; exit 1; }
 
@@ -117,7 +126,9 @@ if kubectl get helmchartconfig "$HCC_NAME" -n "$HCC_NS" >/dev/null 2>&1; then
     REDEPLOY=1
     echo
     echo "==> Traefik config CHANGED — helm-controller will redeploy Traefik."
-    echo "    Expect a brief cluster-wide ingress outage (all hosts, all repos)."
+    echo "    This is a rolling update now (3 replicas, maxUnavailable 0), not"
+    echo "    the cluster-wide outage it used to be. Still every route in, so"
+    echo "    read the diff."
     echo
     diff <(echo "$live") <(echo "$rendered") || true
     echo
@@ -131,7 +142,7 @@ if kubectl get helmchartconfig "$HCC_NAME" -n "$HCC_NS" >/dev/null 2>&1; then
 fi
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
 
 if [[ "$REDEPLOY" == "1" ]]; then
   # helm-controller runs the actual Traefik upgrade as a Job, asynchronously —

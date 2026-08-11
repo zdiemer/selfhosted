@@ -161,7 +161,7 @@ BEFORE_HASH="$(printf '%s' "$HAVE" | md5sum | cut -d' ' -f1)"
 AFTER_HASH="$(printf '%s' "$WANT" | md5sum | cut -d' ' -f1)"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
 
 collector_status() {
   # The collector is deployed alongside the log, not by a separate release, so

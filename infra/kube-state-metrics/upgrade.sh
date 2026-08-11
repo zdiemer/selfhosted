@@ -32,7 +32,7 @@ helm repo update prometheus-community >/dev/null
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> helm upgrade --install ${RELEASE} prometheus-community/kube-state-metrics@${CHART_VERSION} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" prometheus-community/kube-state-metrics \
+helm upgrade --install "$RELEASE" prometheus-community/kube-state-metrics --cleanup-on-fail \
   --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
 
 echo "==> waiting for the Deployment"

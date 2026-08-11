@@ -75,7 +75,7 @@ case "$ACTIONS" in
 esac
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 # Prove the policy actually rejects something, rather than trusting that the
 # object exists. --dry-run=server runs the full admission chain without

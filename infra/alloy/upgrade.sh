@@ -183,10 +183,10 @@ cleanup_validator
 VALIDATE_STARTED=0
 
 echo "==> helm upgrade --install ${RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES"
+helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$VALUES" --cleanup-on-fail
 
 echo "==> helm upgrade --install ${PROBE_RELEASE} ${CHART}@${CHART_VERSION} -n ${NAMESPACE}"
-helm upgrade --install "$PROBE_RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$PROBE_VALUES"
+helm upgrade --install "$PROBE_RELEASE" "$CHART" --version "$CHART_VERSION" -n "$NAMESPACE" -f "$PROBE_VALUES" --cleanup-on-fail
 
 # The credentials arrive as env vars from a Secret, and env vars are read once
 # at process start. Rewriting the Secret alone leaves every running pod using

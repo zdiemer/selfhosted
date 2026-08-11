@@ -89,7 +89,7 @@ echo "==> helm dependency update"
 helm dependency update "$HERE" >/dev/null
 
 echo "==> helm upgrade --install ${RELEASE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f "$LOCAL_VALUES"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f "$LOCAL_VALUES" --cleanup-on-fail
 
 echo "==> Waiting for the operator"
 kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}" --timeout=300s

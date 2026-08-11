@@ -233,6 +233,22 @@ minecraftServer:
 # CurseForge CDN URLs aren't orderable versions, and pack + sideloaded mods
 # must move in lockstep with the client pack. Bumps here stay manual.
 extraEnv:
+  # Tell players before the world goes away, on EVERY shutdown path.
+  #
+  # upgrade.sh already does the polite thing for a deliberate deploy: RCON
+  # save-all flush, then a backup, then the helm upgrade. Nothing covered the
+  # other paths — a node drain, an eviction, `kubectl delete pod` — where the
+  # first sign of trouble is the client disconnecting mid-swing.
+  #
+  # The image turns this into `mc-server-runner --stop-server-announce-delay
+  # 20s` (verified in /image/scripts/start-finalExec on the running image), so
+  # SIGTERM announces to players, waits, and only then stops the server. It is
+  # declarative rather than a pre-drain script somebody has to remember, which
+  # matters precisely because a drain is the shutdown nobody plans.
+  #
+  # Well inside the 300s terminationGracePeriodSeconds set via extraPodSpec:
+  # 20s of warning plus a full world save has room to spare.
+  STOP_SERVER_ANNOUNCE_DELAY: "20"
   MODRINTH_MODPACK: "prominence-2-fabric"
   # Pin to 3.9.27 (released 2026-05-10). Note the env var is
   # MODRINTH_VERSION, not MODRINTH_MODPACK_VERSION — the itzg installer

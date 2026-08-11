@@ -59,7 +59,7 @@ while read -r pc; do [[ -n "$pc" ]] && adopt "$pc"; done <<< "$NAMES"
 before="$(kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.priorityClassName}{"\n"}{end}' 2>/dev/null | grep -c . || true)"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 echo "==> Cluster scheduling policy now"
 kubectl get priorityclass -o custom-columns='NAME:.metadata.name,VALUE:.value,GLOBAL-DEFAULT:.globalDefault,PREEMPTION:.preemptionPolicy' \

@@ -281,7 +281,7 @@ cleanup
 # 5. Apply
 # ---------------------------------------------------------------------------
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --atomic --cleanup-on-fail
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=180s

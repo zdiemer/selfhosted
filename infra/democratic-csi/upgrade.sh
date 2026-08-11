@@ -158,7 +158,7 @@ for driver in iscsi nfs; do
   RELEASE="democratic-csi-${driver}"
   echo ""
   echo "==> helm upgrade --install ${RELEASE} -n ${NAMESPACE}"
-  helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" \
+  helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" --cleanup-on-fail \
     -f "$VALUES" \
     -f "${HERE}/values-${driver}.yaml" \
     -f "$LOCAL_VALUES"

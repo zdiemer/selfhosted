@@ -42,7 +42,7 @@ if [[ "${1:-}" == "--build" ]]; then
 fi
 
 echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
 
 echo "==> Waiting for ${RELEASE} rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=180s

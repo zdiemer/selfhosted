@@ -67,7 +67,7 @@ if [[ -n "${BACKUP_CTR:-}" ]]; then
 fi
 
 echo "==> helm upgrade ${RELEASE} itzg/minecraft@${CHART_VERSION} -n ${NAMESPACE} ${VALUE_ARGS[*]}"
-helm upgrade "$RELEASE" itzg/minecraft --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+helm upgrade "$RELEASE" itzg/minecraft --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
 
 echo "==> Waiting for rollout"
 $K rollout status "deployment/${RELEASE}-minecraft" --timeout=600s

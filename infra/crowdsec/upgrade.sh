@@ -38,7 +38,7 @@ helm repo update crowdsec >/dev/null
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> helm upgrade --install ${RELEASE} crowdsec/crowdsec@${CHART_VERSION} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" crowdsec/crowdsec \
+helm upgrade --install "$RELEASE" crowdsec/crowdsec --cleanup-on-fail \
   --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
 
 echo "==> waiting for the LAPI"
