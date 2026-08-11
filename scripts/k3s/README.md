@@ -14,6 +14,7 @@ chart directory.
 
 | Script | What it does |
 |---|---|
+| [`drain-preflight.sh`](drain-preflight.sh) | Say what draining a node will cost, without draining it: what gaps, what cannot move at all, what a PDB will block, and which volumes face a slow iSCSI detach/attach handoff. `--node <name>`, `--all`. Exits 0 / 2 (something gaps) / 3 (something is stuck or blocked). Every drain path below calls it automatically — `DRAIN_PREFLIGHT=off` skips it, `=strict` refuses to drain on a 3 |
 | [`debug.sh`](debug.sh) | Diagnose node health — tailscale, k3s service, drive/memory health, CPU temp, pending reboots, failed units, resource usage, pods. `--node <name>`, `--all`, `--json` |
 | [`cleanup.sh`](cleanup.sh) | Reclaim disk on nodes. `--report` for a usage report (also flags orphaned local PVs), `--deep` to purge images, containerd snapshots and Docker state |
 | [`restart.sh`](restart.sh) | Restart nodes. `--all` rolls agents first, draining/uncordoning each; `--service-only` restarts k3s rather than rebooting; `--force` skips the drain |

@@ -158,6 +158,29 @@ print_disk_usage() {
 drain_node() {
     local node_name="$1"
 
+    # Say what this is about to cost before it costs it. Every drain path in
+    # this directory goes through here, so wiring the preflight in at this one
+    # point covers restart.sh, update.sh and k3s-upgrade.sh together.
+    #
+    # DRAIN_PREFLIGHT=off skips it; =strict refuses to drain when something on
+    # the node cannot move at all or a PDB will block the eviction (exit 3).
+    # The default is to report and continue: most nodes here host at least one
+    # single-replica service, so "something will gap" is the normal case and
+    # blocking on it would just mean nobody could ever drain anything.
+    if [[ "${DRAIN_PREFLIGHT:-warn}" != "off" ]]; then
+        local preflight_rc=0
+        "$(dirname "${BASH_SOURCE[0]}")/drain-preflight.sh" --node "$node_name" || preflight_rc=$?
+        if [[ $preflight_rc -ge 3 ]]; then
+            echo
+            echo "[WARNING] $node_name hosts something that will NOT come back until the node does." >&2
+            if [[ "${DRAIN_PREFLIGHT:-warn}" == "strict" ]]; then
+                echo "[ABORT] DRAIN_PREFLIGHT=strict; not draining $node_name" >&2
+                return 1
+            fi
+        fi
+        echo
+    fi
+
     echo "Draining $node_name..."
     if ! kubectl drain "$node_name" $DRAIN_OPTS; then
         echo "[WARNING] Drain failed for $node_name" >&2
