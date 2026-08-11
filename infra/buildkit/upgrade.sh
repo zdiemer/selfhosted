@@ -26,7 +26,12 @@ if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
   echo "==> Pre-flight: unprivileged-userns sysctl on each node"
   BAD=0
   for NODE in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-    VAL="$(tailscale ssh "root@${NODE}" sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo '?')"
+    # Bounded, because this is a best-effort check and `tailscale ssh` can hang
+    # rather than fail — a stale tailnet session, a sleeping laptop node, a
+    # machine that answers ping and nothing else. Without a timeout the loop
+    # runs ten unbounded SSH attempts and the deploy never reaches helm at all,
+    # which is a far worse outcome than not knowing the sysctl.
+    VAL="$(timeout 10 tailscale ssh "root@${NODE}" sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo '?')"
     [[ "$VAL" == "0" ]] || { echo "    ${NODE}: kernel.apparmor_restrict_unprivileged_userns=${VAL}"; BAD=1; }
   done
   if [[ "$BAD" == "1" ]]; then
