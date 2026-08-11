@@ -70,7 +70,16 @@ note() { echo "==> $*"; }
 LIVE_IMAGES=""
 load_live_images() {
   command -v kubectl >/dev/null 2>&1 || { note "kubectl not found — cluster checks will be skipped"; return 0; }
-  LIVE_IMAGES="$(kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' 2>/dev/null | sort -u || true)"
+  # Running pods only. Without the field selector this also sees Completed
+  # CronJob pods, which linger for days at whatever image they ran with — so a
+  # months-old backfill job was enough to make smitele-bot look like it was
+  # running 1.5.6 when every Deployment in the namespace was on 1.9.8, and the
+  # pin refused to advance for a submodule that was correctly deployed.
+  #
+  # That failure is quiet in the wrong direction: it does not move a pin it
+  # should not, it *declines* to move one it should, and the repo keeps
+  # claiming the cluster runs older code than it does.
+  LIVE_IMAGES="$(kubectl get pods -A --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' 2>/dev/null | sort -u || true)"
   [[ -n "$LIVE_IMAGES" ]] || note "could not read pods from the cluster — checks will report unverified"
 }
 
