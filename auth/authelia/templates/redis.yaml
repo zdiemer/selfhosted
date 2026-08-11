@@ -43,12 +43,11 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "authelia.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: redis
+      {{- include "authelia.redisSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "authelia.selectorLabels" . | nindent 8 }}
+        {{- include "authelia.redisSelectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
       # Authelia gates ~8 services and cannot serve a session without this, so
@@ -116,8 +115,7 @@ spec:
       protocol: TCP
       name: redis
   selector:
-    {{- include "authelia.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: redis
+    {{- include "authelia.redisSelectorLabels" . | nindent 4 }}
 {{- if .Values.redis.networkPolicy.enabled }}
 ---
 {{/*
@@ -136,8 +134,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      {{- include "authelia.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: redis
+      {{- include "authelia.redisSelectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
