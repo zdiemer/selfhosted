@@ -90,18 +90,22 @@ Options → BitTorrent → Torrent Queueing:
 | Maximum active torrents | 30 | **This is the one that bites.** Seeding torrents count against it, and nothing here ever stops seeding, so a total of 5 means that after five completed grabs the sixth download never starts — it sits queued forever while five permanent seeders hold every slot. Raise it well past the download limit, or set −1. |
 | Do not count slow torrents | on | Idle seeders stop consuming active slots at all, which is the real fix for the row above. |
 
-**Seeding is unlimited, deliberately.** No ratio limit, no seeding-time
-limit, no share-limit action — torrents seed until removed by hand. That is
-close to free here: Sonarr/Radarr import by hardlink, so the file in
-`/media/downloads` and the one in `/media/tv` are the same inode and the
-seeding copy costs no extra bytes. Deleting the torrent *with data* just
-drops one of the two links; the library keeps the file. The cost is upload
-bandwidth and the active-torrent slots above, not disk.
+**Seeding stops at ratio 1.0** — Options → BitTorrent → Share Limits, "When
+ratio reaches 1.0" with action **Pause torrent**. Give back what you took,
+then stop.
 
-If disk ever does become the pressure, the lever is Options → BitTorrent →
-Share Limits (ratio 2.0 / 30 days, action "Remove torrent" — *not* "Remove
-torrent and files", which would unlink the download-side copy while Sonarr
-still believes it owns it).
+Pause, not "Remove torrent and files": the removal action would unlink the
+download-side copy while Sonarr still believes it owns that queue item.
+Pausing is also fully reversible — raise the ratio and they resume where
+they left off. It reclaims no disk, which is fine, because seeding costs
+almost none here in the first place: Sonarr/Radarr import by hardlink, so
+`/media/downloads/…` and `/media/tv/…` are the same inode and the seeding
+copy is not a second copy. What seeding actually consumes is upload
+bandwidth and the active-torrent slots above.
+
+Ratio 1.0 is a public-tracker default. Anything private with a ratio floor
+or a minimum seed time needs its own rule (per-torrent share limits, or a
+category) before this global cap starves it.
 
 ## "This directory does not appear to exist" in Sonarr
 

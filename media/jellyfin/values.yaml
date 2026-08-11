@@ -85,7 +85,21 @@ persistence:
     accessMode: ReadWriteOnce
   # /cache (transcodes, image cache) is scratch — emptyDir, node-local, free
   # to vanish on reschedule.
-  cacheSizeLimit: 20Gi
+  #
+  # 40Gi, up from 20Gi: kubelet evicted the pod on 2026-08-09 with "Usage of
+  # EmptyDir volume cache exceeds the limit 20Gi". The limit is enforced by
+  # killing the pod, so hitting it drops playback mid-stream rather than
+  # failing a write.
+  #
+  # This is headroom, not a fix. Observed growth is ~10Gi per 12h of use
+  # (interrupted transcode sessions leave their segments behind), so 40Gi
+  # buys days, not forever. The real levers are in the Jellyfin UI — the
+  # scheduled transcode-cleanup task and playback → transcode throttling.
+  #
+  # Ceiling on the number: this is node-local disk on zachd-ubuntu-1, which
+  # had ~54Gi free when this was raised. Going much past 40Gi trades a
+  # jellyfin eviction for DiskPressure evicting whatever else lands there.
+  cacheSizeLimit: 40Gi
 
 # NO Authelia forward-auth here, deliberately: TV/phone/desktop Jellyfin apps
 # speak the Jellyfin API directly and cannot answer an HTML login bounce.
