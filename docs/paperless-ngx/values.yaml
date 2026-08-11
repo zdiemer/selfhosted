@@ -105,6 +105,27 @@ redis:
     limits:
       memory: 256Mi
 
+# gotenberg and tika below both stay at ONE replica, deliberately, even though
+# they are stateless HTTP converters and are the obvious candidates for it.
+#
+# Two reasons, and the second is the deciding one:
+#
+#   * Their only consumer is paperless itself, which is a Recreate singleton
+#     (single RWO volume). Making the converters highly available does nothing
+#     while the thing calling them is down, so the win is narrow: it avoids a
+#     failed ingest during a drain of the converter's node specifically.
+#   * They REQUEST 320Mi and 256Mi respectively — that is what the scheduler
+#     books, regardless of the ~7Mi and ~230Mi they actually use at idle. This
+#     cluster does not have that to spare: one node sits above 100% memory,
+#     several are past 80% of requests, and vocard's spotify-tokener carries a
+#     comment about being OOM-evicted under exactly this pressure. Spending
+#     ~600Mi of bookable memory to avoid a retryable ingest failure is the
+#     wrong trade here.
+#
+# Revisit if paperless itself ever becomes non-singleton, which would need its
+# data volume on RWX and its background workers checked for multi-instance
+# safety. Until then this is a considered "no", not an oversight.
+
 gotenberg:
   # Renders Office documents (docx/xlsx/odt/...) to PDF for OCR.
   image:

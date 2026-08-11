@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "keepass.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.keeweb.replicaCount }}
   # Explicit, because the absence of a strategy block reads exactly like a
   # deliberate choice while actually meaning "whatever RollingUpdate 25%/25%
   # does". keeweb is a static web UI with no volume — it holds nothing, and
@@ -38,6 +38,18 @@ spec:
       # Covers the preStop sleep; keeweb serves static assets and holds nothing,
       # so there is no shutdown work beyond that.
       terminationGracePeriodSeconds: 30
+      # Hard spread, so the two replicas are actually on different nodes and a
+      # drain can only ever take one. matchLabelKeys keeps a rollout's surge pod
+      # from being measured against the pods it is replacing.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "keepass.keeweb.selectorLabels" . | nindent 14 }}
       containers:
         - name: keeweb
           image: "{{ .Values.keeweb.image.repository }}:{{ .Values.keeweb.image.tag }}"

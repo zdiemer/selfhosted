@@ -1,0 +1,21 @@
+{{/*
+Only keeweb gets a budget. webdav is deliberately absent: it holds the RWO
+volume the .kdbx lives on, so it can only ever be one pod, and a minAvailable: 1
+budget against a single replica can never be satisfied by evicting it — the
+drain would block forever rather than fail. Singletons are the drain
+preflight's problem, not a budget's. See "Availability conventions" in the root
+README.
+*/}}
+{{- if gt (int .Values.keeweb.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "keepass.fullname" . }}-keeweb
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "keepass.keeweb.selectorLabels" . | nindent 6 }}
+{{- end }}

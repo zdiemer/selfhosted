@@ -52,6 +52,12 @@ webdav:
       memory: 256Mi
 
 keeweb:
+  # Two, unlike its webdav sibling, which is stuck at one by the RWO volume
+  # holding the .kdbx. keeweb holds nothing — the SPA runs entirely in the
+  # browser and fetches the vault itself — so it is one of the few things here
+  # that can genuinely roll and drain with no gap at all. It idles at ~3Mi, so
+  # the second replica is free in a way most of this cluster is not.
+  replicaCount: 2
   image:
     # Upstream-blessed image. Hasn't been actively updated, but KeeWeb
     # itself is mature and the SPA runs entirely client-side. Swap to
