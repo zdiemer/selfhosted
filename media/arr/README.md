@@ -121,12 +121,22 @@ category's `/media/downloads/tv` entirely. The category reports that path to
 Sonarr over the API, Sonarr looks for it, and it has never been created.
 
 Downloads keep working throughout — Sonarr tracks the torrent's actual
-`content_path` — which is why this reads as a false alarm. Fix it properly by
-setting Options → Downloads → **Default Torrent Management Mode: Automatic**;
-new torrents then land in the category folder and the warning clears.
-Existing torrents stay Manual (nothing gets moved) unless you switch them
-individually. Creating the two directories by hand also silences the warning,
-but leaves every file piling up in the root of `/media/downloads`.
+`content_path` — which is why this reads as a false alarm.
+
+Fixed on 2026-08-11 by setting Options → Downloads → **Default Torrent
+Management Mode: Automatic**, so new torrents land in their category folder.
+Existing torrents stay Manual and are not moved; the 259 already in flight
+finish where they are. `/media/downloads/{tv,movies}` were also created by
+hand (`abc:users`, matching their parent) — Automatic mode alone would not
+have made them until the next grab, and the health check wants them there
+now. Sonarr caches health results, so force a re-run rather than waiting:
+
+```bash
+kubectl -n media exec deploy/arr-sonarr -- sh -c \
+  'k=$(grep -o "<ApiKey>[^<]*" /config/config.xml | head -1 | cut -c9-); \
+   curl -s -X POST -H "X-Api-Key: $k" -H "Content-Type: application/json" \
+     -d "{\"name\":\"CheckHealth\"}" http://localhost:8989/api/v3/command'
+```
 
 ## If gluetun crash-loops with a tun EPERM
 
