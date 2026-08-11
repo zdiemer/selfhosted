@@ -135,26 +135,46 @@ spec:
   # largest. Its VOLUME snapshot is 0 B (see the note at the bottom of this
   # file), so this dump is not a supplement to the file copy, it IS the backup.
   #
-  # SOLVED — it was the last hypothesis in the old note, not the networking.
-  # k8up does NOT honour `spec.pod.metadata.labels`: the live PreBackupPod
-  # reports them empty, and the pods k8up actually creates carry only
-  # `k8upjob=true` plus the Job's own labels. talaria's NetworkPolicy admitted
-  # `app.kubernetes.io/component: backup`, so it matched nothing and every
-  # connection was refused — which reads exactly like a networking fault and is
-  # why it was chased as one for so long.
+  # SOLVED, and it was a RACE — not the labels, and not the server.
   #
-  # What isolated it: pg_dump run by hand from INSIDE the postgres pod, over
-  # 127.0.0.1, works perfectly. That rules out the server, the credentials and
-  # the database, and leaves only what sits between two pods.
+  # A brand-new pod in the talaria namespace is refused by talaria's Postgres
+  # NetworkPolicy for the first ~15-30 seconds of its life, no matter what
+  # labels it carries. k3s's built-in (kube-router) policy controller programs
+  # a new pod into its ipsets on a sync, and until that lands the pod falls to
+  # default-deny. kube-router REJECTS rather than drops, so the symptom is
+  # "connection refused" — which reads as "the server isn't there" and is why
+  # this was chased as a server/networking fault for so long. A policy drop
+  # would have timed out and pointed straight at the policy.
   #
-  # The fix is in talaria's own chart (helm/talaria/templates/network-policies.yaml),
-  # which now admits `k8upjob: "true"` — the label the operator really sets.
-  # The labels below are left in place because they are harmless and describe
-  # intent, but nothing reads them.
+  # Demonstrated with one pod that retried on a timer: refused at t=15s, then
+  # succeeded at t=30s and every attempt after, with nothing changing but time.
+  # k8up's dump pod starts and connects immediately, so it always lost that
+  # race; talaria-backend connects fine because it has been running for hours.
+  #
+  # Two things were true and only one was the cause. k8up genuinely does NOT
+  # honour `spec.pod.metadata.labels` — the live PreBackupPod reports them empty
+  # and its pods carry only `k8upjob=true` — so the old selector
+  # (`component: backup`) really did match nothing, and talaria's chart now
+  # admits `k8upjob: "true"` instead. But fixing that alone did NOT fix the
+  # dump: a correctly-labelled pod is still refused inside the race window.
+  # The labels below are left in place as documentation; nothing reads them.
+  #
+  # Only talaria is affected because it is the only backed-up namespace that
+  # has a NetworkPolicy in front of its database.
   #
   # -F c for the same reason as paperless: compressed, and restorable
   # table-by-table with pg_restore rather than all-or-nothing.
-  backupCommand: /bin/sh -c 'PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h talaria-postgres -U $POSTGRES_USER -d $POSTGRES_DB -F c'
+  # Waits for the NetworkPolicy to admit this pod before dumping. See the note
+  # above: a brand-new pod is refused for the first ~15-30s regardless of its
+  # labels, and pg_dump exits immediately when that happens, producing an empty
+  # "successful" backup.
+  #
+  # pg_isready rather than a fixed sleep: it succeeds the moment the path opens,
+  # so the common case costs one round trip rather than a guessed delay. -q
+  # keeps it silent, and stderr is redirected away from the dump — k8up captures
+  # this command's STDOUT as the backup file, so a single stray byte on stdout
+  # corrupts it.
+  backupCommand: /bin/sh -c 'i=0; while [ $i -lt 30 ]; do PGPASSWORD=$POSTGRES_PASSWORD pg_isready -h talaria-postgres -U $POSTGRES_USER -q 2>/dev/null && break; i=$((i+1)); sleep 5; done; PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h talaria-postgres -U $POSTGRES_USER -d $POSTGRES_DB -F c'
   fileExtension: .pgdump
   pod:
     metadata:
