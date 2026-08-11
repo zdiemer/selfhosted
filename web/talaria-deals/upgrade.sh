@@ -12,7 +12,7 @@ set -euo pipefail
 RELEASE="${RELEASE:-talaria-deals}"
 # The Ingress must live beside the Service it points at, so this is talaria's
 # namespace, not one of our own.
-NAMESPACE="${NAMESPACE:-default}"
+NAMESPACE="${NAMESPACE:-talaria}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 VALUE_ARGS=(-f "$VALUES")

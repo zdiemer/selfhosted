@@ -85,15 +85,15 @@ retention:
 # Ordered heaviest-first early in the week, so the long ones have the most room
 # before Sunday's prune. Sizes are real data, not declared:
 #
-#   default    ~85G  (talaria postgres 75G + elasticsearch 9.8G)
+#   talaria    ~85G  (talaria postgres 75G + elasticsearch 9.8G)
 #   games      ~24G  (romm-data 21G; the 78TB library is excluded)
 #   minecraft  ~11G  (world + the sidecar's tarballs)
 #   claude      ~6G  (103k small files)
 #   everything else is under a gigabyte
 schedules:
   # --- Monday: the big one, alone ------------------------------------------
-  - name: default
-    namespace: default
+  - name: talaria
+    namespace: talaria
     schedule: "0 1 * * 1"
 
   # --- Tuesday -------------------------------------------------------------
