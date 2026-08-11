@@ -52,6 +52,15 @@ stringData:
         {{- toYaml .Values.accessControl.rules | nindent 8 }}
 
     session:
+      {{- if .Values.redis.enabled }}
+      # Sessions in Redis rather than in this process. Without it every restart
+      # of this pod — and it is a Recreate singleton, so upgrades and drains
+      # both mean a restart — logs every user out of every gated service.
+      # See templates/redis.yaml.
+      redis:
+        host: {{ include "authelia.fullname" . }}-redis
+        port: 6379
+      {{- end }}
       # One cookie per registrable domain Authelia protects. A browser scopes
       # each cookie to its domain, so SSO is shared within a domain, not across
       # them — during a domain migration both live side by side and users get an

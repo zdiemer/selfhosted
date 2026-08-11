@@ -1,0 +1,152 @@
+{{- if .Values.redis.enabled }}
+{{/*
+The session store.
+
+WHY IT EXISTS. Authelia's default session provider is in-process memory, which
+means every restart of the Authelia pod logs every user out of every gated
+service. That is not a rare event: Authelia is a `Recreate` singleton (SQLite on
+a single RWO volume), so an upgrade, a node drain, or an eviction all end the
+same way — a forced re-login everywhere, on top of the ~15s of 401s while the
+pod is gone. Moving sessions here makes the restart cost only the 401s.
+
+WHY NOT ALSO MOVE STORAGE HERE AND RUN TWO AUTHELIAS. Because that would trade
+away the survival tier. Authelia's SQLite lives on local-path deliberately (see
+infra/k8up values): if the NAS is down, you must still be able to log in to fix
+the NAS. Postgres on truenas-iscsi would make the login path depend on the
+thing you are trying to repair. So Authelia stays one replica and the
+forward-auth gap stays real — this change is about not compounding it with a
+mass logout.
+
+NO PERSISTENCE, ON PURPOSE. `--save "" --appendonly no`: sessions are
+disposable by definition, and a Redis with no volume is a pod that can schedule
+anywhere and start anywhere, which is what keeps it out of the NAS's blast
+radius. The cost is stated plainly: restarting THIS pod does log everyone out,
+so it is a singleton to leave alone rather than a thing to casually roll.
+
+NO PASSWORD, BY DESIGN — the NetworkPolicy below is the auth, the same argument
+infra/buildkit makes for its unauthenticated TCP listener. Only the Authelia
+pod may reach the port at all.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "authelia.fullname" . }}-redis
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  # One pod, one port; nothing shared to overlap on. Recreate rather than a
+  # surge because two Redises would each hold a different half of the sessions
+  # and hand out inconsistent answers for as long as both were in the Endpoints.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "authelia.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "authelia.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      # Authelia gates ~8 services and cannot serve a session without this, so
+      # it inherits Authelia's own priority rather than the platform-app
+      # globalDefault.
+      priorityClassName: platform-core
+      # Covers the preStop sleep. There is nothing to flush — see the
+      # no-persistence note above — so this only has to let open connections
+      # close rather than reset.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          args:
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+          # Reached over a ClusterIP Service, so endpoint removal races SIGTERM
+          # the same as for an ingress-facing pod.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authelia.fullname" . }}-redis
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "authelia.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- if .Values.redis.networkPolicy.enabled }}
+---
+{{/*
+This policy IS the authentication for the port — same argument infra/buildkit
+makes. Session tokens live behind it, and without a password anything that can
+open a TCP connection to 6379 could read or forge one, so the ingress rule is
+deliberately the narrowest thing that works: the Authelia pods in this
+namespace, and nothing else in the cluster.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "authelia.fullname" . }}-redis
+  labels:
+    {{- include "authelia.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "authelia.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "authelia.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 6379
+          protocol: TCP
+{{- end }}
+{{- end }}

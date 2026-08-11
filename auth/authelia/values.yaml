@@ -27,9 +27,44 @@ extraSessionCookies:
 persistence:
   # Holds the SQLite storage database (user 2FA registrations, OIDC consent
   # history). Tiny; a few MB after years of use.
+  #
+  # storageClass is deliberately blank, which means local-path: this is the
+  # survival tier. If the NAS is down and Authelia cannot start, you cannot log
+  # in to fix the NAS. That is a decision about AVAILABILITY and says nothing
+  # about durability — k8up backs the volume up either way.
   size: 1Gi
   storageClass: ""
   accessMode: ReadWriteOnce
+
+# Session store. Without this, sessions live in the Authelia process, so every
+# restart — an upgrade, a node drain, an eviction — logs every user out of every
+# gated service on top of the ~15s of 401s while the pod is gone. Redis makes
+# the restart cost only the 401s.
+#
+# It does NOT make Authelia highly available: storage is still SQLite on a
+# single RWO volume, so Authelia stays one replica. Moving storage to Postgres
+# would allow two, but would put the login path on the NAS and give up the
+# survival tier above. See templates/redis.yaml for the full argument.
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  networkPolicy:
+    # This is the authentication for the port — there is no Redis password, so
+    # only the Authelia pods may reach 6379 at all. Turning this off exposes
+    # session tokens to anything with pod-network access.
+    enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      # Sessions for a handful of users are a few hundred KB. The request is
+      # small on purpose: several nodes here are already past 80% of their
+      # bookable memory.
+      memory: 32Mi
+    limits:
+      memory: 128Mi
 
 # The file-based user backend. Suitable for a small friend group; skip the
 # LDAP song-and-dance. Actual user entries come from values.local.yaml.
