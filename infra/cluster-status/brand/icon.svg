@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img"
+     aria-label="status.diemer.codes">
+  <!--
+    The pulse. A status page answers one question — is anything wrong — so the
+    mark is the answer's shape rather than a picture of the machines: a
+    liveness spike sitting on the baseline the page already draws, in the
+    page's own series colours (green pods, blue k3s).
+
+    Two shapes on a tile, deliberately. Anything with more parts — a rack, a
+    ring of ten nodes — is a smudge at 16px, and a favicon that only works at
+    180px is a favicon that only works where it doesn't matter.
+
+    White-on-dark-tile rather than currentColor, so this is the same object in
+    a light tab, a dark tab, a preview card and on a home screen.
+
+    Transcribed by hand into scripts/gen-brand.py, which draws the PNGs with
+    Pillow and has no SVG parser. Change one, change the other.
+  -->
+  <rect width="64" height="64" rx="13" fill="#09090b"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 34h14" stroke="#0ea5e9" stroke-width="3.5" opacity=".5"/>
+    <path d="M43 34h14" stroke="#0ea5e9" stroke-width="3.5" opacity=".5"/>
+    <path d="M21 34l7-17 7 30 5.5-13H43" stroke="#10b981" stroke-width="4.6"/>
+  </g>
+</svg>

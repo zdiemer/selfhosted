@@ -17,6 +17,7 @@ spec:
         # running collector on the old code until something else restarted it.
         checksum/collector: {{ include (print $.Template.BasePath "/collector-configmap.yaml") . | sha256sum }}
         checksum/web: {{ include (print $.Template.BasePath "/web-configmap.yaml") . | sha256sum }}
+        checksum/brand: {{ include (print $.Template.BasePath "/brand-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "cluster-status.selectorLabels" . | nindent 8 }}
         {{- if .Values.ingress.enabled }}
@@ -68,6 +69,12 @@ spec:
         - name: web
           configMap:
             name: {{ include "cluster-status.fullname" . }}-web
+        # Icons, manifest and preview card. A whole-directory mount rather than
+        # per-file subPaths: nginx serves this with `root`, so the set can grow
+        # by adding a file to brand/ without touching the Deployment.
+        - name: brand
+          configMap:
+            name: {{ include "cluster-status.fullname" . }}-brand
         # nginx creates its *_temp_path dirs at startup, so an empty volume here
         # is fine — but it needs somewhere writable, and the root fs is not.
         - name: nginx-cache
@@ -142,6 +149,9 @@ spec:
             - name: web
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
+              readOnly: true
+            - name: brand
+              mountPath: /usr/share/nginx/brand
               readOnly: true
             # readOnlyRootFilesystem means nginx needs somewhere writable for
             # its caches and pid.

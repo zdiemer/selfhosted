@@ -26,6 +26,41 @@ data:
         return 200 "ok\n";
       }
 
+      # Icons, manifest and preview card, from the brand ConfigMap. `root`
+      # appends the whole request URI, so /icon.svg resolves to
+      # /usr/share/nginx/brand/icon.svg — one block instead of six aliases.
+      #
+      # Named explicitly rather than matched by extension: everything else on
+      # this server falls through to the SPA shell, and a regex like \.png$
+      # would start 404ing anything added later instead of quietly serving the
+      # page. The list is the contract with the brand ConfigMap.
+      #
+      # A day, not a year. These names carry no content hash, so the cache
+      # lifetime is also how long a redesigned mark keeps showing the old one —
+      # the same reasoning web/old-diemer-codes applies to its unfingerprinted
+      # site.css. A day costs one conditional request and bounds the staleness
+      # to something a person would sit through.
+      location ~ ^/(icon\.svg|icon-192\.png|icon-512\.png|icon-maskable-512\.png|apple-touch-icon\.png|og\.png)$ {
+        root /usr/share/nginx/brand;
+        access_log off;
+        add_header Cache-Control "public, max-age=86400" always;
+      }
+
+      # Its own block only because of the content type. nginx's mime.types has
+      # no .webmanifest, so this came back application/octet-stream, and Chrome
+      # then declines to install the app while the manifest itself fetches
+      # perfectly — a miserable thing to diagnose.
+      #
+      # default_type rather than a `types {}` block: a types block inside a
+      # location REPLACES the inherited map rather than adding to it, which
+      # would have taken image/png off the icons above.
+      location = /manifest.webmanifest {
+        root /usr/share/nginx/brand;
+        access_log off;
+        default_type application/manifest+json;
+        add_header Cache-Control "public, max-age=86400" always;
+      }
+
       # The page shell must revalidate on every load. It carries all the
       # rendering logic, and it is served with no content hash in the URL — so
       # without an explicit header a browser applies *heuristic* caching (a
@@ -47,6 +82,32 @@ data:
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <title>Cluster Status</title>
+
+    <!--
+      Icons and the preview card, served out of the brand ConfigMap (see the
+      location block above; drawn by scripts/gen-brand.py). noindex above keeps
+      this out of search results, which is a separate thing from the card: the
+      URL still gets pasted into chats, and the card is what shows up there.
+
+      No favicon.ico anywhere — every browser that matters takes the SVG, and
+      an .ico would be a third transcription of the mark to keep in sync.
+    -->
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#09090b">
+    <meta name="color-scheme" content="light dark">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="status.diemer.codes">
+    <meta property="og:title" content="Cluster Status">
+    <meta property="og:description" content="Live health for the ten-node k3s cluster at home — nodes, pods, storage and every service on top.">
+    <meta property="og:url" content="https://status.diemer.codes/">
+    <meta property="og:image" content="https://status.diemer.codes/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="status.diemer.codes — is everything up?">
+    <meta name="twitter:card" content="summary_large_image">
     <style>
       :root {
         --bg: #ffffff; --fg: #0a0a0a; --muted: #71717a; --muted-bg: #f4f4f5;

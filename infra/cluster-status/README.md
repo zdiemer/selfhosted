@@ -157,3 +157,38 @@ convention in the root README.
 Everything from `status.json` is HTML-escaped before it reaches `innerHTML` —
 event messages are arbitrary Kubernetes text on a public page, so `esc()` is not
 optional. Keep it that way.
+
+## Icons and the preview card
+
+`brand/` holds the favicon, the four home-screen sizes, the manifest and the
+1200×630 preview card. They are **generated, not hand-made**: run
+`python3 scripts/gen-brand.py status` from the repo root after changing the
+mark, then redeploy. `brand/icon.svg` is the authority on the artwork and the
+Pillow drawing calls in that script are a transcription of it — a change has to
+land in both, which the SVG's own comment says out loud.
+
+They ship as a second ConfigMap (`templates/brand-configmap.yaml`, `binaryData`
+via `.Files.Get | b64enc`) because this chart has no image to bake them into.
+That is ~200KB of the 1MiB ConfigMap ceiling; the ceiling applies to the whole
+object and blowing it fails the release, so check the arithmetic before adding
+anything large.
+
+Two things about the nginx side that are not obvious:
+
+- The location block **names each file** rather than matching an extension.
+  Everything else on this server falls through to the page shell, and a
+  `\.png$` pattern would start 404ing whatever gets added later instead of
+  quietly serving the page. The list is the contract with the ConfigMap.
+- `manifest.webmanifest` gets its own block purely for `default_type`. nginx's
+  `mime.types` has no `.webmanifest`, so it served as
+  `application/octet-stream` and Chrome silently declined to install the app
+  while the file itself fetched perfectly. A `types {}` block would have been
+  the obvious fix and is a trap — inside a location it *replaces* the inherited
+  map rather than adding to it, taking `image/png` off the icons with it.
+
+The card carries no numbers on purpose. A static card baked with "246 pods" is
+a photograph of one afternoon, and on a page whose whole subject is freshness a
+stale figure is worse than none — so it shows the three series the page draws
+instead, which never go out of date. (`smite.diemer.codes` solves the same
+problem the other way, by rendering its card live from the last snapshot;
+nothing here can, because nothing here runs but nginx.)

@@ -1,0 +1,34 @@
+{{/*
+  The page's icons and preview card, shipped as a ConfigMap because this chart
+  has no image of its own — stock nginx serves it, so there is nowhere else to
+  bake a file. Drawn by scripts/gen-brand.py and committed under brand/; nothing
+  is generated at deploy time.
+
+  binaryData rather than data: these are PNGs. Helm's .Files.Get hands back the
+  raw bytes and b64enc encodes them, which is the documented way to get a binary
+  into a ConfigMap and the only way that survives a byte that isn't valid UTF-8.
+  icon.svg and the manifest are text and live in data, where they stay readable
+  in `kubectl get cm -o yaml`.
+
+  Total is ~130KB base64-encoded, against the 1MiB ConfigMap ceiling. Worth
+  knowing before adding anything large here: the ceiling is on the whole object,
+  and blowing it fails the release, not the file.
+
+  The Glob is deliberately narrow. A wildcard over brand/ would silently start
+  publishing whatever anyone dropped in that directory, and this page is public.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cluster-status.fullname" . }}-brand
+  labels:
+    {{- include "cluster-status.labels" . | nindent 4 }}
+data:
+  icon.svg: |
+{{ .Files.Get "brand/icon.svg" | indent 4 }}
+  manifest.webmanifest: |
+{{ .Files.Get "brand/manifest.webmanifest" | indent 4 }}
+binaryData:
+  {{- range $name := list "apple-touch-icon.png" "icon-192.png" "icon-512.png" "icon-maskable-512.png" "og.png" }}
+  {{ $name }}: {{ $.Files.Get (printf "brand/%s" $name) | b64enc }}
+  {{- end }}
