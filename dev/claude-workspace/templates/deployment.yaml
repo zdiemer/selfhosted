@@ -238,10 +238,29 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
+              {{- if .Values.happy.restartNotice.enabled }}
+              # Backgrounded: it retries against the relay for up to a minute
+              # and must not hold up the daemon that phone sessions need.
+              /etc/claude-workspace/happy-restart-notice.sh up &
+              {{- end }}
               while true; do
                 happy daemon start-sync || true
                 sleep 10
               done
+          {{- if .Values.happy.restartNotice.enabled }}
+          # Phone-spawned sessions are children of THIS container, so a deploy
+          # kills them and they just disappear from the app. preStop runs before
+          # SIGTERM, which is the only point where their liveness is still
+          # knowable. Bounded well inside terminationGracePeriodSeconds, and
+          # always exits 0 — a failed notification must not stall termination.
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - timeout 8 /etc/claude-workspace/happy-restart-notice.sh down || true
+          {{- end }}
           env:
             - name: HOME
               value: /home/node
@@ -259,6 +278,11 @@ spec:
               mountPath: /home/node
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.happy.restartNotice.enabled }}
+            - name: happy-notice
+              mountPath: /etc/claude-workspace
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources.happyDaemon | nindent 12 }}
         {{- end }}
@@ -569,6 +593,12 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 512Mi
+        {{- if and .Values.happy.daemon.enabled .Values.happy.restartNotice.enabled }}
+        - name: happy-notice
+          configMap:
+            name: {{ include "claude-workspace.fullname" . }}-happy-notice
+            defaultMode: 0555
+        {{- end }}
         {{- if .Values.secrets.relay.enabled }}
         # optional: the very first `secrets.sh publish` has not happened on a
         # new cluster, and a missing Secret must not wedge the pod in

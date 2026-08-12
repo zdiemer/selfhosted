@@ -149,6 +149,24 @@ happy:
     # container, so it needs claude-sized memory headroom (resources.happyDaemon
     # below), not just the daemon's own tiny footprint.
     enabled: true
+  restartNotice:
+    # Push to the phone when a deploy takes the daemon down and when it comes
+    # back, via `happy notify`. Because phone-spawned sessions are children of
+    # the daemon container, a `Recreate` rollout kills them and they otherwise
+    # just vanish from the app with no explanation.
+    #
+    # Only fires when a session was actually live: a preStop hook checks
+    # sessions.json for a "running" session belonging to THIS pod (every record
+    # from a dead pod still says running — the process never got to update it,
+    # so the host check is what makes this meaningful) and leaves a marker that
+    # the next boot reports and clears. A restart while you aren't using Happy
+    # stays silent.
+    #
+    # Best-effort by construction: SIGKILL, an eviction or a node failure skips
+    # preStop, so there is no marker and no notice. The alternative — inferring
+    # it on boot from stale state — is what produces "20 sessions interrupted"
+    # after a quiet restart.
+    enabled: true
 
 bakery:
   # The bakery web harness (github.com/seemethere/bakery), vendored into the

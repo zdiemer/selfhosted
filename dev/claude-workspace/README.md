@@ -589,6 +589,20 @@ tracks `claude-code@latest` at build time):
     interactive `happy` defers to the running daemon. This holds only while
     every container runs the same happy version (they share one image) — a
     mismatch makes them kill and replace each other.
+  - **Restarts** (`happy.restartNotice.enabled`): a deploy kills phone-spawned
+    sessions, and they used to just vanish from the app. A `preStop` hook now
+    pushes "restarting for a deploy" via `happy notify`, and the next boot
+    pushes that it's back with a `happy resume <id>` for the session that
+    dropped. It only fires when a session was genuinely live — the hook filters
+    `sessions.json` on `lifecycleState: running` **and** `host == $HOSTNAME`,
+    because every record left by a dead pod still says `running` (the process
+    never got to update it), so without the host check a quiet restart would
+    report twenty interrupted sessions. Liveness is recorded in a marker at
+    shutdown rather than inferred at boot, which also means SIGKILL, an
+    eviction or a node failure skips preStop and you get no notice — best
+    effort, deliberately. The script is a ConfigMap mounted at
+    `/etc/claude-workspace`, so it changes with a `helm upgrade` rather than an
+    image rebuild.
   - Turn it off with `happy.daemon.enabled: false` (drops the container); the
     old manual `happy daemon start` from `/term` still works if you do.
 - The chart holds no secrets at all, so `values.local.yaml` is just the

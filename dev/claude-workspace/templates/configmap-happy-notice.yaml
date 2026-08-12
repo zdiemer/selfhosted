@@ -1,0 +1,91 @@
+{{- if and .Values.happy.daemon.enabled .Values.happy.restartNotice.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-happy-notice
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+data:
+  # Mounted into the happy-daemon container rather than baked into the image so
+  # it can be changed with a helm upgrade instead of a rebuild+push.
+  happy-restart-notice.sh: |
+    #!/usr/bin/env bash
+    # Tell the phone when a deploy takes the Happy daemon down and when it comes
+    # back. `strategy: Recreate` kills phone-spawned sessions (they are children
+    # of this container), and without this they simply vanish from the app.
+    #
+    #   down  preStop: if a session is live, record it and push a warning
+    #   up    startup: if the marker says one was live, push that we are back
+    #
+    # Everything is best-effort. A failed notification must never stop the
+    # daemon from starting or the pod from terminating.
+    set -uo pipefail
+
+    MODE="${1:-}"
+    STATE="${HOME}/.happy"
+    SESSIONS="${STATE}/sessions.json"
+    MARKER="${STATE}/restart-notice.json"
+
+    notify() {
+      happy notify -t "Workspace" -p "$1" >/dev/null 2>&1
+    }
+
+    case "$MODE" in
+      down)
+        # Only sessions belonging to THIS pod count. sessions.json is on the
+        # PVC and every record from a pod that died still says "running" — the
+        # process never got to update it — so without the host check every
+        # restart would look like it interrupted 20 live sessions.
+        LIVE="$(python3 - "$SESSIONS" "$(hostname)" <<'PY'
+    import json, sys
+    try:
+        with open(sys.argv[1]) as fh:
+            sessions = json.load(fh).get("sessions", {})
+    except Exception:
+        sys.exit(0)
+    live = [
+        sid for sid, s in sessions.items()
+        if s.get("metadata", {}).get("lifecycleState") == "running"
+        and s.get("metadata", {}).get("host") == sys.argv[2]
+    ]
+    print(" ".join(live))
+    PY
+    )"
+        [[ -z "$LIVE" ]] && exit 0
+        # Written before the push so the "back up" side still fires even if the
+        # relay is unreachable on the way down.
+        printf '{"at":%s,"sessions":"%s"}\n' "$(date +%s)" "$LIVE" > "$MARKER"
+        COUNT="$(wc -w <<<"$LIVE")"
+        notify "Restarting for a deploy — ${COUNT} session(s) will drop. Back shortly."
+        ;;
+      up)
+        [[ -f "$MARKER" ]] || exit 0
+        AT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("at",0))' "$MARKER" 2>/dev/null || echo 0)"
+        IDS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sessions",""))' "$MARKER" 2>/dev/null || echo "")"
+        # A marker older than this is not a deploy we should still be reporting;
+        # drop it rather than push a notice about a restart from yesterday.
+        if (( $(date +%s) - AT > 21600 )); then
+          rm -f "$MARKER"
+          exit 0
+        fi
+        FIRST="${IDS%% *}"
+        MSG="Workspace back up."
+        [[ -n "$FIRST" ]] && MSG="${MSG} Resume with: happy resume ${FIRST}"
+        # The relay is reached over the public URL and the daemon has only just
+        # started; retry rather than lose the notice to a few seconds of DNS.
+        for _ in 1 2 3 4 5 6; do
+          if notify "$MSG"; then
+            rm -f "$MARKER"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "happy-restart-notice: giving up after 6 attempts" >&2
+        rm -f "$MARKER"
+        ;;
+      *)
+        echo "usage: happy-restart-notice.sh down|up" >&2
+        exit 2
+        ;;
+    esac
+{{- end }}
