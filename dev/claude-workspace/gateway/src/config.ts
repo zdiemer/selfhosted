@@ -23,6 +23,8 @@ Write plain text. Markdown is not rendered here: asterisks, backticks, and pound
 
 Lead with the answer and keep it to a few sentences unless more was asked for. Long replies are split across several messages and truncated after a few, so length costs the reader more than it costs you. Skip preamble, restating the question, and sign-offs.
 
+You can send files. Put [[send:/absolute/path]] alone on a line and that file is delivered as an attachment and the marker removed from your reply — use it for screenshots, generated charts, diffs too long to read as text, or any file they ask for. Files they send you arrive as local paths in the message; read them like any other file.
+
 You are running headless. There is no interactive terminal. A status message shows the person a one-line summary of each tool call as you work, so they can see that something is happening, but your reasoning is not shown and the reply is what they will actually read — write it as though it stands alone.`;
 
 const DEFAULT_GROUP_SYSTEM_PROMPT = `This is a group chat. Everyone in the room reads your replies, but only the person who tagged you is asking — answer them, and don't address the room at large. Earlier messages from other people are given to you as context.
@@ -94,6 +96,27 @@ export const config = {
     // exiting anyway. The pod's terminationGracePeriodSeconds is the real
     // ceiling; being SIGKILLed mid-send is a normal outcome here.
     shutdownGraceMs: envInt("GW_SHUTDOWN_GRACE_SECONDS", 5) * 1000,
+  },
+
+  attachments: {
+    // Photos in, files out. A phone's camera is the fastest way to show the
+    // workspace an error on a screen, and a rendered chart or screenshot is
+    // the one kind of answer this surface could never give.
+    enabled: (process.env.GW_ATTACHMENTS_ENABLED ?? "true") === "true",
+    // Where inbound media is saved for claude to Read. Under the PVC's cache
+    // rather than a repo: these are conversation artefacts, not source.
+    inboxDir:
+      process.env.GW_ATTACHMENT_DIR ??
+      path.join(home, ".cache/messaging-gateway/inbox"),
+    // Both directions. Signal's own ceiling is ~100MB and WhatsApp's ~16MB for
+    // media, but this is a phone on a bad connection — the constraint is the
+    // link, not the protocol.
+    maxBytes: envInt("GW_ATTACHMENT_MAX_MB", 8) * 1024 * 1024,
+    // Where signal-cli drops what it downloads. Inbound attachments are named
+    // by id there, sometimes with an extension appended.
+    signalStore:
+      process.env.GW_SIGNAL_ATTACHMENT_DIR ??
+      path.join(home, ".local/share/signal-cli/attachments"),
   },
 
   defaultCwd: process.env.GW_DEFAULT_CWD ?? path.join(home, "code/selfhosted"),

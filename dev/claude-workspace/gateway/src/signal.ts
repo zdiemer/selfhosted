@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { importSignalAttachment } from "./attachments.ts";
 import { config } from "./config.ts";
 import {
   handleInbound,
@@ -61,6 +62,7 @@ interface Envelope {
       targetSentTimestamp?: number;
       isRemove?: boolean;
     };
+    attachments?: { id?: string; filename?: string; contentType?: string }[];
     mentions?: Mention[];
     quote?: { author?: string; authorUuid?: string; authorNumber?: string };
     groupInfo?: { groupId?: string };
@@ -152,7 +154,9 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
     }
     return;
   }
-  if (!msg?.message) return; // no receipts/typing events
+  // A photo with no caption is still someone showing you something.
+  if (!msg?.message && !(config.attachments.enabled && msg?.attachments?.length))
+    return; // no receipts/typing events
 
   const groupId = msg.groupInfo?.groupId;
   if (groupId && !config.groups.enabled) return;
@@ -178,7 +182,15 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
   if (allowed && mentioned && env?.timestamp)
     void sendReadReceipt(sender, env.timestamp);
 
-  handleInbound(chatKey, msg.message, {
+  const files = config.attachments.enabled
+    ? (msg.attachments ?? [])
+        .map((a) =>
+          a.id ? importSignalAttachment(chatKey, a.id, a.filename) : undefined,
+        )
+        .filter((f): f is string => Boolean(f))
+    : [];
+
+  handleInbound(chatKey, msg.message ?? "", {
     sender: env?.sourceName || sender,
     allowed,
     owner,
@@ -189,6 +201,7 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
     ref: env?.timestamp
       ? ({ ts: env.timestamp, author: env.sourceUuid ?? sender } as SignalRef)
       : undefined,
+    files,
   });
 }
 
@@ -290,6 +303,16 @@ export function startSignal(): void {
     },
     refId(ref) {
       return String((ref as SignalRef).ts);
+    },
+    async sendFile(chatKey, file, caption) {
+      // signal-cli's `send --attachment`; the caption rides along as the
+      // message body, which is how Signal renders it.
+      await rpc("send", {
+        account: config.signal.number,
+        message: caption,
+        attachment: [file],
+        ...addressOf(chatKey),
+      });
     },
     async edit(chatKey, target, text) {
       // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL

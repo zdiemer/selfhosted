@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { startApprovalServer } from "./approvals.ts";
 import { config } from "./config.ts";
+import { pruneInbox } from "./attachments.ts";
 import { announceRestart, installShutdownHandler } from "./restart.ts";
 import { markReady, registerTransport, sendTo } from "./transport.ts";
 import { startSignal } from "./signal.ts";
@@ -10,10 +11,15 @@ import { startWhatsApp } from "./whatsapp.ts";
 
 fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
 fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
+// The inbox is a cache of what people sent, not an archive; a week is plenty
+// to still be talking about a photo.
+if (config.attachments.enabled) pruneInbox();
 
 // Approval prompts go out through whichever transport owns the chat. Exits
 // rather than start if another gateway already owns the socket.
-await startApprovalServer((chatKey, text) => void sendTo(chatKey, text));
+// Returns the promise rather than discarding it: the handle on the prompt
+// message is what lets a 👍 on that message answer it.
+await startApprovalServer((chatKey, text) => sendTo(chatKey, text));
 
 if (config.signal.enabled) {
   if (!config.signal.number || config.signal.allowedSenders.length === 0) {
@@ -53,6 +59,10 @@ if (process.env.GW_STDIN === "true") {
     async edit(_chatKey, target, text) {
       console.log(`\n<<< [edit #${target}] ${text}`);
     },
+    async sendFile(_chatKey, file, caption) {
+      console.log(`\n<<< [file ${file}]${caption ? ` ${caption}` : ""}`);
+    },
+    refId: (ref) => String(ref),
   });
   markReady("stdin");
   process.stdin.setEncoding("utf8");

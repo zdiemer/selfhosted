@@ -1,12 +1,14 @@
 import path from "node:path";
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   type WAMessage,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
+import { saveInbound } from "./attachments.ts";
 import { config } from "./config.ts";
 import { handleInbound, handleReaction, matchesAllowlist } from "./router.ts";
 import { markReady, registerTransport } from "./transport.ts";
@@ -25,6 +27,45 @@ import { markReady, registerTransport } from "./transport.ts";
 let sock: WASocket | null = null;
 
 const jidOf = (chatKey: string): string => chatKey.slice("wa:".length);
+
+/** WhatsApp gives a mimetype and no name for a camera photo; claude reads by
+ * extension, so give the file one. */
+const MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".csv": "text/csv",
+  ".svg": "image/svg+xml",
+  ".zip": "application/zip",
+  ".mp4": "video/mp4",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
+};
+
+function mimetypeFor(file: string): string {
+  return MIME_BY_EXT[file.slice(file.lastIndexOf(".")).toLowerCase()] ?? "";
+}
+
+function extensionFor(mimetype?: string | null): string {
+  const map: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "application/pdf": ".pdf",
+    "audio/ogg": ".ogg",
+    "audio/mpeg": ".mp3",
+    "video/mp4": ".mp4",
+    "text/plain": ".txt",
+  };
+  return map[(mimetype ?? "").split(";")[0]] ?? "";
+}
 
 /** Did this message actually tag the bot? Structured address only: a real
  * @-mention, or a reply to one of the bot's own messages. A name match in the
@@ -75,6 +116,25 @@ export async function startWhatsApp(): Promise<void> {
       await sock.sendMessage(jidOf(chatKey), {
         react: { text: remove ? "" : emoji, key: target as WAMessage["key"] },
       });
+    },
+    async sendFile(chatKey, file, caption) {
+      if (!sock) throw new Error("whatsapp not connected");
+      // WhatsApp renders these very differently: an image inline, anything
+      // else as a file card. Sending a screenshot as a document would defeat
+      // the point of sending it at all.
+      const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
+      const image = [".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(ext);
+      await sock.sendMessage(
+        jidOf(chatKey),
+        image
+          ? { image: { url: file }, caption: caption || undefined }
+          : {
+              document: { url: file },
+              mimetype: mimetypeFor(file) || "application/octet-stream",
+              fileName: file.slice(file.lastIndexOf("/") + 1),
+              caption: caption || undefined,
+            },
+      );
     },
     refId(ref) {
       return (ref as WAMessage["key"]).id ?? undefined;
@@ -211,9 +271,17 @@ async function connect(): Promise<void> {
         skip("group not allowlisted");
         continue;
       }
+      const media =
+        m.message?.imageMessage ??
+        m.message?.documentMessage ??
+        m.message?.videoMessage ??
+        m.message?.audioMessage;
       const text =
-        m.message?.conversation ?? m.message?.extendedTextMessage?.text;
-      if (!text) {
+        m.message?.conversation ??
+        m.message?.extendedTextMessage?.text ??
+        (media as { caption?: string } | undefined)?.caption ??
+        "";
+      if (!text && !(config.attachments.enabled && media)) {
         // Also where an undecryptable message lands: Baileys still emits it,
         // with no plaintext to read.
         skip("no text payload");
@@ -249,15 +317,33 @@ async function connect(): Promise<void> {
       // Only acknowledge what the bot will act on — in a group, mentions only.
       if (mentioned) void markRead(m.key);
 
-      handleInbound(`wa:${jid}`, text, {
-        sender: m.pushName || ids[0] || "unknown",
-        allowed,
-        owner,
-        mentioned,
-        // Same key the read receipt above is addressed to; a reaction on the
-        // sender's message needs it.
-        ref: m.key,
-      });
+      // Downloading is async and the upsert handler is not, so the run starts
+      // once the bytes are on disk rather than racing them.
+      void (async () => {
+        const files: string[] = [];
+        if (config.attachments.enabled && media && mentioned) {
+          try {
+            const data = (await downloadMediaMessage(m, "buffer", {})) as Buffer;
+            const name =
+              (media as { fileName?: string }).fileName ??
+              `${m.key.id ?? "media"}${extensionFor(media.mimetype)}`;
+            const saved = saveInbound(`wa:${jid}`, name, data);
+            if (saved) files.push(saved);
+          } catch (err) {
+            console.warn(`wa: media download failed: ${(err as Error).message}`);
+          }
+        }
+        handleInbound(`wa:${jid}`, text, {
+          sender: m.pushName || ids[0] || "unknown",
+          allowed,
+          owner,
+          mentioned,
+          // Same key the read receipt above is addressed to; a reaction on the
+          // sender's message needs it.
+          ref: m.key,
+          files,
+        });
+      })();
     }
   });
 }

@@ -450,6 +450,10 @@ spec:
               value: {{ .Values.messaging.bash.maxOutputChars | quote }}
             - name: GW_USAGE_DAYS
               value: {{ .Values.messaging.usageDays | quote }}
+            - name: GW_ATTACHMENTS_ENABLED
+              value: {{ .Values.messaging.attachments.enabled | quote }}
+            - name: GW_ATTACHMENT_MAX_MB
+              value: {{ .Values.messaging.attachments.maxMB | quote }}
             - name: GW_PROGRESS_ENABLED
               value: {{ .Values.messaging.progress.enabled | quote }}
             - name: GW_PROGRESS_EDIT_SECONDS

@@ -289,6 +289,21 @@ messaging:
     # Hard cap on time spent messaging in-flight chats on SIGTERM before
     # exiting anyway. terminationGracePeriodSeconds is the real ceiling.
     shutdownGraceSeconds: 5
+  attachments:
+    # Photos in, files out. A phone camera is the fastest way to show the
+    # workspace an error on a screen, and a rendered chart or a screenshot is
+    # the one kind of answer this surface could never give before.
+    #
+    # Inbound media is saved under ~/.cache/messaging-gateway/inbox and the run
+    # is told the paths, so claude reads them like any other file (the inbox is
+    # pruned to a week at startup — a cache, not an archive). Outbound, claude
+    # puts [[send:/abs/path]] on its own line and the gateway turns that into a
+    # real attachment; the marker is honoured in 1:1 chats only, since a group
+    # can steer text and the marker is parsed from text.
+    enabled: true
+    # Both directions. Well under what either network allows, because the
+    # binding constraint is a phone on a bad connection, not the protocol.
+    maxMB: 8
   # Appended to Claude Code's own system prompt — it teaches the run that the
   # far end is a phone (plain text, no Markdown, short replies). Leave empty to
   # use the gateway's built-in default; set it here to override entirely.

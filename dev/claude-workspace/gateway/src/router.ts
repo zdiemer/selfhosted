@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { attachmentPreamble, extractSendMarkers } from "./attachments.ts";
 import {
   answerPending,
   hasPending,
@@ -37,6 +38,7 @@ import { createStatus, type Status } from "./status.ts";
 import {
   type MsgRef,
   overflowSize,
+  sendFileTo,
   reactTo,
   refIdOf,
   sendReply,
@@ -62,6 +64,8 @@ const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 interface Queued {
   body: string;
   ref?: MsgRef;
+  /** Paths of files that came with this message. */
+  files?: string[];
   /** Already told the sender it is waiting on the global concurrency cap, so
    * the 3s re-check doesn't re-send the same reaction every time round. */
   waiting?: boolean;
@@ -100,6 +104,8 @@ export interface InboundMeta {
   owner: boolean;
   /** The bot was tagged in this message (groups only). */
   mentioned: boolean;
+  /** Absolute paths of files that came with this message, already saved. */
+  files?: string[];
   /** Handle on the inbound message itself, for reacting to it. Both transports
    * already hold this (it is what the read receipt is addressed to); it is
    * optional only so a surface without message ids stays valid. */
@@ -142,7 +148,9 @@ export function handleInbound(
   meta: InboundMeta,
 ): void {
   const body = text.trim();
-  if (!body) return;
+  // A photo with no caption is still a message; only a genuinely empty one
+  // (a receipt, a reaction we don't act on) is nothing.
+  if (!body && !meta.files?.length) return;
 
   if (isGroupChat(chatKey)) {
     // Everything said in the room becomes context, whoever said it — that is
@@ -193,7 +201,7 @@ export function handleInbound(
     void sendTo(chatKey, `⚠ queue full (${config.queueDepth}); message dropped`);
     return;
   }
-  queue.push({ body, ref: meta.ref });
+  queue.push({ body, ref: meta.ref, files: meta.files });
   queues.set(chatKey, queue);
   // 🕒 means "yours is next"; drain() swaps it for 👀 when the run actually
   // starts. That distinction is the whole reason a reaction beats a read
@@ -216,7 +224,7 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const { body: message, ref } = queue[0];
+  const { body: message, ref, files } = queue[0];
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -234,10 +242,18 @@ async function drain(chatKey: string): Promise<void> {
     await status.begin();
   }
   try {
+    // The attachment preamble goes in front of the group context, so the
+    // files are the first thing the run reads about.
+    const preamble = [
+      attachmentPreamble(files ?? []),
+      group ? takeGroupContext(chatKey) : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const result = await runClaude(
       chatKey,
-      message,
-      group ? takeGroupContext(chatKey) : "",
+      message || "(the user sent this with no caption)",
+      preamble,
       status ? (ev) => status.onEvent(ev) : undefined,
     );
     // Collapse the status before the answer lands, so the thread reads
@@ -251,8 +267,16 @@ async function drain(chatKey: string): Promise<void> {
     // A group reply is just an answer in a conversation — the cwd/session/auto
     // banner is workspace bookkeeping and means nothing to the other people in
     // the room, so it stays on the 1:1 surface.
+    // Only a 1:1 honours a send marker. In a group the members are not on the
+    // personal allowlist and claude has no filesystem there anyway — but the
+    // marker is parsed from text, and text is the one thing a room can steer.
+    const outbound =
+      config.attachments.enabled && !group
+        ? extractSendMarkers(result.text)
+        : { text: result.text, files: [], problems: [] };
+
     if (group) {
-      await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
+      await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);
     } else {
       const chat = getChat(chatKey);
       const prefix = replyPrefix(
@@ -263,9 +287,16 @@ async function drain(chatKey: string): Promise<void> {
       );
       await sendReply(
         chatKey,
-        `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
+        `${prefix}${result.isError ? " ⚠" : ""}\n${outbound.text}`,
       );
     }
+    // After the text, so the words arrive first on a slow link.
+    for (const file of outbound.files) {
+      const err = await sendFileTo(chatKey, file);
+      if (err) outbound.problems.push(`⚠ couldn't send ${file}: ${err}`);
+    }
+    if (outbound.problems.length)
+      await sendTo(chatKey, outbound.problems.join("\n"));
   } catch (err) {
     await status?.replace(`⚠ gateway error`);
     react(chatKey, ref, config.reactions.error);

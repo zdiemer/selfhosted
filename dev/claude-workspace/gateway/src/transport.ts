@@ -36,6 +36,9 @@ export interface Transport {
    * ref we kept, WhatsApp a bare key id — so equality has to be the
    * transport's business, not a deep compare out here. */
   refId?(ref: MsgRef): string | undefined;
+  /** Deliver a file. Optional: a surface without it says so rather than
+   * silently dropping what claude tried to send. */
+  sendFile?(chatKey: string, file: string, caption: string): Promise<void>;
 }
 
 const transports = new Map<string, Transport>();
@@ -190,6 +193,24 @@ export async function editMsg(
 export function refIdOf(chatKey: string, ref: MsgRef | undefined): string | undefined {
   if (ref === undefined) return undefined;
   return transportFor(chatKey)?.refId?.(ref);
+}
+
+/** Deliver a file, reporting rather than swallowing a failure — an attachment
+ * that never arrives with no word is worse than an error message. */
+export async function sendFileTo(
+  chatKey: string,
+  file: string,
+  caption = "",
+): Promise<string | undefined> {
+  const t = transportFor(chatKey);
+  if (!t) return "no transport";
+  if (!t.sendFile) return "this surface can't send files";
+  try {
+    await t.sendFile(chatKey, file, caption);
+    return undefined;
+  } catch (err) {
+    return (err as Error).message;
+  }
 }
 
 export function canEdit(chatKey: string): boolean {

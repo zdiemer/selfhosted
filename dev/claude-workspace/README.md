@@ -338,9 +338,17 @@ without re-pairing.
 `!new` / `!clear` fresh session · `!resume [id]` continue the newest session for
 the current cwd (this is the cross-surface handoff — start in tmux, `!resume`
 from the plane) · `!cwd <repo|path>` switch repo (bare names resolve under
-`~/code/`) · `!auto on|off` per-chat auto mode (`--permission-mode
-bypassPermissions` — no prompts at all; turn it off when you land) ·
-`!plan [on|off]` per-chat plan mode (`--permission-mode plan` — claude
+`~/code/`) · `!auto <30m|2h>` per-chat auto mode with an expiry (`--permission-mode
+bypassPermissions` — no prompts at all). Prefer the duration: bare `!auto on`
+still works and is still open-ended, but what it grants is unprompted root in
+a cluster-admin pod, and a standing grant outlives the reason it was given.
+Expiry is checked at every use, not swept by a timer, and the lapse is
+announced rather than just quietly prompting again ·
+`!more` the rest of a reply that was cut short (the four-chunk cap keeps a
+runaway answer off a metered link, but the remainder is now kept rather than
+discarded, and paging chains) · `!use <name>` / `!sessions` several named
+threads in one chat, since there is only one chat with the bot and switching
+context used to destroy the old thread · `!plan [on|off]` per-chat plan mode (`--permission-mode plan` — claude
 researches and proposes, never edits; bare `!plan` turns it on, and it clears
 `!auto`, which is the opposite instruction) ·
 `!model opus|sonnet|haiku|fable|<id>|default` · `!effort
@@ -383,6 +391,22 @@ While a run is going, three things say so, in increasing order of detail:
   while it waits behind another run in the same chat, then ✅ or ❌.
   `messaging.reactions.*` turns this off or changes the emoji — it is the one
   part of this that shows up in a group whether the room asked or not.
+- Reactions go the other way too: **answer a permission prompt by reacting to
+  it** — 👍 allow, 👎 deny, 💯 allow all. Typing 1/2/3 is ambiguous once two
+  prompts are open; a reaction names the message it answers. It needs the same
+  credential as a `!` command, must be on the prompt itself, and an emoji
+  outside that vocabulary does nothing — a reaction can never start a run or
+  reach claude.
+- **Attachments** work both ways (`messaging.attachments`). Photograph an
+  error on a screen and send it: the media is saved under
+  `~/.cache/messaging-gateway/inbox` (pruned to a week at startup — a cache,
+  not an archive) and the run is told the paths, so claude reads it like any
+  other file. Coming back, claude puts `[[send:/abs/path]]` alone on a line and
+  the gateway strips the marker and delivers the file — a screenshot, a
+  rendered chart, a diff too long to read as text. Signal takes it as
+  `send --attachment`; WhatsApp renders images inline and everything else as a
+  document. Honoured in 1:1 chats only: the marker is parsed from text, and
+  text is the one thing a room can steer.
 - In a 1:1, a **status message** is sent when the run starts and edited in
   place as tool calls land (`Bash: helm upgrade …`, `Read src/router.ts`,
   `waiting for your approval`), collapsing to `✓ done · 14 tools · 1m42s` when
