@@ -18,7 +18,16 @@ import {
 } from "./chat.ts";
 import { config } from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
-import { autoActive, autoExpired, getChat, updateChat } from "./state.ts";
+import {
+  autoActive,
+  autoExpired,
+  DEFAULT_SESSION,
+  getChat,
+  listSessions,
+  sessionName,
+  switchSession,
+  updateChat,
+} from "./state.ts";
 import { createStatus, type Status } from "./status.ts";
 import {
   type MsgRef,
@@ -210,7 +219,12 @@ async function drain(chatKey: string): Promise<void> {
       await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
     } else {
       const chat = getChat(chatKey);
-      const prefix = replyPrefix(chat.cwd, chat.sessionId, chatMode(chatKey));
+      const prefix = replyPrefix(
+        chat.cwd,
+        chat.sessionId,
+        chatMode(chatKey),
+        sessionName(chat),
+      );
       await sendReply(
         chatKey,
         `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
@@ -401,6 +415,35 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         killed.length ? `✓ sent SIGTERM to ${killed.join(" + ")}` : "nothing running",
       );
     }
+    case "!use": {
+      if (!arg)
+        return sendTo(
+          chatKey,
+          `session: ${sessionName(chat)}\nusage: !use <name> — switch or start a thread`,
+        );
+      // One word, so a name can't be confused with the rest of a command.
+      const name = arg.split(/\s+/)[0];
+      if (!/^[\w-]{1,24}$/.test(name))
+        return sendTo(chatKey, "usage: !use <name> (letters, digits, - or _)");
+      const { resumed } = switchSession(chatKey, name);
+      return sendTo(
+        chatKey,
+        resumed
+          ? `✓ back on "${name}" — it picks up where it left off`
+          : `✓ started "${name}" — a fresh thread; the old one is parked`,
+      );
+    }
+    case "!sessions": {
+      const lines = listSessions(chat).map(
+        (s) =>
+          `${s.current ? "▸" : " "} ${s.name}` +
+          (s.sessionId ? ` · ${s.sessionId.slice(0, 6)}` : " · (new)"),
+      );
+      return sendTo(
+        chatKey,
+        [...lines, "!use <name> to switch or start one"].join("\n"),
+      );
+    }
     case "!more": {
       const rest = takeOverflow(chatKey);
       if (!rest) return sendTo(chatKey, "nothing more to show");
@@ -414,7 +457,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         chatKey,
         [
           `cwd: ${chat.cwd}`,
-          `session: ${chat.sessionId ?? "(none)"}`,
+          `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
           isGroupChat(chatKey)
             ? `group: tools limited to ${config.groups.allowedTools}`
@@ -432,6 +475,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
           "!auto takes a duration too: !auto 30m, !auto 2h\n" +
           "!more shows the rest of a reply that was cut short\n" +
+          "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +
           "A ❓ question takes a number or your own words · a 📋 plan takes " +

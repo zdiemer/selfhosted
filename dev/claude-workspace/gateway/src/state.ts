@@ -10,6 +10,12 @@ export interface ChatState {
    * researches and proposes instead of editing. Mutually exclusive with auto:
    * one says "don't touch anything", the other "don't ask". */
   plan?: boolean;
+  /** Name of the session `sessionId` currently belongs to. Unset means the
+   * default one, which is what every chat had before named sessions existed. */
+  session?: string;
+  /** Parked sessions by name, so one chat can hold several threads at once.
+   * The CURRENT one lives in `sessionId`; this is everything else. */
+  sessions?: Record<string, string>;
   /** Epoch ms at which `auto` lapses back to prompting. Unset means auto is
    * open-ended, which is what `!auto on` still gives you. */
   autoUntil?: number;
@@ -72,6 +78,52 @@ export function updateChat(
   all[chatKey] = next;
   save();
   return next;
+}
+
+export const DEFAULT_SESSION = "main";
+
+export function sessionName(chat: ChatState): string {
+  return chat.session ?? DEFAULT_SESSION;
+}
+
+/**
+ * Park the current session under its name and make `name` current. Switching
+ * to a name that has never been used starts a fresh thread rather than
+ * erroring — naming it is how you create it.
+ *
+ * Only one id is ever "live" (`sessionId`); the map holds the parked ones. The
+ * alternative, keeping every id in the map and a pointer beside it, would mean
+ * two places to keep in step every time a run writes a new session id.
+ */
+export function switchSession(
+  chatKey: string,
+  name: string,
+): { resumed: boolean } {
+  const chat = getChat(chatKey);
+  const from = sessionName(chat);
+  if (from === name) return { resumed: Boolean(chat.sessionId) };
+
+  const sessions = { ...(chat.sessions ?? {}) };
+  if (chat.sessionId) sessions[from] = chat.sessionId;
+  else delete sessions[from];
+
+  const target = sessions[name];
+  delete sessions[name]; // it is the live one now, not a parked one
+  updateChat(chatKey, { session: name, sessionId: target, sessions });
+  return { resumed: Boolean(target) };
+}
+
+/** Every session this chat holds, current first. */
+export function listSessions(
+  chat: ChatState,
+): { name: string; sessionId?: string; current: boolean }[] {
+  const current = sessionName(chat);
+  return [
+    { name: current, sessionId: chat.sessionId, current: true },
+    ...Object.entries(chat.sessions ?? {})
+      .filter(([name]) => name !== current)
+      .map(([name, sessionId]) => ({ name, sessionId, current: false })),
+  ];
 }
 
 /**

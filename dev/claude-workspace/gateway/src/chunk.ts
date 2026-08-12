@@ -1,3 +1,5 @@
+import { DEFAULT_SESSION } from "./state.ts";
+
 // Chunking for low-bandwidth surfaces: split on line boundaries, cap the
 // number of chunks so a runaway response can't flood a metered connection.
 const MAX_CHUNKS = 4;
@@ -37,8 +39,12 @@ export function replyPrefix(
   cwd: string,
   sessionId: string | undefined,
   mode: string,
+  session = "",
 ): string {
   const repo = cwd.split("/").filter(Boolean).pop() ?? cwd;
   const sid = sessionId ? sessionId.slice(0, 6) : "new";
-  return `[${repo} · ${sid}${mode ? ` · ${mode}` : ""}]`;
+  // Name the thread only when there is more than one to confuse it with —
+  // "main" on every reply is noise.
+  const named = session && session !== DEFAULT_SESSION ? `${session}/` : "";
+  return `[${repo} · ${named}${sid}${mode ? ` · ${mode}` : ""}]`;
 }
