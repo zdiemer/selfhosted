@@ -4,6 +4,7 @@ import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 import { updateChat } from "./state.ts";
+import type { MsgRef } from "./transport.ts";
 
 // The approve-mcp stdio server (grandchild of this process, via claude) dials
 // this unix socket with {chatKey, toolName, input} and blocks until the human
@@ -38,6 +39,10 @@ export interface PendingApproval {
   answers?: Record<string, string>;
   /** How many questions there were to begin with, for the "(2/3)" counter. */
   total?: number;
+  /** The prompt message itself, so a reaction ON IT can answer it. Re-recorded
+   * for each question of a multi-question ask, so a 👍 always answers the
+   * question actually on screen. */
+  promptRef?: MsgRef;
 }
 
 export type PromptKind = "tool" | "question" | "plan";
@@ -52,12 +57,31 @@ const pending = new Map<string, PendingApproval>();
 // lifetime (in-memory; resets on pod restart, which is the safe direction).
 const autoApproved = new Map<string, Set<string>>();
 
-export type ApprovalPrompt = (chatKey: string, text: string) => void;
+export type ApprovalPrompt = (
+  chatKey: string,
+  text: string,
+) => Promise<MsgRef | undefined> | void;
 
 // Set once the server starts. A multi-question AskUserQuestion has to send the
 // next question from inside answerPending(), which the router calls.
 let prompt: ApprovalPrompt = () => {};
 let server: net.Server | null = null;
+
+/** Send a prompt and remember which message it is, so a reaction on that
+ * message can answer it. Fire-and-forget: the send is async, the caller is
+ * not, and a lost ref only costs the reaction shortcut. */
+function ask(chatKey: string, text: string): void {
+  void (async () => {
+    const ref = await prompt(chatKey, text);
+    const p = pending.get(chatKey);
+    if (p && ref !== undefined) p.promptRef = ref;
+  })();
+}
+
+/** The message the open prompt was sent as, for matching an inbound reaction. */
+export function pendingPromptRef(chatKey: string): MsgRef | undefined {
+  return pending.get(chatKey)?.promptRef;
+}
 
 export function hasPending(chatKey: string): boolean {
   return pending.has(chatKey);
@@ -151,7 +175,7 @@ function answerQuestion(
     // More to ask: keep the approval open and send the next one.
     pending.set(chatKey, { ...p, queue: rest, answers });
     const total = p.total ?? queue.length;
-    prompt(chatKey, renderQuestion(rest[0], total - rest.length, total));
+    ask(chatKey, renderQuestion(rest[0], total - rest.length, total));
     return true;
   }
 
@@ -371,18 +395,19 @@ function handleRequest(
   });
 
   if (questions.length) {
-    sendPrompt(req.chatKey, renderQuestion(questions[0], 0, questions.length));
+    ask(req.chatKey, renderQuestion(questions[0], 0, questions.length));
     return;
   }
   if (kind === "plan") {
-    sendPrompt(req.chatKey, renderPlan(planTextOf(req.input)));
+    ask(req.chatKey, renderPlan(planTextOf(req.input)));
     return;
   }
 
-  sendPrompt(
+  ask(
     req.chatKey,
     `Claude wants: ${describeTool(req.toolName, req.input)}\n` +
-      `Reply 1 allow · 2 deny · 3 allow all ${req.toolName} this session`,
+      `Reply 1 allow · 2 deny · 3 allow all ${req.toolName} this session\n` +
+      `(or react 👍 allow · 👎 deny · 💯 allow all)`,
   );
 }
 
@@ -405,4 +430,25 @@ function planTextOf(input: unknown): string {
   return typeof plan === "string" && plan.trim()
     ? plan
     : "(claude wrote the plan to its plan file — ask it to show the plan if you need it here)";
+}
+
+// ---------------------------------------------------------------------------
+// Answering by reaction
+// ---------------------------------------------------------------------------
+
+/**
+ * The digit a reaction stands for, or "" if the emoji means nothing here.
+ *
+ * Typing 1/2/3 is fine until two prompts are open, when the digit is ambiguous
+ * and the wrong one gets answered. A reaction names the message it answers, so
+ * it can't be misrouted — and on a phone it is one tap instead of a keyboard.
+ */
+export function reactionAnswer(emoji: string): string {
+  // Skin-tone modifiers and the variation selector are presentation, not
+  // meaning: 👍🏽 and 👍️ are the same answer as 👍.
+  const bare = emoji.replace(/[\u{1F3FB}-\u{1F3FF}️‍]/gu, "");
+  if (["👍", "✅", "☑", "👌", "🆗"].includes(bare)) return "1";
+  if (["👎", "❌", "✖", "🚫", "⛔"].includes(bare)) return "2";
+  if (["💯", "♾", "🔁", "🔂"].includes(bare)) return "3";
+  return "";
 }

@@ -8,7 +8,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.ts";
-import { handleInbound, matchesAllowlist } from "./router.ts";
+import { handleInbound, handleReaction, matchesAllowlist } from "./router.ts";
 import { markReady, registerTransport } from "./transport.ts";
 
 // Baileys speaks the real WhatsApp Web protocol over an outbound websocket —
@@ -75,6 +75,9 @@ export async function startWhatsApp(): Promise<void> {
       await sock.sendMessage(jidOf(chatKey), {
         react: { text: remove ? "" : emoji, key: target as WAMessage["key"] },
       });
+    },
+    refId(ref) {
+      return (ref as WAMessage["key"]).id ?? undefined;
     },
     async edit(chatKey, target, text) {
       if (!sock) throw new Error("whatsapp not connected");
@@ -169,6 +172,26 @@ async function connect(): Promise<void> {
       }
       if (m.key.fromMe) {
         skip("own message");
+        continue;
+      }
+      // A reaction on one of OUR messages answers an open permission prompt.
+      // It arrives as an ordinary upsert whose payload is a reactionMessage,
+      // so it has to be handled before the "no text payload" skip below.
+      const reaction = m.message?.reactionMessage;
+      if (reaction?.text && reaction.key?.fromMe && reaction.key.id) {
+        const rk = m.key as unknown as Record<string, string | undefined>;
+        const rbare = (j?: string): string =>
+          (j ?? "").replace(/:.*$/, "").replace(/@.*$/, "");
+        const rids = (
+          jid.endsWith("@g.us")
+            ? [rk.participant, rk.participantPn, rk.participantAlt]
+            : [rk.remoteJid, rk.senderPn, rk.remoteJidAlt]
+        )
+          .map(rbare)
+          .filter(Boolean);
+        handleReaction(`wa:${jid}`, reaction.key.id, reaction.text, {
+          owner: matchesAllowlist(rids, config.whatsapp.allowedSenders),
+        });
         continue;
       }
       const group = jid.endsWith("@g.us");

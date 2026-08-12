@@ -10,14 +10,32 @@ import {
   type Verdict,
 } from "../src/approvals.ts";
 import { approvalSocketPath } from "../src/config.ts";
+import { handleReaction } from "../src/router.ts";
 import { getChat, updateChat } from "../src/state.ts";
+import { registerTransport } from "../src/transport.ts";
 
 // Prompts the gateway would have sent to the phone.
 const sent: { chatKey: string; text: string }[] = [];
 const last = () => sent[sent.length - 1]?.text ?? "";
 
+// Prompts go out as real messages here, because answering one by reaction
+// depends on knowing which message the prompt WAS.
+let msgId = 0;
+registerTransport("rx", {
+  chunkLimit: 4000,
+  async send() {
+    return ++msgId;
+  },
+  refId: (ref) => String(ref),
+});
+
 beforeAll(async () => {
-  await startApprovalServer((chatKey, text) => sent.push({ chatKey, text }));
+  await startApprovalServer((chatKey, text) => {
+    sent.push({ chatKey, text });
+    return chatKey.startsWith("rx:")
+      ? Promise.resolve(++msgId as unknown as number)
+      : undefined;
+  });
 });
 
 afterAll(() => {
@@ -205,4 +223,54 @@ test("plainText strips what the surface cannot render", () => {
   expect(plainText("## H\n\n**bold** and `code`\n- item")).toBe(
     "H\n\nbold and code\n• item",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Answering by reaction
+// ---------------------------------------------------------------------------
+
+const OWNER = { owner: true };
+
+test("a 👍 on the prompt allows it", async () => {
+  const verdict = ask("rx:1", "Bash", { command: "ls" });
+  await nextPrompt();
+  // The prompt is the most recent message this transport sent.
+  handleReaction("rx:1", String(msgId), "👍", OWNER);
+  expect((await verdict).behavior).toBe("allow");
+});
+
+test("a 👎 on the prompt denies it", async () => {
+  const verdict = ask("rx:2", "Bash", { command: "rm -rf /" });
+  await nextPrompt();
+  handleReaction("rx:2", String(msgId), "👎", OWNER);
+  expect((await verdict).behavior).toBe("deny");
+});
+
+test("a reaction on some other message does not answer the prompt", async () => {
+  const verdict = ask("rx:3", "Bash", { command: "ls" });
+  await nextPrompt();
+  const promptId = String(msgId);
+
+  // 👍 on an older message — must not approve whatever happens to be pending.
+  handleReaction("rx:3", String(Number(promptId) - 1), "👍", OWNER);
+  // A non-owner reacting on the right message — same credential as a ! command.
+  handleReaction("rx:3", promptId, "👍", { owner: false });
+  // An emoji that means nothing here.
+  handleReaction("rx:3", promptId, "😂", OWNER);
+
+  let settled = false;
+  void verdict.then(() => (settled = true));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(settled).toBe(false);
+
+  // The real one still works afterwards.
+  handleReaction("rx:3", promptId, "👍", OWNER);
+  expect((await verdict).behavior).toBe("allow");
+});
+
+test("typing the digit still works", async () => {
+  const verdict = ask("rx:4", "Bash", { command: "ls" });
+  await nextPrompt();
+  expect(answerPending("rx:4", "2")).toBe(true);
+  expect((await verdict).behavior).toBe("deny");
 });

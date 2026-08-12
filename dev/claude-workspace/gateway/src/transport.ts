@@ -30,6 +30,12 @@ export interface Transport {
     remove?: boolean,
   ): Promise<void>;
   edit?(chatKey: string, target: MsgRef, text: string): Promise<void>;
+  /** A stable string identity for a ref, so an inbound reaction can be matched
+   * against the outbound message it points at. The two arrive in different
+   * shapes on both networks — Signal gives a target timestamp rather than the
+   * ref we kept, WhatsApp a bare key id — so equality has to be the
+   * transport's business, not a deep compare out here. */
+  refId?(ref: MsgRef): string | undefined;
 }
 
 const transports = new Map<string, Transport>();
@@ -178,6 +184,12 @@ export async function editMsg(
     console.warn(`edit failed on ${chatKey}: ${(err as Error).message}`);
     return false;
   }
+}
+
+/** Identity of a ref on its own surface, for matching inbound reactions. */
+export function refIdOf(chatKey: string, ref: MsgRef | undefined): string | undefined {
+  if (ref === undefined) return undefined;
+  return transportFor(chatKey)?.refId?.(ref);
 }
 
 export function canEdit(chatKey: string): boolean {

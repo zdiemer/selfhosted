@@ -2,7 +2,12 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { config } from "./config.ts";
-import { handleInbound, isAllowed, matchesAllowlist } from "./router.ts";
+import {
+  handleInbound,
+  handleReaction,
+  isAllowed,
+  matchesAllowlist,
+} from "./router.ts";
 import { markReady, registerTransport } from "./transport.ts";
 
 /** Signal addresses a message by (author, sent timestamp) — a reaction needs
@@ -48,6 +53,14 @@ interface Envelope {
   timestamp?: number;
   dataMessage?: {
     message?: string;
+    reaction?: {
+      emoji?: string;
+      targetAuthor?: string;
+      targetAuthorNumber?: string;
+      targetAuthorUuid?: string;
+      targetSentTimestamp?: number;
+      isRemove?: boolean;
+    };
     mentions?: Mention[];
     quote?: { author?: string; authorUuid?: string; authorNumber?: string };
     groupInfo?: { groupId?: string };
@@ -114,7 +127,32 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
   // Reply to the number when there is one (it keeps logs and !status readable),
   // otherwise the UUID — signal-cli accepts either as a recipient.
   const sender = ids[0];
-  if (!msg?.message || !sender) return; // no receipts/typing events
+  if (!sender) return;
+
+  // A reaction on one of our own messages is the only non-text envelope this
+  // gateway acts on — it answers an open permission prompt. Everything else
+  // (receipts, typing) is still dropped.
+  const reaction = msg?.reaction;
+  if (reaction?.emoji && !reaction.isRemove) {
+    const target = reaction.targetSentTimestamp;
+    const targetIsUs =
+      reaction.targetAuthorNumber === config.signal.number ||
+      (Boolean(selfUuid) &&
+        (reaction.targetAuthorUuid === selfUuid ||
+          reaction.targetAuthor === selfUuid)) ||
+      reaction.targetAuthor === config.signal.number;
+    if (target && targetIsUs) {
+      const groupId = msg?.groupInfo?.groupId;
+      handleReaction(
+        groupId ? `signal:g:${groupId}` : `signal:${sender}`,
+        String(target),
+        reaction.emoji,
+        { owner: matchesAllowlist(ids, config.signal.allowedSenders) },
+      );
+    }
+    return;
+  }
+  if (!msg?.message) return; // no receipts/typing events
 
   const groupId = msg.groupInfo?.groupId;
   if (groupId && !config.groups.enabled) return;
@@ -249,6 +287,9 @@ export function startSignal(): void {
         ...(remove ? { remove: true } : {}),
         ...addressOf(chatKey),
       });
+    },
+    refId(ref) {
+      return String((ref as SignalRef).ts);
     },
     async edit(chatKey, target, text) {
       // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL

@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { answerPending, hasPending } from "./approvals.ts";
+import {
+  answerPending,
+  hasPending,
+  pendingPromptRef,
+  reactionAnswer,
+} from "./approvals.ts";
 import { replyPrefix } from "./chunk.ts";
 import {
   atCapacity,
@@ -33,6 +38,7 @@ import {
   type MsgRef,
   overflowSize,
   reactTo,
+  refIdOf,
   sendReply,
   sendTo,
   takeOverflow,
@@ -98,6 +104,36 @@ export interface InboundMeta {
    * already hold this (it is what the read receipt is addressed to); it is
    * optional only so a surface without message ids stays valid. */
   ref?: MsgRef;
+}
+
+/**
+ * An inbound reaction on one of the bot's own messages. Only one thing
+ * currently answers to this: a 👍/👎 on an open permission prompt.
+ *
+ * Deliberately narrow. A reaction is not a message — it cannot start a run,
+ * change settings or reach claude — so the blast radius is exactly the prompt
+ * that is already on screen waiting for a 1/2/3.
+ */
+export function handleReaction(
+  chatKey: string,
+  targetId: string | undefined,
+  emoji: string,
+  meta: { owner: boolean },
+): void {
+  // Answering a permission prompt is a privileged act, so it takes the same
+  // credential as a `!` command: membership of an allowlisted group is not it.
+  if (!meta.owner || !targetId) return;
+  if (!hasPending(chatKey)) return;
+
+  // The reaction has to be ON the prompt. Otherwise a 👍 on some older message
+  // would silently approve whatever happens to be pending now.
+  const promptId = refIdOf(chatKey, pendingPromptRef(chatKey));
+  if (!promptId || promptId !== targetId) return;
+
+  const answer = reactionAnswer(emoji);
+  if (!answer) return;
+  if (answerPending(chatKey, answer))
+    console.log(`${chatKey}: prompt answered ${answer} by reaction ${emoji}`);
 }
 
 export function handleInbound(
