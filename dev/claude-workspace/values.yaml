@@ -12,6 +12,9 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v13: chat gains `!bash` (a shell command with no model in the loop),
+  #      `!plan` (plan mode per chat), and `!usage` (subscription spend summed
+  #      from the ~/.claude transcripts, since nothing else counts it).
   # v12: WhatsApp accepts LID-addressed DMs and matches every identifier a
   #      sender arrives under; every skip path now says why it skipped.
   # v11: groups are allowlisted by ROOM — every member of a listed group may
@@ -31,7 +34,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v12"
+  tag: "v13"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
