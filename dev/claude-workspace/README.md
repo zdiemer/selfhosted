@@ -403,9 +403,13 @@ While a run is going, three things say so, in increasing order of detail:
   not an archive) and the run is told the paths, so claude reads it like any
   other file. Coming back, claude puts `[[send:/abs/path]]` alone on a line and
   the gateway strips the marker and delivers the file — a screenshot, a
-  rendered chart, a diff too long to read as text. Signal takes it as
-  `send --attachment`; WhatsApp renders images inline and everything else as a
-  document. Honoured in 1:1 chats only: the marker is parsed from text, and
+  rendered chart, a diff too long to read as text. Signal takes it as `send --attachment`, with one wrinkle: the GraalVM native
+  signal-cli build ships no ImageIO/AWT, and signal-cli reaches for them only
+  when an attachment is typed as an image, to read its dimensions — so sending
+  a photo by path fails with `Can't load library: awt`. The gateway retries
+  those as an untyped data URI, which is identical bytes and still previews
+  inline on the phone, just without dimensions attached. WhatsApp renders
+  images inline and everything else as a document. Honoured in 1:1 chats only: the marker is parsed from text, and
   text is the one thing a room can steer.
 - In a 1:1, a **status message** is sent when the run starts and edited in
   place as tool calls land (`Bash: helm upgrade …`, `Read src/router.ts`,

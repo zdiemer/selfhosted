@@ -264,6 +264,21 @@ function connect(): void {
   });
 }
 
+/** Did the send fail purely because this build can't decode images? Narrow on
+ * purpose — anything else is a real failure and must not be retried into a
+ * second delivery. */
+export function isImageProcessingFailure(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? "";
+  return /ImageIO|\bawt\b|UnsatisfiedLinkError/i.test(msg);
+}
+
+/** signal-cli takes `data:<type>;filename=<name>;base64,<data>` in place of a
+ * path, which is the only way to say "don't treat this as an image". */
+function untypedDataUri(file: string): string {
+  const data = fs.readFileSync(file).toString("base64");
+  return `data:application/octet-stream;filename=${path.basename(file)};base64,${data}`;
+}
+
 /** Groups are addressed by groupId, 1:1 by recipient — signal-cli takes one or
  * the other, never both. */
 function addressOf(chatKey: string): Record<string, unknown> {
@@ -307,12 +322,28 @@ export function startSignal(): void {
     async sendFile(chatKey, file, caption) {
       // signal-cli's `send --attachment`; the caption rides along as the
       // message body, which is how Signal renders it.
-      await rpc("send", {
+      const params = {
         account: config.signal.number,
         message: caption,
-        attachment: [file],
         ...addressOf(chatKey),
-      });
+      };
+      try {
+        await rpc("send", { ...params, attachment: [file] });
+      } catch (err) {
+        if (!isImageProcessingFailure(err)) throw err;
+        // The GraalVM native signal-cli build ships no ImageIO/AWT, and
+        // signal-cli only reaches for them when the attachment is typed as an
+        // image — to read its dimensions. Re-send declaring a generic type:
+        // the bytes are identical and Signal still previews it inline, it just
+        // arrives without dimensions attached.
+        console.warn(
+          `signal: no ImageIO in this build; re-sending ${file} untyped`,
+        );
+        await rpc("send", {
+          ...params,
+          attachment: [untypedDataUri(file)],
+        });
+      }
     },
     async edit(chatKey, target, text) {
       // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL
