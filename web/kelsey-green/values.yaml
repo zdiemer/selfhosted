@@ -10,7 +10,7 @@ nginx:
   # root and runs with a read-only root filesystem.
   image:
     repository: nginxinc/nginx-unprivileged
-    tag: "1.29-alpine"
+    tag: "1.31-alpine"
     pullPolicy: IfNotPresent
   resources:
     requests:
