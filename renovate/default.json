@@ -1,17 +1,19 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Shared Renovate defaults for every zdiemer repo. Extended as github>zdiemer/selfhosted//renovate/default. PRs propose; a human merges; deploys stay manual. prHourlyLimit is off because runs are weekly — prConcurrentLimit is the real throttle (5 open, refills as PRs merge).",
+  "description": "Shared Renovate behaviour for the zdiemer repos. NO minimumReleaseAge, deliberately: it wedged. The preset nulls statusCheckNames because this PAT has no Commit-statuses permission (a 403 on the status POST aborts the whole run), and with internalChecksFilter at its default of 'strict' Renovate holds any update whose release age it cannot confirm \u2014 no branch, no PR, just a line under 'Pending Status Checks' on the dashboard that nobody reads. Ten updates sat there, including cloudflared 19 days after release against a 3-day soak, and paperless-ngx a full major behind. internalChecksFilter: none makes the remaining gate explicit: majors need dependency-dashboard approval, everything else opens a PR and waits for a human. Restore the soak only alongside Commit-statuses RW on the PAT.",
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
     ":semanticCommitsDisabled"
   ],
-  "labels": ["renovate"],
+  "labels": [
+    "renovate"
+  ],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 0,
   "branchConcurrentLimit": 10,
   "osvVulnerabilityAlerts": true,
-  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "none",
   "rangeStrategy": "pin",
   "statusCheckNames": {
     "artifactError": null,
@@ -26,28 +28,45 @@
   "packageRules": [
     {
       "description": "First-party images: build.sh/upgrade.sh own these, and sync-submodules.sh's pin-advance predicate depends on tag == deployed",
-      "matchPackageNames": ["ghcr.io/zdiemer/**"],
+      "matchPackageNames": [
+        "ghcr.io/zdiemer/**"
+      ],
       "enabled": false
     },
     {
       "description": "DB engines under live data: two-week soak before a PR appears",
-      "matchPackageNames": ["/(^|/)postgres$/", "/(^|/)mariadb$/", "/(^|/)mongo$/", "/(^|/)redis$/"],
-      "minimumReleaseAge": "14 days"
+      "matchPackageNames": [
+        "/(^|/)postgres$/",
+        "/(^|/)mariadb$/",
+        "/(^|/)mongo$/",
+        "/(^|/)redis$/"
+      ]
     },
     {
-      "description": "DB majors never auto-PR — dashboard approval only",
-      "matchPackageNames": ["/(^|/)postgres$/", "/(^|/)mariadb$/", "/(^|/)mongo$/", "/(^|/)redis$/"],
-      "matchUpdateTypes": ["major"],
+      "description": "DB majors never auto-PR \u2014 dashboard approval only",
+      "matchPackageNames": [
+        "/(^|/)postgres$/",
+        "/(^|/)mariadb$/",
+        "/(^|/)mongo$/",
+        "/(^|/)redis$/"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "dependencyDashboardApproval": true
     },
     {
       "description": "All majors gated behind the dependency dashboard during initial rollout; loosen per-repo once trust is earned",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "dependencyDashboardApproval": true
     },
     {
       "description": "GitHub Actions bumps grouped into one PR per repo",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github actions"
     }
   ]

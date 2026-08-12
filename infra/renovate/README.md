@@ -45,9 +45,23 @@ Workflows RW (action bumps), Metadata R. It is NOT the laptop's `gh` token.
 
 Commit statuses RW is deliberately not required: the preset nulls
 `statusCheckNames`, because a 403 on the status POST aborts the whole run
-as "repository changed" (found the hard way on first live run). Add the
-permission and remove that block if you ever want stability-days statuses
-on PRs.
+as "repository changed" (found the hard way on first live run).
+
+That workaround had a second-order cost, found 2026-08-11. `minimumReleaseAge`
+is enforced through those same internal checks, and `internalChecksFilter`
+defaults to `strict` — so an update whose release age Renovate cannot confirm
+is held forever rather than released. No branch, no PR, just a line under
+"Pending Status Checks" on the dashboard, which nobody reads because the
+normal signal is a PR appearing.
+
+Ten updates were parked there, including `cloudflared` 19 days after release
+against a 3-day soak, and `paperless-ngx` a full major behind. So the preset
+now drops `minimumReleaseAge` entirely and sets `internalChecksFilter: none`.
+The remaining gate is explicit and works: majors need dependency-dashboard
+approval, everything else opens a PR and waits for a human.
+
+If you ever add Commit statuses RW to the PAT, you can restore the soak and
+un-null `statusCheckNames` together — but not one without the other.
 
 ## Rollout / operations
 
