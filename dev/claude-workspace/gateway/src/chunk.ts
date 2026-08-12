@@ -22,12 +22,15 @@ export function chunkText(text: string, limit: number): string[] {
   return chunks;
 }
 
+/** `mode` is the chat's permission stance ("auto", "plan", or "" for the
+ * default prompt-on-mutation one) — it changes what a reply means, so it rides
+ * along in the banner. */
 export function replyPrefix(
   cwd: string,
   sessionId: string | undefined,
-  auto: boolean,
+  mode: string,
 ): string {
   const repo = cwd.split("/").filter(Boolean).pop() ?? cwd;
   const sid = sessionId ? sessionId.slice(0, 6) : "new";
-  return `[${repo} · ${sid}${auto ? " · auto" : ""}]`;
+  return `[${repo} · ${sid}${mode ? ` · ${mode}` : ""}]`;
 }

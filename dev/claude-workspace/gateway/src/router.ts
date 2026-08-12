@@ -17,7 +17,9 @@ import {
   takeGroupContext,
 } from "./chat.ts";
 import { config } from "./config.ts";
+import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import { getChat, updateChat } from "./state.ts";
+import { usageReport } from "./usage.ts";
 
 // Aliases accepted by !model, so a phone doesn't have to type a full model id.
 const MODEL_ALIASES: Record<string, string> = {
@@ -157,7 +159,7 @@ async function drain(chatKey: string): Promise<void> {
       await sendTo(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
     } else {
       const chat = getChat(chatKey);
-      const prefix = replyPrefix(chat.cwd, chat.sessionId, chat.auto);
+      const prefix = replyPrefix(chat.cwd, chat.sessionId, chatMode(chatKey));
       await sendTo(
         chatKey,
         `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
@@ -171,9 +173,20 @@ async function drain(chatKey: string): Promise<void> {
   }
 }
 
+/** The chat's permission stance, for the banner and !status. Empty string is
+ * the default one: prompt over chat before anything mutates. */
+function chatMode(chatKey: string): string {
+  const chat = getChat(chatKey);
+  if (chat.plan) return "plan";
+  return chat.auto ? "auto" : "";
+}
+
 async function handleCommand(chatKey: string, body: string): Promise<void> {
   const [cmd, ...rest] = body.split(/\s+/);
   const arg = rest.join(" ");
+  // Everything after the command verbatim — `!bash` needs the original
+  // spacing, quoting and newlines, which the split above flattens.
+  const rawArg = body.slice(cmd.length).trim();
   const chat = getChat(chatKey);
 
   switch (cmd) {
@@ -234,19 +247,68 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
     case "!auto": {
       if (arg !== "on" && arg !== "off")
         return sendTo(chatKey, "usage: !auto on|off");
-      updateChat(chatKey, { auto: arg === "on" });
+      const on = arg === "on";
+      // Auto and plan are opposite answers to the same question, so setting
+      // one clears the other (see !plan).
+      updateChat(chatKey, { auto: on, plan: on ? false : chat.plan });
       return sendTo(
         chatKey,
-        arg === "on"
-          ? "⚡ auto mode ON — tools run without asking"
+        on
+          ? "⚡ auto mode ON — tools run without asking" +
+              (chat.plan ? " (plan off)" : "")
           : "✓ auto mode off — mutations will prompt",
       );
     }
-    case "!stop":
+    case "!plan": {
+      // Bare `!plan` turns it on: on a phone the whole value is typing four
+      // characters before a question you don't want acted on.
+      const on = arg === "" || arg === "on";
+      if (!on && arg !== "off") return sendTo(chatKey, "usage: !plan [on|off]");
+      // Clearing auto is the point, not a side effect — "don't touch anything"
+      // and "don't ask before touching" cannot both be the rule.
+      updateChat(chatKey, { plan: on, auto: on ? false : chat.auto });
       return sendTo(
         chatKey,
-        stop(chatKey) ? "✓ sent SIGTERM" : "nothing running",
+        on
+          ? "📋 plan mode ON — claude researches and proposes, no edits" +
+              (chat.auto ? " (auto off)" : "")
+          : "✓ plan mode off",
       );
+    }
+    case "!bash": {
+      if (!config.bash.enabled)
+        return sendTo(chatKey, "⚠ !bash is disabled (messaging.bash.enabled)");
+      // Not in a group, for the same reason approvals aren't: the room reads
+      // every byte, and the room's members are not on the personal allowlist.
+      if (isGroupChat(chatKey))
+        return sendTo(chatKey, "⚠ !bash is not available in group chats");
+      if (!rawArg) return sendTo(chatKey, "usage: !bash <command>");
+      if (isBashRunning(chatKey))
+        return sendTo(chatKey, "⚠ a !bash is already running — !stop to kill");
+      const result = await runBash(chatKey, rawArg, chat.cwd);
+      const status =
+        result.code === 0 ? "" : ` (exit ${result.code ?? "killed"})`;
+      return sendTo(chatKey, `$ ${rawArg}${status}\n${result.text}`);
+    }
+    case "!usage": {
+      const days = Number(arg);
+      const window =
+        Number.isFinite(days) && days > 0 ? Math.min(days, 90) : config.usageDays;
+      // Scanning transcripts takes a moment on a busy workspace; say so rather
+      // than leave the chat silent.
+      await sendTo(chatKey, `reading usage for the last ${window}d…`);
+      return sendTo(chatKey, await usageReport(window));
+    }
+    case "!stop": {
+      const killed = [
+        stop(chatKey) ? "claude" : "",
+        stopBash(chatKey) ? "bash" : "",
+      ].filter(Boolean);
+      return sendTo(
+        chatKey,
+        killed.length ? `✓ sent SIGTERM to ${killed.join(" + ")}` : "nothing running",
+      );
+    }
     case "!status": {
       const q = queues.get(chatKey)?.length ?? 0;
       return sendTo(
@@ -257,8 +319,9 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
           isGroupChat(chatKey)
             ? `group: tools limited to ${config.groups.allowedTools}`
-            : `auto: ${chat.auto ? "on" : "off"}`,
-          `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}`,
+            : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
+          `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}` +
+            (isBashRunning(chatKey) ? ", bash running" : ""),
         ].join("\n"),
       );
     }
@@ -266,7 +329,8 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
       return sendTo(
         chatKey,
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
-          "!model <name> · !effort <level> · !stop · !status\n" +
+          "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
+          "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it",
       );
     default:

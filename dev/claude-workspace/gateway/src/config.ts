@@ -101,6 +101,18 @@ export const config = {
     rateLimit: envInt("GW_GROUP_RATE_LIMIT", 20),
     rateWindowMs: envInt("GW_GROUP_RATE_WINDOW_MINUTES", 60) * 60_000,
   },
+  bash: {
+    // `!bash <cmd>` — a raw shell, no model in the loop. On by default: this is
+    // owner-only in a 1:1, and the same chat can already `!auto on` and have
+    // claude run anything unprompted. Off (`messaging.bash.enabled: false`)
+    // makes the model the only path to the shell.
+    enabled: (process.env.GW_BASH_ENABLED ?? "true") === "true",
+    timeoutMs: envInt("GW_BASH_TIMEOUT_SECONDS", 120) * 1000,
+    // Bounded before chunking, so a runaway `cat` can't grow the pod's heap.
+    maxOutputChars: envInt("GW_BASH_MAX_OUTPUT_CHARS", 8000),
+  },
+  // Days of transcript history `!usage` sums when called with no argument.
+  usageDays: envInt("GW_USAGE_DAYS", 7),
   approvalTimeoutMs: envInt("GW_APPROVAL_TIMEOUT_SECONDS", 300) * 1000,
   claudeTimeoutMs: envInt("GW_CLAUDE_TIMEOUT_SECONDS", 1800) * 1000,
   // Read-only tools that never prompt; everything else goes through the

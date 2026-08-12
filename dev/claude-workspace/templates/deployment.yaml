@@ -418,6 +418,14 @@ spec:
               value: {{ .Values.messaging.model | quote }}
             - name: GW_EFFORT
               value: {{ .Values.messaging.effort | quote }}
+            - name: GW_BASH_ENABLED
+              value: {{ .Values.messaging.bash.enabled | quote }}
+            - name: GW_BASH_TIMEOUT_SECONDS
+              value: {{ .Values.messaging.bash.timeoutSeconds | quote }}
+            - name: GW_BASH_MAX_OUTPUT_CHARS
+              value: {{ .Values.messaging.bash.maxOutputChars | quote }}
+            - name: GW_USAGE_DAYS
+              value: {{ .Values.messaging.usageDays | quote }}
             {{- with .Values.messaging.systemPrompt }}
             - name: GW_SYSTEM_PROMPT
               value: {{ . | quote }}
