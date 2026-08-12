@@ -29,7 +29,7 @@ replicaCount: 2
 
 collector:
   # renovate: datasource=docker depName=python
-  image: python:3.12.13-alpine
+  image: python:3.14.7-alpine
   # Seconds between scrapes. Also the page's poll interval. Each scrape is
   # 1 nodes + 1 pods + 1 deployments + 1 events call, plus one /stats/summary
   # per node — so ~14 calls per cycle on a 10-node cluster, per replica.
