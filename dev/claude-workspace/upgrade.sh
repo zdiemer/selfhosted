@@ -77,11 +77,84 @@ PY
   fi
 fi
 
+# Recover from a half-written release record before trying to add to it.
+#
+# This chart can upgrade ITSELF from the workspace pod, and `strategy: Recreate`
+# deletes that pod the moment the new template is applied — mid-`helm upgrade`.
+# Helm writes the new revision as `pending-upgrade` first and only marks it
+# `deployed` once the apply returns, so being killed in between leaves a
+# permanently pending revision, and every later upgrade fails with "another
+# operation (install/upgrade/rollback) is in progress". The SIGTERM guard below
+# is what stops this happening; this is the cleanup for records already stuck.
+#
+# The repair is "forget the dead revision", not "assume it worked": a killed run
+# may or may not have applied its manifests, so the pending revision is dropped,
+# the previous one is restored to `deployed`, and the ordinary upgrade below
+# re-applies everything and converges either way.
+STATUS="$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
+          | python3 -c 'import sys,json; print(json.load(sys.stdin)["info"]["status"])' 2>/dev/null || echo none)"
+if [[ "$STATUS" == pending-* ]]; then
+  echo "==> Release is ${STATUS} from an interrupted run; repairing"
+  python3 - "$RELEASE" "$NAMESPACE" <<'PY'
+import base64, gzip, json, subprocess, sys
+
+release, namespace = sys.argv[1], sys.argv[2]
+
+def kubectl(*args, capture=True):
+    return subprocess.run(["kubectl", "-n", namespace, *args],
+                          capture_output=capture, text=True, check=True).stdout
+
+secrets = json.loads(kubectl(
+    "get", "secrets", "-l", f"owner=helm,name={release}", "-o", "json"))["items"]
+secrets.sort(key=lambda s: int(s["metadata"]["labels"]["version"]))
+if not secrets:
+    sys.exit(0)
+
+stuck = secrets[-1]
+print(f"    dropping revision {stuck['metadata']['labels']['version']} "
+      f"({stuck['metadata']['labels']['status']})")
+kubectl("delete", "secret", stuck["metadata"]["name"], capture=False)
+
+if len(secrets) < 2:
+    sys.exit(0)
+
+# Helm refuses to upgrade a release whose newest revision isn't `deployed`, so
+# the one we fell back to has to be relabelled — in the gzipped payload as well
+# as the secret label, since helm reads the payload.
+prev = secrets[-2]
+version = prev["metadata"]["labels"]["version"]
+payload = json.loads(gzip.decompress(base64.b64decode(base64.b64decode(prev["data"]["release"]))))
+payload["info"]["status"] = "deployed"
+patch = json.dumps({
+    "metadata": {"labels": {"status": "deployed"}},
+    "data": {"release": base64.b64encode(
+        base64.b64encode(gzip.compress(json.dumps(payload).encode()))).decode()},
+})
+kubectl("patch", "secret", prev["metadata"]["name"], "--type", "merge", "-p", patch,
+        capture=False)
+print(f"    revision {version} restored as the current one")
+PY
+fi
+
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
+# Ignore SIGTERM for the duration of the upgrade. When this chart upgrades
+# itself, applying the new template deletes this very pod, and the kubelet's
+# SIGTERM would otherwise kill the shell — and helm with it — in the seconds
+# between "pending-upgrade written" and "deployed written". An ignored signal
+# disposition survives exec, so helm inherits this and runs to completion inside
+# the pod's termination grace period, which is orders of magnitude longer than
+# it needs. The pod still goes down; it just doesn't take the release record
+# with it.
+trap '' TERM
 helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
+trap - TERM
 
 echo "==> Waiting for ${RELEASE} rollout"
-$K rollout status "deployment/${RELEASE}" --timeout=300s
+# Expected to be cut short when upgrading from inside the pod being replaced:
+# by here the release is safely recorded and the cluster converges on its own,
+# so losing the watch is cosmetic. Don't fail the script over it.
+$K rollout status "deployment/${RELEASE}" --timeout=300s \
+  || echo "    (rollout watch ended early — normal when self-deploying)"
 
 echo "==> Pods"
 $K get pods -l app.kubernetes.io/instance="${RELEASE}"

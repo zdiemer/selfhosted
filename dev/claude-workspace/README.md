@@ -203,11 +203,26 @@ not have) were the only alternative to the password; the pty sign-in in
 `claude --resume`, then check `helm status claude-workspace -n claude` and
 `kubectl -n claude rollout status deploy/claude-workspace`.
 
-If helm was killed in the narrow window before it finished bookkeeping, the
-release is stuck `pending-upgrade` and the next upgrade fails with "another
-operation is in progress". Fix: `helm rollback claude-workspace -n claude`
-and re-run, or delete the stuck revision secret
-`sh.helm.release.v1.claude-workspace.v<N>` in the claude namespace.
+Helm used to be collateral damage in that: it writes the new revision as
+`pending-upgrade`, applies, and only then marks it `deployed`, so the kubelet's
+SIGTERM landing in between left a permanently pending revision and every later
+upgrade failed with "another operation is in progress". `upgrade.sh` now
+handles both ends of it:
+
+- It **ignores SIGTERM around the helm call**. An ignored signal disposition
+  survives `exec`, so helm inherits it and finishes inside the pod's
+  termination grace period — 30s against an operation that needs
+  milliseconds. The pod still goes down; it no longer takes the release record
+  with it.
+- On startup it **repairs an already-stuck release**: the pending revision is
+  dropped and the previous one restored to `deployed`, then the normal upgrade
+  re-applies and converges. Deliberately "forget the dead revision" rather than
+  "assume it worked" — a killed run may or may not have applied its manifests,
+  and re-applying is correct either way.
+
+From the messaging surface the session itself survives, because the gateway
+stores `session_id` and resumes it on the new pod. A `/term` tmux session does
+not; that one needs `claude --resume`.
 
 Image-only refresh (tag unchanged): `kubectl -n claude rollout restart
 deploy/claude-workspace` — same session-death caveat.
