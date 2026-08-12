@@ -18,7 +18,7 @@ import {
 } from "./chat.ts";
 import { config } from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
-import { getChat, updateChat } from "./state.ts";
+import { autoActive, autoExpired, getChat, updateChat } from "./state.ts";
 import { createStatus, type Status } from "./status.ts";
 import {
   type MsgRef,
@@ -172,6 +172,12 @@ async function drain(chatKey: string): Promise<void> {
     return;
   }
   const { body: message, ref } = queue[0];
+  // Say when the grant lapsed rather than just quietly prompting again — the
+  // difference between "auto is off now" and "why is it suddenly asking me?".
+  if (autoExpired(getChat(chatKey))) {
+    updateChat(chatKey, { auto: false, autoUntil: undefined });
+    await sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again");
+  }
   react(chatKey, ref, config.reactions.working);
   const group = isGroupChat(chatKey);
   // No status message in a group: the room did not ask to watch the bot's tool
@@ -226,7 +232,32 @@ async function drain(chatKey: string): Promise<void> {
 function chatMode(chatKey: string): string {
   const chat = getChat(chatKey);
   if (chat.plan) return "plan";
-  return chat.auto ? "auto" : "";
+  if (!autoActive(chat)) return "";
+  // Show what's left, so the banner on every reply is also the countdown.
+  return chat.autoUntil
+    ? `auto ${formatDuration(chat.autoUntil - Date.now())}`
+    : "auto";
+}
+
+/** `30m`, `2h`, `90` (minutes). Null when it isn't a duration at all. */
+export function parseDuration(arg: string): number | null {
+  const m = /^(\d+)\s*(m|min|h|hr|hour)?s?$/i.exec(arg.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!n) return null;
+  const unit = (m[2] ?? "m").toLowerCase();
+  const ms = unit.startsWith("h") ? n * 3_600_000 : n * 60_000;
+  // A day of unattended root is not a time box; refuse rather than pretend.
+  return ms > 86_400_000 ? null : ms;
+}
+
+/** Coarse on purpose — "1h20m left" is what you want to read on a phone. */
+export function formatDuration(ms: number): string {
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem ? `${h}h${rem}m` : `${h}h`;
 }
 
 // Returns whatever the last sendTo did — the `return sendTo(...)` shape below
@@ -296,18 +327,28 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       return sendTo(chatKey, `✓ cwd ${target} (session cleared)`);
     }
     case "!auto": {
-      if (arg !== "on" && arg !== "off")
-        return sendTo(chatKey, "usage: !auto on|off");
-      const on = arg === "on";
+      if (arg === "off") {
+        updateChat(chatKey, { auto: false, autoUntil: undefined });
+        return sendTo(chatKey, "✓ auto mode off — mutations will prompt");
+      }
+      // A duration is the recommended form. This pod is cluster-admin with
+      // root on every node, and `!auto on` is a standing grant that outlives
+      // the reason it was given — a phone left unlocked inherits it.
+      const ms = arg === "on" ? 0 : parseDuration(arg);
+      if (ms === null)
+        return sendTo(
+          chatKey,
+          "usage: !auto <30m|2h> · !auto on (no expiry) · !auto off",
+        );
+      const autoUntil = ms ? Date.now() + ms : undefined;
       // Auto and plan are opposite answers to the same question, so setting
       // one clears the other (see !plan).
-      updateChat(chatKey, { auto: on, plan: on ? false : chat.plan });
+      updateChat(chatKey, { auto: true, autoUntil, plan: false });
       return sendTo(
         chatKey,
-        on
-          ? "⚡ auto mode ON — tools run without asking" +
-              (chat.plan ? " (plan off)" : "")
-          : "✓ auto mode off — mutations will prompt",
+        `⚡ auto mode ON — tools run without asking, ` +
+          (autoUntil ? `for ${formatDuration(ms)}` : "until !auto off") +
+          (chat.plan ? " (plan off)" : ""),
       );
     }
     case "!plan": {
@@ -389,6 +430,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         chatKey,
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
+          "!auto takes a duration too: !auto 30m, !auto 2h\n" +
           "!more shows the rest of a reply that was cut short\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
-import { type ChatState, getChat, updateChat } from "./state.ts";
+import { autoActive, type ChatState, getChat, updateChat } from "./state.ts";
 
 export interface RunResult {
   text: string;
@@ -126,7 +126,7 @@ export async function runClaude(
       "--allowedTools",
       config.groups.allowedTools,
     );
-  } else if (chat.auto && !chat.plan) {
+  } else if (autoActive(chat) && !chat.plan) {
     args.push("--permission-mode", "bypassPermissions");
   } else {
     // --strict-mcp-config keeps the headless run from loading the workspace's

@@ -10,6 +10,9 @@ export interface ChatState {
    * researches and proposes instead of editing. Mutually exclusive with auto:
    * one says "don't touch anything", the other "don't ask". */
   plan?: boolean;
+  /** Epoch ms at which `auto` lapses back to prompting. Unset means auto is
+   * open-ended, which is what `!auto on` still gives you. */
+  autoUntil?: number;
   /** Per-chat overrides for config.model / config.effort, set with !model and
    * !effort. Unset means "follow the chart default". */
   model?: string;
@@ -69,6 +72,20 @@ export function updateChat(
   all[chatKey] = next;
   save();
   return next;
+}
+
+/**
+ * Is auto mode actually in force? `auto` alone is not the answer once a
+ * deadline is attached, and this is checked at every use rather than swept by
+ * a timer: a lapse that only takes effect while the pod happens to be up would
+ * be worse than no deadline at all.
+ */
+export function autoActive(chat: ChatState): boolean {
+  return Boolean(chat.auto) && !autoExpired(chat);
+}
+
+export function autoExpired(chat: ChatState): boolean {
+  return Boolean(chat.auto && chat.autoUntil && Date.now() > chat.autoUntil);
 }
 
 /** Every chat the state file knows about, newest activity first. */
