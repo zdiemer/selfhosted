@@ -12,6 +12,10 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v14: the messaging surface gets reactions (👀 working, ✅ done, and 👍/👎
+  #      on a permission prompt to answer it), a live status message edited as
+  #      tool calls land, attachments both ways, !more / !use / !sessions, an
+  #      expiring !auto, and a word on both sides of a restart.
   # v13: chat gains `!bash` (a shell command with no model in the loop),
   #      `!plan` (plan mode per chat), and `!usage` (subscription spend summed
   #      from the ~/.claude transcripts, since nothing else counts it).
@@ -34,7 +38,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v13"
+  tag: "v14"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
