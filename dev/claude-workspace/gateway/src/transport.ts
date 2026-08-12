@@ -75,11 +75,53 @@ export async function sendTo(
     return undefined;
   }
   let first: MsgRef | undefined;
-  for (const chunk of chunkText(text, t.chunkLimit)) {
+  for (const chunk of chunkText(text, t.chunkLimit).chunks) {
     const ref = await t.send(chatKey, chunk);
     first ??= ref;
   }
   return first;
+}
+
+// What a reply had to leave out, per chat. Only long-form output — claude's
+// answers and !bash — feeds this; a `!status` reply in between must not throw
+// away the page you were about to ask for.
+const overflow = new Map<string, string>();
+
+/**
+ * Send long-form output and remember what didn't fit, so `!more` can page it.
+ * Paging chains naturally: the next page goes out through here too and leaves
+ * its own remainder behind.
+ */
+export async function sendReply(
+  chatKey: string,
+  text: string,
+): Promise<MsgRef | undefined> {
+  const t = transportFor(chatKey);
+  if (!t) {
+    console.error(`no transport for ${chatKey}`);
+    return undefined;
+  }
+  const { chunks, rest } = chunkText(text, t.chunkLimit);
+  if (rest) overflow.set(chatKey, rest);
+  else overflow.delete(chatKey);
+
+  let first: MsgRef | undefined;
+  for (const chunk of chunks) {
+    const ref = await t.send(chatKey, chunk);
+    first ??= ref;
+  }
+  return first;
+}
+
+/** The unsent remainder, cleared as it is handed over. */
+export function takeOverflow(chatKey: string): string {
+  const rest = overflow.get(chatKey) ?? "";
+  overflow.delete(chatKey);
+  return rest;
+}
+
+export function overflowSize(chatKey: string): number {
+  return overflow.get(chatKey)?.length ?? 0;
 }
 
 /** Send exactly one message, truncating rather than splitting. An edit target

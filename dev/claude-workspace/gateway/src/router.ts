@@ -20,7 +20,14 @@ import { config } from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import { getChat, updateChat } from "./state.ts";
 import { createStatus, type Status } from "./status.ts";
-import { type MsgRef, reactTo, sendTo } from "./transport.ts";
+import {
+  type MsgRef,
+  overflowSize,
+  reactTo,
+  sendReply,
+  sendTo,
+  takeOverflow,
+} from "./transport.ts";
 import { usageReport } from "./usage.ts";
 
 export { registerTransport, sendTo, type MsgRef, type Transport } from "./transport.ts";
@@ -194,11 +201,11 @@ async function drain(chatKey: string): Promise<void> {
     // banner is workspace bookkeeping and means nothing to the other people in
     // the room, so it stays on the 1:1 surface.
     if (group) {
-      await sendTo(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
+      await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${result.text}`);
     } else {
       const chat = getChat(chatKey);
       const prefix = replyPrefix(chat.cwd, chat.sessionId, chatMode(chatKey));
-      await sendTo(
+      await sendReply(
         chatKey,
         `${prefix}${result.isError ? " ⚠" : ""}\n${result.text}`,
       );
@@ -332,7 +339,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       const result = await runBash(chatKey, rawArg, chat.cwd);
       const status =
         result.code === 0 ? "" : ` (exit ${result.code ?? "killed"})`;
-      return sendTo(chatKey, `$ ${rawArg}${status}\n${result.text}`);
+      return sendReply(chatKey, `$ ${rawArg}${status}\n${result.text}`);
     }
     case "!usage": {
       const days = Number(arg);
@@ -353,6 +360,13 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         killed.length ? `✓ sent SIGTERM to ${killed.join(" + ")}` : "nothing running",
       );
     }
+    case "!more": {
+      const rest = takeOverflow(chatKey);
+      if (!rest) return sendTo(chatKey, "nothing more to show");
+      // Back through sendReply, so a remainder that is itself too long leaves
+      // its own remainder and !more just keeps working.
+      return sendReply(chatKey, rest);
+    }
     case "!status": {
       const q = queues.get(chatKey)?.length ?? 0;
       return sendTo(
@@ -365,7 +379,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
             ? `group: tools limited to ${config.groups.allowedTools}`
             : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
           `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}` +
-            (isBashRunning(chatKey) ? ", bash running" : ""),
+            (isBashRunning(chatKey) ? ", bash running" : "") +
+            (overflowSize(chatKey) ? `, ${overflowSize(chatKey)} chars unsent (!more)` : ""),
         ].join("\n"),
       );
     }
@@ -374,6 +389,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         chatKey,
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
+          "!more shows the rest of a reply that was cut short\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +
           "A ❓ question takes a number or your own words · a 📋 plan takes " +

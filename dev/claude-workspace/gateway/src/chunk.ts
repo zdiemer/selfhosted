@@ -2,13 +2,19 @@
 // number of chunks so a runaway response can't flood a metered connection.
 const MAX_CHUNKS = 4;
 
-export function chunkText(text: string, limit: number): string[] {
+export interface Chunked {
+  chunks: string[];
+  /** What did not fit. Kept rather than dropped so `!more` can page it. */
+  rest: string;
+}
+
+export function chunkText(text: string, limit: number): Chunked {
   const chunks: string[] = [];
   let rest = text;
   while (rest.length > 0 && chunks.length < MAX_CHUNKS) {
     if (rest.length <= limit) {
       chunks.push(rest);
-      return chunks;
+      return { chunks, rest: "" };
     }
     // Prefer the last newline inside the window; fall back to a hard cut.
     let cut = rest.lastIndexOf("\n", limit);
@@ -17,9 +23,11 @@ export function chunkText(text: string, limit: number): string[] {
     rest = rest.slice(cut).replace(/^\n/, "");
   }
   if (rest.length > 0) {
-    chunks[chunks.length - 1] += `\n…truncated (${rest.length} more chars)`;
+    // Say how to get the rest. The cap is about not flooding a metered
+    // connection unasked — asking is what makes it fine.
+    chunks[chunks.length - 1] += `\n…+${rest.length} more chars — !more`;
   }
-  return chunks;
+  return { chunks, rest };
 }
 
 /** `mode` is the chat's permission stance ("auto", "plan", or "" for the

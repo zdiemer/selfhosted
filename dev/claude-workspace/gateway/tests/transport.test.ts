@@ -4,10 +4,13 @@ import {
   editMsg,
   markReady,
   onTransportReady,
+  overflowSize,
   reactTo,
   registerTransport,
   sendOne,
+  sendReply,
   sendTo,
+  takeOverflow,
   type MsgRef,
 } from "../src/transport.ts";
 
@@ -106,4 +109,36 @@ test("ready fires once per surface, and late subscribers still hear it", () => {
   markReady("fake"); // a reconnect is not a restart
   onTransportReady((p) => seen.push(p));
   expect(seen).toEqual(["fake"]);
+});
+
+test("sendReply keeps what didn't fit so !more can page it", async () => {
+  sent.length = 0;
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i} padding padding`).join("\n");
+  await sendReply("fake:pager", long);
+  // Capped at 4 chunks, and the last one says how to get the rest.
+  expect(sent.length).toBe(4);
+  expect(sent[3]).toMatch(/…\+\d+ more chars — !more$/);
+  expect(overflowSize("fake:pager")).toBeGreaterThan(0);
+
+  // Paging chains: the remainder goes back through sendReply and leaves its own.
+  const rest = takeOverflow("fake:pager");
+  expect(overflowSize("fake:pager")).toBe(0);
+  sent.length = 0;
+  await sendReply("fake:pager", rest);
+  expect(sent.length).toBeGreaterThan(0);
+});
+
+test("a reply that fits clears any stale remainder", async () => {
+  await sendReply("fake:pager", "x".repeat(500));
+  expect(overflowSize("fake:pager")).toBeGreaterThan(0);
+  await sendReply("fake:pager", "short");
+  expect(overflowSize("fake:pager")).toBe(0);
+});
+
+test("plain sendTo leaves the pager alone", async () => {
+  // A !status reply between the truncated answer and !more must not eat it.
+  await sendReply("fake:pager", "y".repeat(500));
+  const before = overflowSize("fake:pager");
+  await sendTo("fake:pager", "cwd: /home/node");
+  expect(overflowSize("fake:pager")).toBe(before);
 });
