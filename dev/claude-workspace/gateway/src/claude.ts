@@ -27,6 +27,15 @@ export interface StreamEvent {
   };
   result?: string;
   is_error?: boolean;
+  /** Present on the `result` event. Drives the token/cost tail on the status
+   * receipt, so a run's cost is visible without reaching for !usage. */
+  total_cost_usd?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 }
 
 const running = new Map<string, ReturnType<typeof spawn>>();

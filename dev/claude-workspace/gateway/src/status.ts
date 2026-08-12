@@ -32,6 +32,18 @@ export function formatElapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
 
+/** The tail of the receipt: what the run cost. Both halves are optional —
+ * a run killed before its result event reports neither, and a subscription
+ * doesn't always price a run, so an absent cost is normal rather than zero. */
+export function formatSpend(tokens: number, costUsd: number): string {
+  let out = "";
+  if (tokens > 0)
+    out += ` · ${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tok`;
+  if (costUsd > 0)
+    out += ` · $${costUsd < 0.01 ? costUsd.toFixed(3) : costUsd.toFixed(2)}`;
+  return out;
+}
+
 /** Shorten a path to its last two segments — `src/router.ts` reads fine on a
  * phone, `/home/node/code/selfhosted/dev/.../src/router.ts` does not. */
 function shortPath(p: unknown): string {
@@ -106,6 +118,8 @@ export class Status {
   private tools = 0;
   private action = "";
   private note = "";
+  private tokens = 0;
+  private costUsd = 0;
   private lastText = "";
   private lastSig = "";
   private lastEditAt = 0;
@@ -150,6 +164,18 @@ export class Status {
   }
 
   onEvent(ev: StreamEvent): void {
+    if (ev.type === "result") {
+      // Everything the run cost, including cache traffic — the point is "was
+      // that an expensive question?", which cache reads very much are part of.
+      const u = ev.usage ?? {};
+      this.tokens =
+        (u.input_tokens ?? 0) +
+        (u.output_tokens ?? 0) +
+        (u.cache_creation_input_tokens ?? 0) +
+        (u.cache_read_input_tokens ?? 0);
+      this.costUsd = ev.total_cost_usd ?? 0;
+      return;
+    }
     if (ev.type !== "assistant") return;
     for (const block of ev.message?.content ?? []) {
       if (block.type === "tool_use") {
@@ -204,7 +230,10 @@ export class Status {
    * receipt, not a stale half-finished action. */
   async finish(ok: boolean): Promise<void> {
     await this.replace(
-      `${ok ? "✓" : "⚠"} ${ok ? "done" : "failed"} · ${this.tools} tool${this.tools === 1 ? "" : "s"} · ${formatElapsed(this.now() - this.started)}`,
+      `${ok ? "✓" : "⚠"} ${ok ? "done" : "failed"}` +
+        ` · ${this.tools} tool${this.tools === 1 ? "" : "s"}` +
+        ` · ${formatElapsed(this.now() - this.started)}` +
+        formatSpend(this.tokens, this.costUsd),
     );
   }
 

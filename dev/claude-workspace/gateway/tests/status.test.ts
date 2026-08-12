@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import type { StreamEvent } from "../src/claude.ts";
-import { Status, formatElapsed, renderStatus, toolLabel } from "../src/status.ts";
+import {
+  Status,
+  formatElapsed,
+  formatSpend,
+  renderStatus,
+  toolLabel,
+} from "../src/status.ts";
 import type { MsgRef } from "../src/transport.ts";
 
 // A transport that records instead of sending. The throttle runs at
@@ -139,4 +145,29 @@ test("a surface that cannot edit gets no status message at all", async () => {
   await status.finish(true);
   expect(h.sends).toEqual([]);
   expect(h.edits).toEqual([]);
+});
+
+test("the receipt reports what the run cost", async () => {
+  const h = harness();
+  await h.status.begin();
+  h.status.onEvent({
+    type: "result",
+    usage: {
+      input_tokens: 1_200,
+      output_tokens: 800,
+      cache_read_input_tokens: 36_000,
+    },
+    total_cost_usd: 0.2149,
+  });
+  await h.status.finish(true);
+  // Cache reads count: the question is "was that expensive", and they are.
+  expect(h.edits[h.edits.length - 1]).toMatch(/· 38k tok · \$0\.21$/);
+});
+
+test("spend is omitted when it isn't known", () => {
+  // A run killed before its result event, or a subscription that doesn't
+  // price one — absent, not zero.
+  expect(formatSpend(0, 0)).toBe("");
+  expect(formatSpend(940, 0)).toBe(" · 940 tok");
+  expect(formatSpend(0, 0.004)).toBe(" · $0.004");
 });
