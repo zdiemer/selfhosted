@@ -6,6 +6,10 @@ export interface ChatState {
   sessionId?: string;
   cwd: string;
   auto: boolean;
+  /** `!plan on` — runs go out with `--permission-mode plan`, so claude
+   * researches and proposes instead of editing. Mutually exclusive with auto:
+   * one says "don't touch anything", the other "don't ask". */
+  plan?: boolean;
   /** Per-chat overrides for config.model / config.effort, set with !model and
    * !effort. Unset means "follow the chart default". */
   model?: string;

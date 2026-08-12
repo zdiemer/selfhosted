@@ -325,9 +325,30 @@ the current cwd (this is the cross-surface handoff — start in tmux, `!resume`
 from the plane) · `!cwd <repo|path>` switch repo (bare names resolve under
 `~/code/`) · `!auto on|off` per-chat auto mode (`--permission-mode
 bypassPermissions` — no prompts at all; turn it off when you land) ·
+`!plan [on|off]` per-chat plan mode (`--permission-mode plan` — claude
+researches and proposes, never edits; bare `!plan` turns it on, and it clears
+`!auto`, which is the opposite instruction) ·
 `!model opus|sonnet|haiku|fable|<id>|default` · `!effort
-low|medium|high|xhigh|max|default` · `!stop` SIGTERM the running claude ·
-`!status` · `!help`.
+low|medium|high|xhigh|max|default` · `!bash <cmd>` shell command in the chat's
+cwd, no model in the loop · `!usage [days]` token totals ·
+`!stop` SIGTERM the running claude (and any `!bash`) · `!status` · `!help`.
+
+`!bash` is the escape hatch for cheap questions — `kubectl get pods`,
+`git log --oneline -5` — where a whole claude run plus a permission round-trip
+costs four messages and a minute to answer one line. Owner-only, 1:1 only (a
+group reads every byte, and its members are not on the personal allowlist), runs
+under `bash -lc` in the chat's `!cwd`, bounded by `messaging.bash.timeoutSeconds`
+and `maxOutputChars`. It is not a widening of the trust boundary — the same chat
+can already `!auto on` — so it is on by default; `messaging.bash.enabled: false`
+makes the model the only path to the shell.
+
+`!usage [days]` (default `messaging.usageDays`) sums the `usage` block of every
+assistant message in `~/.claude/projects/**.jsonl`: the rolling 5h window (the
+subscription's limit block), today, and the last N days split by model. It reads
+the PVC, not the network — there is no `claude usage` subcommand, no supported
+endpoint for the subscription counters, and the interactive `/usage` panel is a
+TUI this headless surface can't reach. So it counts **every** claude run in this
+pod (chat, tmux, Happy) and nothing you ran anywhere else.
 
 Runs default to **Opus 5 at medium effort** (`messaging.model` /
 `messaging.effort`); `!model` and `!effort` override per chat and persist in the
@@ -336,7 +357,7 @@ drops the session pointer so the next message starts cold. The transcript itself
 stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
 
 Anything else is sent to claude. Replies are the final result only (no
-streaming), prefixed `[repo · session · auto?]` in a 1:1, chunked to ~1.9k
+streaming), prefixed `[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k
 (Signal) / ~2.9k (WhatsApp) chars, max 4 chunks then truncated — bandwidth is
 the point. Messages the gateway accepts are marked **read** on the sender's
 side, so a read receipt means "the bot has this", not "a packet arrived".
@@ -439,6 +460,14 @@ tracks `claude-code@latest` at build time):
 - **Baileys ban risk**: unofficial WhatsApp client; Meta bans
   automation-smelling numbers. Dedicated number, low volume, default-off. A
   ban costs the number, not the account you actually use.
+- **Never smoke-test the gateway with the default runtime dir.** `main.ts`
+  unlinks `approve.sock` before binding it, so a second copy started in `/term`
+  (or by a chat-driven claude run) deletes the socket the *live* gateway is
+  listening on. The running server keeps the unlinked inode and notices nothing;
+  every subsequent permission prompt dies with `gateway unreachable: connect
+  ENOENT`, which strands the in-flight run read-only. It now refuses to start
+  when the socket answers — pass `GW_RUNTIME_DIR=/tmp/gwtest GW_STATE_DIR=…
+  GW_STDIN=true bun run src/main.ts` to test against a scratch path.
 - **One surface per session at a time**: chat `!resume` of a session that
   tmux/Happy is actively driving interleaves jsonl writes. Hand off, don't
   share.

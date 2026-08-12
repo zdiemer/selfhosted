@@ -210,6 +210,26 @@ messaging:
   # chat at runtime; these are the defaults every chat starts from.
   model: claude-opus-5
   effort: medium
+  bash:
+    # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
+    # For the cheap questions (`kubectl get pods`) where a whole claude run plus
+    # a permission round-trip costs four messages to answer one line.
+    #
+    # On by default, and it is not the widening it looks like: `!` commands are
+    # owner-only, `!bash` additionally refuses group chats, and the same 1:1 can
+    # already `!auto on` and have claude run anything unprompted. Set false to
+    # make the model the only path to the shell.
+    enabled: true
+    # SIGTERM (then SIGKILL) after this long — one chat runs one bash at a time,
+    # so a wedged command would otherwise hold the slot until the pod restarts.
+    timeoutSeconds: 120
+    # Output is capped before chunking, so a runaway `cat` can't grow the heap.
+    maxOutputChars: 8000
+  # Days `!usage` sums when called bare (`!usage 30` overrides, max 90). It adds
+  # up the usage blocks in ~/.claude transcripts — every claude run in this pod,
+  # chat and tmux and Happy alike — because there is no CLI or API for the
+  # subscription's own counters.
+  usageDays: 7
   # Appended to Claude Code's own system prompt — it teaches the run that the
   # far end is a phone (plain text, no Markdown, short replies). Leave empty to
   # use the gateway's built-in default; set it here to override entirely.

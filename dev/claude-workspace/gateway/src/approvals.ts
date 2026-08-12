@@ -62,11 +62,26 @@ function describeTool(toolName: string, input: unknown): string {
   return `${toolName}(${json.length > 200 ? json.slice(0, 200) + "…" : json})`;
 }
 
-export function startApprovalServer(sendPrompt: ApprovalPrompt): void {
+export async function startApprovalServer(
+  sendPrompt: ApprovalPrompt,
+): Promise<void> {
   fs.mkdirSync(path.dirname(approvalSocketPath), {
     recursive: true,
     mode: 0o700,
   });
+  // Unlinking a LIVE socket is silent and vicious: the running gateway keeps
+  // the unlinked inode and notices nothing, while every approve-mcp from then
+  // on gets ENOENT on the path and the in-flight claude run is stranded with no
+  // way to ask for permission. That is exactly what a second copy started for a
+  // smoke test does, so check before removing — a stale socket (nobody
+  // listening) is the only one safe to clear.
+  if (fs.existsSync(approvalSocketPath) && (await socketAnswers())) {
+    console.error(
+      `another gateway is listening on ${approvalSocketPath}; refusing to ` +
+        "clobber it. Set GW_RUNTIME_DIR to a scratch path to run a second copy.",
+    );
+    process.exit(1);
+  }
   fs.rmSync(approvalSocketPath, { force: true });
 
   const server = net.createServer((sock) => {
@@ -87,6 +102,20 @@ export function startApprovalServer(sendPrompt: ApprovalPrompt): void {
     sock.on("error", () => {});
   });
   server.listen(approvalSocketPath);
+}
+
+/** True if something is accepting connections on the approval socket path. */
+function socketAnswers(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.connect(approvalSocketPath);
+    const done = (answered: boolean) => {
+      probe.destroy();
+      resolve(answered);
+    };
+    probe.on("connect", () => done(true));
+    probe.on("error", () => done(false));
+    setTimeout(() => done(false), 1000);
+  });
 }
 
 function handleRequest(

@@ -10,8 +10,9 @@ import { startWhatsApp } from "./whatsapp.ts";
 fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
 fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
 
-// Approval prompts go out through whichever transport owns the chat.
-startApprovalServer((chatKey, text) => void sendTo(chatKey, text));
+// Approval prompts go out through whichever transport owns the chat. Exits
+// rather than start if another gateway already owns the socket.
+await startApprovalServer((chatKey, text) => void sendTo(chatKey, text));
 
 if (config.signal.enabled) {
   if (!config.signal.number || config.signal.allowedSenders.length === 0) {

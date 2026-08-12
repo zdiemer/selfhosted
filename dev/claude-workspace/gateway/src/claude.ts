@@ -84,7 +84,7 @@ export async function runClaude(
       "--allowedTools",
       config.groups.allowedTools,
     );
-  } else if (chat.auto) {
+  } else if (chat.auto && !chat.plan) {
     args.push("--permission-mode", "bypassPermissions");
   } else {
     // --strict-mcp-config keeps the headless run from loading the workspace's
@@ -98,6 +98,11 @@ export async function runClaude(
       "--allowedTools",
       config.allowedTools,
     );
+    // Plan mode outranks auto (the router keeps them from being set together,
+    // but state written by an older build could have both). Claude refuses
+    // edits itself here; the approval relay still covers the rest, and an
+    // ExitPlanMode arrives as an ordinary "reply 1/2/3" prompt.
+    if (chat.plan) args.push("--permission-mode", "plan");
   }
 
   activeCount++;
