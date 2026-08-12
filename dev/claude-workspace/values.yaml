@@ -233,6 +233,44 @@ messaging:
   # chat and tmux and Happy alike — because there is no CLI or API for the
   # subscription's own counters.
   usageDays: 7
+  progress:
+    # The live status message: one message sent when a run starts, edited in
+    # place with the current tool call, then collapsed to a one-line receipt
+    # ("done · 14 tools · 1m42s") when the answer goes out. Without it a long
+    # run is indistinguishable from the bot being down.
+    #
+    # It is always a separate message from the reply — the reply is chunked
+    # across up to four messages and can't be an edit target.
+    enabled: true
+    # Minimum gap between edits of that message. Not a cosmetic knob: WhatsApp
+    # is reached through an unofficial client (see "ban risk"), so an edit per
+    # event is not on the table. The last state always lands regardless.
+    editSeconds: 3
+  reactions:
+    # Emoji on the sender's own message: working → done/failed, with the queued
+    # one while another run in the same chat is still going. This is the only
+    # feature here that shows up in a group whether the room asked or not,
+    # hence its own switch.
+    enabled: true
+    queued: "🕒"
+    working: "👀"
+    done: "✅"
+    error: "❌"
+  restartNotice:
+    # Redeploying this chart is a `Recreate` rollout — the pod is torn down
+    # before the new one pulls, so a run in flight just stops. Since a chat can
+    # trigger that itself (`!bash ./build.sh && ./upgrade.sh`), silence there
+    # reads as the bot having crashed.
+    enabled: true
+    # Only chats active this recently are told. An hour is roughly "still
+    # holding the phone"; a day would be a ping out of nowhere.
+    withinMinutes: 60
+    # Suppress the notice if the last one was this recent, so a crash-looping
+    # pod can't turn into a message per restart.
+    dedupeMinutes: 10
+    # Hard cap on time spent messaging in-flight chats on SIGTERM before
+    # exiting anyway. terminationGracePeriodSeconds is the real ceiling.
+    shutdownGraceSeconds: 5
   # Appended to Claude Code's own system prompt — it teaches the run that the
   # far end is a phone (plain text, no Markdown, short replies). Leave empty to
   # use the gateway's built-in default; set it here to override entirely.

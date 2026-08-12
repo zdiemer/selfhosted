@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import { startApprovalServer } from "./approvals.ts";
 import { config } from "./config.ts";
-import { registerTransport, sendTo } from "./router.ts";
+import { announceRestart, installShutdownHandler } from "./restart.ts";
+import { markReady, registerTransport, sendTo } from "./transport.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
 
@@ -36,19 +37,35 @@ if (config.whatsapp.enabled) {
 // from a terminal with no Signal/WhatsApp pairing at all.
 if (process.env.GW_STDIN === "true") {
   const { handleInbound } = await import("./router.ts");
+  let stdinMsgId = 0;
   registerTransport("stdin", {
     chunkLimit: 100000,
     async send(_chatKey, text) {
-      console.log(`\n<<< ${text}`);
+      const id = ++stdinMsgId;
+      console.log(`\n<<< [#${id}] ${text}`);
+      return id;
+    },
+    // Faked, but faked all the way through: the status message and the
+    // reaction state machine are exercised end to end with no pairing.
+    async react(_chatKey, target, emoji, remove) {
+      console.log(`<<< [react ${remove ? "-" : emoji} on #${target}]`);
+    },
+    async edit(_chatKey, target, text) {
+      console.log(`\n<<< [edit #${target}] ${text}`);
     },
   });
+  markReady("stdin");
   process.stdin.setEncoding("utf8");
+  let stdinInboundId = 0;
   process.stdin.on("data", (line) =>
     handleInbound("stdin:local", String(line), {
       sender: "stdin",
       allowed: true,
       owner: true,
       mentioned: true,
+      // Stands in for a Signal timestamp / WhatsApp key, so the reaction state
+      // machine is exercised here too rather than silently skipped.
+      ref: `in${++stdinInboundId}`,
     }),
   );
   console.log("stdin transport ready — type a message:");
@@ -58,4 +75,7 @@ console.log(
   `messaging-gateway up (signal=${config.signal.enabled}, whatsapp=${config.whatsapp.enabled})`,
 );
 
-process.on("SIGTERM", () => process.exit(0));
+// Fires per surface as each one finishes connecting — sending before that is
+// sending into a socket that isn't open yet.
+announceRestart();
+installShutdownHandler();

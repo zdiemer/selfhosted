@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { answerPending, hasPending } from "./approvals.ts";
-import { chunkText, replyPrefix } from "./chunk.ts";
+import { replyPrefix } from "./chunk.ts";
 import {
   atCapacity,
   isRunning,
@@ -19,7 +19,11 @@ import {
 import { config } from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import { getChat, updateChat } from "./state.ts";
+import { createStatus, type Status } from "./status.ts";
+import { type MsgRef, reactTo, sendTo } from "./transport.ts";
 import { usageReport } from "./usage.ts";
+
+export { registerTransport, sendTo, type MsgRef, type Transport } from "./transport.ts";
 
 // Aliases accepted by !model, so a phone doesn't have to type a full model id.
 const MODEL_ALIASES: Record<string, string> = {
@@ -30,32 +34,33 @@ const MODEL_ALIASES: Record<string, string> = {
 };
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
-export interface Transport {
-  /** Chunk limit per message for this surface. */
-  chunkLimit: number;
-  send(chatKey: string, text: string): Promise<void>;
+// One in-flight claude per chat; extra messages wait their turn. The inbound
+// ref rides along so the reaction can be moved from 🕒 to 👀 to ✅ on the
+// message that asked for it, rather than on whatever arrived most recently.
+interface Queued {
+  body: string;
+  ref?: MsgRef;
+  /** Already told the sender it is waiting on the global concurrency cap, so
+   * the 3s re-check doesn't re-send the same reaction every time round. */
+  waiting?: boolean;
 }
-
-const transports = new Map<string, Transport>();
-
-export function registerTransport(prefix: string, t: Transport): void {
-  transports.set(prefix, t);
-}
-
-export async function sendTo(chatKey: string, text: string): Promise<void> {
-  const t = transports.get(chatKey.split(":", 1)[0]);
-  if (!t) {
-    console.error(`no transport for ${chatKey}`);
-    return;
-  }
-  for (const chunk of chunkText(text, t.chunkLimit)) {
-    await t.send(chatKey, chunk);
-  }
-}
-
-// One in-flight claude per chat; extra messages wait their turn.
-const queues = new Map<string, string[]>();
+const queues = new Map<string, Queued[]>();
 let droppedLog = 0;
+
+/** Reaction state machine on the sender's own message. Both networks replace a
+ * previous reaction from the same account, so each call is the whole update. */
+function react(chatKey: string, ref: MsgRef | undefined, emoji: string): void {
+  if (!config.reactions.enabled) return;
+  void reactTo(chatKey, ref, emoji);
+}
+
+/** The status message for the run currently draining this chat, so SIGTERM can
+ * tell it why it is about to stop. */
+const statuses = new Map<string, Status>();
+
+export function activeStatus(chatKey: string): Status | undefined {
+  return statuses.get(chatKey);
+}
 
 export interface InboundMeta {
   /** Display label for the sender, used for group context lines. */
@@ -73,6 +78,10 @@ export interface InboundMeta {
   owner: boolean;
   /** The bot was tagged in this message (groups only). */
   mentioned: boolean;
+  /** Handle on the inbound message itself, for reacting to it. Both transports
+   * already hold this (it is what the read receipt is addressed to); it is
+   * optional only so a surface without message ids stays valid. */
+  ref?: MsgRef;
 }
 
 export function handleInbound(
@@ -128,29 +137,58 @@ export function handleInbound(
 
   const queue = queues.get(chatKey) ?? [];
   if (queue.length >= config.queueDepth) {
+    react(chatKey, meta.ref, config.reactions.error);
     void sendTo(chatKey, `⚠ queue full (${config.queueDepth}); message dropped`);
     return;
   }
-  queue.push(body);
+  queue.push({ body, ref: meta.ref });
   queues.set(chatKey, queue);
+  // 🕒 means "yours is next"; drain() swaps it for 👀 when the run actually
+  // starts. That distinction is the whole reason a reaction beats a read
+  // receipt here — and the reason only the waiting case reacts from here, so a
+  // message that starts immediately gets one reaction rather than two.
   if (queue.length === 1 && !isRunning(chatKey)) void drain(chatKey);
+  else react(chatKey, meta.ref, config.reactions.queued);
 }
 
 async function drain(chatKey: string): Promise<void> {
   const queue = queues.get(chatKey);
   if (!queue?.length) return;
   if (atCapacity()) {
-    // Re-check shortly; global cap bounds worst-case pod memory.
+    // Re-check shortly; global cap bounds worst-case pod memory. Say so once —
+    // this chat is next in line but another chat holds the slot.
+    if (!queue[0].waiting) {
+      queue[0].waiting = true;
+      react(chatKey, queue[0].ref, config.reactions.queued);
+    }
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const message = queue[0];
+  const { body: message, ref } = queue[0];
+  react(chatKey, ref, config.reactions.working);
+  const group = isGroupChat(chatKey);
+  // No status message in a group: the room did not ask to watch the bot's tool
+  // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
+  // is very little to watch.
+  const status = group ? undefined : createStatus(chatKey);
+  if (status) {
+    statuses.set(chatKey, status);
+    await status.begin();
+  }
   try {
-    const group = isGroupChat(chatKey);
     const result = await runClaude(
       chatKey,
       message,
       group ? takeGroupContext(chatKey) : "",
+      status ? (ev) => status.onEvent(ev) : undefined,
+    );
+    // Collapse the status before the answer lands, so the thread reads
+    // status-receipt-then-answer rather than answer-then-a-stale-"working…".
+    await status?.finish(!result.isError);
+    react(
+      chatKey,
+      ref,
+      result.isError ? config.reactions.error : config.reactions.done,
     );
     // A group reply is just an answer in a conversation — the cwd/session/auto
     // banner is workspace bookkeeping and means nothing to the other people in
@@ -166,8 +204,11 @@ async function drain(chatKey: string): Promise<void> {
       );
     }
   } catch (err) {
+    await status?.replace(`⚠ gateway error`);
+    react(chatKey, ref, config.reactions.error);
     await sendTo(chatKey, `⚠ gateway error: ${String(err)}`);
   } finally {
+    statuses.delete(chatKey);
     queue.shift();
     if (queue.length) void drain(chatKey);
   }
@@ -181,7 +222,10 @@ function chatMode(chatKey: string): string {
   return chat.auto ? "auto" : "";
 }
 
-async function handleCommand(chatKey: string, body: string): Promise<void> {
+// Returns whatever the last sendTo did — the `return sendTo(...)` shape below
+// is how each case says "reply and stop", and the handle it hands back is of no
+// interest to the caller.
+async function handleCommand(chatKey: string, body: string): Promise<unknown> {
   const [cmd, ...rest] = body.split(/\s+/);
   const arg = rest.join(" ");
   // Everything after the command verbatim — `!bash` needs the original

@@ -8,7 +8,8 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.ts";
-import { handleInbound, matchesAllowlist, registerTransport } from "./router.ts";
+import { handleInbound, matchesAllowlist } from "./router.ts";
+import { markReady, registerTransport } from "./transport.ts";
 
 // Baileys speaks the real WhatsApp Web protocol over an outbound websocket —
 // no ingress, no webhook. Auth keys persist on the PVC so a pod restart
@@ -22,6 +23,8 @@ import { handleInbound, matchesAllowlist, registerTransport } from "./router.ts"
 // protocol version at the handshake with a 405, before pairing ever starts.
 
 let sock: WASocket | null = null;
+
+const jidOf = (chatKey: string): string => chatKey.slice("wa:".length);
 
 /** Did this message actually tag the bot? Structured address only: a real
  * @-mention, or a reply to one of the bot's own messages. A name match in the
@@ -61,7 +64,28 @@ export async function startWhatsApp(): Promise<void> {
     chunkLimit: 2900,
     async send(chatKey, text) {
       if (!sock) throw new Error("whatsapp not connected");
-      await sock.sendMessage(chatKey.slice("wa:".length), { text });
+      const sent = await sock.sendMessage(jidOf(chatKey), { text });
+      // The key is this message's identity; an edit or reaction is addressed
+      // to it. Baileys returns undefined if the send was swallowed.
+      return sent?.key;
+    },
+    async react(chatKey, target, emoji, remove) {
+      if (!sock) throw new Error("whatsapp not connected");
+      // An empty reaction text is how WhatsApp expresses "take mine back".
+      await sock.sendMessage(jidOf(chatKey), {
+        react: { text: remove ? "" : emoji, key: target as WAMessage["key"] },
+      });
+    },
+    async edit(chatKey, target, text) {
+      if (!sock) throw new Error("whatsapp not connected");
+      // WhatsApp refuses edits more than ~15 minutes after the original, so on
+      // a long run the status message stops updating partway. transport.ts
+      // treats that as a failed best-effort edit, which is the right outcome:
+      // the answer still arrives as its own message.
+      await sock.sendMessage(jidOf(chatKey), {
+        text,
+        edit: target as WAMessage["key"],
+      });
     },
   });
   await connect();
@@ -96,6 +120,7 @@ async function connect(): Promise<void> {
     if (u.connection === "open") {
       console.log("whatsapp: connected");
       reconnectDelay = RECONNECT_MIN_MS;
+      markReady("wa");
     }
     if (u.connection === "close") {
       const code = (u.lastDisconnect?.error as any)?.output?.statusCode;
@@ -206,6 +231,9 @@ async function connect(): Promise<void> {
         allowed,
         owner,
         mentioned,
+        // Same key the read receipt above is addressed to; a reaction on the
+        // sender's message needs it.
+        ref: m.key,
       });
     }
   });

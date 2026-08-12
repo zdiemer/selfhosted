@@ -356,11 +356,34 @@ state file. `!clear` is `!new` under a name that reads right in a chat — it
 drops the session pointer so the next message starts cold. The transcript itself
 stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
 
-Anything else is sent to claude. Replies are the final result only (no
-streaming), prefixed `[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k
-(Signal) / ~2.9k (WhatsApp) chars, max 4 chunks then truncated — bandwidth is
-the point. Messages the gateway accepts are marked **read** on the sender's
-side, so a read receipt means "the bot has this", not "a packet arrived".
+Anything else is sent to claude. Replies are prefixed
+`[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k (Signal) / ~2.9k
+(WhatsApp) chars, max 4 chunks then truncated — bandwidth is the point.
+
+While a run is going, three things say so, in increasing order of detail:
+
+- Messages the gateway accepts are marked **read** on the sender's side, so a
+  read receipt means "the bot has this", not "a packet arrived".
+- Your message is **reacted to**: 👀 while it is the one being worked on, 🕒
+  while it waits behind another run in the same chat, then ✅ or ❌.
+  `messaging.reactions.*` turns this off or changes the emoji — it is the one
+  part of this that shows up in a group whether the room asked or not.
+- In a 1:1, a **status message** is sent when the run starts and edited in
+  place as tool calls land (`Bash: helm upgrade …`, `Read src/router.ts`,
+  `waiting for your approval`), collapsing to `✓ done · 14 tools · 1m42s` when
+  the answer goes out. It is deliberately a separate message from the answer:
+  the answer is chunked across up to four messages, so it has no single
+  identity to edit, and WhatsApp refuses edits more than ~15 minutes after the
+  original — a long run would lose the thread partway. Edits are throttled to
+  one every `messaging.progress.editSeconds` for the same reason `!bash` output
+  is capped: this is a metered connection and, on WhatsApp, an unofficial
+  client. Groups get no status message — the room did not ask to watch, and a
+  group run only has `WebFetch`/`WebSearch` to show.
+
+The run itself is driven off `claude -p --output-format stream-json`, which is
+also where the session id now comes from: it is written to the state file the
+moment the run starts rather than when it finishes, which is what makes an
+interrupted run recoverable (below).
 
 Every run carries an appended system prompt (`--append-system-prompt`, so Claude
 Code's own prompt still teaches it its tools) explaining the harness: the far
@@ -371,6 +394,26 @@ literally, and replies should lead with the answer and stay short. Override with
 The bot's Signal profile is set with `signal-cli updateProfile --given-name …`
 (or the daemon's `updateProfile` JSON-RPC while it holds the account lock).
 Without it the account shows as **Unknown** in everyone's client.
+
+### Restarts
+
+This pod can redeploy itself (`build.sh && ./upgrade.sh` from `!bash` or an
+`!auto on` chat), and `strategy: Recreate` means the old pod is gone before the
+new image is pulled. Any run in flight simply stops. So the gateway says so at
+both ends:
+
+- On `SIGTERM`, every chat with a run going gets `⏳ gateway restarting — back
+  shortly` and its status message is overwritten with the same. Strictly
+  time-boxed (`messaging.restartNotice.shutdownGraceSeconds`) — the pod's
+  termination grace period is the real ceiling and being killed mid-send is a
+  normal outcome here, not something to handle.
+- On boot, once each transport is actually connected, chats active in the last
+  `restartNotice.withinMinutes` (default 60) get `✓ gateway back up`. A chat
+  whose run was cut off is told that instead, and can say "continue" to pick it
+  up: the session id was persisted at run start, so the partial transcript on
+  the PVC is still reachable through `--resume`. Suppressed entirely if the
+  last notice was under `dedupeMinutes` ago, so a crash-looping pod doesn't
+  become a message per restart. Groups are never notified.
 
 ### Group chats
 

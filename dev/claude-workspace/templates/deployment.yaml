@@ -426,6 +426,28 @@ spec:
               value: {{ .Values.messaging.bash.maxOutputChars | quote }}
             - name: GW_USAGE_DAYS
               value: {{ .Values.messaging.usageDays | quote }}
+            - name: GW_PROGRESS_ENABLED
+              value: {{ .Values.messaging.progress.enabled | quote }}
+            - name: GW_PROGRESS_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.editSeconds | quote }}
+            - name: GW_REACTIONS_ENABLED
+              value: {{ .Values.messaging.reactions.enabled | quote }}
+            - name: GW_REACT_QUEUED
+              value: {{ .Values.messaging.reactions.queued | quote }}
+            - name: GW_REACT_WORKING
+              value: {{ .Values.messaging.reactions.working | quote }}
+            - name: GW_REACT_DONE
+              value: {{ .Values.messaging.reactions.done | quote }}
+            - name: GW_REACT_ERROR
+              value: {{ .Values.messaging.reactions.error | quote }}
+            - name: GW_RESTART_NOTICE_ENABLED
+              value: {{ .Values.messaging.restartNotice.enabled | quote }}
+            - name: GW_RESTART_NOTICE_MINUTES
+              value: {{ .Values.messaging.restartNotice.withinMinutes | quote }}
+            - name: GW_RESTART_NOTICE_DEDUPE_MINUTES
+              value: {{ .Values.messaging.restartNotice.dedupeMinutes | quote }}
+            - name: GW_SHUTDOWN_GRACE_SECONDS
+              value: {{ .Values.messaging.restartNotice.shutdownGraceSeconds | quote }}
             {{- with .Values.messaging.systemPrompt }}
             - name: GW_SYSTEM_PROMPT
               value: {{ . | quote }}

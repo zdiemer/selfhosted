@@ -2,12 +2,15 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { config } from "./config.ts";
-import {
-  handleInbound,
-  isAllowed,
-  matchesAllowlist,
-  registerTransport,
-} from "./router.ts";
+import { handleInbound, isAllowed, matchesAllowlist } from "./router.ts";
+import { markReady, registerTransport } from "./transport.ts";
+
+/** Signal addresses a message by (author, sent timestamp) — a reaction needs
+ * both, an edit needs the timestamp. */
+interface SignalRef {
+  ts: number;
+  author: string;
+}
 
 // JSON-RPC client for `signal-cli daemon --socket ...` (newline-delimited
 // JSON-RPC 2.0 over a unix socket on the pod's shared /tmp emptyDir). With
@@ -142,6 +145,12 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
     allowed,
     owner,
     mentioned,
+    // A reaction is addressed to the sender's message, so the author is the
+    // sender rather than this account — the same pair the read receipt above
+    // is built from.
+    ref: env?.timestamp
+      ? ({ ts: env.timestamp, author: env.sourceUuid ?? sender } as SignalRef)
+      : undefined,
   });
 }
 
@@ -198,7 +207,19 @@ function connect(): void {
   };
   sock.once("close", retry);
   sock.on("error", (err) => console.error(`signal socket: ${err.message}`));
-  sock.on("connect", () => console.log("signal: connected to signal-cli daemon"));
+  sock.on("connect", () => {
+    console.log("signal: connected to signal-cli daemon");
+    markReady("signal");
+  });
+}
+
+/** Groups are addressed by groupId, 1:1 by recipient — signal-cli takes one or
+ * the other, never both. */
+function addressOf(chatKey: string): Record<string, unknown> {
+  const target = chatKey.slice("signal:".length);
+  return target.startsWith("g:")
+    ? { groupId: target.slice("g:".length) }
+    : { recipient: [target] };
 }
 
 export function startSignal(): void {
@@ -207,15 +228,37 @@ export function startSignal(): void {
     // Some Signal clients truncate near 2000 chars; stay under it.
     chunkLimit: 1900,
     async send(chatKey, text) {
-      const target = chatKey.slice("signal:".length);
-      // Groups are addressed by groupId, 1:1 by recipient — signal-cli takes
-      // one or the other, never both.
+      const res = (await rpc("send", {
+        account: config.signal.number,
+        message: text,
+        ...addressOf(chatKey),
+      })) as { timestamp?: number } | undefined;
+      // The send timestamp is the message's identity on this network — without
+      // it there is nothing to edit later.
+      return res?.timestamp
+        ? ({ ts: res.timestamp, author: config.signal.number } as SignalRef)
+        : undefined;
+    },
+    async react(chatKey, target, emoji, remove) {
+      const r = target as SignalRef;
+      await rpc("sendReaction", {
+        account: config.signal.number,
+        emoji,
+        targetAuthor: r.author,
+        targetTimestamp: r.ts,
+        ...(remove ? { remove: true } : {}),
+        ...addressOf(chatKey),
+      });
+    },
+    async edit(chatKey, target, text) {
+      // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL
+      // send timestamp across successive edits rather than the last revision's
+      // — clients resolve an edit chain from its root.
       await rpc("send", {
         account: config.signal.number,
         message: text,
-        ...(target.startsWith("g:")
-          ? { groupId: target.slice("g:".length) }
-          : { recipient: [target] }),
+        editTimestamp: (target as SignalRef).ts,
+        ...addressOf(chatKey),
       });
     },
   });

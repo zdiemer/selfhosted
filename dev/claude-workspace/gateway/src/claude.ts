@@ -11,6 +11,24 @@ export interface RunResult {
   isError: boolean;
 }
 
+/** One NDJSON line from `--output-format stream-json`. Only the fields this
+ * gateway reads are typed; the stream carries a good deal more. */
+export interface StreamEvent {
+  type?: string;
+  subtype?: string;
+  session_id?: string;
+  message?: {
+    content?: {
+      type?: string;
+      text?: string;
+      name?: string;
+      input?: Record<string, unknown>;
+    }[];
+  };
+  result?: string;
+  is_error?: boolean;
+}
+
 const running = new Map<string, ReturnType<typeof spawn>>();
 let activeCount = 0;
 
@@ -23,6 +41,11 @@ export function stop(chatKey: string): boolean {
   if (!child) return false;
   child.kill("SIGTERM");
   return true;
+}
+
+/** Chats with a claude running right now — the ones a shutdown owes a word to. */
+export function runningChats(): string[] {
+  return [...running.keys()];
 }
 
 export function atCapacity(): boolean {
@@ -54,11 +77,21 @@ export async function runClaude(
   chatKey: string,
   message: string,
   contextPrefix = "",
+  onEvent?: (ev: StreamEvent) => void,
 ): Promise<RunResult> {
   const chat: ChatState = getChat(chatKey);
   const group = isGroupChat(chatKey);
   const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
-  const args = ["-p", prompt, "--output-format", "json"];
+  // stream-json rather than json: the events are what drive the live status
+  // message, and the init event carries session_id early enough to persist it
+  // before the run can be interrupted. --verbose is required alongside it.
+  const args = [
+    "-p",
+    prompt,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+  ];
   args.push("--model", chat.model ?? config.model);
   args.push("--effort", chat.effort ?? config.effort);
   // Append rather than replace: Claude Code's own system prompt is what tells
@@ -106,6 +139,9 @@ export async function runClaude(
   }
 
   activeCount++;
+  // Recorded on the PVC so the next boot can tell this chat its run was cut
+  // off mid-flight (main.ts). Cleared in the finally below, including on crash.
+  updateChat(chatKey, { inFlight: true });
   try {
     return await new Promise<RunResult>((resolve) => {
       const child = spawn("claude", args, {
@@ -115,10 +151,55 @@ export async function runClaude(
       });
       running.set(chatKey, child);
 
-      let out = "";
       let err = "";
-      child.stdout!.on("data", (d) => (out += d));
+      let result: RunResult | null = null;
+      let sessionId: string | undefined;
+
+      // NDJSON: the same line-split loop the signal-cli socket uses, because a
+      // chunk boundary lands mid-line often enough to matter.
+      let buf = "";
+      child.stdout!.on("data", (d) => {
+        buf += d;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (line.trim()) handleLine(line);
+        }
+      });
       child.stderr!.on("data", (d) => (err += d));
+
+      const handleLine = (line: string): void => {
+        let ev: StreamEvent;
+        try {
+          ev = JSON.parse(line) as StreamEvent;
+        } catch {
+          // A non-JSON line on stdout is a claude-side warning, not a fatal
+          // condition. Keep it for the error path and carry on.
+          err += line + "\n";
+          return;
+        }
+        // Persist the session the moment it is known, not at the end. This is
+        // what makes a run killed by a redeploy resumable: the transcript is
+        // already on the PVC, we just have to remember its id.
+        if (ev.session_id && ev.session_id !== sessionId) {
+          sessionId = ev.session_id;
+          updateChat(chatKey, { sessionId });
+        }
+        if (ev.type === "result") {
+          result = {
+            text: ev.result ?? "(no result text)",
+            sessionId: ev.session_id ?? sessionId,
+            isError: Boolean(ev.is_error),
+          };
+        }
+        try {
+          onEvent?.(ev);
+        } catch (e) {
+          // A broken progress renderer must not take the run down with it.
+          console.warn(`onEvent failed: ${(e as Error).message}`);
+        }
+      };
 
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
@@ -128,27 +209,24 @@ export async function runClaude(
       child.on("close", (code) => {
         clearTimeout(timer);
         running.delete(chatKey);
-        try {
-          const parsed = JSON.parse(out);
-          if (parsed.session_id)
-            updateChat(chatKey, { sessionId: parsed.session_id });
-          resolve({
-            text: parsed.result ?? "(no result text)",
-            sessionId: parsed.session_id,
-            isError: Boolean(parsed.is_error),
-          });
-        } catch {
-          resolve({
+        if (buf.trim()) handleLine(buf);
+        // No result event means the run died before finishing — killed by
+        // !stop, the timeout, or a SIGTERM from a redeploy. Say what happened
+        // rather than hand back an empty answer.
+        resolve(
+          result ?? {
             text:
               `claude exited ${code}` +
               (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
+            sessionId,
             isError: true,
-          });
-        }
+          },
+        );
       });
     });
   } finally {
     activeCount--;
+    updateChat(chatKey, { inFlight: false });
   }
 }
 

@@ -23,7 +23,7 @@ Write plain text. Markdown is not rendered here: asterisks, backticks, and pound
 
 Lead with the answer and keep it to a few sentences unless more was asked for. Long replies are split across several messages and truncated after a few, so length costs the reader more than it costs you. Skip preamble, restating the question, and sign-offs.
 
-You are running headless. There is no interactive terminal, and the person sees only your final message, not your tool calls or reasoning.`;
+You are running headless. There is no interactive terminal. A status message shows the person a one-line summary of each tool call as you work, so they can see that something is happening, but your reasoning is not shown and the reply is what they will actually read — write it as though it stands alone.`;
 
 const DEFAULT_GROUP_SYSTEM_PROMPT = `This is a group chat. Everyone in the room reads your replies, but only the person who tagged you is asking — answer them, and don't address the room at large. Earlier messages from other people are given to you as context.
 
@@ -56,6 +56,44 @@ export const config = {
     allowedSenders: envList("WA_ALLOWED_SENDERS"),
     // Group JIDs (`…@g.us`).
     allowedGroups: envList("WA_ALLOWED_GROUPS"),
+  },
+
+  // The live status message: one message per run, edited in place as tool
+  // calls land. Off makes the surface behave as it did before — the answer,
+  // and nothing until the answer.
+  progress: {
+    enabled: (process.env.GW_PROGRESS_ENABLED ?? "true") === "true",
+    // Minimum gap between edits of that message. Baileys is an unofficial
+    // WhatsApp client (see the chart README on ban risk), so an edit per event
+    // is not on the table; the status still lands its final state because the
+    // throttle keeps a trailing timer.
+    editIntervalMs: envInt("GW_PROGRESS_EDIT_SECONDS", 3) * 1000,
+  },
+  // Reactions on the sender's own message: accepted → working → done/failed.
+  // This is the one feature that shows up in a group whether the room asked
+  // for it or not, hence its own switch.
+  reactions: {
+    enabled: (process.env.GW_REACTIONS_ENABLED ?? "true") === "true",
+    queued: process.env.GW_REACT_QUEUED ?? "🕒",
+    working: process.env.GW_REACT_WORKING ?? "👀",
+    done: process.env.GW_REACT_DONE ?? "✅",
+    error: process.env.GW_REACT_ERROR ?? "❌",
+  },
+  restartNotice: {
+    // A redeploy of this chart is a `Recreate` rollout: the pod is torn down
+    // before the new one pulls, so a run in flight simply stops. Both halves of
+    // that — a word on the way down, a word on the way back — are the point.
+    enabled: (process.env.GW_RESTART_NOTICE_ENABLED ?? "true") === "true",
+    // Only chats active this recently hear about a restart. An hour is roughly
+    // "you are still holding the phone"; a day would be a stranger's ping.
+    withinMs: envInt("GW_RESTART_NOTICE_MINUTES", 60) * 60_000,
+    // Suppress the notice if the last one was this recent — a crashloop must
+    // not turn into a message per restart.
+    dedupeMs: envInt("GW_RESTART_NOTICE_DEDUPE_MINUTES", 10) * 60_000,
+    // Hard cap on how long SIGTERM handling may spend on the network before
+    // exiting anyway. The pod's terminationGracePeriodSeconds is the real
+    // ceiling; being SIGKILLed mid-send is a normal outcome here.
+    shutdownGraceMs: envInt("GW_SHUTDOWN_GRACE_SECONDS", 5) * 1000,
   },
 
   defaultCwd: process.env.GW_DEFAULT_CWD ?? path.join(home, "code/selfhosted"),
