@@ -147,6 +147,34 @@ kubectl -n infra logs -l app.kubernetes.io/name=cluster-status -c collector --ta
 Network rates need **two** scrapes before they appear — expect `null` for the
 first ~15s after a restart. That's the diff working as designed, not a fault.
 
+## The verdict badge
+
+The page opens on the answer, not the evidence. `verdict()` works it out from
+exactly the data every card below is drawn from, so the badge can never
+disagree with them, and it splits into two tiers:
+
+| | what counts | colour |
+|---|---|---|
+| **bad** | node NotReady, probed service down, pod CrashLoopBackOff, any filesystem ≥ 90%, node under memory/disk/PID/network pressure | red |
+| **warn** | failed / pending / unknown pods, any filesystem ≥ 80% | amber |
+| **good** | none of the above | green |
+
+**Failed pods are deliberately not critical.** Most of them here are CronJob
+pods that exited non-zero hours ago and are being kept for their logs. A red
+banner for those trains you to ignore red banners, which costs you the one that
+matters.
+
+**Staleness outranks everything.** nginx keeps serving the last `status.json`
+after the collector dies, so without that check the page would sit there saying
+"All clear" about a cluster it had stopped being able to see — the single worst
+thing a status page can do. Past three collector intervals the badge goes grey
+and says so, and a failed `fetch` does the same rather than leaving the last
+good answer up.
+
+The badge holds one line; anything else the verdict found goes on the `also:`
+line beneath it. That is not just a nicety — a `title` tooltip would have hidden
+it from every phone, which is most of this page's traffic.
+
 ## Editing the page
 
 `templates/web-configmap.yaml` holds `index.html` (inline CSS + vanilla JS, no
@@ -157,6 +185,46 @@ convention in the root README.
 Everything from `status.json` is HTML-escaped before it reaches `innerHTML` —
 event messages are arbitrary Kubernetes text on a public page, so `esc()` is not
 optional. Keep it that way.
+
+### On a phone
+
+This is mostly read on a phone, and three things there are load-bearing:
+
+- **Tables become records below 700px.** Every `<td>` carries a `data-l`
+  attribute holding its column's header, which CSS pulls in front of the value
+  as a label. Add a column, add its `data-l` — a cell without one renders with a
+  blank label. They *flow* rather than stacking one per line: stacking was the
+  first attempt and multiplies each table's height by its column count, which
+  with 71 deployments and a node's 63 pods turned the page into 21,000px of
+  scroll.
+- **Long, healthy workload lists fold.** 71 Deployments, all Available, is one
+  fact and 71 rows. A `<details>` collapses them — but only when nothing is
+  wrong, because a card that hides a Failure behind a click is worse than no
+  card.
+- **`min-width: 0` on the grid and flex children.** The default is
+  `min-width: auto`, i.e. "never shrink below your content", so one long mono
+  bar label used to push its track wider than its allotted space and the whole
+  document sideways with it. This page rendered 593px wide on a 390px phone for
+  as long as it had existed. Anything new that holds an unbreakable string wants
+  the same treatment, or it will do it again.
+
+`.opt` marks the longest, least useful thing on a line — the OS string on a node
+row, the `· req N` tail on a bar label. It is *dropped* on narrow screens rather
+than ellipsised, because truncating a line takes the figure at the end of it
+(the percentage) with it, and that is the one anybody came for. It is dropped
+inside `.node-bars` at every width: those three bars share one node's worth of
+space and never have room for the tail.
+
+Iterating on this without a deploy loop: render the chart, drop `index.html` next
+to a real `status.json`, and serve the directory.
+
+```bash
+helm template cluster-status infra/cluster-status \
+  | python3 -c 'import sys,yaml;[sys.stdout.write(d["data"]["index.html"]) for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind")=="ConfigMap" and d["metadata"]["name"].endswith("-web")]' \
+  > /tmp/page/index.html
+curl -s https://status.diemer.codes/status.json > /tmp/page/status.json
+python3 -m http.server 8899 -d /tmp/page
+```
 
 ## Icons and the preview card
 

@@ -79,7 +79,7 @@ data:
     <html lang="en">
     <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="robots" content="noindex, nofollow">
     <title>Cluster Status</title>
 
@@ -109,74 +109,251 @@ data:
     <meta property="og:image:alt" content="status.diemer.codes — is everything up?">
     <meta name="twitter:card" content="summary_large_image">
     <style>
+      /* ---------------------------------------------------------------- tokens
+         Zinc neutrals, and the three series colours the page has always used
+         for pods / k3s / system. Semantic state (ok / warn / bad) is kept
+         separate from those three on purpose: "this bar segment is k3s" and
+         "this number is alarming" are different jobs, and collapsing them is
+         how a chart ends up saying a node is on fire because its runtime is
+         busy. */
       :root {
         --bg: #ffffff; --fg: #0a0a0a; --muted: #71717a; --muted-bg: #f4f4f5;
         --border: #e4e4e7; --card: #ffffff; --destructive: #dc2626;
         --pods: #10b981; --k3s: #0ea5e9; --system: #f59e0b;
         --ok: #10b981; --warn: #eab308; --info: #3b82f6;
+        --raise: 0 1px 2px rgba(9, 9, 11, .04);
+        color-scheme: light;
       }
       @media (prefers-color-scheme: dark) {
         :root {
           --bg: #09090b; --fg: #fafafa; --muted: #a1a1aa; --muted-bg: #27272a;
           --border: #27272a; --card: #101012; --destructive: #f87171;
           --ok: #34d399; --warn: #facc15; --info: #60a5fa;
+          --raise: none;
+          color-scheme: dark;
         }
       }
       * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
       body {
-        margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--fg);
+        margin: 0;
+        /* viewport-fit=cover is set on the meta tag, so the side padding has to
+           clear the notch cutouts in landscape or the first character of every
+           node name lands under one. */
+        padding: 1rem max(.75rem, env(safe-area-inset-left)) 3rem;
+        background: var(--bg); color: var(--fg);
         font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       }
+      @media (min-width: 640px) { body { padding: 1.5rem 1rem 4rem; } }
       .wrap { max-width: 1200px; margin: 0 auto; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      h1 { font-size: 1.25rem; margin: 0; font-weight: 600; }
-      h2 { font-size: 1rem; margin: 1.5rem 0 .75rem; font-weight: 500; }
-      .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+      /* Every figure on this page sits in a column with another figure above or
+         below it. Proportional digits make those columns ripple as the numbers
+         change, which on a page that repaints every 15s reads as movement where
+         nothing has happened. */
+      .mono, .stat-v, table, .barlbl, .pill b { font-variant-numeric: tabular-nums; }
+
+      /* ------------------------------------------------------------- verdict
+         The answer, before any of the evidence. A status page that opens on a
+         summary card makes you read four numbers and a pill row to find out
+         whether anything is wrong; this says so, and colours itself. Sticky,
+         because the node list is long and the answer should not scroll away. */
+      .top {
+        position: sticky; top: 0; z-index: 5;
+        margin: -1rem calc(-1 * max(.75rem, env(safe-area-inset-left))) 1rem;
+        padding: .875rem max(.75rem, env(safe-area-inset-left));
+        background: color-mix(in srgb, var(--bg) 88%, transparent);
+        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--border);
+      }
+      @media (min-width: 640px) {
+        .top { margin: -1.5rem -1rem 1.25rem; padding: 1.25rem 1rem 1rem; }
+      }
+      .top-row { display: flex; align-items: center; gap: .625rem; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+      .brand svg { width: 22px; height: 22px; border-radius: 5px; display: block; flex: none; }
+      h1 { font-size: 1.0625rem; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+      .verdict {
+        display: inline-flex; align-items: center; gap: .4375rem;
+        border-radius: 999px; padding: .1875rem .5625rem .1875rem .5rem;
+        font-size: 12px; font-weight: 600; line-height: 1.4;
+        color: var(--vc, var(--ok));
+        background: color-mix(in srgb, var(--vc, var(--ok)) 13%, transparent);
+        border: 1px solid color-mix(in srgb, var(--vc, var(--ok)) 28%, transparent);
+      }
+      .verdict .dot {
+        width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none;
+      }
+      /* Only the healthy state pulses. A red badge that also breathes reads as
+         decorative; a still red badge next to a live green one does not. */
+      @media (prefers-reduced-motion: no-preference) {
+        .verdict.good .dot { animation: beat 2.4s ease-in-out infinite; }
+      }
+      @keyframes beat { 0%, 70%, 100% { opacity: 1; } 85% { opacity: .35; } }
+      .top .sub { margin-top: .3125rem; }
+      .why { color: var(--muted); font-size: 12px; }
+      .why b { color: var(--fg); font-weight: 600; }
+
       .sub { color: var(--muted); font-size: 12px; }
-      .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: .75rem; }
-      .card-h { padding: .75rem 1rem .5rem; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center; }
-      .card-t { font-weight: 600; font-size: .9rem; }
-      .card-c { padding: 0 1rem 1rem; }
+      h2 {
+        font-size: 11px; margin: 1.75rem 0 .625rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+        display: flex; align-items: center; gap: .5rem;
+      }
+      h2::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+      /* ---------------------------------------------------------------- cards */
+      .card {
+        background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+        margin-bottom: .625rem; box-shadow: var(--raise);
+      }
+      .card-h { padding: .75rem .875rem .5rem; display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; align-items: center; }
+      .card-t { font-weight: 600; font-size: .8125rem; letter-spacing: -.005em; }
+      /* space-between distributes THREE children, and a folded card header has
+         three: the disclosure marker, the title, and the summary chip. Without
+         this the title floats into the middle of the card while the other two
+         sit at the edges. Pinning the title to the left makes the count of
+         children stop mattering. */
+      .card-h > .card-t { margin-right: auto; }
+      .card-c { padding: 0 .875rem .875rem; }
+      @media (min-width: 640px) {
+        .card-h { padding: .875rem 1rem .5rem; }
+        .card-c { padding: 0 1rem 1rem; }
+      }
+      .count { color: var(--muted); font-weight: 500; }
+      /* A <summary> is the card header for the folded workload lists. The
+         default marker is a black triangle that ignores the type colour, so it
+         is replaced with one built from the same muted token as everything else
+         on the row. list-style:none is what Safari needs; ::-webkit-details-marker
+         is what older Safari needs. */
+      summary { cursor: pointer; list-style: none; }
+      summary::-webkit-details-marker { display: none; }
+      summary::before {
+        content: "\25B8"; color: var(--muted); font-size: 11px; margin-right: -.125rem;
+        transition: transform .12s ease; display: inline-block;
+      }
+      details[open] > summary::before { transform: rotate(90deg); }
+      summary:hover { background: var(--muted-bg); border-radius: 10px 10px 0 0; }
+      summary:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; border-radius: 10px; }
+      @media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
       .grid { display: grid; gap: 1rem; }
-      .g4 { grid-template-columns: repeat(2, 1fr); }
+      /* A grid or flex item defaults to min-width:auto, which is "never shrink
+         below your content" — so one long mono line inside a bar label pushed
+         its track wider than the track was allotted, the wrap with it, and the
+         whole document sideways. On a 390px phone this page was 593px wide and
+         had been for as long as it has existed. Everything here is meant to
+         truncate or wrap instead, and this is what lets it. */
+      .grid > *, .node-bars > *, .card, .wrap { min-width: 0; }
+      .g4 { grid-template-columns: repeat(2, 1fr); gap: .875rem 1rem; }
       .g3 { grid-template-columns: 1fr; }
       .g2 { grid-template-columns: 1fr; }
       @media (min-width: 640px) { .g4 { grid-template-columns: repeat(4, 1fr); } }
       @media (min-width: 1024px) { .g3 { grid-template-columns: repeat(3, 1fr); } .g2 { grid-template-columns: repeat(2, 1fr); } }
-      .stat-l { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-      .stat-v { font-size: 1.05rem; font-weight: 600; word-break: break-word; }
+
+      .stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+      /* No word-break here. It used to be break-word, which split "122.6 GB"
+         across two lines on a phone and knocked the tile below it out of
+         alignment; these values are short and the container is a grid cell that
+         can take them. */
+      .stat-v { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.02em; margin-top: 1px; }
       .stat-s { font-size: 11px; color: var(--muted); }
-      .bar { position: relative; display: flex; height: 12px; width: 100%; overflow: hidden; border-radius: 3px; background: var(--muted-bg); }
+
+      /* ----------------------------------------------------------------- bars */
+      .bar { position: relative; display: flex; height: 10px; width: 100%; overflow: hidden; border-radius: 999px; background: var(--muted-bg); }
       .bar > i { height: 100%; display: block; }
-      .marker { position: absolute; top: 0; height: 100%; width: 2px; background: var(--fg); opacity: .7; }
-      .barlbl { display: flex; justify-content: space-between; gap: .5rem; font-size: 11px; color: var(--muted); margin-top: 3px; flex-wrap: wrap; }
-      .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-size: 11px; color: var(--muted); }
+      .marker { position: absolute; top: -1px; height: calc(100% + 2px); width: 2px; background: var(--fg); opacity: .55; }
+      /* nowrap + a shrinking left half. This was flex-wrap:wrap, so on a narrow
+         column the percentage dropped onto its own line and every node card in
+         the list ended up a different height. */
+      .barlbl { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: 11px; color: var(--muted); margin-top: 4px; }
+      .barlbl > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .barlbl > :last-child { flex: none; }
+
+      .legend { display: flex; flex-wrap: wrap; gap: .25rem .875rem; font-size: 11px; color: var(--muted); }
       .legend span { display: inline-flex; align-items: center; gap: .375rem; }
-      .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+      .sw { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
       .pill { display: inline-flex; align-items: center; gap: .375rem; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 500; }
-      .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+      .pills { display: flex; flex-wrap: wrap; gap: .375rem; margin: .875rem 0; }
+
+      /* --------------------------------------------------------------- tables */
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
-      th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); font-size: 11px; }
-      td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+      th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+      td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
       tr:last-child td { border-bottom: 0; }
       .r { text-align: right; }
       .c { text-align: center; }
       .scroll { overflow-x: auto; }
-      .node-btn { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: .75rem 1rem; display: flex; flex-direction: column; gap: .75rem; border-radius: 8px; }
+
+      /* On a phone none of these tables fit: the problem-pod table is six
+         columns of pod names, and .scroll turned it into a sideways drag on the
+         one view where you are least able to do that. Below 700px every row
+         becomes a small record instead, carrying the header text down as a
+         label per cell (data-l, set where the row is built).
+
+         The fields FLOW rather than stacking one per line. Stacking was the
+         first attempt and is the obvious thing to reach for, but it multiplies
+         every table's height by its column count — with 71 deployments and a
+         node's 63 pods on the page, it turned the document into 21,000px of
+         scroll. Inline-flex chips wrap to one or two lines per record and stay
+         labelled, which is the part that mattered. */
+      @media (max-width: 699px) {
+        .scroll { overflow-x: visible; }
+        table, tbody { display: block; width: 100%; }
+        thead { display: none; }
+        tr {
+          display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px .75rem;
+          padding: .5rem 0; border-bottom: 1px solid var(--border);
+        }
+        tr:last-child { border-bottom: 0; }
+        td {
+          display: inline-flex; align-items: baseline; gap: .3125rem;
+          width: auto; padding: 0; border: 0; text-align: left;
+        }
+        td::before {
+          content: attr(data-l); flex: none;
+          color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+        }
+        /* The record's title: its own full-width line, and the only cell
+           allowed to break mid-token — pod names are long and unhyphenatable. */
+        td:first-child { flex-basis: 100%; font-weight: 500; overflow-wrap: anywhere; }
+        td:first-child::before { display: none; }
+        /* An empty cell with a label is worse than no cell: it reads as missing
+           data rather than as nothing to say. */
+        td:empty { display: none; }
+      }
+
+      /* ---------------------------------------------------------------- nodes */
+      .node-btn { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: .75rem .875rem; display: flex; flex-direction: column; gap: .75rem; border-radius: 10px; }
       .node-btn:hover { background: var(--muted-bg); }
-      @media (min-width: 900px) { .node-btn { flex-direction: row; align-items: center; justify-content: space-between; } .node-bars { max-width: 40rem; flex-shrink: 0; } }
+      .node-btn:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+      @media (min-width: 900px) { .node-btn { flex-direction: row; align-items: center; justify-content: space-between; padding: .75rem 1rem; } .node-bars { max-width: 40rem; flex-shrink: 0; } }
       .node-bars { display: grid; grid-template-columns: 1fr; gap: .75rem; width: 100%; }
       @media (min-width: 640px) { .node-bars { grid-template-columns: repeat(3, 1fr); } }
       .node-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11px; color: var(--muted); margin-top: 3px; }
+      /* Marks the least useful, longest thing in a line — the OS string on a
+         node row, the "· req N" tail on a bar label. Dropped rather than
+         ellipsised on narrow screens, because truncating the line takes the
+         figure at the END of it (the percentage) with it, and that is the one
+         anybody came for. */
+      @media (max-width: 479px) { .opt { display: none; } }
+      /* Always dropped inside a node row, at every width. Those three bars share
+         one node's worth of horizontal space, so even on a wide desktop the tail
+         does not fit and gets ellipsised mid-token — "· req …" is strictly worse
+         than nothing. The requested figure is still on the bar itself, as the
+         marker and in its hover title. The cluster-wide bars up in the summary
+         are three times wider and keep theirs. */
+      .node-bars .opt { display: none; }
       .chev { display: inline-block; width: 12px; color: var(--muted); }
-      .detail { border-top: 1px solid var(--border); padding: 1rem; }
-      .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: .375rem; }
+      .detail { border-top: 1px solid var(--border); padding: .875rem; }
+      .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .375rem; }
+
       .ev { border-bottom: 1px solid var(--border); padding: .5rem 0; }
       .ev:last-child { border-bottom: 0; }
       .ev-h { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
-      .ev-m { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 2px; }
-      .err { border: 1px solid var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); padding: .75rem; border-radius: 6px; }
-      .tile-l { font-size: 10px; text-transform: uppercase; color: var(--muted); }
+      .ev-m { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
+      .err { border: 1px solid var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); padding: .75rem; border-radius: 8px; }
+      .tile-l { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
       @media (min-width: 640px) { .tile-l { display: none; } }
       ol { margin: 0; padding-left: 1.25rem; }
       li { margin: 2px 0; }
@@ -186,19 +363,30 @@ data:
     </head>
     <body>
     <div class="wrap">
-      <div class="head">
-        <div>
-          <h1>Cluster Status</h1>
-          <div class="sub" id="meta">Loading…</div>
+      <!--
+        The verdict, above everything. This page used to open on the summary
+        card, which meant working out whether anything was wrong by reading four
+        figures and a pill row — on a phone, below the fold. Now it says so.
+
+        Sticky, because the node list is long and the answer is the one thing
+        that should not scroll away.
+
+        The mark is <img src="/icon.svg"> rather than an inline <svg>. The
+        artwork already exists as two transcriptions (the SVG and the Pillow
+        calls in scripts/gen-brand.py); pasting the paths in here would make it
+        three, and this one would be the copy nobody remembers to update.
+      -->
+      <header class="top">
+        <div class="top-row">
+          <span class="brand">
+            <img src="/icon.svg" width="22" height="22" alt="">
+            <h1>Cluster Status</h1>
+          </span>
+          <span class="verdict" id="verdict"><i class="dot"></i><span id="verdict-t">Checking…</span></span>
         </div>
-        <div class="legend">
-          <span><i class="sw" style="background:var(--pods)"></i>Pods (workload)</span>
-          <span><i class="sw" style="background:var(--k3s)"></i>k3s (kubelet + runtime)</span>
-          <span><i class="sw" style="background:var(--system)"></i>System (non-k3s)</span>
-          <span><i class="sw" style="background:var(--muted-bg);border:1px solid var(--border)"></i>Idle / free</span>
-          <span><i class="sw" style="width:2px;height:12px;background:var(--fg);opacity:.7"></i>Requested</span>
-        </div>
-      </div>
+        <div class="sub" id="meta">Loading…</div>
+        <div class="why" id="why" hidden></div>
+      </header>
       <div id="root"></div>
     </div>
     <script>
@@ -309,7 +497,8 @@ data:
         ];
         return bar(segs, cpu.capacity, reqCores, fmtCores) +
           '<div class="barlbl"><span class="mono">' + fmtCores(used) + ' / ' + fmtCores(cpu.capacity) + ' cores' +
-          (reqCores > 0 ? ' · req ' + fmtCores(reqCores) : '') + '</span><span>' + pct(p) + '</span></div>';
+          (reqCores > 0 ? '<span class="opt"> · req ' + fmtCores(reqCores) + '</span>' : '') +
+          '</span><span>' + pct(p) + '</span></div>';
       }
 
       function ramBar(ram, reqBytes) {
@@ -324,7 +513,8 @@ data:
         ];
         return bar(segs, cap, reqBytes, fmtBytes) +
           '<div class="barlbl"><span class="mono">' + fmtBytes(used) + ' / ' + fmtBytes(cap) +
-          (reqBytes > 0 ? ' · req ' + fmtBytes(reqBytes) : '') + '</span><span>' + pct(p) + '</span></div>';
+          (reqBytes > 0 ? '<span class="opt"> · req ' + fmtBytes(reqBytes) + '</span>' : '') +
+          '</span><span>' + pct(p) + '</span></div>';
       }
 
       function diskBar(disk) {
@@ -347,8 +537,119 @@ data:
           esc(disks.length === 1 ? worst.label : disks.length + ' disks') + '</span><span>' + pct(worst.percent) + '</span></div>';
       }
 
+      // The question the page exists to answer, worked out from exactly the data
+      // everything below is drawn from — so the badge can never disagree with
+      // the cards under it.
+      //
+      // Two tiers, and the split is deliberate. `bad` is "something users would
+      // notice": a node gone, a probed endpoint refusing, a pod stuck in a
+      // restart loop, a disk with no room left. `warn` is "somebody should
+      // look": a finished Job whose pod exited non-zero, a node under pressure,
+      // a filesystem heading somewhere.
+      //
+      // Failed pods are specifically NOT critical. Most of them here are
+      // CronJob pods that exited non-zero hours ago and were kept for their
+      // logs — a red banner for those trains you to ignore red banners, which
+      // costs the one that matters.
+      function verdict(d) {
+        var bad = [], warn = [];
+        var nodes = d.nodeDisks || [];
+
+        // Staleness outranks everything. nginx keeps serving the last
+        // status.json after the collector dies, so without this the page would
+        // sit there saying "All clear" about a cluster it stopped being able to
+        // see — which is the single worst thing a status page can do.
+        if (isStale(d)) {
+          return {
+            level: 'stale', color: 'var(--muted)', label: 'Stale data',
+            rest: ['last collected ' + fmtRel(d.generatedAt)]
+          };
+        }
+
+        var notReady = nodes.filter(function (n) { return !n.ready; });
+        if (notReady.length) bad.push(plural(notReady.length, 'node') + ' not ready');
+
+        var down = (d.services || []).filter(function (s) { return !s.ok; });
+        if (down.length) bad.push(plural(down.length, 'service') + ' down');
+
+        var ps = (d.totals && d.totals.podStatus) || {};
+        if (ps.crashLooping > 0) bad.push(plural(ps.crashLooping, 'pod') + ' crash-looping');
+        if (ps.failed > 0) warn.push(plural(ps.failed, 'failed pod'));
+        if (ps.pending > 0) warn.push(plural(ps.pending, 'pod') + ' pending');
+        if (ps.unknown > 0) warn.push(plural(ps.unknown, 'pod') + ' in unknown state');
+
+        // Worst single filesystem, not the cluster-wide average: the average
+        // stays comfortable while one node's root fills up and evicts things.
+        var worstDisk = 0, worstDiskNode = null;
+        nodes.forEach(function (n) {
+          (n.disks || []).forEach(function (disk) {
+            if ((disk.percent || 0) > worstDisk) { worstDisk = disk.percent; worstDiskNode = n.name; }
+          });
+        });
+        if (worstDisk >= 90) bad.push('disk ' + worstDisk.toFixed(0) + '% on ' + worstDiskNode);
+        else if (worstDisk >= 80) warn.push('disk ' + worstDisk.toFixed(0) + '% on ' + worstDiskNode);
+
+        var pressured = nodes.filter(function (n) {
+          var c = n.conditions || {};
+          return c.memoryPressure || c.diskPressure || c.pidPressure || c.networkUnavailable;
+        });
+        if (pressured.length) bad.push(plural(pressured.length, 'node') + ' under pressure');
+
+        if (bad.length) return { level: 'bad', color: 'var(--destructive)', label: bad[0], rest: bad.slice(1).concat(warn) };
+        if (warn.length) return { level: 'warn', color: 'var(--warn)', label: warn[0], rest: warn.slice(1) };
+        return {
+          level: 'good', color: 'var(--ok)',
+          label: 'All clear',
+          rest: [plural(nodes.length, 'node') + ' ready', plural(d.totals ? d.totals.podCount : 0, 'pod') + ' running']
+        };
+      }
+
+      function plural(n, word) {
+        return n + ' ' + word + (n === 1 ? '' : 's');
+      }
+
+      function setVerdict(v) {
+        var el = document.getElementById('verdict');
+        el.className = 'verdict ' + v.level;
+        el.style.setProperty('--vc', v.color);
+        document.getElementById('verdict-t').textContent = v.label;
+        el.title = v.rest.length ? v.rest.join(' · ') : v.label;
+
+        // The badge holds one line, so anything else it found goes underneath.
+        // A title attribute alone would have hidden it from every phone, which
+        // is most of the traffic this page gets.
+        var why = document.getElementById('why');
+        if (v.level !== 'good' && v.rest.length) {
+          // "also:" only where the rest really is a list of further problems.
+          // On the stale badge the remainder is the explanation of the badge
+          // itself, and "also: last collected 40m ago" reads as a second fault.
+          why.textContent = (v.level === 'stale' ? '' : 'also: ') + v.rest.join(' · ');
+          why.hidden = false;
+        } else {
+          why.hidden = true;
+        }
+      }
+
+      function legend() {
+        // Lives with the bars it explains rather than up in the masthead, where
+        // it was three wrapped lines of colour key above the fold on a phone —
+        // ahead of any actual data.
+        return '<div class="legend" style="margin-bottom:.75rem">' +
+          '<span><i class="sw" style="background:var(--pods)"></i>Pods (workload)</span>' +
+          '<span><i class="sw" style="background:var(--k3s)"></i>k3s (kubelet + runtime)</span>' +
+          '<span><i class="sw" style="background:var(--system)"></i>System (non-k3s)</span>' +
+          '<span><i class="sw" style="background:var(--muted-bg);border:1px solid var(--border)"></i>Idle / free</span>' +
+          '<span><i class="sw" style="width:2px;height:11px;border-radius:1px;background:var(--fg);opacity:.55"></i>Requested</span>' +
+          '</div>';
+      }
+
       function stat(label, value, sub) {
-        return '<div><div class="stat-l">' + esc(label) + '</div><div class="stat-v mono">' + esc(value) + '</div>' +
+        // Sans, not mono. These are the four largest strings on the page and
+        // mono set "76.6 GB / 122.6 GB" wide enough to wrap its own unit onto a
+        // second line on a phone, which knocked the tile beside it out of
+        // alignment. tabular-nums (see the stylesheet) keeps the digits from
+        // jittering on repaint, which is the only thing mono was buying here.
+        return '<div><div class="stat-l">' + esc(label) + '</div><div class="stat-v">' + esc(value) + '</div>' +
           (sub ? '<div class="stat-s">' + esc(sub) + '</div>' : '') + '</div>';
       }
 
@@ -391,7 +692,7 @@ data:
           stat('Pods', String(t.podCount), 'running across cluster') +
           stat('CPU', fmtCores(cpuUsed) + ' / ' + fmtCores(t.cpu ? t.cpu.capacity : 0), 'cores') +
           stat('RAM', fmtBytes(ramUsed) + ' / ' + fmtBytes(ramCap), t.ram ? fmtBytes(t.ram.availableBytes) + ' available' : '') +
-          '</div>' + podStatusPills(t.podStatus) +
+          '</div>' + podStatusPills(t.podStatus) + legend() +
           '<div class="grid g3">' +
           '<div><div class="lbl">CPU</div>' + cpuBar(t.cpu, t.requests ? t.requests.cpuCores : 0) + '</div>' +
           '<div><div class="lbl">RAM</div>' + ramBar(t.ram, t.requests ? Number(t.requests.ramBytes) : 0) + '</div>' +
@@ -433,8 +734,11 @@ data:
             h += '<div class="lbl">Disks</div><div class="scroll"><table><thead><tr><th>Mount</th><th class="r">Used</th>' +
               '<th class="r">Total</th><th class="r">Free</th><th class="r">%</th></tr></thead><tbody>' +
               n.disks.map(function (d) {
-                return '<tr><td class="mono">' + esc(d.label) + '</td><td class="r">' + esc(d.used) + '</td><td class="r">' +
-                  esc(d.total) + '</td><td class="r">' + esc(d.free) + '</td><td class="r">' + pct(d.percent) + '</td></tr>';
+                return '<tr><td class="mono" data-l="Mount">' + esc(d.label) + '</td>' +
+                  '<td class="r" data-l="Used">' + esc(d.used) + '</td>' +
+                  '<td class="r" data-l="Total">' + esc(d.total) + '</td>' +
+                  '<td class="r" data-l="Free">' + esc(d.free) + '</td>' +
+                  '<td class="r" data-l="Full">' + pct(d.percent) + '</td></tr>';
               }).join('') + '</tbody></table></div>';
           }
           if (n.pods && n.pods.length) {
@@ -442,14 +746,14 @@ data:
               '<th>Pod</th><th>Namespace</th><th class="c">Status</th><th class="r">Restarts</th>' +
               '<th class="r">Last Restart</th><th class="r">CPU</th><th class="r">RAM</th></tr></thead><tbody>' +
               n.pods.map(function (p) {
-                return '<tr><td class="mono" style="font-size:12px">' + esc(p.name) + '</td>' +
-                  '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.namespace || '-') + '</td>' +
-                  '<td class="c" style="color:' + podStatusColor(p.status) + ';text-transform:capitalize">' + esc(p.status || 'N/A') + '</td>' +
-                  '<td class="r">' + (p.restarts || 0) + '</td>' +
-                  '<td class="r" style="font-size:11px;color:var(--muted)">' +
+                return '<tr><td class="mono" style="font-size:12px" data-l="Pod">' + esc(p.name) + '</td>' +
+                  '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(p.namespace || '-') + '</td>' +
+                  '<td class="c" style="color:' + podStatusColor(p.status) + ';text-transform:capitalize" data-l="Status">' + esc(p.status || 'N/A') + '</td>' +
+                  '<td class="r" data-l="Restarts">' + (p.restarts || 0) + '</td>' +
+                  '<td class="r" style="font-size:11px;color:var(--muted)" data-l="Last restart">' +
                   esc(p.lastRestartTime ? new Date(p.lastRestartTime).toLocaleString() : 'Never') + '</td>' +
-                  '<td class="r">' + pct(p.cpuPercent) + '</td>' +
-                  '<td class="r">' + esc(p.ramUsage || '') + ' (' + pct(p.ramPercent) + ')</td></tr>';
+                  '<td class="r" data-l="CPU">' + pct(p.cpuPercent) + '</td>' +
+                  '<td class="r" data-l="RAM">' + esc(p.ramUsage || '') + ' (' + pct(p.ramPercent) + ')</td></tr>';
               }).join('') + '</tbody></table></div>';
           }
           h += '</div>';
@@ -474,16 +778,17 @@ data:
         // pods behind a non-zero Pending/Failed/CrashLoop/Unknown count, including
         // unscheduled ones that appear in no node's table.
         if (!pods || !pods.length) return '';
-        return '<div class="card"><div class="card-h"><span class="card-t" style="color:var(--destructive)">Problem pods (' + pods.length + ')</span></div>' +
+        return '<div class="card"><div class="card-h"><span class="card-t" style="color:var(--destructive)">Problem pods ' +
+          '<span class="count">' + pods.length + '</span></span></div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Pod</th><th>Namespace</th>' +
           '<th class="c">Status</th><th>Reason</th><th>Node</th><th class="r">Restarts</th></tr></thead><tbody>' +
           pods.map(function (p) {
-            return '<tr><td class="mono" style="font-size:12px">' + esc(p.name) + '</td>' +
-              '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.namespace || '-') + '</td>' +
-              '<td class="c" style="color:' + podStatusColor(p.status) + '">' + esc(p.status || 'N/A') + '</td>' +
-              '<td class="mono" style="font-size:12px">' + esc(p.reason || '') + '</td>' +
-              '<td class="mono" style="font-size:12px;color:var(--muted)">' + esc(p.node || '—') + '</td>' +
-              '<td class="r">' + (p.restarts || 0) + '</td></tr>';
+            return '<tr><td class="mono" style="font-size:12px" data-l="Pod">' + esc(p.name) + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(p.namespace || '-') + '</td>' +
+              '<td class="c" style="color:' + podStatusColor(p.status) + '" data-l="Status">' + esc(p.status || 'N/A') + '</td>' +
+              '<td class="mono" style="font-size:12px" data-l="Reason">' + esc(p.reason || '') + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Node">' + esc(p.node || '—') + '</td>' +
+              '<td class="r" data-l="Restarts">' + (p.restarts || 0) + '</td></tr>';
           }).join('') + '</tbody></table></div></div></div>';
       }
 
@@ -494,27 +799,46 @@ data:
           if (c === 'Progressing') return 'var(--warn)';
           return 'var(--ok)';
         }
-        return '<div class="card"><div class="card-h"><span class="card-t">' + esc(title) + ' (' + ds.length + ')</span></div>' +
+
+        // 71 deployments, all Available, is one fact and 71 rows. Folded away
+        // when there is nothing to say about them — and left open the moment
+        // there is, because a card that hides a Failure behind a click is worse
+        // than no card. On a phone this is the difference between a page you
+        // scroll and a page you scroll past.
+        var unhealthy = ds.filter(function (d) { return d.condition !== 'Available'; });
+        var fold = !unhealthy.length && ds.length > 8;
+        var head = '<span class="card-t">' + esc(title) + ' <span class="count">' + ds.length + '</span></span>' +
+          (unhealthy.length
+            ? '<span class="pill" style="color:var(--warn);background:color-mix(in srgb,var(--warn) 15%,transparent)">' +
+              unhealthy.length + ' not available</span>'
+            : '<span class="sub">all available</span>');
+
+        return '<div class="card">' +
+          (fold ? '<details><summary class="card-h">' + head + '</summary>'
+                : '<div class="card-h">' + head + '</div>') +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th><th class="r">Ready</th>' +
           '<th class="r">Available</th><th class="r">Updated</th><th class="c">Status</th></tr></thead><tbody>' +
           ds.map(function (d) {
-            return '<tr><td class="mono" style="font-size:12px"' + (d.message ? ' title="' + esc(d.message) + '"' : '') + '>' +
-              esc(d.name) + '</td><td class="mono" style="font-size:12px;color:var(--muted)">' + esc(d.namespace) + '</td>' +
-              '<td class="r mono" style="font-size:12px">' + d.ready + ' / ' + d.desired + '</td>' +
-              '<td class="r mono" style="font-size:12px">' + d.available + '</td>' +
-              '<td class="r mono" style="font-size:12px">' + d.updated + '</td>' +
-              '<td class="c"><span class="pill" style="color:' + color(d.condition) +
+            return '<tr><td class="mono" style="font-size:12px" data-l="Name"' + (d.message ? ' title="' + esc(d.message) + '"' : '') + '>' +
+              esc(d.name) + '</td><td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(d.namespace) + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Ready">' + d.ready + ' / ' + d.desired + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Available">' + d.available + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Updated">' + d.updated + '</td>' +
+              '<td class="c" data-l="Status"><span class="pill" style="color:' + color(d.condition) +
               ';background:color-mix(in srgb,' + color(d.condition) + ' 15%,transparent)">' + esc(d.condition) + '</span></td></tr>';
-          }).join('') + '</tbody></table></div></div></div>';
+          }).join('') + '</tbody></table></div></div>' +
+          (fold ? '</details>' : '') + '</div>';
       }
 
       function events(evs) {
         if (!evs) return '';
         if (!evs.length) {
-          return '<div class="card"><div class="card-h"><span class="card-t">Recent Warnings</span></div>' +
+          return '<div class="card"><div class="card-h"><span class="card-t">Recent warnings</span>' +
+            '<span class="sub">none</span></div>' +
             '<div class="card-c"><div class="sub">No recent warnings.</div></div></div>';
         }
-        return '<div class="card"><div class="card-h"><span class="card-t">Recent Warnings (' + evs.length + ')</span></div><div class="card-c">' +
+        return '<div class="card"><div class="card-h"><span class="card-t">Recent warnings ' +
+          '<span class="count">' + evs.length + '</span></span></div><div class="card-c">' +
           evs.map(function (e) {
             return '<div class="ev"><div class="ev-h">' +
               '<b style="color:var(--destructive)">' + esc(e.reason) + '</b>' +
@@ -534,8 +858,10 @@ data:
         if (!list || !list.length) return '';
         var down = list.filter(function (s) { return !s.ok; }).length;
         return '<div class="card"><div class="card-h"><span class="card-t"' +
-          (down ? ' style="color:var(--destructive)"' : '') + '>Services' +
-          (down ? ' (' + down + ' down)' : '') + '</span></div>' +
+          (down ? ' style="color:var(--destructive)"' : '') + '>Services ' +
+          '<span class="count">' + list.length + '</span></span>' +
+          (down ? '<span class="pill" style="color:var(--destructive);background:color-mix(in srgb,var(--destructive) 15%,transparent)">' +
+                  down + ' down</span>' : '<span class="sub">all up</span>') + '</div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Service</th>' +
           '<th class="c">State</th><th class="c">Detail</th><th class="r">Latency</th>' +
           '</tr></thead><tbody>' +
@@ -544,10 +870,10 @@ data:
             // A reachable-but-unhealthy service reports its HTTP code; an
             // unreachable one reports why the connection failed.
             var detail = s.reason ? s.reason : ('HTTP ' + (s.status == null ? '—' : s.status));
-            return '<tr><td>' + esc(s.name) + '</td>' +
-              '<td class="c" style="color:' + c + '">' + (s.ok ? 'up' : 'down') + '</td>' +
-              '<td class="c mono" style="font-size:12px;color:var(--muted)">' + esc(detail) + '</td>' +
-              '<td class="r mono" style="font-size:12px">' +
+            return '<tr><td data-l="Service">' + esc(s.name) + '</td>' +
+              '<td class="c" style="color:' + c + '" data-l="State">' + (s.ok ? 'up' : 'down') + '</td>' +
+              '<td class="c mono" style="font-size:12px;color:var(--muted)" data-l="Detail">' + esc(detail) + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Latency">' +
               (s.latencyMs == null ? '—' : s.latencyMs + 'ms') + '</td></tr>';
           }).join('') + '</tbody></table></div></div></div>';
       }
@@ -567,8 +893,9 @@ data:
           if (!want || val === want) return '<span class="mono" style="font-size:12px">' + esc(val || '—') + '</span>';
           return '<span class="mono" style="font-size:12px;color:var(--warn)" title="latest: ' + esc(want) + '">' + esc(val || '—') + '</span>';
         };
-        return '<div class="card"><div class="card-h"><span class="card-t">Pending Upgrades' +
-          (behind ? ' (' + behind + ' node' + (behind > 1 ? 's' : '') + ' behind)' : '') + '</span>' +
+        return '<div class="card"><div class="card-h"><span class="card-t">Pending upgrades</span>' +
+          (behind ? '<span class="pill" style="color:var(--warn);background:color-mix(in srgb,var(--warn) 15%,transparent)">' +
+                    plural(behind, 'node') + ' behind</span>' : '<span class="sub">all current</span>') +
           '<span style="margin-left:auto;font-size:11px;color:var(--muted)" title="' + esc(u.generatedAt || '') + '">reported ' +
           esc(fmtRel(u.generatedAt) || '—') + '</span></div>' +
           '<div class="card-c"><div class="sub" style="margin-bottom:8px">k3s stable: <span class="mono">' + esc(u.k3sStable || '?') +
@@ -583,12 +910,12 @@ data:
             var kern = n.kernelRunning === n.kernelNewest
               ? '<span class="mono" style="font-size:12px">' + esc(n.kernelRunning) + '</span>'
               : '<span class="mono" style="font-size:12px;color:var(--warn)">' + esc(n.kernelRunning) + ' → ' + esc(n.kernelNewest) + '</span>';
-            return '<tr><td class="mono" style="font-size:12px">' + esc(n.name) + '</td>' +
-              '<td class="r">' + apt + '</td>' +
-              '<td class="c">' + (n.rebootRequired ? '<span style="color:var(--warn);font-weight:600">yes</span>' : 'no') + '</td>' +
-              '<td>' + kern + '</td>' +
-              '<td>' + drift(n.k3s, u.k3sStable) + '</td>' +
-              '<td>' + drift(n.tailscale, u.tailscaleLatest) + '</td></tr>';
+            return '<tr><td class="mono" style="font-size:12px" data-l="Node">' + esc(n.name) + '</td>' +
+              '<td class="r" data-l="apt pending (security)">' + apt + '</td>' +
+              '<td class="c" data-l="Reboot">' + (n.rebootRequired ? '<span style="color:var(--warn);font-weight:600">yes</span>' : 'no') + '</td>' +
+              '<td data-l="Kernel">' + kern + '</td>' +
+              '<td data-l="k3s">' + drift(n.k3s, u.k3sStable) + '</td>' +
+              '<td data-l="tailscale">' + drift(n.tailscale, u.tailscaleLatest) + '</td></tr>';
           }).join('') + '</tbody></table></div></div></div>';
       }
 
@@ -599,7 +926,7 @@ data:
         // Surfaced high, right under the summary: if anything is wrong it should
         // be the first thing you see, not buried below the node list.
         h += problemPods(d.problemPods);
-        h += '<h2>Nodes (' + d.nodeDisks.length + ')</h2>';
+        h += '<h2>Nodes <span class="count">' + d.nodeDisks.length + '</span></h2>';
         if (!d.nodeDisks.length) h += '<div class="sub">No node data available.</div>';
         h += d.nodeDisks.map(nodeRow).join('');
         if (d.totals && d.totals.topCpuPods && d.totals.topCpuPods.length) {
@@ -622,6 +949,15 @@ data:
         });
       }
 
+      // The page's own liveness check: nginx keeps serving the last status.json
+      // even if the collector has died, so a timestamp that keeps aging is the
+      // only signal the data has gone stale. Three intervals is the threshold —
+      // enough that one slow scrape doesn't cry wolf.
+      function isStale(d) {
+        var ageSec = Math.max(0, Math.floor((Date.now() - Date.parse(d.generatedAt)) / 1000));
+        return isFinite(ageSec) && ageSec > (POLL_MS / 1000) * 3;
+      }
+
       function setMeta(d, err) {
         var el = document.getElementById('meta');
         if (err) { el.innerHTML = '<span style="color:var(--destructive)">' + esc(err) + '</span>'; return; }
@@ -629,11 +965,7 @@ data:
         // implying it's live.
         var age = fmtRel(d.generatedAt);
         var every = Math.round(POLL_MS / 1000);
-        // The page's own liveness check: nginx keeps serving the last status.json
-        // even if the collector has died, so a timestamp that keeps aging is the
-        // only signal the data has gone stale. Past 3 intervals, say so loudly.
-        var ageSec = Math.max(0, Math.floor((Date.now() - Date.parse(d.generatedAt)) / 1000));
-        if (isFinite(ageSec) && ageSec > every * 3) {
+        if (isStale(d)) {
           el.innerHTML = '<span style="color:var(--destructive);font-weight:600">Stale — last collected ' +
             esc(age) + '; the collector may be down</span> · expected every ' + every + 's';
           return;
@@ -648,16 +980,22 @@ data:
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
           })
-          .then(function (d) { last = d; render(d); setMeta(d); })
+          .then(function (d) { last = d; render(d); setMeta(d); setVerdict(verdict(d)); })
           .catch(function (e) {
             if (!last) document.getElementById('root').innerHTML = '<div class="err">Failed to load cluster status.</div>';
             setMeta(null, 'Failed to refresh: ' + e.message);
+            // Whatever the last poll said is no longer something this page can
+            // stand behind — leaving a green badge up while the fetch is failing
+            // is the same lie as leaving one up over stale data.
+            setVerdict({ level: 'stale', color: 'var(--muted)', label: 'Not reachable', rest: [e.message] });
           });
       }
       tick();
       setInterval(tick, POLL_MS);
-      // Keep the relative "collected Xs ago" honest between polls.
-      setInterval(function () { if (last) setMeta(last); }, 1000);
+      // Keep the relative "collected Xs ago" honest between polls — and the
+      // badge with it, since going stale is something that happens on the clock
+      // rather than on a response.
+      setInterval(function () { if (last) { setMeta(last); setVerdict(verdict(last)); } }, 1000);
     })();
     </script>
     </body>
