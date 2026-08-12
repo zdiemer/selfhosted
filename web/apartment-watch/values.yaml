@@ -45,6 +45,11 @@ web:
   enabled: true
   service:
     port: 8080
+  # Override for the origin written into og:image. Empty means "derive it from
+  # the ingress" — the Cloudflare hostname if there is one, else the DuckDNS
+  # host. Only set this if the page is ever reached at a name the chart cannot
+  # see. See templates/_helpers.tpl, apartment-watch.publicUrl.
+  publicUrl: ""
   resources:
     requests:
       cpu: 10m

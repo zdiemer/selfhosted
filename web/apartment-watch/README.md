@@ -177,6 +177,45 @@ A card with no photo renders compactly rather than reserving an empty 16:10
 block. A photo that *fails* still holds its space, which avoids layout shift
 after paint.
 
+## Icons and the preview card
+
+`src/brand/` holds the favicon, the four home-screen sizes, the manifest and
+the 1200×630 card. Generated, not hand-made: `python3 scripts/gen-brand.py
+homes` from the repo root, then rebuild — they are baked into the image, like
+everything else under `src/`. `src/brand/icon.svg` is the authority on the
+artwork; the Pillow drawing calls in that script are a transcription of it.
+
+The mark is a San Francisco bay window with one light on: cornice, sill, three
+panes with the wide flat face in the middle, in the app's own `--accent` green
+with the amber it reserves for things wanting a decision. A map pin with a
+house in it would read faster and would also be the icon every rental app
+already has; the lit pane is the actual product, since this thing is silent
+unless something passes.
+
+Three things worth knowing about the serving side:
+
+- **The routes are one per file, not a `/{asset:path}` catch-all.** FastAPI
+  resolves in registration order and that pattern matches everything, so it
+  would shadow `/healthz` and every `/r/<token>` declared after it — i.e. the
+  only URL anyone is ever sent would start 404ing. The allowlist is also the
+  same instinct as the photo proxy next door: this app does not hand out
+  whatever happens to be in a directory.
+- **`og:image` needs an absolute URL.** Scrapers drop a relative one and the
+  preview falls back to a grey box, so the chart passes the origin in as
+  `APARTMENT_WATCH_BASE_URL`, derived from the ingress (see
+  `apartment-watch.publicUrl` in `_helpers.tpl`). It must agree with
+  `criteria.yaml`'s `alerts.web_base_url`, which is what the SMS link itself is
+  built from — they are separate because the chart cannot read that file, and
+  if they drift the symptom is quiet: the link works and the preview points
+  somewhere else.
+- **`noindex` and a preview card are not in tension.** The page stays
+  `noindex,nofollow`; the card is what renders when the link lands in the text
+  message it exists to be pasted into, and iMessage and WhatsApp read those
+  tags and ignore robots entirely.
+
+The prices and neighbourhoods on the card are illustrative and hard-coded in
+the generator. Nothing on it comes from `criteria.yaml` or the database.
+
 ## The rules
 
 `criteria.yaml` is the entire tuning surface, and it's a **ConfigMap** — editing

@@ -41,6 +41,13 @@ logger = logging.getLogger("apartment-watch.web")
 DB_PATH = os.environ.get("APARTMENT_WATCH_DB", "/data/apartment-watch.db")
 TZ = os.environ.get("APARTMENT_WATCH_TZ", "America/Los_Angeles")
 
+# Where this is reachable from outside, for og:image — which has to be an
+# absolute URL or scrapers drop it and the preview falls back to a grey box.
+# Set by the chart from the ingress host; the default matches criteria.yaml's
+# alerts.web_base_url, which is what the SMS link is built from. If those two
+# ever disagree, the link works and the preview points at the wrong host.
+OG_BASE = os.environ.get("APARTMENT_WATCH_BASE_URL", "https://homes.diemer.codes").rstrip("/")
+
 app = FastAPI(title="homes", docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -332,6 +339,29 @@ def _page(title: str, heading: str, sub: str, eyebrow: str, inner: str) -> str:
 <meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex,nofollow">
 <title>{html.escape(title)}</title>
+<!--
+  Icons and the preview card (src/brand/, drawn by the selfhosted repo's
+  scripts/gen-brand.py). noindex above and a preview card are not in tension:
+  noindex keeps this out of search, while the card is what renders when the
+  link is pasted into the text message it exists to be pasted into. iMessage
+  and WhatsApp read these tags and ignore robots entirely.
+
+  Absolute og:image URL because that is the only kind a scraper will resolve —
+  a relative one is silently dropped and the preview falls back to a grey box.
+-->
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0B6E4F">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="homes.diemer.codes">
+<meta property="og:title" content="{html.escape(title)}">
+<meta property="og:description" content="San Francisco rentals, filtered to what you asked for.">
+<meta property="og:image" content="{OG_BASE}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="homes.diemer.codes — apartments found in the latest sweep">
+<meta name="twitter:card" content="summary_large_image">
 <style>{STYLE}</style>
 </head>
 <body>
@@ -405,6 +435,70 @@ def image(source: str, external_id: str):
         _IMG_CACHE.popitem(last=False)
     return Response(content=body, media_type=ctype,
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+# --------------------------------------------------------------------- brand
+#
+# Icons, manifest and the preview card, from src/brand/ (drawn by the
+# selfhosted repo's scripts/gen-brand.py and baked into the image).
+#
+# An explicit allowlist rather than StaticFiles over the directory: this app
+# serves one other thing from disk and it is a photo proxy that goes to some
+# lengths not to be an open one. A mount that hands out whatever is in a
+# directory is the same shape of mistake, and the set of files here is seven
+# and fixed. Read once at import, because they never change under a running
+# pod — the image is the artifact.
+
+_BRAND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand")
+_BRAND_TYPES = {
+    "icon.svg": "image/svg+xml",
+    "apple-touch-icon.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png",
+    "og.png": "image/png",
+    "manifest.webmanifest": "application/manifest+json",
+}
+
+
+def _load_brand() -> dict[str, tuple[bytes, str]]:
+    loaded: dict[str, tuple[bytes, str]] = {}
+    for name, media_type in _BRAND_TYPES.items():
+        path = os.path.join(_BRAND_DIR, name)
+        try:
+            with open(path, "rb") as handle:
+                loaded[name] = (handle.read(), media_type)
+        except OSError as exc:
+            # Warn rather than raise: a missing icon should not stop the run
+            # page from serving, which is the thing someone is holding a link
+            # to. It does need to be loud in the log, because the symptom
+            # otherwise is a preview that silently stops unfurling.
+            logger.warning("brand asset missing, not serving it: %s (%s)", path, exc)
+    return loaded
+
+
+def _register_brand_routes() -> None:
+    """One explicit route per asset.
+
+    Deliberately NOT a single `/{asset:path}` handler. FastAPI resolves in
+    registration order and that pattern matches everything, so it would shadow
+    /healthz and every /r/<token> declared after it — the run page, i.e. the
+    only URL anyone is ever sent, would start 404ing. Seven fixed routes cannot
+    do that to anything.
+    """
+    for name, (body, media_type) in _BRAND.items():
+        def handler(body: bytes = body, media_type: str = media_type) -> Response:
+            # A day, not a year: these names carry no content hash, so the
+            # cache lifetime is also how long a redesigned mark keeps showing
+            # the old one.
+            return Response(content=body, media_type=media_type,
+                            headers={"Cache-Control": "public, max-age=86400"})
+
+        app.add_api_route(f"/{name}", handler, methods=["GET"], include_in_schema=False)
+
+
+_BRAND = _load_brand()
+_register_brand_routes()
 
 
 @app.get("/healthz")

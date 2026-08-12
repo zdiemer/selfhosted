@@ -85,3 +85,28 @@ use it — the same self-maintaining trick infra/alloy uses for log shipping.
 egress.zachd/proxied: "true"
 {{- end }}
 {{- end -}}
+
+{{/*
+The public origin, for the one place a relative URL will not do: og:image.
+Scrapers do not resolve relative image URLs — they drop them and the preview
+comes back as a grey box — so the tag has to name a host, and the app cannot
+know its own from inside the pod.
+
+Derived from the ingress rather than configured twice. The Cloudflare hostname
+wins because that is the one that gets pasted into a text message; the DuckDNS
+host is the way in when Cloudflare is not, not the name anyone shares.
+
+This must agree with criteria.yaml's `alerts.web_base_url`, which is what the
+SMS link itself is built from. They are separate on purpose — criteria.yaml is
+a gitignored secret-ish file and the chart cannot read it — but if they drift,
+the symptom is quiet: the link works and the preview points somewhere else.
+*/}}
+{{- define "apartment-watch.publicUrl" -}}
+{{- if .Values.web.publicUrl -}}
+{{- .Values.web.publicUrl | trimSuffix "/" -}}
+{{- else if .Values.ingress.cloudflareHosts -}}
+https://{{ first .Values.ingress.cloudflareHosts }}
+{{- else -}}
+https://{{ .Values.ingress.host }}
+{{- end -}}
+{{- end -}}

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img"
+     aria-label="homes.diemer.codes">
+  <!--
+    A San Francisco bay window: cornice above, sill below, three panes with the
+    wide flat face in the middle, and one light on.
+
+    A map pin with a house in it would read faster and would also be the icon
+    every rental app already has. This one is about a specific city's housing
+    stock, and the lit pane is the whole product — the tool is silent unless
+    something passes, so the mark is the moment it isn't.
+
+    Green ground and amber pane are the app's own tokens (--accent and --flag
+    in src/web.py). Amber is the palette's "this wants a decision" colour,
+    which is exactly what a listing that got through the filter is.
+
+    Transcribed by hand into scripts/gen-brand.py, which draws the PNGs with
+    Pillow and has no SVG parser. Change one, change the other.
+  -->
+  <rect width="64" height="64" rx="13" fill="#0B6E4F"/>
+  <rect x="12" y="11" width="40" height="5.4" rx="2.2" fill="#F7F8FA"/>
+  <rect x="15" y="18" width="34" height="28" rx="2" fill="#F7F8FA"/>
+  <rect x="26.1" y="18" width="11.8" height="28" fill="#E9B067"/>
+  <g fill="#0B6E4F">
+    <rect x="23.6" y="18" width="2.5" height="28"/>
+    <rect x="37.9" y="18" width="2.5" height="28"/>
+  </g>
+  <rect x="12" y="47.6" width="40" height="5.4" rx="2.2" fill="#F7F8FA"/>
+</svg>

@@ -87,6 +87,9 @@ spec:
               value: /data/apartment-watch.db
             - name: APARTMENT_WATCH_TZ
               value: {{ .Values.schedule.timeZone | quote }}
+            # Only used to write an absolute og:image URL. See the helper.
+            - name: APARTMENT_WATCH_BASE_URL
+              value: {{ include "apartment-watch.publicUrl" . | quote }}
             - name: HOME
               value: /tmp
             - name: PYTHONUNBUFFERED
