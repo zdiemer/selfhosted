@@ -6,6 +6,6 @@ version: 1.0.0
 # No app image of our own: this is lego plus kubectl and a shell script.
 # appVersion tracks the lego image, which is what actually does the work.
 # renovate: image=goacme/lego
-appVersion: "4.29.0"
+appVersion: "4.35.2"
 maintainers:
   - name: zachd
