@@ -20,6 +20,12 @@ spec:
     spec:
       # Covers the preStop sleep plus flushing its SQLite request database.
       terminationGracePeriodSeconds: 45
+      # Seerr runs as non-root `node` (UID 1000). jellyseerr ran as root and
+      # left /app/config owned 0:0, so without this the new image cannot write
+      # its config or database. fsGroup makes Kubernetes apply the ownership on
+      # mount — the native form of the `chown -R 1000:1000` upstream asks for.
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
       containers:
         - name: jellyseerr
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

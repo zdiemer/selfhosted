@@ -1,7 +1,27 @@
+# Seerr, formerly Jellyseerr. The project was renamed in v3.0.0 (2026-02-14)
+# and moved to seerr-team/seerr; docker.io/fallenbagel/jellyseerr stops at
+# 2.7.3 and will never move again, so a version check against the old name
+# looks permanently up to date. That is why this sat on 2.7.3.
+#
+# NOTE THE `v` PREFIX. jellyseerr tagged `2.7.3`; seerr tags `v3.4.1`. The
+# release tags are also easy to miss on the registry — the tag list is mostly
+# `sha-*` and `preview-*`, with only eight `v*` tags among ~375.
+#
+# renovate: datasource=docker depName=ghcr.io/seerr-team/seerr
 image:
-  repository: docker.io/fallenbagel/jellyseerr
-  tag: "2.7.3"
+  repository: ghcr.io/seerr-team/seerr
+  tag: "v3.4.1"
   pullPolicy: IfNotPresent
+
+# Seerr runs as the non-root `node` user (UID 1000); jellyseerr ran as root and
+# left /app/config owned 0:0. fsGroup is what makes the existing volume
+# writable — Kubernetes applies the group ownership on mount, which is the
+# native equivalent of the `chown -R 1000:1000` the upstream migration guide
+# asks for. The volume is ~5M, so the recursive chown is instant.
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
 
 service:
   type: ClusterIP
