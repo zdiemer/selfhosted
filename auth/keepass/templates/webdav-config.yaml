@@ -1,0 +1,33 @@
+{{/*
+Config for hacdias/webdav, which replaced bytemark/webdav in 2026-08.
+
+WHY A CONFIGMAP AT ALL. bytemark/webdav took its whole configuration in
+environment variables (AUTH_TYPE / USERNAME / PASSWORD / LOCATION). hacdias
+takes a config file and supports env substitution only for the credentials —
+which is the part that matters, because it keeps the username and password in
+the Secret rather than inlining them here.
+
+`{env}NAME` is hacdias' own syntax, not Helm templating: the server reads the
+named environment variable at startup. The env vars themselves come from the
+existing keepass-webdav Secret, unchanged by the migration.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keepass.fullname" . }}-webdav-config
+  labels:
+    {{- include "keepass.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    address: 0.0.0.0
+    port: {{ .Values.webdav.containerPort }}
+    # The directory served over WebDAV. The PVC mounts here; bytemark used
+    # /var/lib/dav, which also held an Apache DavLock file that has no
+    # equivalent and is not carried over.
+    directory: /data
+    # Create, Read, Update, Delete — a KeePass client needs all four to save a
+    # vault, and the read-only subset would make this useless for its one job.
+    permissions: CRUD
+    users:
+      - username: "{env}WEBDAV_USERNAME"
+        password: "{env}WEBDAV_PASSWORD"

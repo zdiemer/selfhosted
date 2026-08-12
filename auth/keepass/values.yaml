@@ -5,12 +5,24 @@
 
 webdav:
   image:
-    # Apache mod_dav. Old (2018) but rock-solid for the tiny PUT/GET/PROPFIND
-    # surface KeePass clients use. Swap if you want something newer
-    # (hacdias/webdav, dgraziotin/nginx-webdav-nononsense).
-    repository: bytemark/webdav
-    tag: "2.4"
+    # Was bytemark/webdav:2.4 — Apache mod_dav, last published 2018-12-14 by a
+    # hosting company that no longer exists. Nothing was wrong with it
+    # functionally; the problem is that an abandoned image cannot receive a
+    # patch, and this endpoint is the front door to a password vault. Renovate
+    # could never have flagged it either: the tag it watches will never move,
+    # so "no update available" and "no maintainer" look identical.
+    #
+    # hacdias/webdav is a single Go binary on `scratch` — no shell, no OS
+    # packages, nothing to patch but the binary itself — and is actively
+    # maintained. Config moved from env vars to a file; see
+    # templates/webdav-config.yaml.
+    # renovate: datasource=docker depName=ghcr.io/hacdias/webdav
+    repository: ghcr.io/hacdias/webdav
+    tag: "v5.14.2"
     pullPolicy: IfNotPresent
+  # hacdias' default. bytemark served on 80; the Service still publishes
+  # service.port, so nothing outside this chart needs to know.
+  containerPort: 6065
   service:
     port: 80
   ingress:
@@ -54,10 +66,18 @@ keeweb:
   # the second replica is free in a way most of this cluster is not.
   replicaCount: 2
   image:
-    # Upstream-blessed image. Hasn't been actively updated, but KeeWeb
-    # itself is mature and the SPA runs entirely client-side. Swap to
-    # lscr.io/linuxserver/keeweb if you want a more actively maintained
-    # build.
+    # Checked 2026-08-11 while replacing the webdav image, and deliberately
+    # left alone: 1.18.7 IS the newest build of the newest upstream release
+    # (keeweb/keeweb v1.18.7, 2021-07-18). The project is not archived — it
+    # still sees commits — it simply has not cut a release in five years, so
+    # there is nothing newer to move to.
+    #
+    # A previous note here suggested lscr.io/linuxserver/keeweb. That image
+    # does not exist (404); do not chase it.
+    #
+    # Lower risk than the webdav container was: this serves static assets for a
+    # client-side SPA, the vault is fetched by the browser rather than passing
+    # through it, and it sits behind Authelia forward-auth.
     repository: antelle/keeweb
     tag: "1.18.7"
     pullPolicy: IfNotPresent

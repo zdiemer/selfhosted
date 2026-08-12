@@ -38,30 +38,36 @@ spec:
             preStop:
               sleep:
                 seconds: 3
+          # hacdias/webdav takes a config file rather than bytemark's env-var
+          # interface; only the credentials come in through the environment.
+          args: ["-c", "/config/config.yaml"]
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.webdav.containerPort }}
           env:
-            - name: AUTH_TYPE
-              value: Basic
-            - name: USERNAME
+            # Names match the {env} references in templates/webdav-config.yaml.
+            - name: WEBDAV_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: {{ include "keepass.fullname" . }}-webdav
                   key: username
-            - name: PASSWORD
+            - name: WEBDAV_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "keepass.fullname" . }}-webdav
                   key: password
-            - name: LOCATION
-              value: /
           volumeMounts:
             - name: data
-              mountPath: /var/lib/dav
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
           resources:
             {{- toYaml .Values.webdav.resources | nindent 12 }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "keepass.fullname" . }}-webdav
+        - name: config
+          configMap:
+            name: {{ include "keepass.fullname" . }}-webdav-config
