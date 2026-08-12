@@ -1,0 +1,3 @@
+[test]
+# Redirects the runtime/state dirs to scratch paths before config.ts loads.
+preload = ["./tests/setup.ts"]

@@ -430,6 +430,23 @@ stdio MCP server → the gateway's approvals socket → a chat message. Reply
 (in-memory; resets with the pod, which is the safe direction). No reply for
 `messaging.approvalTimeoutSeconds` (default 5m) denies.
 
+**AskUserQuestion and ExitPlanMode arrive on this same socket but are not
+permission requests** — they're claude talking to you, and the generic prompt
+rendered them as truncated JSON with no way to answer:
+
+- A question is sent as its options, numbered. Reply with a number (or `1,3`
+  when it's multi-select), or type your own words for the "Other" branch. The
+  answer goes back as the tool's `answers` field, keyed by question text; that
+  field is the whole mechanism, and a bare "allow" without it is why an
+  approved question used to come back as "user did not answer". Multiple
+  questions are asked one at a time.
+- A plan is sent as the plan text itself, de-marked for a surface that renders
+  no markdown. `1` approves — and **clears `!plan` for the chat**, since
+  approving a plan means "go do it" and leaving plan mode on sends the next
+  message straight back into planning. Anything else keeps planning, with what
+  you typed handed to claude as the reason.
+- Neither offers `3 allow all`, and neither is eligible for it.
+
 Two claude-CLI dependencies to re-verify on every image bump (the image
 tracks `claude-code@latest` at build time):
 
@@ -467,7 +484,11 @@ tracks `claude-code@latest` at build time):
   every subsequent permission prompt dies with `gateway unreachable: connect
   ENOENT`, which strands the in-flight run read-only. It now refuses to start
   when the socket answers — pass `GW_RUNTIME_DIR=/tmp/gwtest GW_STATE_DIR=…
-  GW_STDIN=true bun run src/main.ts` to test against a scratch path.
+  GW_STDIN=true bun run src/main.ts` to test against a scratch path. The same
+  applies to `bun test`, which binds a real socket to exercise the approval
+  round trip; `tests/setup.ts` (preloaded via `bunfig.toml`) redirects both
+  dirs to a temp path, so run the suite from `gateway/` with
+  `bun test` / `bun run typecheck` and don't bypass that preload.
 - **One surface per session at a time**: chat `!resume` of a session that
   tmux/Happy is actively driving interleaves jsonl writes. Hand off, don't
   share.

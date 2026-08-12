@@ -3,19 +3,44 @@ import net from "node:net";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
+import { updateChat } from "./state.ts";
 
 // The approve-mcp stdio server (grandchild of this process, via claude) dials
 // this unix socket with {chatKey, toolName, input} and blocks until the human
 // answers over chat (or the timeout denies). One pending approval per chat is
 // enough: claude runs are serialized per chat, and claude itself awaits the
 // permission tool before continuing.
+//
+// Two tools arrive here that are not really permission requests at all —
+// AskUserQuestion and ExitPlanMode are how claude talks to the human, and the
+// generic "Claude wants: Tool({json…})" prompt renders them as a truncated
+// blob with no way to actually answer. They get their own prompt and their own
+// reply grammar below; everything else keeps the plain 1/2/3 flow.
+
+/** A question from AskUserQuestion, as claude's schema shapes it. */
+interface Question {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: { label: string; description?: string }[];
+}
 
 export interface PendingApproval {
   chatKey: string;
   toolName: string;
   input: unknown;
   resolve: (verdict: Verdict) => void;
+  /** Which reply grammar applies. */
+  kind: PromptKind;
+  /** Questions still unanswered, head first (kind === "question"). */
+  queue?: Question[];
+  /** Answers collected so far, keyed by question text (kind === "question"). */
+  answers?: Record<string, string>;
+  /** How many questions there were to begin with, for the "(2/3)" counter. */
+  total?: number;
 }
+
+export type PromptKind = "tool" | "question" | "plan";
 
 export type Verdict =
   | { behavior: "allow"; updatedInput: unknown }
@@ -29,16 +54,31 @@ const autoApproved = new Map<string, Set<string>>();
 
 export type ApprovalPrompt = (chatKey: string, text: string) => void;
 
+// Set once the server starts. A multi-question AskUserQuestion has to send the
+// next question from inside answerPending(), which the router calls.
+let prompt: ApprovalPrompt = () => {};
+let server: net.Server | null = null;
+
 export function hasPending(chatKey: string): boolean {
   return pending.has(chatKey);
 }
 
-/** Route a "1"/"2"/"3" chat reply to the waiting approval. Returns false if
- * the reply wasn't an answer to anything. */
+/** Route a chat reply to the waiting approval. Returns false if the reply
+ * wasn't an answer to anything — the router then treats it as a new message.
+ *
+ * Plain tool prompts take 1/2/3 only, so an unrelated message typed while one
+ * is open still reaches claude. Questions and plans also accept free text,
+ * because "none of those, do X" is a real answer to both and there is nowhere
+ * else for it to go. */
 export function answerPending(chatKey: string, reply: string): boolean {
   const p = pending.get(chatKey);
   if (!p) return false;
   const answer = reply.trim();
+  if (!answer) return false;
+
+  if (p.kind === "question") return answerQuestion(chatKey, p, answer);
+  if (p.kind === "plan") return answerPlan(chatKey, p, answer);
+
   if (!["1", "2", "3"].includes(answer)) return false;
   pending.delete(chatKey);
   if (answer === "2") {
@@ -54,6 +94,115 @@ export function answerPending(chatKey: string, reply: string): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// AskUserQuestion
+// ---------------------------------------------------------------------------
+
+/** Options as a numbered list the user can answer with digits. Descriptions
+ * are trimmed hard — the question and the labels are what a phone needs. */
+export function renderQuestion(q: Question, index: number, total: number): string {
+  const lines: string[] = [];
+  const counter = total > 1 ? ` (${index + 1}/${total})` : "";
+  lines.push(`❓ ${q.header ? `${q.header}: ` : ""}${q.question}${counter}`);
+  (q.options ?? []).forEach((o, i) => {
+    const desc = o.description ? ` — ${truncate(o.description, 100)}` : "";
+    lines.push(`${i + 1}. ${o.label}${desc}`);
+  });
+  lines.push(
+    q.multiSelect
+      ? "Reply with numbers (e.g. 1,3), or type your own answer."
+      : "Reply with a number, or type your own answer.",
+  );
+  return lines.join("\n");
+}
+
+/** Map a reply onto option labels. Digits select; anything else is the user's
+ * own answer, which is exactly what the tool's "Other" choice means. */
+export function selectOptions(reply: string, q: Question): string {
+  const options = q.options ?? [];
+  const picks = reply.split(/[,\s]+/).filter(Boolean);
+  const indexes = picks.map((p) => Number(p));
+  const allDigits =
+    picks.length > 0 &&
+    indexes.every((n) => Number.isInteger(n) && n >= 1 && n <= options.length);
+  if (!allDigits) return reply;
+  const chosen = (q.multiSelect ? indexes : indexes.slice(0, 1)).map(
+    (n) => options[n - 1].label,
+  );
+  return [...new Set(chosen)].join(", ");
+}
+
+function answerQuestion(
+  chatKey: string,
+  p: PendingApproval,
+  reply: string,
+): boolean {
+  const queue = p.queue ?? [];
+  const q = queue[0];
+  if (!q) {
+    pending.delete(chatKey);
+    p.resolve({ behavior: "allow", updatedInput: p.input });
+    return true;
+  }
+
+  const answers = { ...(p.answers ?? {}), [q.question]: selectOptions(reply, q) };
+  const rest = queue.slice(1);
+  if (rest.length) {
+    // More to ask: keep the approval open and send the next one.
+    pending.set(chatKey, { ...p, queue: rest, answers });
+    const total = p.total ?? queue.length;
+    prompt(chatKey, renderQuestion(rest[0], total - rest.length, total));
+    return true;
+  }
+
+  pending.delete(chatKey);
+  // `answers` is the channel claude's own permission component uses to hand
+  // back what the user picked; without it the tool reports "did not answer".
+  p.resolve({
+    behavior: "allow",
+    updatedInput: { ...(p.input as object), answers },
+  });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// ExitPlanMode
+// ---------------------------------------------------------------------------
+
+/** The plan itself is the thing worth reading, so send it rather than a
+ * truncated JSON blob. Markdown is de-marked because this surface renders none
+ * of it. */
+export function renderPlan(planText: string): string {
+  return (
+    `📋 Plan:\n\n${plainText(planText)}\n\n` +
+    "Reply 1 approve · 2 keep planning · or say what to change"
+  );
+}
+
+function answerPlan(chatKey: string, p: PendingApproval, reply: string): boolean {
+  pending.delete(chatKey);
+  if (reply === "1") {
+    // Approving a plan means "go do it". Leaving plan mode on would send the
+    // very next message back into planning, which reads as the approval having
+    // been ignored.
+    updateChat(chatKey, { plan: false });
+    p.resolve({ behavior: "allow", updatedInput: p.input });
+    prompt(chatKey, "✓ approved — plan mode off, going ahead");
+    return true;
+  }
+  // Anything else is feedback. Handing it back as the denial message puts it in
+  // front of claude as the reason, so "2 but skip the tests" keeps planning
+  // with the note attached instead of being thrown away.
+  const note = reply === "2" ? "" : `: ${reply}`;
+  p.resolve({
+    behavior: "deny",
+    message: `user wants to keep planning${note}`,
+  });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+
 function describeTool(toolName: string, input: unknown): string {
   const i = input as Record<string, unknown> | null;
   if (toolName === "Bash" && i?.command) return `Bash(${i.command})`;
@@ -62,9 +211,34 @@ function describeTool(toolName: string, input: unknown): string {
   return `${toolName}(${json.length > 200 ? json.slice(0, 200) + "…" : json})`;
 }
 
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+/** Strip the markdown this surface can't render (headings, emphasis, code
+ * fences, bullet dashes) so a plan reads as plain lines on a phone. */
+export function plainText(s: string): string {
+  return s
+    .replace(/^```.*$/gm, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "• ")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Which reply grammar a tool gets. */
+export function promptKind(toolName: string): PromptKind {
+  if (toolName === "AskUserQuestion") return "question";
+  if (toolName === "ExitPlanMode") return "plan";
+  return "tool";
+}
+
 export async function startApprovalServer(
   sendPrompt: ApprovalPrompt,
 ): Promise<void> {
+  prompt = sendPrompt;
   fs.mkdirSync(path.dirname(approvalSocketPath), {
     recursive: true,
     mode: 0o700,
@@ -84,7 +258,7 @@ export async function startApprovalServer(
   }
   fs.rmSync(approvalSocketPath, { force: true });
 
-  const server = net.createServer((sock) => {
+  server = net.createServer((sock) => {
     let buf = "";
     sock.on("data", (d) => {
       buf += d.toString("utf8");
@@ -102,6 +276,13 @@ export async function startApprovalServer(
     sock.on("error", () => {});
   });
   server.listen(approvalSocketPath);
+}
+
+/** Close the listening socket. Only tests need this — the gateway itself keeps
+ * it open for the life of the process. */
+export function stopApprovalServer(): void {
+  server?.close();
+  server = null;
 }
 
 /** True if something is accepting connections on the approval socket path. */
@@ -142,7 +323,12 @@ function handleRequest(
     return;
   }
 
-  if (autoApproved.get(req.chatKey)?.has(req.toolName)) {
+  const kind = promptKind(req.toolName);
+
+  // "3 = allow all" is meaningless for these two and actively harmful: a blind
+  // allow of AskUserQuestion returns no answers, so the tool reports that the
+  // user didn't answer — which is how a question can silently vanish.
+  if (kind === "tool" && autoApproved.get(req.chatKey)?.has(req.toolName)) {
     finish({ behavior: "allow", updatedInput: req.input });
     return;
   }
@@ -163,8 +349,13 @@ function handleRequest(
     sendPrompt(req.chatKey, "⏱ approval timed out — denied.");
   }, config.approvalTimeoutMs);
 
+  const questions = kind === "question" ? readQuestions(req.input) : [];
   pending.set(req.chatKey, {
     ...req,
+    kind: kind === "question" && !questions.length ? "tool" : kind,
+    queue: questions,
+    answers: {},
+    total: questions.length,
     resolve: (verdict) => {
       clearTimeout(timer);
       finish(verdict);
@@ -179,9 +370,39 @@ function handleRequest(
     }
   });
 
+  if (questions.length) {
+    sendPrompt(req.chatKey, renderQuestion(questions[0], 0, questions.length));
+    return;
+  }
+  if (kind === "plan") {
+    sendPrompt(req.chatKey, renderPlan(planTextOf(req.input)));
+    return;
+  }
+
   sendPrompt(
     req.chatKey,
     `Claude wants: ${describeTool(req.toolName, req.input)}\n` +
       `Reply 1 allow · 2 deny · 3 allow all ${req.toolName} this session`,
   );
+}
+
+/** Questions out of an AskUserQuestion input, defensively — a malformed or
+ * empty list falls back to the plain 1/2/3 prompt rather than stranding the
+ * run with a question nobody can answer. */
+function readQuestions(input: unknown): Question[] {
+  const qs = (input as { questions?: unknown })?.questions;
+  if (!Array.isArray(qs)) return [];
+  return qs.filter(
+    (q): q is Question =>
+      Boolean(q) && typeof (q as Question).question === "string",
+  );
+}
+
+/** ExitPlanMode's plan text. Newer builds read the plan from a file and send
+ * nothing, so fall back to a pointer rather than an empty message. */
+function planTextOf(input: unknown): string {
+  const plan = (input as { plan?: unknown })?.plan;
+  return typeof plan === "string" && plan.trim()
+    ? plan
+    : "(claude wrote the plan to its plan file — ask it to show the plan if you need it here)";
 }

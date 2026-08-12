@@ -331,7 +331,9 @@ async function handleCommand(chatKey: string, body: string): Promise<void> {
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
-          "During a permission prompt: 1 allow · 2 deny · 3 allow all like it",
+          "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +
+          "A ❓ question takes a number or your own words · a 📋 plan takes " +
+          "1 to approve, or say what to change",
       );
     default:
       return sendTo(chatKey, `unknown command ${cmd} — try !help`);
