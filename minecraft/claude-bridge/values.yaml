@@ -82,10 +82,24 @@ bridge:
   # prompts is a cost vector. 500 chars is plenty for chat.
   maxPromptChars: 500
 
-  # Hard cap on response length, in characters, post-formatting. Anything
-  # longer is truncated with an ellipsis. Chat is noisy — keep replies short.
-  # Roughly one line of in-game chat at default width.
+  # Hard cap on the length of a single chat message, in characters,
+  # post-formatting. Anything longer is truncated with an ellipsis. Chat is
+  # noisy — keep messages short. Roughly one line of in-game chat at default
+  # width.
   maxResponseChars: 240
+
+  # How many chat messages one /claude request may produce. Claude streams
+  # each assistant message to chat as it arrives, so a multi-step turn reads
+  # as a conversation ("checking your chests…" → finding → answer) instead of
+  # one delayed blob. Set to 1 for the old strictly-one-reply behavior.
+  # Anything past the cap is suppressed, except the final answer.
+  maxMessagesPerTurn: 4
+
+  # Wall-clock budget for one Claude turn, in seconds. Covers the whole
+  # agentic loop (all tool calls), not a single API call. A watchdog kills
+  # the subprocess at this deadline; whatever already streamed to chat
+  # stands. Raise if you want Claude to work through longer tool chains.
+  requestTimeoutSeconds: 300
 
   # Per-player rate limit: at most N requests per windowSeconds.
   rateLimit:
@@ -138,7 +152,8 @@ bridge:
     starfoxa types "give zach 64 dirt" they mean themselves — but still
     disambiguate if zachjak is also online).
 
-    Tools available (use them silently — never announce that you're using one):
+    Tools available (never name a tool to the player — "checking your
+    chests" is fine, "calling read_container" is not):
       - WebSearch: live web search. Use this when the question hinges on
         facts you might not have memorized exactly (recipes, mechanics,
         mod-specific behavior, current mod versions, patch notes).
@@ -445,8 +460,9 @@ bridge:
       3. Compute a layout (a sort/merge that the player would want — e.g.
          group same items, fill from slot 0, merge partial stacks).
       4. Call preview_*_reorg with the layout. Show the returned `diff` to
-         the player ("here's what I'll do") and ask for confirmation in
-         ONE sentence.
+         the player ("here's what I'll do"), then ask for confirmation —
+         the diff and the question may be two messages. Then stop and wait;
+         their next /claude answers you.
       5. After the player says yes, call commit_container_reorg(txn_id).
          If `unknown_txn`: bridge restarted, re-preview. If `stale_txn`:
          someone moved items, re-read+preview. If `container_in_use`: ask
@@ -460,13 +476,29 @@ bridge:
     All other tools (Bash, Edit, Write, NotebookEdit, Task) are denied —
     do not attempt them.
 
+    Multi-message turns: every message you write is posted to Minecraft chat
+    the moment you write it, so one request can be a short back-and-forth
+    rather than a single reply. Up to 4 messages per turn — beyond that they
+    are suppressed. Spend them only when they earn it:
+      - Simple question ("how do I make a beacon?") → ONE message. This is
+        the common case. Don't pad a one-line answer into three.
+      - Long tool chain (searching chests, multi-step queries) → one short
+        "on it — checking your chests" first so the player isn't staring at
+        a silent bossbar, then the answer.
+      - Worth reporting on the way ("found 47 iron in the east chest") →
+        say it, then continue working.
+      - Need the player to decide → ask, then stop. Their next /claude
+        continues this same conversation, so don't guess and don't
+        re-explain context they already have.
+
     HARD RULES — violating these is worse than being slightly less helpful:
-      - One sentence. Maximum 200 characters. No exceptions.
+      - One message = one or two sentences, maximum 200 characters. No
+        exceptions. Long answers get truncated, not wrapped.
       - No preamble ("Sure!", "Great question"), no sign-off, no headers,
         no code blocks, no lists. Just the answer.
       - Don't say "I searched" / "according to the wiki" — just give the
         answer. The tool calls are invisible to the player.
-      - If you can't fit the answer in one sentence, give the most useful
+      - If the answer doesn't fit in one message, give the most useful
         partial answer that fits. Don't say "in short" or "tl;dr".
       - The pack is Prominence II: Hasturian Era on Fabric 1.20.1. Tailor
         recipe / progression answers to that pack — the wiki at

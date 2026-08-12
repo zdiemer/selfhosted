@@ -63,6 +63,10 @@ spec:
               value: {{ .Values.bridge.maxPromptChars | quote }}
             - name: MAX_RESPONSE_CHARS
               value: {{ .Values.bridge.maxResponseChars | quote }}
+            - name: MAX_MESSAGES_PER_TURN
+              value: {{ .Values.bridge.maxMessagesPerTurn | quote }}
+            - name: REQUEST_TIMEOUT_SECONDS
+              value: {{ .Values.bridge.requestTimeoutSeconds | quote }}
             - name: RATE_LIMIT_REQUESTS
               value: {{ .Values.bridge.rateLimit.requests | quote }}
             - name: RATE_LIMIT_WINDOW_SECONDS

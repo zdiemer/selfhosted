@@ -111,16 +111,46 @@ Everything player-visible lives in `values.yaml` under `bridge:`:
 |---|---|---|
 | Trigger | `/claude <prompt>` | Registered by `claude-mod`; not a values knob. |
 | `bridge.maxPromptChars` | 500 | Rejected with a chat note above this. |
-| `bridge.maxResponseChars` | 800 | Truncated with `…` above this. |
+| `bridge.maxResponseChars` | 240 | Per chat message; truncated with `…` above this. |
+| `bridge.maxMessagesPerTurn` | 4 | Messages one request may post. `1` = one reply, as before. |
+| `bridge.requestTimeoutSeconds` | 300 | Wall clock for a whole turn, all tool calls included. |
 | `bridge.rateLimit` | 5 / 60s | Per-player sliding window. |
 | `bridge.enforceWhitelist` | `true` | Pulled live from RCON. |
 | `bridge.systemPrompt` | (chat-tuned) | Steers replies toward 1-2 short sentences. |
+
+### Multi-message turns
+
+One `/claude` request can produce several chat messages. Each assistant
+message is posted the moment it arrives, so a turn that does real work reads
+as a conversation — "on it, checking your chests" → an intermediate finding →
+the answer — instead of one delayed blob. Simple questions still get a single
+message; the system prompt tells Claude to spend extra messages only when
+they earn it.
+
+Claude may also end a turn with a question and wait. Conversation state is
+per-player and persists (`sessions.json` on the PVC), so the player's next
+`/claude` answers it in the same session. `/claude clear` resets.
+
+Two caps bound the blast radius: `maxMessagesPerTurn` (extras are suppressed,
+though the final answer always gets through) and `requestTimeoutSeconds` (a
+watchdog kills the subprocess; anything already posted to chat stands).
+Death advice is deliberately still one whispered message.
 | `bridge.feedback.repoUrl` | this repo | Where `FEEDBACK.md` commits land. |
 
 Logs:
 
 ```bash
 kubectl -n minecraft logs -f deployment/claude-bridge
+```
+
+## Tests
+
+`tests/` covers the stream parser (multi-message delivery, the per-turn cap,
+suppressing the trailing `result` repeat), the turn timeout, and the chat
+formatting helpers. No cluster or RCON needed — `conftest.py` stubs both.
+
+```bash
+cd minecraft/claude-bridge && uv run --with pytest python -m pytest tests/ -q
 ```
 
 ## Failure modes

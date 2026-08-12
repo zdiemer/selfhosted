@@ -60,6 +60,7 @@ class Config:
 
     max_prompt_chars: int
     max_response_chars: int
+    max_messages_per_turn: int
     rate_limit_requests: int
     rate_limit_window: int
     enforce_whitelist: bool
@@ -100,6 +101,10 @@ class Config:
             rcon_password=need("RCON_PASSWORD"),
             max_prompt_chars=int(os.environ.get("MAX_PROMPT_CHARS", "500")),
             max_response_chars=int(os.environ.get("MAX_RESPONSE_CHARS", "800")),
+            # Per-turn ceiling on chat messages. Claude may narrate / report
+            # an intermediate finding / ask a follow-up within one request;
+            # this bounds how spammy that can get. 1 = old one-shot behavior.
+            max_messages_per_turn=max(1, int(os.environ.get("MAX_MESSAGES_PER_TURN", "4"))),
             rate_limit_requests=int(os.environ.get("RATE_LIMIT_REQUESTS", "5")),
             rate_limit_window=int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60")),
             enforce_whitelist=os.environ.get("ENFORCE_WHITELIST", "true").lower() == "true",
@@ -267,6 +272,134 @@ class SessionStore:
 
 
 # ---------------------------------------------------------------------------
+# Result of one Claude turn.
+#
+#   text          — reply text the caller still needs to deliver. Empty when
+#                   everything was already streamed out via on_message.
+#   messages_sent — how many messages the streaming callback delivered.
+# ---------------------------------------------------------------------------
+@dataclass
+class TurnResult:
+    text: str = ""
+    messages_sent: int = 0
+
+
+# ---------------------------------------------------------------------------
+# NDJSON stream parser, factored out of the subprocess plumbing so the
+# multi-message / dedupe logic is unit-testable against a captured transcript.
+#
+# `lines` is any iterable of raw stream-json lines. on_message fires for each
+# assistant text block as it arrives — that's what turns one request into
+# several chat messages — capped at max_messages so a chatty turn can't flood
+# in-game chat. on_progress fires per tool_use (bossbar labels).
+# ---------------------------------------------------------------------------
+@dataclass
+class _StreamResult:
+    final_text: str = ""
+    session_id: str | None = None
+    had_error: bool = False
+    messages_sent: int = 0
+    # Last assistant text we saw, whether or not it was delivered. Used to
+    # suppress the trailing `result` event, which normally just repeats the
+    # final assistant message and would otherwise double-post every turn.
+    last_seen_text: str = ""
+    # Messages withheld by the per-turn cap. When this is non-zero the final
+    # answer was among the ones dropped, so the caller posts `final_text`
+    # anyway rather than leaving the player with narration and no answer.
+    dropped: int = 0
+
+
+def _consume_events(lines: Iterable[str],
+                    on_message: Callable[[str], None] | None = None,
+                    on_progress: Callable[[str], None] | None = None,
+                    max_messages: int = 1) -> _StreamResult:
+    res = _StreamResult()
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type")
+        if etype == "assistant":
+            msg = event.get("message", {}) or {}
+            for block in msg.get("content", []) or []:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "tool_use":
+                    # Surface the call (name + truncated input) so
+                    # MCP tool failures are diagnosable from bridge
+                    # logs without instrumenting the MCP layer itself.
+                    tname = block.get("name") or "?"
+                    tinp = block.get("input") or {}
+                    try:
+                        inp_repr = json.dumps(tinp, separators=(",", ":"))[:300]
+                    except Exception:
+                        inp_repr = str(tinp)[:300]
+                    log.info("tool_use %s args=%s", tname, inp_repr)
+                    if on_progress:
+                        try:
+                            on_progress(_progress_label(block))
+                        except Exception as e:
+                            log.warning("on_progress callback failed: %s", e)
+                elif btype == "text":
+                    text = (block.get("text") or "").strip()
+                    if not text:
+                        continue
+                    res.last_seen_text = text
+                    if on_message is None:
+                        continue
+                    if res.messages_sent >= max_messages:
+                        res.dropped += 1
+                        continue
+                    try:
+                        on_message(text)
+                        res.messages_sent += 1
+                    except Exception as e:
+                        log.warning("on_message callback failed: %s", e)
+        elif etype == "user":
+            # tool_result events come back as `user` messages; log
+            # any error responses so we can see why a tool failed.
+            msg = event.get("message", {}) or {}
+            for block in msg.get("content", []) or []:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                content = block.get("content")
+                if isinstance(content, list):
+                    content = "".join(
+                        c.get("text", "") if isinstance(c, dict) else str(c)
+                        for c in content
+                    )
+                content = (content or "")[:600]
+                is_err = bool(block.get("is_error")) or '"error"' in content
+                if is_err:
+                    log.warning("tool_result ERROR id=%s: %s",
+                                (block.get("tool_use_id") or "")[-8:], content)
+                else:
+                    # Trim verbose successes so logs stay readable.
+                    log.info("tool_result id=%s: %s",
+                             (block.get("tool_use_id") or "")[-8:],
+                             content[:200])
+        elif etype == "result":
+            if event.get("is_error"):
+                res.had_error = True
+                log.error("claude result error: subtype=%s", event.get("subtype"))
+            res.final_text = (event.get("result") or "").strip()
+            res.session_id = event.get("session_id")
+            break
+
+    if res.dropped:
+        log.info("suppressed %d message(s) over the %d-per-turn cap",
+                 res.dropped, max_messages)
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Claude Code wrapper — one subprocess per request. The MCP config and
 # settings.json baked into the image already deny Bash/Edit/Write and
 # register the feature-request MCP server, so we don't pass tool flags here.
@@ -293,14 +426,24 @@ class Claude:
 
     def ask(self, player_uuid: str, player_name: str, prompt: str,
             on_progress: Callable[[str], None] | None = None,
+            on_message: Callable[[str], None] | None = None,
+            max_messages: int | None = None,
             extra_system: str = "",
-            ephemeral: bool = False) -> str:
+            ephemeral: bool = False) -> TurnResult:
         """
         Run a Claude turn with streaming output. on_progress is called for
         every tool_use the model emits — callers use this to update a
         bossbar / status indicator while the agent works through multi-tool
         questions like "find iron in my base and tell me if it's enough
         for a beacon".
+
+        on_message is called for each assistant text block as it arrives, so
+        one request can produce several chat messages — "on it, checking your
+        chests", an intermediate finding, then the answer — instead of a
+        single reply at the end. Capped at max_messages (default
+        CFG.max_messages_per_turn); pass on_message=None to get the old
+        one-shot behavior, where the whole reply comes back in
+        TurnResult.text for the caller to deliver.
 
         extra_system is appended to the system prompt for this turn only —
         used by the death-advice path to swap in death-specific guidance
@@ -310,13 +453,18 @@ class Claude:
         write-back). Death advice runs ephemeral so it never poisons the
         player's regular /claude conversation context.
         """
+        if max_messages is None:
+            max_messages = CFG.max_messages_per_turn
         with self._lock_for(player_uuid):
             return self._ask_locked(player_uuid, player_name, prompt,
-                                    on_progress, extra_system, ephemeral)
+                                    on_progress, on_message, max_messages,
+                                    extra_system, ephemeral)
 
     def _ask_locked(self, player_uuid: str, player_name: str, prompt: str,
                     on_progress: Callable[[str], None] | None,
-                    extra_system: str, ephemeral: bool) -> str:
+                    on_message: Callable[[str], None] | None,
+                    max_messages: int,
+                    extra_system: str, ephemeral: bool) -> TurnResult:
         session_id = None if ephemeral else self.sessions.get(player_uuid)
         # Prompt goes via stdin — claude's --mcp-config is variadic, so a
         # positional prompt arg gets swallowed by it. stdin sidesteps the
@@ -362,89 +510,51 @@ class Claude:
         except Exception as e:
             log.warning("failed to send prompt to claude stdin: %s", e)
 
-        deadline = time.time() + self.timeout
-        final_text = ""
-        new_session: str | None = None
-        had_error = False
+        # Watchdog rather than an in-loop deadline check: the old check only
+        # ran when a line arrived, so a subprocess that went silent past the
+        # deadline pinned a worker thread indefinitely. Killing the process
+        # ends the stdout iterator, which unblocks the read below. Matters
+        # more now that turns are allowed to run longer.
+        timed_out = threading.Event()
+
+        def _kill_on_timeout() -> None:
+            timed_out.set()
+            log.error("claude timed out for %s after %ds", player_name, self.timeout)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+        watchdog = threading.Timer(self.timeout, _kill_on_timeout)
+        watchdog.daemon = True
+        watchdog.start()
 
         try:
-            for raw in proc.stdout:
-                if time.time() > deadline:
-                    log.error("claude timed out for %s", player_name)
-                    proc.kill()
-                    return "(timed out — try again with a shorter question)"
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                etype = event.get("type")
-                if etype == "assistant":
-                    msg = event.get("message", {}) or {}
-                    for block in msg.get("content", []) or []:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
-                            # Surface the call (name + truncated input) so
-                            # MCP tool failures are diagnosable from bridge
-                            # logs without instrumenting the MCP layer itself.
-                            tname = block.get("name") or "?"
-                            tinp = block.get("input") or {}
-                            try:
-                                inp_repr = json.dumps(tinp, separators=(",", ":"))[:300]
-                            except Exception:
-                                inp_repr = str(tinp)[:300]
-                            log.info("tool_use %s args=%s", tname, inp_repr)
-                            if on_progress:
-                                try:
-                                    on_progress(_progress_label(block))
-                                except Exception as e:
-                                    log.warning("on_progress callback failed: %s", e)
-                elif etype == "user":
-                    # tool_result events come back as `user` messages; log
-                    # any error responses so we can see why a tool failed.
-                    msg = event.get("message", {}) or {}
-                    for block in msg.get("content", []) or []:
-                        if not isinstance(block, dict) or block.get("type") != "tool_result":
-                            continue
-                        content = block.get("content")
-                        if isinstance(content, list):
-                            content = "".join(
-                                c.get("text", "") if isinstance(c, dict) else str(c)
-                                for c in content
-                            )
-                        content = (content or "")[:600]
-                        is_err = bool(block.get("is_error")) or '"error"' in content
-                        if is_err:
-                            log.warning("tool_result ERROR id=%s: %s",
-                                        (block.get("tool_use_id") or "")[-8:], content)
-                        else:
-                            # Trim verbose successes so logs stay readable.
-                            log.info("tool_result id=%s: %s",
-                                     (block.get("tool_use_id") or "")[-8:],
-                                     content[:200])
-                elif etype == "result":
-                    if event.get("is_error"):
-                        had_error = True
-                        log.error("claude result error: subtype=%s",
-                                  event.get("subtype"))
-                    final_text = (event.get("result") or "").strip()
-                    new_session = event.get("session_id")
-                    # Log the full reply (already capped at MAX_RESPONSE_CHARS
-                    # downstream by broadcast) so replies are auditable post
-                    # hoc — bridge logs previously only carried tool calls.
-                    log.info("claude reply player=%s len=%d text=%s",
-                             player_name, len(final_text),
-                             final_text.replace("\n", " ⏎ "))
-                    break
+            res = _consume_events(proc.stdout, on_message=on_message,
+                                  on_progress=on_progress, max_messages=max_messages)
         finally:
+            watchdog.cancel()
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-        if proc.returncode and not final_text:
+        if res.final_text:
+            # Log the full reply (capped per message by broadcast downstream)
+            # so replies are auditable post hoc — bridge logs previously only
+            # carried tool calls.
+            log.info("claude reply player=%s messages=%d len=%d text=%s",
+                     player_name, res.messages_sent, len(res.final_text),
+                     res.final_text.replace("\n", " ⏎ "))
+
+        if timed_out.is_set():
+            # Anything already streamed stands; only say so if the player has
+            # heard nothing yet.
+            if res.messages_sent:
+                return TurnResult("", res.messages_sent)
+            return TurnResult("(timed out — try again with a shorter question)")
+
+        if proc.returncode and not res.final_text and not res.messages_sent:
             stderr_tail = ""
             try:
                 stderr_tail = (proc.stderr.read() or "").strip()[:500]
@@ -453,14 +563,23 @@ class Claude:
             log.error("claude exited %s: stderr=%s", proc.returncode, stderr_tail)
             if session_id and "session" in stderr_tail.lower():
                 self.sessions.set(player_uuid, "")
-            return "(sorry, I hit an error)"
+            return TurnResult("(sorry, I hit an error)")
 
-        if not ephemeral and new_session and new_session != session_id:
-            self.sessions.set(player_uuid, new_session)
+        if not ephemeral and res.session_id and res.session_id != session_id:
+            self.sessions.set(player_uuid, res.session_id)
 
-        if had_error and not final_text:
-            return "(sorry, I hit an error)"
-        return final_text or "(no reply)"
+        if res.had_error and not res.final_text and not res.messages_sent:
+            return TurnResult("(sorry, I hit an error)")
+
+        # The `result` event normally repeats the last assistant message. If
+        # we already streamed that text, don't post it twice.
+        pending = res.final_text
+        if (pending and pending == res.last_seen_text
+                and res.messages_sent and not res.dropped):
+            pending = ""
+        if not pending and not res.messages_sent:
+            pending = "(no reply)"
+        return TurnResult(pending, res.messages_sent)
 
 
 # ---------------------------------------------------------------------------
@@ -802,25 +921,40 @@ def main() -> None:
                 except Exception as e:
                     log.warning("bossbar update failed for %s: %s", player, e)
 
+            # Each assistant message goes to chat the moment it arrives, so a
+            # multi-step turn reads as a conversation ("checking your
+            # chests…" → finding → answer) instead of one delayed blob.
+            def on_message(text: str) -> None:
+                broadcast(rcon, player, text, CFG.max_response_chars)
+
             try:
                 key = name_to_uuid.get(player.lower(), player.lower())
                 if kind == "death":
                     log.info("death-advice trigger player=%s msg=%r",
                              player, item.death_message)
-                    reply = claude.ask(
+                    # Single-message on purpose: this fires at the death
+                    # screen and is whispered — narration there is noise.
+                    turn = claude.ask(
                         key, player, prompt,
+                        max_messages=1,
                         extra_system=CFG.death_advice_system_prompt,
                         ephemeral=True,
                     )
                     # Targeted only at the dying player — others don't need
                     # the post-mortem in their chat. Same aqua-bold styling
                     # as /claude replies, just a different prefix.
-                    broadcast(rcon, player, reply, CFG.max_response_chars,
+                    broadcast(rcon, player, turn.text, CFG.max_response_chars,
                               prefix=f"[Claude → {player} (RIP)]",
                               target=player)
                 else:
-                    reply = claude.ask(key, player, prompt, on_progress=on_progress)
-                    broadcast(rcon, player, reply, CFG.max_response_chars)
+                    turn = claude.ask(key, player, prompt,
+                                      on_progress=on_progress,
+                                      on_message=on_message)
+                    # Usually empty — the reply already went out as it
+                    # streamed. Non-empty on error strings and on the
+                    # capped-turn path.
+                    if turn.text:
+                        broadcast(rcon, player, turn.text, CFG.max_response_chars)
             except Exception as e:
                 log.exception("worker error for %s (%s): %s", player, kind, e)
                 # Don't bother spamming the player on death-advice failures —
