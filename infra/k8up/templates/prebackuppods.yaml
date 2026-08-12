@@ -107,7 +107,7 @@ spec:
       containers:
         - name: dump
           # renovate: datasource=docker depName=mongo
-          image: mongo:7.0.39
+          image: mongo:7.0.40
           command: ["sleep", "infinity"]
           env:
             # This secret uses hyphenated keys, which are not valid shell
