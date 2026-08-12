@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img"
+     aria-label="old.diemer.codes">
+  <!--
+    NOT the favicon. public/favicon.ico is the site's own 2019 monogram and it
+    stays exactly as it is — this is the home-screen icon and the mark on the
+    preview card, which is what the .ico could not do: black letterforms on
+    transparent disappear on a dark home screen.
+
+    Same ZD, on the site's charcoal with the site's yellow, plus a block cursor.
+    site.less asks for Fira Code in three places and has never once loaded it
+    (its only @import pointed at cdn.rawgit.com, which shut down in 2019, and
+    sat after every rule besides), so setting the monogram in it is the site
+    finally getting the face it asked for.
+
+    The glyphs here are <text>, which is fine because this file is NOT served —
+    it exists so the mark has a vector source to read. The served artwork is the
+    PNG set drawn by scripts/gen-brand.py, which sets the same string in the
+    real Fira Code binary. Do not link this from index.html without converting
+    the text to paths first; a browser without Fira Code would draw something
+    else entirely.
+  -->
+  <rect width="64" height="64" rx="13" fill="#202020"/>
+  <text x="12" y="41" fill="#E9E9E9" font-family="'Fira Code', ui-monospace, monospace"
+        font-size="25" font-weight="600" letter-spacing="-0.5">ZD</text>
+  <rect x="43" y="20" width="9.5" height="21" rx="1" fill="#EAC67A"/>
+</svg>

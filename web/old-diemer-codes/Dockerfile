@@ -62,6 +62,25 @@ COPY site/ ./
 # the full reasoning.
 COPY overlay/index.html ./public/index.html
 
+# Home-screen icons and the preview card, drawn by the selfhosted repo's
+# scripts/gen-brand.py. CRA copies public/* into build/ verbatim, so landing
+# them here is the whole of "serving" them.
+#
+# manifest.json is REPLACED, not added: the 2019 one declares favicon.ico as a
+# 192x192 image/png, which is wrong about both the size and the type, and is
+# why saving this to a phone has always produced a letter in a grey circle.
+#
+# favicon.ico is deliberately untouched — the ZD monogram is the site's mark
+# and it stays. What it could not do is be a home-screen icon: black
+# letterforms on transparent vanish on a dark background.
+#
+# overlay/icon.svg is deliberately NOT copied. It is the vector source the PNGs
+# were drawn from and it sets the monogram in <text>, so a browser without Fira
+# Code would render a different mark. See the comment inside it.
+COPY overlay/manifest.json ./public/manifest.json
+COPY overlay/apple-touch-icon.png overlay/icon-192.png overlay/icon-512.png \
+     overlay/icon-maskable-512.png overlay/og.jpg ./public/
+
 # Site.jsx declares 22 styled-components and renders only some of them, so
 # `react-scripts build` emits no-unused-vars warnings -- and CRA turns warnings
 # into hard errors when process.env.CI is truthy. docker build does not inherit
@@ -96,6 +115,10 @@ RUN npm run build
 #                                 its <style> are the two things it could eat,
 #                                 and a page that quietly stops saying it is an
 #                                 archive is the failure this guards.
+#   the icon set present   -> the overlay COPY landed and CRA copied it through,
+#                             which is the only thing standing between this and
+#                             a home screen showing a grey letter again
+#   og:image in the html   -> the preview tags survived html-minifier too
 RUN set -eux; \
     test -s build/index.html; \
     test -s build/site.css; \
@@ -106,7 +129,16 @@ RUN set -eux; \
     grep -q 'Fira+Code' build/index.html; \
     grep -q 'archived copy' build/index.html; \
     grep -q '\.archive-banner' build/index.html; \
-    ! grep -q 'gtag' build/index.html
+    ! grep -q 'gtag' build/index.html; \
+    test -s build/apple-touch-icon.png; \
+    test -s build/icon-192.png; \
+    test -s build/icon-512.png; \
+    test -s build/icon-maskable-512.png; \
+    test -s build/og.jpg; \
+    test -s build/favicon.ico; \
+    grep -q 'icon-maskable-512' build/manifest.json; \
+    grep -q 'og:image' build/index.html; \
+    ! test -e build/icon.svg
 
 # -------------------------------------------------------------- runtime stage
 # Same base as web/kelsey-green: uid 101, binds 8080, no root anywhere, and

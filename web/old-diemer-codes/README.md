@@ -117,6 +117,29 @@ go in the site repo:
   which also means it renders before the React bundle and survives `<noscript>`.
   Styling notes (the opaque background and the `z-index` are both load-bearing)
   are in the overlay next to the CSS.
+- **A home-screen icon and a link preview.** Neither existed. `manifest.json`
+  declared `favicon.ico` as a 192×192 `image/png` — wrong about both the size
+  and the type — which is why saving this to a phone always produced a letter
+  in a grey circle; and pasting the URL anywhere got a bare hostname, which for
+  an archive reads as a dead link rather than as something kept on purpose.
+
+  **`favicon.ico` is untouched.** The ZD monogram is the site's mark and it
+  stays. What it could not do is be a home-screen icon: black letterforms on
+  transparent vanish on a dark background. So the overlay adds the same
+  monogram on the site's own charcoal with its own yellow, set in Fira Code —
+  the face `site.less` has been asking for and failing to load since 2019 —
+  with a block cursor after it, which is what a page that has sat unchanged for
+  six years looks like.
+
+  The card is `og.jpg`, not `og.png`: it carries `sf.jpg`, the site's own hero
+  photograph, and a palette-quantised PNG of it came back with the yellow
+  turned white. All of it is drawn by `python3 scripts/gen-brand.py old` from
+  the repo root; re-run that, then rebuild.
+
+  `overlay/icon.svg` is deliberately **not** copied into the image. It is the
+  vector source the PNGs were drawn from and it sets the monogram in `<text>`,
+  so a browser without Fira Code would render a different mark. The Dockerfile
+  asserts it is absent from `build/` for exactly that reason.
 
 ## Usage
 
