@@ -28,6 +28,12 @@ gitSync:
   # The branch CI publishes the built site to. Never `main`.
   ref: deploy
   period: 60s
+  # Consecutive fetch failures tolerated before the sidecar gives up and exits.
+  # At the period above that is five minutes of GitHub being unreachable, which
+  # is what the occasional `Connection to github.com port 22: Connection timed
+  # out` needs. nginx keeps serving the last good checkout throughout either
+  # way; this only decides whether the container restarts.
+  maxFailures: 5
   # REQUIRED — set in values.local.yaml. The PRIVATE half of a read-only deploy
   # key on the repo (the whole PEM, including the BEGIN/END lines). Read-only:
   # the cluster pulls, it never pushes, and GitHub never gets cluster access.

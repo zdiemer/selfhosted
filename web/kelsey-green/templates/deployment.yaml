@@ -125,6 +125,11 @@ spec:
             - --ref={{ .Values.gitSync.ref }}
             - --period={{ .Values.gitSync.period }}
             - --depth=1
+            # Without this git-sync exits on the FIRST failed fetch (upstream
+            # default is 0), so one SSH timeout reaching github.com:22 restarts
+            # the sidecar. Finite rather than -1: a genuinely broken deploy key
+            # should still crashloop instead of retrying quietly forever.
+            - --max-failures={{ .Values.gitSync.maxFailures }}
             - --root=/git
             # nginx serves /var/www/current; git-sync checks out into hashed
             # dirs and repoints this symlink atomically when a checkout is
