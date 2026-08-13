@@ -1,0 +1,50 @@
+# Shape and provenance for infra/crowdsec/values.local.yaml. The real file is
+# gitignored and materialized from 1Password with:
+#   op inject -i values.local.tpl.yaml -o values.local.yaml -f
+#
+# BOTH HALVES BELONG HERE — see values.yaml. profiles.yaml is what references
+# the notifier by name, so shipping it apart from the notifier's own config
+# would allow a profile that names a plugin which does not exist. Without this
+# file the default profiles.yaml from values.yaml applies: same bans, no texts.
+config:
+  # Two profiles. Routine web scanners (roughly five a day, all of them walking
+  # the URL space) are banned silently via `on_success: break`; everything else
+  # falls through to the second profile and sends a message.
+  profiles.yaml: |
+    name: routine_web_scanners
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() in ["crowdsecurity/http-probing","crowdsecurity/http-wordpress-scan"]
+    decisions:
+      - type: ban
+        duration: 4h
+    on_success: break
+    ---
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    notifications:
+      - sms_relay
+    on_success: break
+  notifications:
+    # FILENAME HYPHENATED. The chart derives a Kubernetes volume name from this
+    # key (crowdsec-notifications-<basename>) and an underscore is illegal in an
+    # RFC 1123 label — `sms_relay.yaml` fails the Deployment patch outright. The
+    # notifier's own `name:` keeps CrowdSec's underscore convention; only the
+    # filename is constrained by Kubernetes.
+    sms-relay.yaml: |
+      type: http
+      name: sms_relay
+      log_level: info
+      # Cluster-local Service: sms-relay is tailnet-only, but the LAPI runs in
+      # this cluster and reaches the ClusterIP directly — no ingress, no TLS, no
+      # dependency on the tunnel or DuckDNS.
+      url: http://sms-relay.infra.svc.cluster.local:8000/api/v1/messages
+      method: POST
+      headers:
+        Content-Type: application/json
+        X-API-Key: <sms-relay apiKeys["crowdsec"] — add it in infra/sms-relay/values.local.yaml>
+      format: |
+        {{ $a := index . 0 }}{"to":"<alert number>","body":"CrowdSec: {{$a.Scenario}} — {{$a.Source.IP}}{{if $a.Source.Cn}} ({{$a.Source.Cn}}){{end}} banned{{if gt (len .) 1}}, +{{ sub (len .) 1 }} more{{end}}"}

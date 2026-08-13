@@ -24,6 +24,60 @@
 container_runtime: containerd
 
 # ---------------------------------------------------------------------------
+# Where decisions go
+# ---------------------------------------------------------------------------
+# CrowdSec bans things now (infra/traefik runs the bouncer plugin), and until
+# this existed the only way to know it had was to exec into a pod and run
+# `cscli decisions list`. The alerts were real and nobody was reading them.
+#
+# WHY NOT GRAFANA, which already has thirteen alert rules. Because Grafana Cloud
+# is OUTSIDE and sms-relay is deliberately tailnet-only — it carries message
+# bodies, so it is the one service kept off the Cloudflare tunnel entirely.
+# Grafana Cloud cannot reach it, which is the actual reason
+# infra/grafana-dashboards routes everything to a dead-end contact point. That
+# is a real architectural constraint, not an unfinished job. CrowdSec's LAPI, by
+# contrast, runs in this cluster and can reach the Service directly.
+#
+# WHAT GETS A TEXT, AND WHAT DOES NOT. The cluster bans roughly five addresses a
+# day, essentially all of them WordPress scanners and directory probes walking
+# the URL space. A text per ban is five texts a day of "the internet is still
+# the internet", which is how a notification channel gets muted and then
+# ignored. So profiles.yaml below splits them: routine web scanners are banned
+# SILENTLY, and anything else — an ssh brute force, a CVE exploit attempt, a
+# scenario nobody has seen before — sends a message. The signal is "something
+# unusual", not "something happened".
+profiles:
+  # The scenarios considered routine. Every one of these has actually fired here
+  # and every one was a scanner. Adding to this list makes things quieter;
+  # removing from it makes them louder, and both are one deploy.
+  routineScenarios:
+    - crowdsecurity/http-probing
+    - crowdsecurity/http-sensitive-files
+    - crowdsecurity/http-wordpress-scan
+    - crowdsecurity/http-admin-interface-probing
+    - crowdsecurity/http-technology-probing
+    - crowdsecurity/http-crawl-non_statics
+    - crowdsecurity/http-bad-user-agent
+
+# NOTIFICATIONS LIVE IN values.local.yaml, both halves of them, and the reason
+# is a failure mode rather than tidiness.
+#
+# The notification config carries an API key and a phone number, so it cannot be
+# here. But profiles.yaml is what REFERENCES the notifier by name, and a profile
+# naming a plugin that was never configured is exactly the kind of half-applied
+# state that fails at the worst moment. Keeping both in the same file means they
+# arrive together or not at all:
+#
+#   * with values.local.yaml — profiles.yaml (with `notifications: [sms_relay]`)
+#     and the sms_relay plugin are both mounted;
+#   * without it — the default profiles.yaml from values.yaml applies, which
+#     bans exactly the same things and simply notifies nobody.
+#
+# A deploy from a fresh clone with no secrets is therefore still correct and
+# still enforcing, just silent. See values.local.yaml.example for the shape.
+
+
+# ---------------------------------------------------------------------------
 # Whitelist — the prerequisite for ever enforcing
 # ---------------------------------------------------------------------------
 # THIS MUST LAND BEFORE A BOUNCER DOES, not with it. While CrowdSec is
@@ -70,6 +124,24 @@ container_runtime: containerd
 # CrowdSec will load. Inventing a nicer-looking key would render nothing and
 # report nothing — the same silent no-op this repo keeps running into.
 config:
+  # The default profile, WITHOUT any notification reference. values.local.yaml
+  # replaces this wholesale with a two-profile version that adds the routine
+  # filter and the sms_relay notification; helm replaces scalar strings rather
+  # than merging them, so whichever file is last wins cleanly.
+  #
+  # NOTE this sits under the SAME `config:` key as the whitelist parser below,
+  # and has to. Two `config:` blocks in one values file is not an error YAML
+  # reports — the loader silently keeps the last one, so the first block's
+  # contents vanish with nothing to notice. That is how this nearly shipped
+  # with the whitelist quietly deleting profiles.yaml.
+  profiles.yaml: |
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    on_success: break
   parsers:
     s02-enrich:
       trusted-networks.yaml: |
