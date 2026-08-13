@@ -26,3 +26,7 @@
 	path = web/talaria
 	url = git@github.com:zdiemer/talaria.git
 	branch = main
+[submodule "web/diemer-codes"]
+	path = web/diemer-codes
+	url = git@github.com:zdiemer/diemer.codes.git
+	branch = main
