@@ -80,7 +80,12 @@ the wildcard SAN cert and DuckDNS record already cover it. If a
 ## Day-2 notes
 
 - **Upgrading**: bump `HAPPY_REF` in `build.sh` and `image.tag` in
-  `values.yaml` together, `./build.sh`, then `./upgrade.sh`. The CLI pin in
+  `values.yaml` together, `./build.sh`, then **update `image.digest`** and
+  `./upgrade.sh`. The image is pinned by digest, not by tag: `v1` is a tag we
+  move, so with `pullPolicy: Always` every restart — a drain, an eviction, an
+  OOM kill — silently pulled whatever had last been pushed, and nothing recorded
+  which build was serving. Read the new digest with
+  `crane digest ghcr.io/zdiemer/happy-server:v1`. The CLI pin in
   the claude-workspace Dockerfile should track roughly the same release —
   wildly mismatched client/server versions are the first thing to suspect
   after an upgrade.

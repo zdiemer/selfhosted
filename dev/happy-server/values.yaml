@@ -5,10 +5,43 @@ image:
   # minecraft/claude-bridge/build.sh for why we never side-load images.
   repository: "ghcr.io/zdiemer/happy-server"
   # v1 = monorepo tag cli-1.1.10 (the HAPPY_REF pin in build.sh). Bump both
-  # together, deliberately — this is an internet-facing surface.
+  # together, deliberately.
   tag: "v1"
-  # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
-  pullPolicy: Always
+
+  # PINNED BY DIGEST, and this is the one chart where it matters most.
+  #
+  # `v1` is a tag WE move: build.sh rebuilds from the slopus/happy monorepo and
+  # pushes over it. Combined with pullPolicy below, every pod restart — a node
+  # drain, an eviction, an OOM kill at 3am — silently pulled whatever `v1`
+  # pointed at then. Nothing recorded which build was actually serving, so
+  # "roll back to what was working" had no answer, and a rebuild that broke
+  # something would surface at the next unrelated restart rather than at deploy.
+  #
+  # That is a bad trade for any service. For this one it is the relay that
+  # fronts dev/claude-workspace's session daemon, whose sessions are children of
+  # a pod holding cluster-admin — so "whatever got pushed most recently" decides
+  # what runs next to the most privileged thing in the cluster.
+  #
+  # The digest is what the live pod is running as of this pin, read from its
+  # status.containerStatuses[].imageID rather than from the registry, so it is
+  # the build that is known to work rather than the newest one.
+  #
+  # HOW TO BUMP: ./build.sh, then read the digest it pushed —
+  #   crane digest ghcr.io/zdiemer/happy-server:v1
+  # or after deploying once with the digest cleared:
+  #   kubectl -n happy get pod -l app.kubernetes.io/name=happy-server \
+  #     -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+  # Set it here and re-run upgrade.sh. Clearing this falls back to the tag,
+  # which is the old behaviour and is fine for a deliberate one-off.
+  digest: "sha256:a94573a2b70df8ad40adde4d0fcb0adc2778f33529c6c27970a9d6f4d58539b3"
+
+  # IfNotPresent, not Always — with a digest, `Always` is pure cost. A digest
+  # names exactly one immutable blob, so re-checking the registry on every
+  # restart can only ever return the layer already on the node, at the price of
+  # a network round trip in the startup path and a hard dependency on GHCR being
+  # up in order for a pod to reschedule. Restore `Always` only if the digest
+  # above is cleared.
+  pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
