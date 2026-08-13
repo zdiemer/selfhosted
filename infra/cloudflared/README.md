@@ -54,7 +54,6 @@ so the only column that actually varies is the hostname:
 | `auth.diemer.codes` | `auth/authelia` | `authelia:9091` |
 | `docs.diemer.codes` | `docs/paperless` | `paperless:8000` |
 | `games.diemer.codes` | `games/gamedex` | `gamedex:8080` |
-| `homes.diemer.codes` | `web/apartment-watch-web` | `apartment-watch-web:8080` |
 | `keepass.diemer.codes` | `auth/keepass-keeweb` | `keepass-keeweb:80` |
 | `old.diemer.codes` | `web/old-diemer-codes` | `old-diemer-codes:80` |
 | `pdf.diemer.codes` | `docs/stirling` | `stirling:8080` |

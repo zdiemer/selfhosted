@@ -23,9 +23,8 @@ data:
 
     2. IT ATTRIBUTES AT QUERY TIME, AGAINST A WATCHED POD CACHE. Pod IPs are
        ephemeral, and the workloads most worth seeing are exactly the ones that
-       do not persist -- duckdns, apartment-watch and the smitele collectors
-       are CronJobs, and a duckdns pod resolves www.duckdns.org and exits in
-       about a second.
+       do not persist -- duckdns and the smitele collectors are CronJobs, and a
+       duckdns pod resolves www.duckdns.org and exits in about a second.
 
        This originally polled every 20s and those pods landed in the
        unattributed bucket exactly as you would expect: the first run of it

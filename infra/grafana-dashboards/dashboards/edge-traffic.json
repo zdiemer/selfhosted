@@ -239,7 +239,7 @@
     {
       "type": "timeseries",
       "title": "Bytes out by service",
-      "description": "Only opted-in services route through infra/egress-proxy (today: smitele-bot and apartment-watch). This is not all cluster egress — it is all *proxied* egress.",
+      "description": "Only opted-in services route through infra/egress-proxy (today: smitele-bot; apartment-watch was the other until it was deprecated 2026-08-13). This is not all cluster egress — it is all *proxied* egress.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
       "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
       "targets": [
@@ -257,7 +257,7 @@
     {
       "type": "table",
       "title": "Top egress destinations",
-      "description": "`dst` and `url` are deliberately NOT Loki labels — one stream per destination is a cardinality bomb (a single apartment-watch run touches ~70 hosts). Aggregating at query time costs no series.",
+      "description": "`dst` and `url` are deliberately NOT Loki labels — one stream per destination is a cardinality bomb (a single apartment-watch run touched ~70 hosts). Aggregating at query time costs no series.",
       "gridPos": { "h": 8, "w": 8, "x": 12, "y": 22 },
       "datasource": { "type": "loki", "uid": "__LOKI_UID__" },
       "targets": [

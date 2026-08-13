@@ -160,8 +160,9 @@ kubectl get validatingadmissionpolicybinding ingress-policy \
 
 - **`spec.tls`.** Traefik's cert request is driven by the
   `router.tls.domains.0.*` annotations, not by `spec.tls`, so requiring the
-  block would enforce tidiness rather than correctness. `web/apartment-watch` has
-  the annotations and no `spec.tls` block, and works fine.
+  block would enforce tidiness rather than correctness. `web/apartment-watch` had
+  the annotations and no `spec.tls` block, and served fine that way for its whole
+  life.
 - **Hostname shape.** New `*.zachd.duckdns.org` hosts need no registration
   anywhere — DuckDNS resolves any label to the same A record and the wildcard
   cert already covers it. There is nothing to validate.

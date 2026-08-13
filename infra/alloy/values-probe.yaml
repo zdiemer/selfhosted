@@ -136,11 +136,10 @@ alloy:
         // this dashboard. See the tailnet-only block at the end for where each
         // of the three went — only status is probed at all now, and the reason
         // the other two are not is a deliberate call, not an omission.
-        target {
-          name    = "homes"
-          address = "https://homes.diemer.codes"
-          module  = "http_edge"
-        }
+        //
+        // homes (web/apartment-watch) was dropped for the same reason on
+        // 2026-08-13, though it is not coming back: the chart was deprecated
+        // and uninstalled, so there is no service behind the hostname at all.
         target {
           name    = "smite"
           address = "https://smite.diemer.codes"

@@ -6,8 +6,9 @@
 # no equivalent, and three separate problems followed from that:
 #
 #   1. EVERYTHING LEAVES FROM THE HOUSE. games/gamedex talks to ~50 hosts,
-#      finance/money scrapes Zillow and Redfin, web/apartment-watch scrapes
-#      Craigslist and Zumper, and discord/smitele-bot pulls ~118 GB/month
+#      finance/money scrapes Zillow and Redfin, web/apartment-watch scraped
+#      Craigslist and Zumper until it was deprecated, and discord/smitele-bot
+#      pulls ~118 GB/month
 #      through a Cloudflare-fronted tracker.gg — all from the address the
 #      household browses from. smitele-bot has already been refused with
 #      `Retry-After: 3600`, which its own docs correctly read as a ban on the
@@ -255,21 +256,19 @@ clients:
     lane: direct
     allowedHosts: []
 
-  # apartment-watch runs Camoufox with geoip=True, which derives locale,
-  # timezone and lat/long FROM THE EXIT IP — so the exit has to be plausibly
-  # near San Francisco or the fingerprint describes somewhere the traffic is not
-  # coming from. The vps lane's exit is in DigitalOcean SFO3 for exactly that
-  # reason.
+  # THE `vps` LANE NOW HAS NO CLIENTS. web/apartment-watch was its only one and
+  # was deprecated 2026-08-13 (the flat search it fed ended). The lane is left
+  # enabled because the exit is already paid for and staged for other uses, but
+  # nothing routes through it — if that stays true, the droplet is the thing to
+  # decide about, not this file.
   #
-  # THE REMAINING RISK IS THE ASN, NOT THE GEO. This scraped well from a
-  # residential address — Craigslist answers a plain httpx GET from one
-  # essentially always — and a datacenter ASN may be treated worse. Watch the
-  # `blocked` counter in the run summary (`fetch stats: {... 'blocked': 0 ...}`);
-  # if it climbs off zero, put this back to `direct`, which is a one-word revert.
-  - name: apartment-watch
-    namespace: web
-    lane: vps
-    allowedHosts: []
+  # What that client demonstrated, since it is the only worked example the lane
+  # has: Camoufox with geoip=True derives locale, timezone and lat/long FROM THE
+  # EXIT IP, so a browser-tier client needs an exit plausibly near the place it
+  # claims to be browsing from — which is why the exit is in DigitalOcean SFO3.
+  # It scraped four listing sites through the lane without the `blocked` counter
+  # leaving zero, so a datacenter ASN was not fatal there, unlike smitele-bot's
+  # Cloudflare-fronted target above.
 
 # Passwords live in values.local.yaml as a MAP keyed by client name, never as
 # part of the `clients` list above. Helm merges maps by key but REPLACES lists

@@ -12,6 +12,17 @@
 
 set -euo pipefail
 
+# DEPRECATED 2026-08-13 — see README.md. The release is uninstalled, the PVC is
+# gone and both 1Password items are archived, so everything below would fail at
+# the sv_has checks anyway; this just fails first and says why. Redeploying is a
+# deliberate act: re-create the vault items, then set APARTMENT_WATCH_REVIVE=1.
+if [[ -z "${APARTMENT_WATCH_REVIVE:-}" ]]; then
+  echo "apartment-watch is deprecated (retired 2026-08-13) and is not deployed." >&2
+  echo "  Nothing to upgrade. See README.md for what reviving it would take." >&2
+  echo "  To deploy anyway: APARTMENT_WATCH_REVIVE=1 $0" >&2
+  exit 1
+fi
+
 RELEASE="${RELEASE:-apartment-watch}"
 NAMESPACE="${NAMESPACE:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

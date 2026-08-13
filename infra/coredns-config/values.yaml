@@ -89,9 +89,9 @@ dnsLogging:
 #
 # IT ATTRIBUTES AT QUERY TIME, against a WATCHED pod cache. This is the part
 # that matters. Pod IPs are ephemeral, and the workloads most worth seeing are
-# the ones that don't persist — duckdns, apartment-watch and the smitele
-# collectors are CronJobs, and a duckdns pod resolves www.duckdns.org and exits
-# in about a second.
+# the ones that don't persist — duckdns and the smitele collectors are
+# CronJobs, and a duckdns pod resolves www.duckdns.org and exits in about a
+# second.
 #
 # This polled every 20s at first, and those pods landed in the unattributed
 # bucket exactly as you would expect: six long-lived workloads attributed,

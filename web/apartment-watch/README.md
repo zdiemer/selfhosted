@@ -1,5 +1,46 @@
 # apartment-watch — Bay Area rental scraper → SMS
 
+> ## DEPRECATED — retired 2026-08-13
+>
+> The search this served is over: the person it texted found a place. Nothing
+> below runs any more, and the tense in the rest of this file is historical.
+>
+> **What was torn down**
+>
+> - `helm uninstall apartment-watch -n web` — CronJob, web Deployment, Service,
+>   and the Ingress on `homes.zachd.duckdns.org` / `homes.diemer.codes`.
+> - The `apartment-watch-data` PVC, which the chart pins with
+>   `helm.sh/resource-policy: keep`, so it had to be deleted by hand. A verified
+>   SQLite snapshot (1489 listings, 175 runs, through the 2026-08-13 20:00 UTC
+>   run) was taken first and lives outside this repo at
+>   `~/backups/apartment-watch/`. There is also a restic copy in the k8up
+>   repository, but only from the weekly `backup-web` run on 2026-08-08 — the
+>   schedule is `0 1 * * 6`, so nothing captured the final five days. The local
+>   snapshot is the current one.
+> - Its `clients:` entry in [`infra/egress-proxy`](../../infra/egress-proxy/)
+>   — it was the **only** consumer of the `vps` lane, so that exit now carries
+>   no traffic.
+> - Both 1Password items (`web-apartment-watch` and
+>   `web-apartment-watch-criteria`), and with them the phone numbers. They were
+>   **archived, not destroyed** — `op item delete --archive` — so they are
+>   recoverable from the vault's Archive. Older `secrets.sh backup` tarballs on
+>   the NAS still contain them outright.
+>
+> **What was left alone**
+>
+> - The `homes.diemer.codes` public hostname in the Cloudflare Zero Trust
+>   dashboard. That is dashboard state, not chart state — delete it under
+>   Networks → Tunnels → Public Hostnames.
+> - The `ghcr.io/zdiemer/apartment-watch` package.
+> - This chart and `src/`, kept as the worked example for `infra/egress-proxy`'s
+>   browser tier and for the private-GHCR pull-secret naming the root README
+>   points at.
+>
+> **Redeploying** would need: a new `criteria.yaml` and `values.local.yaml` in
+> 1Password (see `criteria.example.yaml`), the CF hostname re-added, and an
+> egress client entry if the browser tier is wanted. The source table below has
+> been rotting since August 2026 — assume the browser sources need work.
+
 A CronJob that scrapes studio/1br listings across San Francisco, southern Marin
 and Burlingame, filters them against `criteria.yaml`, and texts a link to
 anything new that matches. The listings themselves live on a run page served by

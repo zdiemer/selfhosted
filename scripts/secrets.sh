@@ -83,17 +83,29 @@ AGE_KEY="${AGE_KEY:-$HOME/.config/selfhosted/backup-age.key}"
 AGE_RECIPIENTS="${AGE_RECIPIENTS:-${ROOT:-$HOME/.config/selfhosted}/scripts/backup-recipients.txt}"
 PAPER_MARKER="${PAPER_MARKER:-$HOME/.config/selfhosted/.paper-key-confirmed}"
 
-# Secret files that are not values.local.yaml. apartment-watch reads criteria
-# off disk via .Files.Get in templates/configmap.yaml, so it must be present
-# before helm runs, exactly like a -f file.
-EXTRA_FILES=("web/apartment-watch/criteria.yaml")
+# Secret files that are not values.local.yaml. The mechanism is generic; its
+# only user was web/apartment-watch, which read criteria off disk via .Files.Get
+# in templates/configmap.yaml and so needed it present before helm ran, exactly
+# like a -f file. That chart was deprecated 2026-08-13 and its vault items were
+# archived, so this is empty — the criteria.tpl.yaml handling below is kept for
+# the next chart that owns a second secret file.
+EXTRA_FILES=()
 
 # infra/coredns-config/values.local.yaml is NOT a secret and must never be
 # managed here. Its *presence* is what enables the cluster-wide DNS query log;
 # its own .example says the tracked default must stay false and that deleting
 # the file is how you close the window. Materializing it would silently reopen
 # cluster DNS logging and restart CoreDNS.
-EXCLUDE_FILES=("infra/coredns-config/values.local.yaml")
+#
+# web/apartment-watch was deprecated 2026-08-13 and both its vault items were
+# archived, but its two .tpl.yaml files are kept in the tree as the record of
+# what the chart needed. Excluding them here is what stops discovery from
+# looking for items that no longer exist and reporting the chart broken.
+EXCLUDE_FILES=(
+  "infra/coredns-config/values.local.yaml"
+  "web/apartment-watch/values.local.yaml"
+  "web/apartment-watch/criteria.yaml"
+)
 
 # Charts whose GATE2 render needs inputs beyond values.yaml + the secret, so the
 # generic render in cmd_verify cannot stand them up and a plain failure would be
@@ -104,12 +116,11 @@ EXCLUDE_FILES=("infra/coredns-config/values.local.yaml")
 #   infra/democratic-csi   renders twice, once per driver, each needing its own
 #                          -f values-<driver>.yaml; without one the chart fails
 #                          on `csiDriver.name is required`.
-#   web/apartment-watch    criteria arrives via --set-file from tmpfs (see its
-#                          upgrade.sh), so a render without it hits the
-#                          templates/configmap.yaml `fail` guard.
+#
+# (web/apartment-watch was the second entry until it was deprecated 2026-08-13.
+# It is excluded from discovery entirely now, so it never reaches a GATE.)
 GATE2_SKIP=(
   "infra/democratic-csi"
-  "web/apartment-watch"
 )
 gate2_skipped() {
   local d="$1" s
@@ -629,7 +640,7 @@ cmd_pull() {
 
 # Resolve a chart argument to its template and logical name. Accepts a chart
 # directory (infra/duckdns) with an optional stem for charts that own more than
-# one secret (web/apartment-watch criteria).
+# one secret (the deprecated web/apartment-watch was the only one: `criteria`).
 # Where a template SHOULD live, with no synthesis. cmd_new is the only caller:
 # it is creating the template, so a synthesised one in scratch would read as
 # "already exists" and refuse — which is exactly what happened the first time.
@@ -720,7 +731,7 @@ check_yaml() {
 
 cmd_edit() {
   need_op
-  [[ $# -gt 0 ]] || die "usage: secrets.sh edit <chart> [stem]   (e.g. infra/duckdns, or web/apartment-watch criteria)"
+  [[ $# -gt 0 ]] || die "usage: secrets.sh edit <chart> [stem]   (e.g. infra/duckdns, or '<chart> criteria' for a chart owning a second secret file)"
   local chart="$1" stem="${2:-values.local}" tpl logical sd f before after
   IFS=$'\t' read -r tpl logical < <(resolve_chart "$chart" "$stem")
   [[ -f "$tpl" ]] || die "no template for ${chart} (${stem}.tpl.yaml). New secret? use: secrets.sh new ${chart}"

@@ -16,8 +16,8 @@ It answers the questions nothing else here can, because everything else is a
 02:05 left no trace anywhere at all.
 
 The CronJobs are most of the value. Twelve-plus schedules run in this cluster —
-apartment-watch, renovate, duckdns, money's SimpleFIN sync, seven smitele-bot
-jobs, talaria's reindex — and **none of them were watched by anything**. One
+renovate, duckdns, money's SimpleFIN sync, seven smitele-bot jobs, talaria's
+reindex — and **none of them were watched by anything**. One
 metric fixes that:
 
 ```promql

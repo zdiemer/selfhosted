@@ -22,9 +22,11 @@ than a limitation. smitele-bot's Cloudflare clearance cookie is bound to the
 exit that solved the challenge, there are twelve solves a day before a four-hour
 breaker arms, and a cookie replayed from a different address is refused. A
 rotating pool there does not work worse; it fails within minutes.
-apartment-watch has the same preference for a different reason: Camoufox's
+apartment-watch had the same preference for a different reason: Camoufox's
 `geoip=True` derives locale, timezone and lat/long from the exit, so a stable,
-plausible location is worth more than variety.
+plausible location is worth more than variety. (That chart was deprecated
+2026-08-13 and was this exit's only client — see the note on `clients:` in
+../values.yaml before renewing the box.)
 
 When a service genuinely wants rotation — because it is rate-limited *per
 address* rather than challenged — there are three ways to get it, and all of
@@ -89,7 +91,7 @@ the cluster names a *lane* rather than a host: swapping the address is a
 |---|---|
 | **Flat rate, ≥1 TB/month** | smitele-bot alone is ~118 GB/month steady plus ~36 GB per backfill. Per-gigabyte billing is the wrong shape entirely. |
 | **Static IPv4** | The clearance cookie is bound to it. An address that changes on reboot defeats the point. |
-| **US, ideally West Coast** | apartment-watch's Camoufox derives its fingerprint's location from the exit. An exit far from San Francisco is a *louder* signal than the current residential address. |
+| **US, ideally West Coast** | Applied to apartment-watch, whose Camoufox derived its fingerprint's location from the exit — an exit far from San Francisco is a *louder* signal than the current residential address. That client is gone; the requirement stands for any future browser-tier one. |
 | Datacenter ASN is fine to start | What carries smitele-bot past Cloudflare is the solved cookie and the Firefox handshake, not the address's reputation. Escalate to a static ISP proxy only if this gets challenged — it is a config change, not a rewrite. |
 
 ## Install

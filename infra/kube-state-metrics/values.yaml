@@ -10,8 +10,9 @@
 # is CrashLooping" had no source at all — infra/cluster-status polls the API for
 # a live snapshot and keeps no history, so a job that failed at 02:00 and was
 # retried by 02:05 left no trace anywhere. Most of the value here is in the
-# CronJobs: apartment-watch, renovate, duckdns, money and seven smitele-bot
-# schedules, none of which are watched by anything today.
+# CronJobs: renovate, duckdns, money and seven smitele-bot schedules, none of
+# which are watched by anything today. (apartment-watch was in this list until
+# it was deprecated 2026-08-13.)
 #
 # One Deployment, one replica. This is a read-only reflector of the API server;
 # if it dies you lose metrics, not state, and it rebuilds its whole world on

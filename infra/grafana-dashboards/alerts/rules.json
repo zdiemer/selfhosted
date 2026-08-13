@@ -250,7 +250,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "A CronJob's next scheduled run passed over an hour ago and never happened. Covers apartment-watch, renovate, duckdns, money and the smitele-bot collectors."
+      "summary": "A CronJob's next scheduled run passed over an hour ago and never happened. Covers renovate, duckdns, money and the smitele-bot collectors."
     },
     "notification_settings": {
       "receiver": "unwired"

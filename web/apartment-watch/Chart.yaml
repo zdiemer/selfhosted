@@ -1,8 +1,14 @@
 apiVersion: v2
 name: apartment-watch
-description: Daily SF rental scraper that texts a digest of new matching listings via sms-relay
+description: DEPRECATED (2026-08-13) — SF rental scraper that texted a digest of new matching listings via sms-relay
 type: application
-version: 0.2.0
+# Retired 2026-08-13: the flat search this fed is over. The release is
+# uninstalled, its PVC is deleted, its 1Password items are archived, and it is
+# no longer a
+# client of infra/egress-proxy. Chart and source are kept as reference — see
+# README.md for what redeploying would take.
+deprecated: true
+version: 0.3.0
 # appVersion tracks the image tag in values.yaml (image.tag).
 appVersion: "v1"
 maintainers:

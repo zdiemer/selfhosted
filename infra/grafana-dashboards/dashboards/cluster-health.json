@@ -322,7 +322,7 @@
     {
       "type": "table",
       "title": "Hours since last successful run",
-      "description": "The highest-value panel here. Covers apartment-watch, renovate, duckdns, money's SimpleFIN sync, the smitele-bot collectors and every k8up backup Schedule — none of which had any monitoring at all before. A CronJob that quietly stopped working shows up here and nowhere else.",
+      "description": "The highest-value panel here. Covers renovate, duckdns, money's SimpleFIN sync, the smitele-bot collectors and every k8up backup Schedule — none of which had any monitoring at all before. A CronJob that quietly stopped working shows up here and nowhere else.",
       "gridPos": { "h": 11, "w": 14, "x": 0, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
       "targets": [

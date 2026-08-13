@@ -16,7 +16,8 @@
 # WHAT THIS BOX IS NOT. One VPS is ONE address. It is a second address, not a
 # rotating one — which is exactly what smitele-bot needs (its Cloudflare
 # clearance cookie is bound to the exit, so rotation fails within minutes) and
-# what apartment-watch's geoip fingerprinting wants. See README.md for the three
+# what apartment-watch's geoip fingerprinting wanted before it was deprecated.
+# See README.md for the three
 # ways to get rotation when a service actually wants it.
 
 set -euo pipefail
