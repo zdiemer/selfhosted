@@ -39,7 +39,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PTY_HELPER="${HERE}/lib/op-signin-pty.py"
+PTY_HELPER="${OP_PTY_HELPER:-${HERE}/lib/op-signin-pty.py}"
 
 # The account shorthand from `op account list`. OP_ACCOUNT is op's own variable,
 # so honouring it keeps this consistent with plain op usage.

@@ -27,7 +27,43 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# WHERE THE CHECKOUT IS, IF THERE IS ONE.
+#
+# Bundled as a single executable on PATH (scripts/build-secrets-cli.sh), this
+# runs with no repo around it at all. Most of what it does is vault work and
+# needs none: show, edit, check, backup and restore only ever talk to 1Password
+# and the NAS. Two verbs genuinely cannot work without a checkout — `new` writes
+# a template into a git repo, and `verify` renders charts — and they say so
+# rather than half-working.
+#
+# $SELFHOSTED_ROOT wins; then the tree this script sits in, if it is one; then
+# the conventional clone. HAVE_REPO is the honest answer, not a guess.
+_looks_like_repo() { [[ -n "$1" && -f "$1/scripts/secrets.sh" && -d "$1/scripts/lib" ]]; }
+if [[ -n "${SELFHOSTED_ROOT:-}" ]]; then
+  # An explicit override that is wrong must fail, not fall through to a
+  # different tree — silently using a checkout the caller did not name is how
+  # you edit the wrong fleet's secrets.
+  _looks_like_repo "$SELFHOSTED_ROOT" \
+    || { echo "SELFHOSTED_ROOT=${SELFHOSTED_ROOT} is not a selfhosted checkout" >&2; exit 1; }
+  ROOT="$SELFHOSTED_ROOT"
+elif _looks_like_repo "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+elif _looks_like_repo "$HOME/Code/selfhosted"; then
+  ROOT="$HOME/Code/selfhosted"
+else
+  ROOT=""
+fi
+HAVE_REPO=$([[ -n "$ROOT" ]] && echo 1 || echo 0)
+
+# Refuse clearly rather than producing an empty result from an empty tree.
+need_repo() {
+  [[ $HAVE_REPO -eq 1 ]] && return 0
+  die "'$1' needs the selfhosted checkout (it $2).
+       Point at one:  SELFHOSTED_ROOT=/path/to/selfhosted secrets $1 ...
+       Everything that only touches the vault — show, edit, check, backup,
+       restore — works without it."
+}
+
 VAULT="${VAULT:-homelab}"
 
 # Cluster relay (claude-workspace). The pod runs as a cluster-admin SA, so it
@@ -44,7 +80,7 @@ NAS_SHARE="${NAS_SHARE:-//192.168.4.36/backups}"
 NAS_DIR="${NAS_DIR:-selfhosted-secrets}"
 NAS_CREDS="${NAS_CREDS:-$HOME/.config/selfhosted/nas-creds}"
 AGE_KEY="${AGE_KEY:-$HOME/.config/selfhosted/backup-age.key}"
-AGE_RECIPIENTS="${AGE_RECIPIENTS:-${ROOT}/scripts/backup-recipients.txt}"
+AGE_RECIPIENTS="${AGE_RECIPIENTS:-${ROOT:-$HOME/.config/selfhosted}/scripts/backup-recipients.txt}"
 PAPER_MARKER="${PAPER_MARKER:-$HOME/.config/selfhosted/.paper-key-confirmed}"
 
 # Secret files that are not values.local.yaml. apartment-watch reads criteria
@@ -317,7 +353,7 @@ OP_SESSION_READY=0
 op_session_ready() {
   [[ $OP_SESSION_READY -eq 1 ]] && return 0
   command -v op >/dev/null 2>&1 || return 1
-  local helper="${ROOT}/scripts/op-session.sh" line=""
+  local helper="${OP_SESSION_SH:-${ROOT}/scripts/op-session.sh}" line=""
   if [[ -x "$helper" ]]; then
     line="$("$helper" ensure)" || return 1
     [[ -n "$line" ]] && eval "$line"
@@ -336,7 +372,7 @@ need_op() {
   op_session_ready && return 0
   command -v op >/dev/null 2>&1 \
     || die "op not found. Install the 1Password CLI (>= 2.0)."
-  die "no 1Password session — see the message above, or run: ${ROOT}/scripts/op-session.sh login"
+  die "no 1Password session — see the message above, or run: ${OP_SESSION_SH:-${ROOT}/scripts/op-session.sh} login"
 }
 
 # Materialize one template. Four guards, each covering a distinct failure, and
@@ -414,7 +450,18 @@ sha_of() { sha256sum < "$1" | cut -d' ' -f1; }
 #
 # /dev/shm is tmpfs; / is ext4. Decrypted material must never touch a disk.
 SCRATCH=""
-cleanup_scratch() { [[ -n "$SCRATCH" && -d "$SCRATCH" ]] && rm -rf "$SCRATCH"; return 0; }
+cleanup_scratch() {
+  # $_SC_DIR belongs to the bundled CLI (scripts/build-secrets-cli.sh), which
+  # extracts op-session.sh and the pty helper to tmpfs before this script runs.
+  # It cannot clean up after itself: the `trap ... EXIT` below REPLACES any trap
+  # already installed, so the bundle's own cleanup never fires and every
+  # invocation left an extract directory behind. Removing it here is the
+  # coupling made explicit — the same trap-clobbering that sv_trap_add exists to
+  # avoid in scripts/lib/secret-values.sh.
+  [[ -n "${_SC_DIR:-}" && -d "${_SC_DIR:-}" ]] && rm -rf "$_SC_DIR"
+  [[ -n "${SCRATCH:-}" && -d "${SCRATCH:-}" ]] && rm -rf "$SCRATCH"
+  return 0
+}
 trap cleanup_scratch EXIT INT TERM
 
 # The root is created once by the dispatcher, in the PARENT shell. It cannot be
@@ -540,6 +587,7 @@ cmd_status() {
 }
 
 cmd_pull() {
+  need_repo pull "materializes files into a checkout"
   need_op
   local tmp; tmp="$(scratch)"
   local logical tpl out n=0
@@ -582,22 +630,54 @@ cmd_pull() {
 # Resolve a chart argument to its template and logical name. Accepts a chart
 # directory (infra/duckdns) with an optional stem for charts that own more than
 # one secret (web/apartment-watch criteria).
+# Where a template SHOULD live, with no synthesis. cmd_new is the only caller:
+# it is creating the template, so a synthesised one in scratch would read as
+# "already exists" and refuse — which is exactly what happened the first time.
+chart_tpl_path() {
+  local chart="${1:?}" stem="${2:-values.local}" pair name
+  chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"${ROOT:-/nonexistent}"/}"
+  for pair in "${EXTERNAL_MAP[@]}"; do
+    if [[ "${pair%%:*}" == "$chart" ]]; then
+      name="${pair#*:}"; printf '%s\n' "${EXTERNAL_BASE}/${name}/${stem}.tpl.yaml"; return 0
+    fi
+  done
+  printf '%s\n' "${ROOT}/${chart}/${stem}.tpl.yaml"
+}
+
 resolve_chart() {
-  local chart="${1:?chart required}" stem="${2:-values.local}" tpl logical dir
-  chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"$ROOT"/}"
-  tpl="${ROOT}/${chart}/${stem}.tpl.yaml"
-  if [[ ! -f "$tpl" ]]; then
-    # External charts keep their template in the standalone clone, because that
-    # is the tree their own upgrade.sh runs from.
-    local pair name
-    for pair in "${EXTERNAL_MAP[@]}"; do
-      [[ "${pair%%:*}" == "$chart" ]] || continue
-      name="${pair#*:}"
-      tpl="${EXTERNAL_BASE}/${name}/${stem}.tpl.yaml"
-      break
-    done
-  fi
+  local chart="${1:?chart required}" stem="${2:-values.local}" tpl logical
+  chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"${ROOT:-/nonexistent}"/}"
   logical="${chart}/${stem}.yaml"
+  tpl=""
+  if [[ -n "$ROOT" ]]; then
+    tpl="${ROOT}/${chart}/${stem}.tpl.yaml"
+    if [[ ! -f "$tpl" ]]; then
+      # External charts keep their template in the standalone clone, because
+      # that is the tree their own upgrade.sh runs from.
+      local pair name
+      tpl=""
+      for pair in "${EXTERNAL_MAP[@]}"; do
+        [[ "${pair%%:*}" == "$chart" ]] || continue
+        name="${pair#*:}"
+        [[ -f "${EXTERNAL_BASE}/${name}/${stem}.tpl.yaml" ]] && tpl="${EXTERNAL_BASE}/${name}/${stem}.tpl.yaml"
+        break
+      done
+    fi
+  fi
+
+  # NO TEMPLATE ON DISK IS NOT A DEAD END. The template is only a stored copy of
+  # a derivation anyone can redo: item title is the chart path with / -> -, and
+  # the field label is the file name. Synthesising it is what lets show and edit
+  # work with no checkout at all — which is the entire point of installing this
+  # as a single binary on PATH.
+  #
+  # The real template still wins when there is one: it is authoritative, and a
+  # chart whose reference was ever hand-edited would not survive a re-derivation.
+  if [[ -z "$tpl" || ! -f "$tpl" ]]; then
+    local syn; syn="$(scratch)/${stem}.tpl.yaml"
+    printf '{{ op://%s/%s/%s }}\n' "$VAULT" "$(item_title "$logical")" "$(field_label "$logical")" > "$syn"
+    tpl="$syn"
+  fi
   printf '%s\t%s\n' "$tpl" "$logical"
 }
 
@@ -661,13 +741,15 @@ cmd_edit() {
 
 cmd_new() {
   need_op
+  need_repo new "writes a values.local.tpl.yaml into a git repo"
   [[ $# -gt 0 ]] || die "usage: secrets.sh new <chart> [stem]"
   local chart="$1" stem="${2:-values.local}" tpl logical sd f title dir example
   chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"$ROOT"/}"
-  IFS=$'\t' read -r tpl logical < <(resolve_chart "$chart" "$stem")
+  logical="${chart}/${stem}.yaml"
+  tpl="$(chart_tpl_path "$chart" "$stem")"
   dir="$(dirname "$tpl")"
   [[ -d "$dir" ]] || die "no such chart directory: ${dir}"
-  [[ -f "$tpl" ]] && die "${tpl#"$ROOT"/} already exists — use: secrets.sh edit ${chart}"
+  [[ -f "$tpl" ]] && die "${tpl#"$ROOT"/} already exists — use: $(basename "$0") edit ${chart}"
 
   title="${ITEM_OVERRIDE:-$(item_title "$logical")}"
   op item get "$title" --vault "$VAULT" >/dev/null 2>&1 \
@@ -1042,6 +1124,7 @@ PY
 # No helm upgrade is needed to validate this migration.
 cmd_verify() {
   need_op
+  need_repo verify "renders every chart with helm"
   local tmp; tmp="$(scratch)"
   local logical tpl out dir rc=0
   while IFS=$'\t' read -r logical tpl out; do
@@ -1427,8 +1510,8 @@ cmd_restore() {
 }
 
 usage() {
-  cat <<'EOF'
-Usage: scripts/secrets.sh <command> [options] [path...]
+  echo "Usage: $(basename "$0") <command> [options] [path...]"
+  cat <<'EOF' 
 
   sync [--dry-run]         reconcile every managed file with the vault, both ways
   check                    op reachable, every ref resolves AND is non-empty
