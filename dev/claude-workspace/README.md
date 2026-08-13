@@ -170,11 +170,20 @@ why it stays even though the pod can now reach 1Password.
 **1Password is the return path**, and it is optional
 (`secrets.onePassword.enabled`, credentials in `values.local.yaml`). Without it
 the relay is one-directional: a secret edited *here* sits on the PVC until the
-laptop publishes over the top of it. With it, `scripts/secrets.sh sync` works
-here exactly as it does on the laptop —
+laptop publishes over the top of it. With it, `scripts/secrets.sh` `pull`,
+`push` and `sync` all work here —
 [`scripts/op-session.sh`](../../scripts/op-session.sh) signs in unattended from
 `~/.config/selfhosted/op-password`, adding the account on first use if the PVC
-has never seen it.
+has never seen it. Turned on 2026-08-12; verified by pushing a change from the
+pod and watching the laptop see it as `DRIFT (vault newer)`.
+
+The one thing that does *not* work here is the NAS archive `push`/`sync` chain
+onto a write. This image ships neither `age` nor `smbclient`, and the netpol
+excludes RFC1918 anyway, so the pod has no route to the NAS by design. That
+used to end a pod push with a bare `FAIL: age required` printed *after* the
+vault write had already succeeded; `secrets.sh` now skips the archive where one
+cannot be taken and says so. The vault holds the change either way, and the
+laptop's next `push`/`sync`/weekly timer sweeps it into an archive.
 
 The honest accounting, since this reverses an earlier decision recorded here:
 the account password is now on the PVC. Against a cluster-admin SA that could

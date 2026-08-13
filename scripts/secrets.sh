@@ -786,10 +786,11 @@ PY
   # A backup can never be more than one change stale. cmd_sync suppresses this
   # and takes one backup at the end instead of one per file.
   #
-  # Subshell so the intended `|| true` actually holds: cmd_backup ends in `die`,
-  # and die exits the script, so an unreachable NAS used to discard the exit
-  # status of a push that had already succeeded.
-  [[ $DRY_RUN -eq 1 || $NO_BACKUP -eq 1 ]] || ( cmd_backup ) || true
+  # auto_backup subshells cmd_backup so the intended `|| true` actually holds:
+  # cmd_backup ends in `die`, and die exits the script, so an unreachable NAS
+  # used to discard the exit status of a push that had already succeeded. It
+  # also skips the archive entirely where one cannot be taken (the pod).
+  [[ $DRY_RUN -eq 1 || $NO_BACKUP -eq 1 ]] || auto_backup || true
 }
 
 # Gate 2 — render equality. The check that actually matters: an empty diff means
@@ -922,7 +923,7 @@ cmd_sync() {
     # so the `||` would never fire and a NAS that happens to be down would take
     # the cluster publish down with it. The reconciliation already succeeded by
     # this point; neither of these is allowed to retroactively fail it.
-    ( cmd_backup )  || echo "    backup failed — the vault still holds the change"
+    auto_backup     || echo "    backup failed — the vault still holds the change"
     ( cmd_publish ) || echo "    publish failed — the pod stays stale until the next run"
   fi
 
@@ -1078,6 +1079,30 @@ EOF
     touch "$PAPER_MARKER"
     note "acknowledged (${PAPER_MARKER})"
   fi
+}
+
+# Can a NAS archive be taken from HERE? The claude-workspace pod cannot: its
+# image ships neither age nor smbclient, its NetworkPolicy has no route to the
+# LAN (RFC1918 is excluded from the egress rule), and it holds no NAS
+# credentials. That is by design — the archive is the laptop's job — but push
+# chains a backup onto every write, so a pod push ended in a bare
+# "FAIL: age required" printed *after* the vault had already been updated. The
+# write succeeded and the message said the opposite.
+#
+# Only the automatic after-a-write backup degrades to a note. Asking for
+# `backup` or `restore` by name still dies loudly: there the archive IS the
+# request, and quietly not making one is the silent hole this file keeps
+# warning about.
+backup_possible() {
+  command -v age >/dev/null && command -v smbclient >/dev/null && [[ -f "$NAS_CREDS" ]]
+}
+
+auto_backup() {
+  backup_possible || {
+    note "no NAS backup from here (needs age, smbclient and ${NAS_CREDS}) — the vault holds the change; the laptop's next backup picks it up"
+    return 0
+  }
+  ( cmd_backup )
 }
 
 cmd_backup() {
