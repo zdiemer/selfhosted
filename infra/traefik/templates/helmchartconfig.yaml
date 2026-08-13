@@ -115,16 +115,62 @@ spec:
             - {{ . | quote }}
             {{- end }}
         {{- end }}
-        {{- if .Values.rateLimit.enabled }}
+        {{- if or .Values.rateLimit.enabled (and .Values.crowdsec.enabled .Values.crowdsec.entrypoint) }}
         {{- /*
-          Entrypoint-level middleware: applies to every router on websecure.
-          The Middleware object itself is templates/middleware.yaml — same
-          chart on purpose, see the header comment there.
+          Entrypoint-level middlewares: applied to every router on websecure.
+          The Middleware objects themselves are templates/middleware.yaml —
+          same chart on purpose, see the header comment there.
+
+          ORDER MATTERS AND IS NOT ALPHABETICAL. The bouncer runs FIRST so a
+          banned IP is rejected before it is allowed to consume rate-limit
+          budget. With the order reversed, a banned source still competes for
+          the shared bucket and can push legitimate traffic into 429s while
+          being 403'd itself — it would be denied service and denying it to
+          others at the same time.
         */}}
         middlewares:
+          {{- if and .Values.crowdsec.enabled .Values.crowdsec.entrypoint }}
+          - {{ .Values.helmChart.namespace }}-crowdsec-bouncer@kubernetescrd
+          {{- end }}
+          {{- if .Values.rateLimit.enabled }}
           - {{ .Values.helmChart.namespace }}-edge-ratelimit@kubernetescrd
+          {{- end }}
         {{- end }}
       {{- end }}
+    {{- end }}
+    {{- if .Values.crowdsec.enabled }}
+    {{- /*
+      STATIC CONFIG. Plugins are registered here and fetched+compiled by Traefik
+      at process start — they cannot be added dynamically, which is precisely
+      why this coupling to plugins.traefik.io exists at all.
+
+      Registering the plugin does NOT put it in the request path. Nothing is
+      enforced until a Middleware referencing it is attached to a router or
+      entrypoint (templates/middleware.yaml). That separation is what makes a
+      staged rollout possible: this block alone proves the fetch works and the
+      pods still come up, before any traffic is subject to it.
+    */}}
+    experimental:
+      plugins:
+        {{ .Values.crowdsec.pluginName }}:
+          moduleName: {{ .Values.crowdsec.moduleName | quote }}
+          version: {{ .Values.crowdsec.version | quote }}
+    {{- /*
+      The bouncer key, mounted from the Secret this chart renders into
+      kube-system. The Traefik chart's `volumes` takes a list of
+      name/mountPath/type and wires both the volume and the mount.
+
+      NOTE the ordering hazard: the Secret must exist before the Deployment
+      rolls, or the new pods sit in ContainerCreating on a missing volume.
+      Helm applies this chart's Secret in the same release as this config, and
+      helm-controller redeploys Traefik asynchronously afterwards, so the Secret
+      always lands first. Deleting the Secret without disabling crowdsec here
+      would break the next Traefik rollout, silently, whenever it next happens.
+    */}}
+    volumes:
+      - name: {{ .Values.crowdsec.secretName }}
+        mountPath: {{ .Values.crowdsec.mountPath | quote }}
+        type: secret
     {{- end }}
     logs:
       general:

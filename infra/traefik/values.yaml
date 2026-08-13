@@ -229,6 +229,119 @@ rateLimit:
   average: 25
   burst: 100
 
+# ---------------------------------------------------------------------------
+# CrowdSec bouncer — the enforcement point
+# ---------------------------------------------------------------------------
+# infra/crowdsec has been detecting since it was installed and blocking nothing.
+# This is what makes its decisions bite: a Traefik plugin that checks the client
+# IP against the LAPI's decision list and answers 403 for a banned one.
+#
+# WHY THIS AND NOT THE CLOUDFLARE BOUNCER. The Cloudflare Workers bouncer blocks
+# further out, at the edge, which is genuinely better placement — but it wants a
+# broad API token (Workers Scripts, Workers KV, Turnstile, Zone DNS) and on the
+# free plan it is bounded by 1,000 KV writes/day, which truncates the blocklist,
+# and 100k requests/day, after which it stops remediating. It also needs its
+# routes set fail-open so quota exhaustion doesn't serve error pages. For a
+# home cluster that is a lot of moving parts and a paid plan to do the job this
+# plugin does for nothing.
+#
+# WHY THE ORIGINAL OBJECTION NO LONGER HOLDS. infra/crowdsec's values.yaml
+# rejected this plugin, and was right to at the time: the plugin is fetched from
+# plugins.traefik.io at Traefik start, and with ONE replica on a Recreate
+# rollout a failed fetch turned every restart into a cluster-wide ingress
+# outage. Traefik now runs three replicas, rolling, with maxUnavailable 0. A
+# failed fetch now means a new pod does not become Ready and the old ones keep
+# serving — the rollout stalls instead of the cluster going dark.
+#
+# WHAT THAT LEAVES, stated plainly rather than waved away: you cannot roll
+# Traefik while plugins.traefik.io is unreachable. That is a real coupling to a
+# third party, it is just a much smaller one than "ingress is down". If it ever
+# bites, set enabled: false here and re-run upgrade.sh — that removes both the
+# plugin and the middleware reference together.
+crowdsec:
+  enabled: true
+
+  # Pinned. Plugins are fetched and compiled at Traefik start, so an unpinned
+  # version means the code running in the ingress path can change under you on
+  # an unrelated restart. Bump deliberately.
+  # renovate: datasource=github-releases depName=maxlerebourg/crowdsec-bouncer-traefik-plugin
+  version: "v1.7.1"
+  moduleName: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
+
+  # The name Traefik's static config registers the plugin under. The Middleware
+  # spec must use this exact key (see templates/middleware.yaml) — Traefik
+  # matches them by string, and a mismatch is a router-level error, not a
+  # startup one, so it surfaces as 500s rather than a failed deploy.
+  pluginName: bouncer
+
+  # WHERE THE BOUNCER APPLIES.
+  #
+  #   false — the Middleware exists but nothing references it, so nothing is
+  #           enforced. Attach it to one router by hand
+  #           (traefik.ingress.kubernetes.io/router.middlewares:
+  #           kube-system-crowdsec-bouncer@kubernetescrd) to watch it in
+  #           production against real traffic first.
+  #   true  — referenced from the websecure entrypoint, so EVERY router in the
+  #           cluster is bounced, including charts in other repos that will
+  #           never read this file. That is the end state and the reason this
+  #           lives at the entrypoint rather than in 26 Ingresses.
+  #
+  # Flipped to true after the single-router test passed end to end on
+  # old.diemer.codes: a decision added for the probing source produced a 403
+  # there within ~30s while every other host still served 200, and removing the
+  # decision restored it. Block, scope and recovery all confirmed before this
+  # was allowed to cover every route in the cluster.
+  entrypoint: true
+
+  # `stream` is the recommended mode and the only one that keeps Traefik off the
+  # LAPI's critical path: the bouncer pulls the decision list every 60s and
+  # answers from its own cache, so a request never waits on CrowdSec and a LAPI
+  # outage degrades to "the list stops updating" rather than "every request
+  # blocks". `live` queries per-IP and `none` queries every request; both put a
+  # network hop in front of every page load for no benefit here.
+  mode: stream
+
+  # The LAPI, cross-namespace. crowdsec-service is the chart's Service name.
+  lapiHost: "crowdsec-service.crowdsec.svc.cluster.local:8080"
+  lapiScheme: http
+
+  # Where the bouncer key Secret is mounted into the Traefik container, and the
+  # filename within it. These three must agree with each other and with
+  # templates/crowdsec-secret.yaml; they are values rather than literals for
+  # exactly that reason.
+  secretName: traefik-crowdsec-bouncer
+  secretKey: bouncer-key
+  mountPath: /etc/traefik/crowdsec
+
+  # REQUIRED — set in values.local.yaml (gitignored), materialized from
+  # 1Password. Generate with:
+  #   kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli bouncers add traefik-plugin -o raw
+  bouncerKey: ""
+
+  # Proxies whose X-Forwarded-For the PLUGIN believes. Distinct from
+  # forwardedHeaders.trustedIPs above, which is what TRAEFIK believes: the
+  # plugin does its own client-IP resolution and has its own trust list, so
+  # setting one and not the other means the bouncer buckets every request under
+  # an internal hop and bans the tunnel the first time anything trips.
+  # Same two CIDRs, for the same reason.
+  forwardedHeadersTrustedIPs:
+    - 10.42.0.0/16
+    - 192.168.4.0/24
+
+  # Clients that bypass the bouncer entirely, before any cache or LAPI lookup.
+  #
+  # This is deliberately redundant with the whitelist parser in infra/crowdsec:
+  # that one stops our own traffic ever BECOMING a decision, this one stops a
+  # decision ever being APPLIED to us. Two independent mechanisms, because the
+  # failure this guards against — locking ourselves out of every service at
+  # once — is the expensive one, and a whitelist that only exists on the
+  # detection side is one config error away from not existing.
+  clientTrustedIPs:
+    - 10.42.0.0/16
+    - 10.43.0.0/16
+    - 192.168.4.0/24
+    - 100.64.0.0/10
+
 # NOT configured here, deliberately:
 #   * The dashboard (`--api.dashboard=true` is on, but the `traefik` entrypoint
 #     is absent from the LoadBalancer Service, so it is unreachable from

@@ -37,3 +37,61 @@ spec:
       */}}
       requestHeaderName: CF-Connecting-IP
 {{- end }}
+{{- if .Values.crowdsec.enabled }}
+---
+{{/*
+The CrowdSec bouncer middleware.
+
+CREATING THIS OBJECT ENFORCES NOTHING. It only takes effect where it is
+referenced — either from an Ingress's router.middlewares annotation or, once
+`crowdsec.entrypoint` is true, from the websecure entrypoint in
+helmchartconfig.yaml. That separation is deliberate: it makes it possible to
+attach the bouncer to a single router and watch it before every route in the
+cluster depends on it.
+
+SAME LOCKSTEP HAZARD AS edge-ratelimit ABOVE, and worse in one respect: if the
+entrypoint names a middleware that does not exist, EVERY router on websecure
+errors. So this object and the entrypoint reference must move together, which is
+why they live in the same chart and are gated by the same `crowdsec.enabled`
+flag — disabling it removes both, in one apply, in the right order.
+
+Note the plugin key (`bouncer` here) must match the name the plugin is
+registered under in the static config. Traefik matches them by string, and a
+mismatch does not fail the deploy — it fails the ROUTER, at request time, as a
+500. Both come from .Values.crowdsec.pluginName so they cannot drift.
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: crowdsec-bouncer
+  namespace: {{ .Values.helmChart.namespace }}
+  labels:
+    {{- include "traefik-config.labels" . | nindent 4 }}
+spec:
+  plugin:
+    {{ .Values.crowdsec.pluginName }}:
+      # Strings, not booleans. The plugin parses its own config out of the CRD's
+      # free-form JSON and expects string scalars — the upstream example writes
+      # `Enabled: "true"` for the same reason.
+      enabled: "true"
+      crowdsecMode: {{ .Values.crowdsec.mode | quote }}
+      crowdsecLapiHost: {{ .Values.crowdsec.lapiHost | quote }}
+      crowdsecLapiScheme: {{ .Values.crowdsec.lapiScheme | quote }}
+      {{- /*
+        From a file, never inline — an inline key would sit in plaintext in an
+        ordinary CRD. See templates/crowdsec-secret.yaml.
+      */}}
+      crowdsecLapiKeyFile: {{ printf "%s/%s" .Values.crowdsec.mountPath .Values.crowdsec.secretKey | quote }}
+      {{- with .Values.crowdsec.forwardedHeadersTrustedIPs }}
+      forwardedHeadersTrustedIPs:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.crowdsec.clientTrustedIPs }}
+      clientTrustedIPs:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+{{- end }}
