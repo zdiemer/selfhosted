@@ -1435,6 +1435,17 @@ cmd_backup() {
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"; archive="selfhosted-secrets-${stamp}.tar.gz.age"
 
   mkdir -p "$tmp/stage"
+  # ASK for the session HERE, before packing. pack_bundle materializes every
+  # file with `op inject`, and unlike the vault dump below it has no degraded
+  # mode — a secret it cannot resolve is a `die`, by design. Nothing else on
+  # this path opens a session: every other verb calls need_op itself, but the
+  # dispatcher hands `backup` straight to this function, so a backup asked for
+  # by name injected unauthenticated and reported all 28 secrets
+  # "unresolvable" — which reads as a vault that has lost its items rather than
+  # a sign-in that never happened. The backup chained onto `push` was immune
+  # (cmd_push had already signed in), so this only bit the weekly timer and
+  # anyone running `secrets backup` on its own.
+  need_op
   INCLUDE_EXTERNAL=1 pack_bundle "$tmp/stage/files.tar.gz"
 
   # A full vault dump, so 1Password itself can be rebuilt — not just the files.
