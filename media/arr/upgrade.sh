@@ -2,7 +2,7 @@
 # Apply the current chart + values.local.yaml to the running arr release.
 #
 # Flow:
-#   1. Materialize values.local.yaml from 1Password if missing
+#   1. Resolve the PIA credentials from 1Password into memory
 #   2. helm upgrade
 #   3. Wait for all four rollouts
 #   4. Print pods + the VPN egress IP (should be a PIA address, never the house)
@@ -13,20 +13,15 @@ RELEASE="${RELEASE:-arr}"
 NAMESPACE="${NAMESPACE:-media}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
+# The PIA credentials are resolved from 1Password into memory for the life of
+# this run and never written to a disk. See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
 
-# Materialize values.local.yaml from 1Password when it's missing and a template
-# exists. Convenience only: values.local.yaml is still the contract, so this
-# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
-# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
-
-[[ -f "$LOCAL_VALUES" ]] || { echo "FAIL: ${LOCAL_VALUES} missing (PIA credentials). See values.local.yaml.example"; exit 1; }
+# gluetun with blank credentials retries forever while reporting Running, so an
+# empty resolve has to stop the deploy rather than reach the chart.
+sv_has || { echo "FAIL: no PIA credentials resolved from 1Password."
+            echo "  check with:  ./scripts/secrets.sh check media/arr"; exit 1; }
 
 K="kubectl -n ${NAMESPACE}"
 
@@ -34,7 +29,7 @@ command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
 echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f "$LOCAL_VALUES" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
 
 for d in prowlarr sonarr radarr qbittorrent; do
   echo "==> Waiting for ${RELEASE}-${d} rollout"
