@@ -5,7 +5,7 @@ driving it:
 
 | Timer | When | What |
 |---|---|---|
-| `selfhosted-secrets-sync` | every 15 min | reconcile every `values.local.yaml` with 1Password, both directions |
+| `selfhosted-secrets-check` | every 15 min | assert every `op://` reference still resolves AND is non-empty |
 | `selfhosted-secrets-backup` | Sun 03:00 | age-encrypted archive + vault dump to `//192.168.4.36/backups/selfhosted-secrets` |
 | `selfhosted-submodules-sync` | daily 04:30 | move submodule pins to the commits the cluster is actually running |
 | `selfhosted-versions-report` | Sat 07:00 | node-lane staleness report (apt/kernel/k3s/tailscale) → versions-report ConfigMap (status.diemer.codes panel) + pinned GitHub issue |
@@ -22,7 +22,17 @@ replaced "edit a gitignored file" with a ritual: `push` after every edit, `pull`
 on every other machine, and an `op signin` in front of each. That is strictly
 more work than the files it replaced, and work that gets skipped.
 
-`sync` closes the loop. It runs unattended because
+`check` is what remains of that. The files are gone entirely now — every
+`upgrade.sh` resolves its secrets into memory at deploy time (see
+[`scripts/lib/secret-values.sh`](../lib/secret-values.sh)) — so there is no
+second copy to drift, nothing to push, and nothing to reconcile. What can still
+go wrong is quieter: a vault item renamed or deleted, a field emptied, a
+reference that stops resolving. None of it surfaces until a deploy renders a
+Secret with a blank value, which installs perfectly and fails at runtime.
+`check` asserts every reference resolves and is non-empty, so the failure
+arrives on a schedule with an SMS attached instead.
+
+It runs unattended because
 [`scripts/op-session.sh`](../op-session.sh) can now obtain a session with no
 terminal, driving `op signin` through a pty
 ([why](../lib/op-signin-pty.py) — op has not accepted a password on stdin
@@ -52,12 +62,12 @@ EOF
 scripts/submodules-lock.sh
 
 # 4. The timers.
-ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-secrets-sync.{service,timer} ~/.config/systemd/user/
+ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-secrets-check.{service,timer} ~/.config/systemd/user/
 ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-secrets-backup.{service,timer} ~/.config/systemd/user/
 ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-submodules-sync.{service,timer} ~/.config/systemd/user/
 ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-alert@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now selfhosted-secrets-sync.timer \
+systemctl --user enable --now selfhosted-secrets-check.timer \
                               selfhosted-secrets-backup.timer \
                               selfhosted-submodules-sync.timer
 loginctl enable-linger "$USER"
@@ -73,7 +83,6 @@ mode a backup must not have.
 |---|---|---|
 | `~/.config/selfhosted/op-password` | 1Password account password | **no** |
 | `~/.config/selfhosted/backup-age.key` | decrypts the archives | **no** |
-| `~/.config/selfhosted/sync-state/` | sha256 of the last agreed content per item | no (rebuildable) |
 | `$XDG_RUNTIME_DIR/selfhosted/op-session` | live session token, tmpfs, gone at logout | no |
 | every `values.local.yaml` | the actual secrets | yes |
 
@@ -87,9 +96,9 @@ replacement machine needs both.
 
 ```sh
 systemctl --user list-timers 'selfhosted-*'
-journalctl --user -u selfhosted-secrets-sync.service -n 30
-scripts/secrets.sh status                    # what sync thinks, without acting
-scripts/secrets.sh sync --dry-run            # what it would do
+journalctl --user -u selfhosted-secrets-check.service -n 30
+scripts/secrets.sh check                     # every reference resolves and is non-empty
+scripts/secrets.sh verify                   # and renders the same manifests
 scripts/secrets.sh restore --verify-only     # decrypt the latest archive, write nothing
 ```
 
@@ -97,21 +106,24 @@ A backup you have never decrypted is not a backup. `backup` already fetches and
 decrypts each archive immediately after upload, but `restore --verify-only` is
 the check to run by hand every so often.
 
-## When sync stops
+## When check fails
 
-`sync` is deliberately unwilling to guess. Two states make it exit non-zero and
-change nothing:
+`check` exits non-zero when any `op://` reference fails to resolve, or resolves
+to nothing. Both mean the same thing in practice: the next deploy of that chart
+renders a Secret with a missing or blank value, installs cleanly, and breaks at
+runtime. Usual causes, in rough order of likelihood:
 
-- **CONFLICT** — the file and the vault both changed since they last agreed.
-  Pick a side: `secrets.sh pull --force <dir>` or `secrets.sh push <file>`.
-- **DRIFT, no marker** — they disagree and there is no record of them ever
-  agreeing, so there is no basis for choosing. Same fix; from then on it is
-  arbitrated automatically.
+- **A field was emptied** while editing the item in the 1Password app. This is
+  the one worth having a timer for — `op inject` does not fail on an empty
+  field, it substitutes nothing.
+- **An item was renamed.** The template names it by title
+  (`op://homelab/<chart-path-with-dashes>/values.local.yaml`), so a rename in
+  the app breaks the reference. Fix the title, or repoint the template.
+- **No session.** `scripts/op-session.sh status` first.
 
-Direction is decided against `~/.config/selfhosted/sync-state/`, a sha256 of
-what both sides last held — not against mtimes. mtime cannot tell "the vault
-moved" from "both moved", and the cost of getting that wrong is a silently
-overwritten credential.
+Fix it with `secrets.sh edit <chart>`, then re-run `check`. There is no
+CONFLICT state any more, and no `sync-state/` markers: those existed to arbitrate
+between a file and the vault, and there is no longer a file.
 
 ## Restoring
 

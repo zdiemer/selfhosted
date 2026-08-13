@@ -166,6 +166,9 @@ ASSUME_YES=0
 FILES_ONLY=0
 KEEP="${KEEP:-20}"
 ITEM_OVERRIDE=""
+PUSH_FROM=""
+FROM_STDIN=0
+REVEAL=0
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 note() { echo "==> $*"; }
@@ -563,6 +566,171 @@ cmd_pull() {
 # the template that reproduces it. Whole-file is lossless and mechanical, so it
 # carries near-zero risk while delivering the entire recoverability benefit.
 # Per-key conversion is where the judgment calls live; do it later, per chart.
+# ---------------------------------------------------------------- authoring
+#
+# WHY THESE EXIST. Deleting the values.local.yaml files removed the only way
+# anyone had to change a secret: you edited the file. Without a replacement the
+# answer becomes "open the 1Password app", which is fine for a human at a
+# desktop and useless for a script, an agent, or anyone over ssh — and a system
+# whose secrets can only be edited by hand is one where secrets stop getting
+# rotated.
+#
+# The shape is the same for both verbs: resolve into tmpfs, let something change
+# it, push. Nothing touches a disk, and the push path is the one `push` already
+# uses, so the merge-and-verify behaviour is identical.
+
+# Resolve a chart argument to its template and logical name. Accepts a chart
+# directory (infra/duckdns) with an optional stem for charts that own more than
+# one secret (web/apartment-watch criteria).
+resolve_chart() {
+  local chart="${1:?chart required}" stem="${2:-values.local}" tpl logical dir
+  chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"$ROOT"/}"
+  tpl="${ROOT}/${chart}/${stem}.tpl.yaml"
+  if [[ ! -f "$tpl" ]]; then
+    # External charts keep their template in the standalone clone, because that
+    # is the tree their own upgrade.sh runs from.
+    local pair name
+    for pair in "${EXTERNAL_MAP[@]}"; do
+      [[ "${pair%%:*}" == "$chart" ]] || continue
+      name="${pair#*:}"
+      tpl="${EXTERNAL_BASE}/${name}/${stem}.tpl.yaml"
+      break
+    done
+  fi
+  logical="${chart}/${stem}.yaml"
+  printf '%s\t%s\n' "$tpl" "$logical"
+}
+
+# Open $EDITOR on a tmpfs file, with the editor's own scratch writing disabled.
+#
+# THE EDITOR IS THE LEAK HERE, NOT THE FILE. vim writes ~/.viminfo, which holds
+# registers and the last search — and you will yank a token. With undofile and a
+# global undodir it writes a full undo history of the secret onto ext4. VS Code
+# keeps local history under ~/.config/Code. Putting the file on tmpfs achieves
+# nothing if the editor copies it somewhere else.
+edit_in_place() {
+  local f="$1" ed; ed="${VISUAL:-${EDITOR:-vi}}"
+  case "$(basename "$ed")" in
+    vim|nvim|vi)
+      "$ed" -n -i NONE --cmd 'set noundofile nobackup nowritebackup noswapfile' "$f" ;;
+    nano)
+      "$ed" --nonewlines "$f" ;;
+    *)
+      note "WARNING: ${ed} may write backups or history outside tmpfs; vim/nvim/nano are hardened, others are not"
+      "$ed" "$f" ;;
+  esac
+}
+
+# Read the replacement document from stdin. The affordance that makes these
+# verbs usable by anything that is not a human at a terminal.
+read_stdin_to() {
+  local f="$1"
+  [[ ! -t 0 ]] || die "--from-stdin given but stdin is a terminal"
+  ( umask 077; cat > "$f" )
+  [[ -s "$f" ]] || die "--from-stdin read nothing"
+}
+
+# Assert the buffer is YAML before it is allowed near the vault. op inject is a
+# raw text substitution and will happily store anything.
+check_yaml() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$1" 2>/dev/null \
+    || die "not valid YAML — refusing to store it"
+}
+
+cmd_edit() {
+  need_op
+  [[ $# -gt 0 ]] || die "usage: secrets.sh edit <chart> [stem]   (e.g. infra/duckdns, or web/apartment-watch criteria)"
+  local chart="$1" stem="${2:-values.local}" tpl logical sd f before after
+  IFS=$'\t' read -r tpl logical < <(resolve_chart "$chart" "$stem")
+  [[ -f "$tpl" ]] || die "no template for ${chart} (${stem}.tpl.yaml). New secret? use: secrets.sh new ${chart}"
+
+  sd="$(scratch)"; f="$sd/${stem}.yaml"
+  ( umask 077; : > "$f" )
+  inject_probe "$tpl" "$f" || die "could not resolve ${logical} from the vault — run: scripts/secrets.sh check ${chart}"
+  before="$(sha256sum "$f" | cut -d' ' -f1)"
+
+  if [[ $FROM_STDIN -eq 1 ]]; then read_stdin_to "$f"; else edit_in_place "$f"; fi
+
+  after="$(sha256sum "$f" | cut -d' ' -f1)"
+  if [[ "$before" == "$after" ]]; then note "no change"; return 0; fi
+  check_yaml "$f"
+
+  PUSH_FROM="$f" cmd_push "${ROOT}/${logical}"
+}
+
+cmd_new() {
+  need_op
+  [[ $# -gt 0 ]] || die "usage: secrets.sh new <chart> [stem]"
+  local chart="$1" stem="${2:-values.local}" tpl logical sd f title dir example
+  chart="${chart%/}"; chart="${chart#./}"; chart="${chart#"$ROOT"/}"
+  IFS=$'\t' read -r tpl logical < <(resolve_chart "$chart" "$stem")
+  dir="$(dirname "$tpl")"
+  [[ -d "$dir" ]] || die "no such chart directory: ${dir}"
+  [[ -f "$tpl" ]] && die "${tpl#"$ROOT"/} already exists — use: secrets.sh edit ${chart}"
+
+  title="${ITEM_OVERRIDE:-$(item_title "$logical")}"
+  op item get "$title" --vault "$VAULT" >/dev/null 2>&1 \
+    && die "vault item ${title} already exists but ${stem}.tpl.yaml does not.
+       Write the template by hand, or pass --item to name a different item."
+
+  sd="$(scratch)"; f="$sd/${stem}.yaml"
+  example="${dir}/${stem}.yaml.example"
+  [[ "$stem" == "values.local" ]] || example="${dir}/${stem}.example.yaml"
+  if [[ -f "$example" ]]; then
+    ( umask 077; cp "$example" "$f" )
+    note "seeded from $(basename "$example") — it is the schema and the provenance note"
+  else
+    ( umask 077; printf '# %s\n' "$logical" > "$f" )
+    note "no ${stem}.yaml.example — starting empty (consider writing one; it is the only human-readable record of shape)"
+  fi
+
+  if [[ $FROM_STDIN -eq 1 ]]; then read_stdin_to "$f"; else edit_in_place "$f"; fi
+  check_yaml "$f"
+  grep -qE '(REPLACE_ME|CHANGE-ME|000000000000)' "$f" \
+    && die "placeholder values are still in the document — refusing to store it"
+
+  note "creating op://${VAULT}/${title}/$(field_label "$logical")"
+  # import, not push: push only EDITS an item that already exists, and it also
+  # writes and stages the template — which is the artifact that makes the secret
+  # visible to every other machine.
+  ITEM_OVERRIDE="$title" PUSH_FROM="$f" cmd_import "$logical"
+}
+
+# Keys only unless asked otherwise. A terminal is not a safe sink for a secret:
+# in the claude-workspace pod it is a tmux session on a PVC, so a revealed value
+# stays in the scrollback long after the command scrolls away. This is also the
+# verb an agent should reach for to find out what a chart holds.
+cmd_show() {
+  need_op
+  [[ $# -gt 0 ]] || die "usage: secrets.sh show <chart> [stem] [--reveal]"
+  local chart="$1" stem="${2:-values.local}" tpl logical sd f
+  IFS=$'\t' read -r tpl logical < <(resolve_chart "$chart" "$stem")
+  [[ -f "$tpl" ]] || die "no template for ${chart} (${stem}.tpl.yaml)"
+  sd="$(scratch)"; f="$sd/${stem}.yaml"
+  ( umask 077; : > "$f" )
+  inject_probe "$tpl" "$f" || die "could not resolve ${logical} from the vault"
+  if [[ $REVEAL -eq 1 ]]; then cat "$f"; return 0; fi
+  python3 - "$f" <<'PY'
+import sys, yaml
+def walk(node, path=""):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            walk(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(node, list):
+        print(f"  {path:<44} [{len(node)} item(s)]")
+    else:
+        s = str(node)
+        kind = "empty" if s == "" else f"{len(s)} chars"
+        print(f"  {path:<44} <{kind}>")
+try:
+    walk(yaml.safe_load(open(sys.argv[1])) or {})
+except Exception as e:
+    sys.exit(f"could not parse: {e}")
+PY
+  note "values elided — pass --reveal to print them (a terminal is not a safe sink)"
+}
+
 cmd_import() {
   need_op
   [[ $# -gt 0 ]] || die "usage: secrets.sh import <path-to-values.local.yaml> ..."
@@ -582,9 +750,11 @@ cmd_import() {
       tplabs="$(dirname "$src")/$([[ "$label" == values.local.yaml ]] && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
     else
       f="${f#"$ROOT"/}"; f="${f#./}"
-      [[ -f "${ROOT}/${f}" ]] || die "no such file: $f"
+      # --from-file: the bytes may live in tmpfs (see cmd_new). The path
+      # argument still supplies the logical identity and the template location.
+      [[ -n "$PUSH_FROM" || -f "${ROOT}/${f}" ]] || die "no such file: $f"
       is_excluded "$f" && die "$f is deliberately excluded (see EXCLUDE_FILES)"
-      src="${ROOT}/${f}"
+      src="${PUSH_FROM:-${ROOT}/${f}}"
       title="${ITEM_OVERRIDE:-$(item_title "$f")}"; label="$(field_label "$f")"
       tpl="$(dirname "$f")/$([[ "$label" == values.local.yaml ]] && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
       tplabs="${ROOT}/${tpl}"
@@ -768,6 +938,11 @@ cmd_push() {
     else
       die "no such managed file: $f"
     fi
+    # --from-file separates WHERE THE BYTES ARE from WHAT THEY ARE CALLED. `edit`
+    # needs exactly that: the content it is pushing lives in tmpfs, which is not
+    # in the repo and not in any clone, so it could never be named. The path
+    # argument still supplies the logical identity; only the source moves.
+    [[ -n "$PUSH_FROM" ]] && src="$PUSH_FROM"
     [[ -f "$src" ]] || die "no such file: $src"
     is_mirror "$logical" && [[ "$src" == "$ROOT"/* ]] \
       && die "$logical is a submodule checkout, not a source — push the standalone clone instead:
@@ -1236,12 +1411,16 @@ Usage: scripts/secrets.sh <command> [options] [path...]
   status [path...]         per-chart: in-sync / drift / not-materialized / NOT MIGRATED
   pull [path...]           materialize values.local.yaml from 1Password
   verify [path...]         Gate 1 (byte-exact) + Gate 2 (rendered manifests identical)
+  edit <chart> [stem]      open the vault's copy in $EDITOR (tmpfs), push on save
+  new <chart> [stem]       create a secret: seed from .example, store it, write the template
+  show <chart> [stem]      what a chart holds — key paths only, values elided
   import <path>...         one-time: store an existing file in the vault, write its template
   push <path>...           write local edits back to the vault, then back up
   backup                   age-encrypt everything + vault dump, upload to the NAS, verify
   restore [--verify-only]  recover from the latest NAS archive
 
 Options: --dry-run  --force  --yes  --no-external  --vault NAME
+         --from-stdin (edit/new, for scripts and agents)  --reveal (show)
          --files-only (skip the vault dump)  --keep N (archive retention, default 20)
 
 sync is the unattended verb. It pushes when only the file moved, pulls when only
@@ -1275,6 +1454,9 @@ while [[ $# -gt 0 ]]; do
     --keep)             KEEP="$2"; shift ;;
     --vault)            VAULT="$2"; shift ;;
     --item)             ITEM_OVERRIDE="$2"; shift ;;
+    --from-file)        PUSH_FROM="$2"; shift ;;
+    --from-stdin)       FROM_STDIN=1 ;;
+    --reveal)           REVEAL=1 ;;
     -h|--help)          usage; exit 0 ;;
     -*)                 die "unknown option: $1" ;;
     *)                  ARGS+=("$1") ;;
@@ -1291,6 +1473,9 @@ case "$CMD" in
   status)  cmd_status "${ARGS[@]+"${ARGS[@]}"}" ;;
   pull)    cmd_pull "${ARGS[@]+"${ARGS[@]}"}" ;;
   verify)  cmd_verify "${ARGS[@]+"${ARGS[@]}"}" ;;
+  edit)    cmd_edit "${ARGS[@]+"${ARGS[@]}"}" ;;
+  new)     cmd_new  "${ARGS[@]+"${ARGS[@]}"}" ;;
+  show)    cmd_show "${ARGS[@]+"${ARGS[@]}"}" ;;
   import)  cmd_import "${ARGS[@]+"${ARGS[@]}"}" ;;
   push)    cmd_push "${ARGS[@]+"${ARGS[@]}"}" ;;
   backup)  cmd_backup ;;

@@ -76,31 +76,47 @@ repo stays the full index of what runs on the cluster. Clone with
   swallows chart *templates* named that way, silently and without an error
   (`templates/ghcr-secret.yaml` never gets added). Name pull-secret templates
   something else — see `web/apartment-watch/templates/imagepullsecret.yaml`.
-- **1Password is where those secrets actually live.** `values.local.yaml` is
-  still the only thing helm reads, but it is now materialized rather than
-  hand-kept: each project tracks a `values.local.tpl.yaml` holding nothing but
-  `op://` references, and
+- **1Password is where those secrets live, and they are never written to a
+  disk.** Each project tracks a `values.local.tpl.yaml` holding nothing but
+  `op://` references. At deploy time `upgrade.sh` sources
+  [`scripts/lib/secret-values.sh`](scripts/lib/secret-values.sh), which resolves
+  that template into a shell variable and hands helm a pipe:
 
-      op inject -i values.local.tpl.yaml -o values.local.yaml -f
+      . "${HERE}/../../scripts/lib/secret-values.sh"
+      sv_load "$HERE" || exit 1
+      helm upgrade --install "$REL" "$HERE" -n "$NS" -f "$VALUES" -f <(sv_fd)
 
-  reproduces the real file. That one-liner is the whole contract — it works in
-  a standalone app-repo clone with no `scripts/` directory. `scripts/secrets.sh`
-  is bulk convenience on top (`sync`, `pull`, `status`, `verify`, `publish`,
-  `backup`) and no deploy path depends on it. The `.example` files stay: they
-  document *shape and provenance*, which a template of references cannot.
-  `infra/coredns-config` is a deliberate exception — its `values.local.yaml` is
-  a mode switch, not a secret, and its *absence* is what closes the DNS audit
-  window, so it is never materialized.
-- **And it converges on its own.** A `secrets.sh sync` timer (every 15 min,
-  [`scripts/systemd/`](scripts/systemd/)) pushes when only the file moved, pulls
-  when only the vault moved, and refuses when both did — judged against a
-  recorded hash of what the two last agreed on, not against mtimes. It runs
-  unattended because [`scripts/op-session.sh`](scripts/op-session.sh) obtains a
-  session without a terminal, which is also why the weekly backup regained its
-  vault dump. Editing a secret is back to editing the file; the ritual around it
-  is gone. The standalone app clones under `~/Code` are in scope by default —
-  they are where secrets actually change, and they used to be invisible to
-  everything but the backup.
+  There is no `values.local.yaml` any more. It used to be materialized next to
+  each chart, which meant every secret in the fleet sat on ext4 between deploys
+  — and on the claude-workspace PVC, unpacked there on every pod start. The
+  vault was already the source of truth; the files were a cache nothing needed.
+
+  Each helm call writes its own `<(sv_fd)` rather than sharing one through a
+  `VALUE_ARGS` array. That fd is a **pipe, readable exactly once**, and eight
+  scripts here read their values twice or more. A shared one renders as though
+  the secret were not there — measured: five `render()` calls in `infra/traefik`
+  give a stable 163 lines each, and hoisting the substitution into the array
+  gives 0 on the first.
+
+  The `.example` files stay, and matter more than before: they are now the only
+  human-readable record of *shape and provenance*, which a template of
+  references cannot carry. `infra/coredns-config` is a deliberate exception —
+  its `values.local.yaml` is a mode switch, not a secret, and its *absence* is
+  what closes the DNS audit window.
+- **Nothing reconciles, because nothing can drift.** With no second copy there
+  is no push/pull to arbitrate, so the old `secrets.sh sync` timer is gone. A
+  `secrets.sh check` timer (every 15 min, [`scripts/systemd/`](scripts/systemd/))
+  runs in its place and guards what can still go wrong: a vault item renamed or
+  deleted, a field emptied, a reference that no longer resolves. None of that is
+  visible until a deploy renders a Secret with a blank value — which installs
+  perfectly and fails at runtime. It runs unattended because
+  [`scripts/op-session.sh`](scripts/op-session.sh) obtains a session without a
+  terminal, which is also why the weekly backup carries a vault dump.
+
+  Editing a secret is `secrets.sh edit <chart>`: the vault's copy is opened in
+  `$EDITOR` on tmpfs and pushed back on save. `secrets.sh new <chart>` creates
+  one, seeded from the `.example`. Both take `--from-stdin` for anything
+  non-interactive.
 - **Each project ships an `upgrade.sh`** that does the right pre-flight
   (e.g. Minecraft flushes the world to disk and triggers a backup before
   the helm upgrade). Prefer it over raw `helm upgrade`.

@@ -338,9 +338,11 @@ signal-cli -a +1<botnumber> verify <sms-code>
 # CAPTCHA required? Follow the URL signal-cli prints, then re-run register
 # with the captcha token it produces.
 
-# Then: add the messaging block to the vault item (see
-# values.local.yaml.example), `scripts/secrets.sh publish` (or `sync` from the
-# pod), flip messaging.enabled: true, ./upgrade.sh.
+# Then: add the messaging block to the vault item —
+#   scripts/secrets.sh edit dev/claude-workspace
+# (see values.local.yaml.example for the shape), flip messaging.enabled: true,
+# ./upgrade.sh. There is no publish step any more: the pod resolves from
+# 1Password itself, so the edit is live the moment it lands in the vault.
 
 # WhatsApp (optional, after messaging.whatsapp.enabled: true) — pair by QR:
 kubectl -n claude logs -f deploy/claude-workspace -c messaging-gateway
