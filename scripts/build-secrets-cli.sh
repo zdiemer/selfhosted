@@ -22,7 +22,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/.." && pwd)"
-OUT="${ROOT}/dist/secrets"
+OUT="${OUT:-${ROOT}/dist/secrets}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 mkdir -p "$(dirname "$OUT")"

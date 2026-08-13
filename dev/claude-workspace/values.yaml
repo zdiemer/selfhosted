@@ -12,6 +12,9 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v15: adds the `secrets` CLI to PATH — read and edit 1Password-backed chart
+  #      secrets from the pod with no selfhosted checkout and no script path
+  #      (scripts/build-secrets-cli.sh).
   # v14: the messaging surface gets reactions (👀 working, ✅ done, and 👍/👎
   #      on a permission prompt to answer it), a live status message edited as
   #      tool calls land, attachments both ways, !more / !use / !sessions, an
@@ -38,7 +41,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v14"
+  tag: "v15"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

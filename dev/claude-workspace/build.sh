@@ -19,6 +19,16 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(awk -F'"' '/^  repository:/{print $2; exit}' "${HERE}/values.yaml")"
 TAG="$(awk -F'"' '/^  tag:/{print $2; exit}' "${HERE}/values.yaml")"
 IMAGE="${REPO}:${TAG}"
+ROOT="$(cd "${HERE}/../.." && pwd)"
+
+# The `secrets` CLI is generated into the build context, because the context is
+# this directory and dist/ is at the repo root. Named without a .sh suffix on
+# purpose: .dockerignore excludes *.sh, and a COPY of an ignored path fails in a
+# way that reads like a missing file.
+CLI="${HERE}/secrets-cli"
+echo "==> Bundling the secrets CLI into the build context"
+OUT="$CLI" "${ROOT}/scripts/build-secrets-cli.sh" >/dev/null
+trap 'rm -f "$CLI"' EXIT INT TERM
 
 if command -v docker >/dev/null; then
   echo "==> Building ${IMAGE} (docker)"

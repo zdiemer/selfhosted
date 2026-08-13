@@ -156,6 +156,10 @@ RUN git clone --filter=blob:none https://github.com/seemethere/bakery /opt/baker
 # README "Messaging surface"). In-repo app baked into this image like bakery;
 # deps resolve at build time so the pod never runs a package install. Owned by
 # uid 1000 for symmetry with /opt/bakery, though it runs read-only.
+# The secrets CLI, generated into the context by build.sh. On PATH as `secrets`
+# so the pod can read and edit vault items with no checkout and no script path.
+COPY --chmod=0755 secrets-cli /usr/local/bin/secrets
+
 COPY --chown=1000:1000 gateway /opt/messaging-gateway
 RUN cd /opt/messaging-gateway \
  && HOME=/root bun install --frozen-lockfile --production \
