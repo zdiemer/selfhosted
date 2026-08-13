@@ -50,6 +50,14 @@ elif _looks_like_repo "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && p
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 elif _looks_like_repo "$HOME/Code/selfhosted"; then
   ROOT="$HOME/Code/selfhosted"
+elif _looks_like_repo "$HOME/code/selfhosted"; then
+  # The laptops clone to ~/Code, the claude-workspace pod to ~/code — the same
+  # split EXTERNAL_BASE already accounts for below. Missing it here is not a
+  # cosmetic difference: the bundled CLI lives on PATH, so BASH_SOURCE points at
+  # /usr/local/bin and this fallback is the only thing that finds the checkout.
+  # Without it `secrets check` ran in the pod against ROOT="" and called every
+  # chart UNRESOLVABLE.
+  ROOT="$HOME/code/selfhosted"
 else
   ROOT=""
 fi
@@ -241,6 +249,18 @@ is_mirror() {
   return 1
 }
 
+# The one place the checkout is walked, and the one place ROOT is allowed to be
+# empty. `cd ""` is a silent no-op in bash rather than an error, so without this
+# guard a no-checkout run walks whatever the caller's cwd happens to be and emits
+# paths like /auth/authelia/values.local.tpl.yaml — which resolve to nothing and
+# made `secrets check` call all 30 charts UNRESOLVABLE from inside the tree, and
+# exit 0 having checked only the four external clones from anywhere else. Both
+# answers were wrong, and the second one was wrong quietly.
+repo_scan() {
+  [[ $HAVE_REPO -eq 1 ]] || return 0
+  (cd "$ROOT" && find "$@" -not -path './.git/*' | sort)
+}
+
 # Every managed secret file that currently exists, repo-relative. Mirrors are
 # omitted: their real copy is discovered by discover_pairs from ~/Code.
 discover_local() {
@@ -250,7 +270,7 @@ discover_local() {
     is_excluded "$f" && continue
     is_mirror "$f" && continue
     printf '%s\n' "$f"
-  done < <(cd "$ROOT" && find . -name values.local.yaml -not -path './.git/*' | sort)
+  done < <(repo_scan . -name values.local.yaml)
   for f in "${EXTRA_FILES[@]}"; do
     [[ -f "$ROOT/$f" ]] && printf '%s\n' "$f"
   done
@@ -277,8 +297,7 @@ discover_pairs() {
     is_excluded "$out" && continue
     is_mirror "$out" && continue
     printf '%s\t%s\t%s\n' "$out" "${ROOT}/${t}" "${ROOT}/${out}"
-  done < <(cd "$ROOT" && find . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \) \
-             -not -path './.git/*' | sort)
+  done < <(repo_scan . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \))
 
   [[ $INCLUDE_EXTERNAL -eq 1 ]] || return 0
   local pair
@@ -302,8 +321,7 @@ discover_tpl() {
     is_excluded "$out" && continue
     is_mirror "$out" && continue
     printf '%s\t%s\n' "$t" "$out"
-  done < <(cd "$ROOT" && find . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \) \
-             -not -path './.git/*' | sort)
+  done < <(repo_scan . \( -name 'values.local.tpl.yaml' -o -name 'criteria.tpl.yaml' \))
 }
 
 # values.local.tpl.yaml -> values.local.yaml ; criteria.tpl.yaml -> criteria.yaml
@@ -489,10 +507,18 @@ cmd_check() {
   op vault get "$VAULT" >/dev/null 2>&1 || die "vault '${VAULT}' not found (op vault create ${VAULT})"
   note "vault ${VAULT} reachable as $(op whoami --format json | jq -r .email 2>/dev/null || echo '?')"
 
-  local tmp rc=0; tmp="$(scratch)"
+  # Without a checkout this can only reach the external clones, which is four
+  # charts out of thirty-four. That is a legitimate way to run it by hand and a
+  # useless thing to put on a timer, so it says so rather than exiting 0 and
+  # letting the count go unnoticed.
+  [[ $HAVE_REPO -eq 1 ]] \
+    || note "no selfhosted checkout found — only the standalone clones under ${EXTERNAL_BASE} are checked"
+
+  local tmp rc=0 n=0; tmp="$(scratch)"
   local logical tpl out ref empty
   while IFS=$'\t' read -r logical tpl out; do
     [[ -n "$logical" ]] || continue
+    n=$((n + 1))
     if ! inject_probe "$tpl" "$tmp/probe"; then
       echo "  UNRESOLVABLE  $logical"; rc=1; continue
     fi
@@ -506,6 +532,9 @@ cmd_check() {
     [[ $empty -eq 1 ]] && rc=1 || echo "  ok            $logical"
   done < <(discover_pairs)
   rm -f "$tmp/probe"
+  # The journal only keeps the last few lines for the failure text, so the count
+  # is what tells you a "passing" run actually looked at everything.
+  note "${n} chart(s) checked"
   return $rc
 }
 
