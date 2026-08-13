@@ -92,9 +92,9 @@ still configured.
 4. Happy pairing (needs `dev/happy-server` deployed first): install the Happy
    app on the phone, set its custom server URL to
    `https://happy.zachd.duckdns.org` (tailnet only — the phone needs Tailscale
-   up), then in tmux run `happy`. **Do not scan the QR**: the pod now reaches
-   the relay over the cluster-local Service, so a QR minted here carries an
-   in-cluster address the phone cannot resolve. Set the URL by hand.
+   up), then in tmux run `happy` and scan the QR it prints. The QR embeds that
+   same duckdns host, which both the pod and the phone can reach, so pairing
+   works as it always did.
    Pairing keys land in `~/.happy` on the PVC. From then on, `happy` instead
    of `claude` = same session, controllable from the phone with push
    notifications for permission prompts.

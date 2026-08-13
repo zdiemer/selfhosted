@@ -60,16 +60,19 @@ the wildcard SAN cert and DuckDNS record already cover it. If a
 ## Wiring up the clients
 
 - **CLI (workspace pod)**: `dev/claude-workspace` sets
-  `HAPPY_SERVER_URL=http://happy-server.happy.svc.cluster.local:3005` on the
-  term container — the cluster-local Service, not the public host, so the pod's
-  path and the phone's path cannot break each other. Nothing to do there. In
-  tmux, run `happy` instead of `claude`.
-- **iOS app**: install Happy from the App Store and set the custom server URL
-  to `https://happy.zachd.duckdns.org` **by hand**, **before** pairing. The
-  phone needs Tailscale up to reach it — that is the trade for delisting.
-  **The QR flow no longer works** for the server URL: the CLI now points at a
-  cluster-internal address, so a scanned QR would hand the phone a hostname it
-  cannot resolve.
+  `HAPPY_SERVER_URL=https://happy.zachd.duckdns.org` on the term container —
+  nothing to do there. In tmux, run `happy` instead of `claude`; first run
+  prints a QR code.
+
+  That host has to stay a name **both ends** can resolve, which since
+  `infra/duckdns` went to `tailnet` mode it is: a `100.x` node address the pod
+  reaches through cluster DNS and the phone reaches over the tailnet. Pointing
+  it at the cluster-local Service would work for the pod and quietly break the
+  QR, because the QR embeds whatever this is set to.
+- **iOS app**: install Happy from the App Store, set the custom server URL to
+  `https://happy.zachd.duckdns.org` **before** pairing, then scan the QR from
+  the terminal. The phone needs Tailscale up to reach it — that is the trade
+  for delisting, and the only thing that changed for the app.
 - **Web**: `app.happy.engineering` pointed at the same custom server URL
   (browser must also be on the tailnet)
   (E2E crypto means the hosted web client never sees plaintext either).

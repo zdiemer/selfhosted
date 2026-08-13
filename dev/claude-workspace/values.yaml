@@ -146,25 +146,26 @@ ingress:
 happy:
   # Relay URL for the happy CLI (HAPPY_SERVER_URL on the term container).
   #
-  # CLUSTER-LOCAL, NOT THE PUBLIC HOST. This used to be the public URL, on the
-  # reasoning that the QR pairing flow may embed it and the phone can only
-  # reach a public address — with pod egress riding the 443-to-public rule via
-  # hairpin NAT. dev/happy-server is now tailnet-only (its cloudflareHosts is
-  # empty), so that reasoning no longer describes reality: leaving this pointed
-  # at a public hostname that no longer exists would break the daemon on the
-  # next restart, for a delisting that has nothing to do with this pod.
+  # THE DUCKDNS HOST, AND IT MUST STAY A NAME THE PHONE CAN ALSO REACH. That is
+  # the whole constraint, and it is easy to get wrong in a tidying pass: this
+  # URL is what the QR pairing flow embeds, so a value that only the POD can
+  # resolve produces a QR the phone cannot use, and pairing silently becomes a
+  # manual URL-typing exercise.
   #
-  # Pointing at the Service instead DECOUPLES the two paths, which is the
-  # actual win: the pod reaches the relay over the cluster network and the
-  # phone reaches it over the tailnet, so neither can break the other. The
-  # netpol already allows this hop — it was written as the documented fallback
-  # for exactly this case.
+  # This was briefly changed to the cluster-local Service
+  # (http://happy-server.happy.svc.cluster.local:3005) during the tunnel
+  # delisting, on the reasoning that the public host was going away. That
+  # reasoning was wrong: the value here was never the diemer.codes host, it was
+  # always this duckdns one, and delisting happy.diemer.codes did not touch it.
+  # Now that infra/duckdns is in tailnet mode, this name resolves to a 100.x
+  # node address that BOTH ends reach — the pod over the cluster's DNS and the
+  # phone over the tailnet. One name, both paths, QR pairing intact.
   #
-  # CONSEQUENCE, unchanged from when this was the fallback: the app must be
-  # pointed at the tailnet host (happy.zachd.duckdns.org) BY HAND, never via a
-  # scanned QR code — a QR minted here now carries a cluster-internal address
-  # the phone cannot resolve.
-  serverUrl: "http://happy-server.happy.svc.cluster.local:3005"
+  # The cluster-local Service remains the correct fallback if this pod ever
+  # needs to reach the relay while DNS or the tailnet is broken — the netpol
+  # allows it — but pairing must then be done by typing the URL, so it is a
+  # break-glass value rather than the default.
+  serverUrl: "https://happy.zachd.duckdns.org"
   daemon:
     # Run `happy daemon` as an always-on supervised sidecar so the Happy app
     # can spawn NEW sessions in any ~/code dir the moment the pod is up — no
