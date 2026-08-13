@@ -1,4 +1,1 @@
-# 1Password references for infra/traefik. Materialize with:
-#   op inject -i values.local.tpl.yaml -o values.local.yaml -f
-crowdsec:
-  bouncerKey: "{{ op://homelab/infra-traefik/bouncerKey }}"
+{{ op://homelab/infra-traefik/values.local.yaml }}
