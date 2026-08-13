@@ -65,6 +65,28 @@ ACME_EMAIL="${ACME_EMAIL:-zach.diemer@gmail.com}"
 # Node Tailscale IPs, :30096 = the jellyfin-lan NodePort (etp=Cluster, so any
 # node reaches the pod). Space-separated; Caddy load-balances with failover.
 MEDIA_NODES="${MEDIA_NODES:-100.121.136.39:30096 100.84.179.82:30096 100.118.242.89:30096 100.124.40.81:30096 100.122.194.1:30096}"
+# Run CrowdSec on this box, with the nftables firewall bouncer ENFORCING.
+#
+# This is the one control here that both detects and blocks, and it is the only
+# one that covers every public listener at once: sshd, Caddy (the media lane)
+# and haproxy (Minecraft) all write logs, and one agent reads all of them.
+#
+# WHY IT ENFORCES HERE WHEN THE CLUSTER'S CROWDSEC DOES NOT. infra/crowdsec runs
+# detection-only because its natural enforcement point was a Traefik plugin that
+# fetches from plugins.traefik.io at pod start, making every Traefik restart
+# depend on a third party being up. There is no equivalent hazard on this box:
+# the firewall bouncer is a local daemon writing local nftables sets, with
+# nothing to fetch at boot and nothing to take down but itself.
+#
+# WHAT IT PROTECTS THAT NOTHING ELSE DOES. Everything on this VPS bypasses
+# Cloudflare and Traefik entirely, so the cluster's WAF, rate limiter and
+# CrowdSec never see any of it. Before this, the only controls on the public
+# lanes were the nftables meters (blind to behaviour) and each app's own auth.
+CROWDSEC="${CROWDSEC:-true}"
+# Addresses CrowdSec must never ban, no matter what the logs say. The tailnet is
+# how you get back in when a rule misfires, and the house is where the cluster
+# talks from — banning either turns a detection into an outage. Space-separated.
+CROWDSEC_WHITELIST="${CROWDSEC_WHITELIST:-100.64.0.0/10 192.168.4.0/24}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -162,20 +184,40 @@ else
   FB4="# public fallback disabled (PUBLIC_FALLBACK=false) — tailnet only"
   FB6="# the home_v4/home_v6 sets are still refreshed, but nothing consults them"
 fi
-if [[ "$MC_RELAY" == "true" ]]; then
-  MCR="tcp dport 25565 accept"
-else
-  MCR="# minecraft relay disabled (MC_RELAY=false)"
-fi
-if [[ "$MEDIA_RELAY" == "true" ]]; then
-  MEDIA="tcp dport { 80, 443 } accept"
-else
-  MEDIA="# media lane disabled (MEDIA_RELAY=false)"
-fi
+# The relay lanes are each THREE rules now (two rate meters, then the accept),
+# so they are no longer substituted as a whole rule. Instead each line in
+# nftables.conf carries a `@MC_@` / `@MEDIA_@` prefix that renders to nothing
+# when the lane is on and to `# ` when it is off.
+#
+# That inversion is what keeps the actual firewall rules readable in git, with
+# their comments, instead of being assembled here out of a shell string. It
+# also sidesteps a real trap: sed cannot substitute a multi-line replacement
+# without escaping every newline, so the string-building version would have had
+# to collapse three rules onto one `;`-separated line to work at all.
+if [[ "$MC_RELAY" == "true" ]]; then MC_P=""; else MC_P="# "; fi
+if [[ "$MEDIA_RELAY" == "true" ]]; then MEDIA_P=""; else MEDIA_P="# "; fi
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
     -e "s|@PUBLIC_FALLBACK_V4@|${FB4}|" -e "s|@PUBLIC_FALLBACK_V6@|${FB6}|" \
-    -e "s|@MC_RELAY@|${MCR}|" -e "s|@MEDIA_RELAY@|${MEDIA}|" \
-  "${HERE}/nftables.conf" > /etc/nftables.conf
+    -e "s|@MC_@|${MC_P}|g" -e "s|@MEDIA_@|${MEDIA_P}|g" \
+  "${HERE}/nftables.conf" > /etc/nftables.conf.new
+
+# CHECK BEFORE SWAPPING. haproxy gets `haproxy -c` and Caddy gets `caddy
+# validate` a few sections down; the firewall — the one config on this box whose
+# failure mode is "no filtering at all, on a public IP" — got neither, and
+# rendered straight over the live file.
+#
+# `nft -c -f` parses without loading. It is the only step here that can catch a
+# malformed rule while the previous ruleset is still the one in the kernel, and
+# it is why the render above goes to a .new file: a rejected config never
+# becomes /etc/nftables.conf, so a re-run after a bad edit still has a working
+# file to fall back to and `systemctl restart nftables` at boot cannot load a
+# broken one.
+if ! nft -c -f /etc/nftables.conf.new; then
+  echo "FAIL: nftables rejected the rendered ruleset — live ruleset left untouched"
+  echo "      the rejected file is at /etc/nftables.conf.new for inspection"
+  exit 1
+fi
+mv /etc/nftables.conf.new /etc/nftables.conf
 # Through the unit, not a bare `nft -f`. Both load the same file, but loading it
 # directly leaves nftables.service reporting `inactive` on a box that is in fact
 # firewalled — and `systemctl is-active nftables` is the obvious health check, so
@@ -251,6 +293,11 @@ if [[ "$MEDIA_RELAY" == "true" ]]; then
     apt-get update -qq
     apt-get install -y -qq caddy >/dev/null
   fi
+  # The access log directory, owned by the user Caddy drops to. Caddy does not
+  # create it and does not fail loudly when it cannot write there — it starts,
+  # serves traffic, and logs nothing, which would take CrowdSec's caddy
+  # acquisition down with it while everything reported healthy.
+  install -d -o caddy -g caddy -m 0750 /var/log/caddy
   # Build the space-separated upstream list for the Caddyfile.
   sed -e "s|@ACME_EMAIL@|${ACME_EMAIL}|g" \
       -e "s|jellyfin.diemer.codes|${MEDIA_HOST}|g" \
@@ -267,6 +314,86 @@ if [[ "$MEDIA_RELAY" == "true" ]]; then
 elif systemctl is-active --quiet caddy 2>/dev/null; then
   echo "==> MEDIA_RELAY=false but caddy is running — stopping it"
   systemctl disable --now caddy
+fi
+
+# ---------------------------------------------------------------------------
+# CrowdSec — detection AND enforcement
+# ---------------------------------------------------------------------------
+if [[ "$CROWDSEC" == "true" ]]; then
+  echo "==> CrowdSec (agent + nftables firewall bouncer)"
+  if ! command -v cscli >/dev/null 2>&1; then
+    # CrowdSec's own apt repo. Their install script is the documented path and
+    # is what keeps the repo key and suite correct across Debian/Ubuntu.
+    curl -s https://install.crowdsec.net | bash >/dev/null
+    apt-get update -qq
+    apt-get install -y -qq crowdsec >/dev/null
+  fi
+
+  # Acquisition. Written wholesale to its own file rather than appended to
+  # /etc/crowdsec/acquis.yaml: the package owns that file and rewrites it on
+  # upgrade, so an appended stanza is one `apt upgrade` away from vanishing.
+  # Anything in acquis.d/ survives.
+  mkdir -p /etc/crowdsec/acquis.d
+  cp "${HERE}/crowdsec-acquis.yaml.template" /etc/crowdsec/acquis.d/egress-vps.yaml
+
+  # The whitelist, from CROWDSEC_WHITELIST. Rendered as a YAML list, indented
+  # under `cidr:` — four spaces, because this is a nested sequence and CrowdSec
+  # rejects the file outright if the indentation is wrong.
+  #
+  # Built by truncating the template at the placeholder line and appending the
+  # rendered list, rather than by substituting into it. sed replaces within ONE
+  # line, so a multi-line replacement has to arrive pre-escaped — which is both
+  # unreadable and the kind of quoting that breaks the first time a value has a
+  # slash in it. Truncate-and-append has neither problem.
+  mkdir -p /etc/crowdsec/parsers/s02-enrich
+  {
+    sed '/@CROWDSEC_WHITELIST_CIDRS@/,$d' "${HERE}/crowdsec-whitelist.yaml.template"
+    for cidr in $CROWDSEC_WHITELIST; do printf '    - "%s"\n' "$cidr"; done
+  } > /etc/crowdsec/parsers/s02-enrich/egress-vps-whitelist.yaml
+
+  # Collections. sshd and caddy are the two that actually fire here; the
+  # http-cve and base-http scenarios are what turn "someone requested
+  # /wp-login.php" into a decision rather than a log line.
+  #
+  # `cscli collections install` is idempotent and quiet about already-installed
+  # items, so this is safe on every re-run.
+  for c in crowdsecurity/sshd crowdsecurity/caddy crowdsecurity/base-http-scenarios \
+           crowdsecurity/http-cve crowdsecurity/whitelist-good-actors; do
+    cscli collections install "$c" >/dev/null 2>&1 || echo "    WARN: could not install $c"
+  done
+
+  # The bouncer. THIS is what makes any of the above block rather than observe.
+  if ! command -v cs-firewall-bouncer >/dev/null 2>&1; then
+    apt-get install -y -qq crowdsec-firewall-bouncer-nftables >/dev/null
+  fi
+  # nftables mode, and it maintains its OWN tables (crowdsec / crowdsec6) rather
+  # than touching `inet egress`. That separation is why nftables.conf had to stop
+  # saying `flush ruleset` — see the note at the top of that file.
+  systemctl enable crowdsec crowdsec-firewall-bouncer >/dev/null 2>&1 || true
+  systemctl restart crowdsec
+  systemctl restart crowdsec-firewall-bouncer
+
+  systemctl is-active --quiet crowdsec || {
+    echo "FAIL: crowdsec did not start"; journalctl -u crowdsec -n 30 --no-pager; exit 1; }
+  systemctl is-active --quiet crowdsec-firewall-bouncer || {
+    echo "FAIL: crowdsec-firewall-bouncer did not start"
+    journalctl -u crowdsec-firewall-bouncer -n 30 --no-pager; exit 1; }
+
+  # PROVE THE BOUNCER IS REGISTERED, don't assume it. A bouncer whose API key
+  # never registered runs happily and blocks nothing — the exact failure this
+  # whole section exists to avoid, wearing the uniform of a healthy service.
+  if cscli bouncers list 2>/dev/null | grep -q .; then
+    echo "    bouncer registered:"
+    cscli bouncers list 2>/dev/null | sed 's/^/      /' | head -8
+  else
+    echo "    WARN: no bouncer registered — decisions will be made but NOT enforced"
+  fi
+  echo "    acquisition:"
+  cscli metrics 2>/dev/null | grep -A6 -i "acquisition" | sed 's/^/      /' | head -10 || true
+  echo "    whitelisted: ${CROWDSEC_WHITELIST}"
+elif systemctl is-active --quiet crowdsec 2>/dev/null; then
+  echo "==> CROWDSEC=false but crowdsec is running — stopping it"
+  systemctl disable --now crowdsec crowdsec-firewall-bouncer || true
 fi
 
 echo "==> Unattended security upgrades"

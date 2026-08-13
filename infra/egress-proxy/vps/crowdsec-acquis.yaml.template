@@ -1,0 +1,66 @@
+---
+# What CrowdSec reads on this box. Written by bootstrap.sh — edit here, in git,
+# and re-run it.
+#
+# One file, one source per document. Every public listener on this VPS appears
+# exactly once, and the `type` is what selects the parser: get it wrong and the
+# lines are read, parsed by nothing, and matched by no scenario — a silent
+# no-op that looks identical to "no attacks yet".
+#
+# THIS BOX IS THE BLIND SPOT THIS FIXES. Its lanes bypass Cloudflare and Traefik
+# entirely, so none of this traffic reaches the cluster's access log, its rate
+# limiter, or infra/crowdsec. What is not read here is not seen anywhere.
+
+# sshd, from journald rather than /var/log/auth.log. Ubuntu still writes the
+# file, but journald is the source of truth and survives the day someone turns
+# rsyslog off — and `journalctl_filter` costs nothing when the file also exists.
+#
+# Note this only ever sees the PUBLIC sshd. Tailscale SSH is handled inside
+# tailscaled and never touches sshd's logs, which is correct: those sessions are
+# already authenticated by the tailnet and must not be bannable from here.
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog
+---
+# Caddy — the media lane (Jellyfin). JSON access logs, which is what the caddy
+# parser expects; the Caddyfile must keep `log { format json }` for this to
+# parse, and bootstrap.sh renders it that way.
+#
+# This is the busiest and most exposed surface on the box: a public HTTPS
+# service whose only other control is Jellyfin's own login page.
+source: file
+filenames:
+  - /var/log/caddy/access.log
+labels:
+  type: caddy
+---
+# haproxy — the Minecraft relay. There is no CrowdSec collection for Minecraft
+# itself (the protocol is not HTTP and nobody has written scenarios for it), so
+# what this buys is narrower than the Caddy lane: connection-level noise, not
+# gameplay abuse.
+#
+# It is here anyway because it is free and because the haproxy stick-table
+# rejections show up in this log — so a source that trips the connection limit
+# repeatedly becomes visible as a pattern rather than a counter nobody reads.
+source: file
+filenames:
+  - /var/log/haproxy.log
+labels:
+  type: haproxy
+---
+# squid — the egress proxy. Reachable only over the tailnet (or from the house,
+# if PUBLIC_FALLBACK=true), so this is not an attack surface in the way the
+# others are.
+#
+# It is acquired for a different reason: this log is where a STOLEN PROXY
+# CREDENTIAL would show up, as authenticated requests from somewhere that is not
+# the cluster. Nothing bans on it today — there is no stock scenario for "this
+# proxy user appeared from a new address" — but the lines have to be being read
+# before any such scenario could ever fire.
+source: file
+filenames:
+  - /var/log/squid/access.log
+labels:
+  type: syslog

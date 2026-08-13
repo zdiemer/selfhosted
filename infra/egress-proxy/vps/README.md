@@ -116,12 +116,20 @@ ssh root@<vps> 'bash /tmp/egress-vps/bootstrap.sh'
 
 Tunable by environment: `PROXY_PORT` (3129), `CLUSTER_USER` (homecluster),
 `HOME_DDNS` (zachd.duckdns.org), `SSH_PORT` (22), `TLS_NAME` (egress.local),
-plus two that decide the posture:
+plus the ones that decide the posture:
 
 | | Default | Meaning |
 |---|---|---|
 | `PUBLIC_FALLBACK` | `false` | Also admit the proxy port from the house over the public internet. Only needed for a box that is *not* on a tailnet. |
 | `TLS_HOP` | `false` | Serve `https_port` instead of `http_port`. Only useful if the cluster side terminates TLS itself — squid's own `cache_peer tls` does not work against this box. |
+| `CROWDSEC` | `true` | Run the CrowdSec agent **and the nftables firewall bouncer**, so detections actually block. Reads sshd, Caddy, haproxy and squid. Set `false` only to take enforcement off the box entirely. |
+| `CROWDSEC_WHITELIST` | `100.64.0.0/10 192.168.4.0/24` | Networks CrowdSec may never ban — the tailnet (your recovery path) and the house LAN (the cluster's proxy traffic). Whitelisted at the parser stage, so they never accumulate toward a decision. |
+
+⚠️ **`CROWDSEC=true` is the default, and it enforces.** That is deliberate — the
+lanes on this box are the only public surfaces in the estate that Cloudflare and
+Traefik never see — but it does mean a first run installs a thing that can ban
+addresses. Check `cscli decisions list` after a day; the whitelist covers the
+paths you would actually notice losing.
 
 Idempotent — re-running keeps the existing certificate and password. It prints a
 block ready to paste into `infra/egress-proxy/values.local.yaml`.
@@ -198,9 +206,54 @@ control.
   refreshed and the cluster loses its exit — loud, and safe. It never widens on
   failure, which would be worse than having no firewall because it would still
   look like one.
-- **SSH stays open to the world, deliberately.** Locking it to the same DDNS set
-  means one failed lookup plus a changed home address locks you out of a box
-  with no console. Use keys, disable password auth.
+- **SSH stays open to the world, deliberately — but metered.** Locking it to the
+  same DDNS set means one failed lookup plus a changed home address locks you
+  out of a box with no console. Use keys, disable password auth. On top of that
+  the public port is rate-limited to 10 new connections/minute per source
+  (burst 5), which does nothing against a targeted attacker and a great deal
+  against the thousands of daily credential-stuffing attempts that otherwise
+  bury every real signal in the journal. **The tailnet path is exempt and listed
+  first** — Tailscale SSH answers on the same port over `tailscale0`, and
+  rate-limiting your own way back in is how a hardening change becomes an
+  incident.
+- **Every public lane has a kernel-level rate limit.** `nftables.conf` meters
+  new connections per source on :22, :25565 and :80/:443 before anything
+  userspace sees them. Sized per lane and deliberately generous — 30/min for
+  Minecraft (client server-list pings are bursty), 240/min for the media lane
+  (one Jellyfin stream opens many parallel connections) — because the job is to
+  stop a flood, not to shape normal use. These are blind to behaviour: they
+  count packets, not intent. CrowdSec is the layer that reads intent.
+- **CrowdSec runs here, and it *enforces*.** Unlike `infra/crowdsec` in the
+  cluster (detection-only, because its enforcement point was a Traefik plugin
+  that fetches from a third party at pod start), this box runs the nftables
+  firewall bouncer: a local daemon writing local nftables sets, with nothing to
+  fetch and nothing to take down but itself. One agent reads sshd, Caddy,
+  haproxy and squid, so every public listener is covered at once.
+
+  This matters more here than anywhere else in the estate, because **everything
+  on this box bypasses Cloudflare and Traefik entirely** — none of it reaches
+  the cluster's WAF, its rate limiter, or its access log. What is not read here
+  is not seen anywhere.
+
+  The tailnet and the house LAN are whitelisted at the *parser* stage
+  (`CROWDSEC_WHITELIST`), so they cannot accumulate toward a decision at all.
+  That is the recovery path; it must not be bannable.
+- **The Minecraft relay limits connections, not just packets.** haproxy holds a
+  stick-table keyed on source: 8 concurrent and 30/minute. `maxconn 512` is
+  global, so without it one source can take every slot and lock out real players
+  — a denial of service that never reaches the Minecraft whitelist, because the
+  whitelist lives on the far side of a connection that was never established.
+- **The firewall no longer flushes the whole ruleset.** `nftables.conf` resets
+  only `table inet egress`. It used to open with `flush ruleset`, which was
+  harmless with one firewall on the box and became a real bug the moment
+  CrowdSec's bouncer started maintaining its own tables: every
+  `systemctl restart nftables`, every re-run of `bootstrap.sh` and every reboot
+  would have silently emptied the live ban set while still reporting healthy.
+- **The rendered ruleset is checked before it is loaded.** `nft -c -f` parses it
+  while the previous ruleset is still in the kernel, and a rejected config never
+  becomes `/etc/nftables.conf`. haproxy and Caddy configs were already validated
+  this way; the firewall — the one config here whose failure mode is "no
+  filtering at all, on a public IP" — was not.
 - **The hop rides the tailnet, not TLS.** squid *can* speak TLS to a cache_peer
   and it works between two identical builds, but the cluster image is
   `--with-gnutls` while Ubuntu's squid is OpenSSL, and across that pair this box
@@ -247,6 +300,30 @@ nft list set inet egress home_v4          # should hold the current home address
 tail -f /var/log/squid/access.log         # same logfmt shape as the cluster side
 ```
 
+CrowdSec, on the box. The one that matters is `cscli bouncers list`: an agent
+with no registered bouncer makes decisions and enforces none of them, which
+looks exactly like a healthy install.
+
+```sh
+cscli bouncers list        # MUST be non-empty, or nothing is being blocked
+cscli metrics              # acquisition: every source should show lines read
+cscli decisions list       # live bans
+cscli alerts list          # what fired, whether or not it was actioned
+
+# the meters, and how much they have actually dropped
+nft list ruleset | grep -A2 meter
+
+# prove the whitelist works — this must return nothing
+cscli decisions list -o json | grep -E '100\.(6[4-9]|[7-9][0-9]|1[0-2][0-9])\.'
+```
+
+If a rule misfires and bans something it shouldn't:
+
+```sh
+cscli decisions delete --ip <addr>     # one
+cscli decisions delete --all           # panic button; bouncer clears within seconds
+```
+
 **The tests worth actually doing** are that a dead exit fails closed rather than
 falling back to the house — the whole point of `never_direct` — and that the
 public port really is shut:
@@ -271,9 +348,19 @@ answers.
 - **Single point of failure.** One box, no failover. A lane with two peers and
   `roundRobin: true` would survive one dying, at the cost of a rotating exit —
   which smitele-bot cannot have. Accept the SPOF or run two and split the lanes.
-- **Nothing ships this box's logs anywhere.** journald and `/var/log/squid` only.
-  The cluster-side access log is the one that is shipped and attributed by
-  service; this one exists to answer "did the request reach the exit at all".
+- **Nothing ships this box's logs anywhere.** journald, `/var/log/squid` and
+  `/var/log/caddy` only. The cluster-side access log is the one that is shipped
+  and attributed by service; this one exists to answer "did the request reach
+  the exit at all". CrowdSec now *reads* all of them locally, so they are acted
+  on even though they are never shipped — but the corollary is that its alerts
+  are only visible on the box (`cscli alerts list`). Nothing pages you.
+- **CrowdSec has no Minecraft scenarios.** The haproxy log is acquired, so
+  connection-level noise is visible and the stick-table rejections show up as a
+  pattern, but nobody has written scenarios for the Minecraft protocol itself.
+  Gameplay abuse is the server whitelist's problem, not this box's.
+- **The rate limits are per source address.** They shape single-source abuse and
+  do nothing about a distributed flood; that is the provider's DDoS protection,
+  upstream of this box and not configurable from here.
 - **The certificate is pinned, so reissuing it is a two-sided change.** Deleting
   `/etc/squid/tls/proxy.*` and re-running mints a new one, and the cluster keeps
   rejecting the peer until `caCert` in `values.local.yaml` is updated to match.

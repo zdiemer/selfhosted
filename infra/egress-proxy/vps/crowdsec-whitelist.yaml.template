@@ -1,0 +1,28 @@
+name: egress-vps/trusted-networks
+description: "Never ban the tailnet or the house"
+#
+# THE RECOVERY PATH MUST NOT BE BANNABLE. Written by bootstrap.sh from
+# CROWDSEC_WHITELIST — edit the variable, not this file.
+#
+# Two networks, for two different reasons:
+#
+#   100.64.0.0/10   the tailnet. This is how you reach the box when something
+#                   here is wrong, and Tailscale SSH is the only login path that
+#                   does not go through the public sshd. A CrowdSec decision
+#                   that covered it could lock you out of the machine you need
+#                   in order to remove the decision — the classic way a
+#                   detection tool becomes an outage.
+#
+#   192.168.4.0/24  the house / cluster LAN. The cluster talks to this box as an
+#                   authenticated proxy client, at volume. A false positive here
+#                   does not lock out a person, it takes every opted-in
+#                   service's egress down at once.
+#
+# A whitelist is a PARSER stage, not a scenario filter: it drops the event
+# before any scenario counts it, so a whitelisted source cannot accumulate
+# toward a ban at all. That is the behaviour we want — "ban them but ignore it"
+# would still fill the decisions table with noise.
+whitelist:
+  reason: "tailnet and home LAN — the recovery path and the cluster itself"
+  cidr:
+@CROWDSEC_WHITELIST_CIDRS@

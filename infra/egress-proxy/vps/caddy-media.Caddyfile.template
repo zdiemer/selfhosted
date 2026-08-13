@@ -39,4 +39,22 @@ jellyfin.diemer.codes {
 
 	# Streams are large and long; don't let Caddy buffer them.
 	encode zstd gzip
+
+	# Access log to a file, in JSON. Both halves are load-bearing for CrowdSec:
+	# its `caddy` parser expects JSON, and it acquires from a file path
+	# (crowdsec-acquis.yaml.template) rather than from journald, because Caddy's
+	# default is stderr-to-journal where the access lines are interleaved with
+	# everything else the process says.
+	#
+	# Change `format json` and CrowdSec silently stops matching — the lines are
+	# still read and still parsed by nothing, which looks exactly like a quiet
+	# week rather than a broken control. This is the single most breakable link
+	# between this file and the detection on this box.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
 }

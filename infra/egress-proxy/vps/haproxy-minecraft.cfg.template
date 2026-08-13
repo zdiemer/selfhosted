@@ -39,6 +39,47 @@ defaults
 
 frontend minecraft
   bind :25565
+
+  # ---------------------------------------------------------------------
+  # Per-source connection limiting
+  # ---------------------------------------------------------------------
+  # The nftables meter in front of this box is a packet-rate floor and knows
+  # nothing about connections; this knows how many a source currently HOLDS,
+  # which is the thing that actually exhausts a relay. `maxconn 512` above is
+  # global, so without this one source can take all 512 and lock every real
+  # player out — a denial of service that costs the attacker one cheap host and
+  # never reaches the Minecraft whitelist, because the whitelist lives on the
+  # far side of a connection that was never established.
+  #
+  # The table keys on source IP: 100k entries, expiring 10 minutes after a
+  # source goes quiet. ~10 MB, which on this box is affordable and bounded.
+  stick-table type ip size 100k expire 10m store conn_cur,conn_rate(60s)
+  tcp-request connection track-sc0 src
+
+  # 8 concurrent from one address. A player uses one connection, plus a
+  # transient second when the server-list ping and a join overlap; a household
+  # sharing a WAN address with four players sits at four or five. 8 is roomy
+  # for anyone real and ruinous for a connection flood.
+  tcp-request connection reject if { sc0_conn_cur ge 8 }
+
+  # 30 new connections per minute from one address. Deliberately the same
+  # number as the nftables meter — they are not redundant, they are the same
+  # policy stated at two layers, and a source that slips past the packet meter
+  # (fragmented, or arriving while the meter entry has aged out) still meets it
+  # here. Keep the two in step if either is retuned.
+  tcp-request connection reject if { sc0_conn_rate ge 30 }
+
+  # NOTE ON WHAT THIS CANNOT DO. Both rules key on source IP, so they shape
+  # single-source abuse and do nothing about a distributed flood — for that the
+  # answer is the provider's own DDoS protection, which is upstream of this box
+  # and not configurable from here. This is the layer that stops one bored
+  # person with a VPS, which is the realistic threat to a friends' Minecraft
+  # server.
+  #
+  # AND WHAT IT MUST NOT BECOME: no `check` on the backend servers. The server
+  # autopauses when idle and wakes on any TCP connection, so a health probe
+  # would mean the JVM never sleeps. See the header.
+
   default_backend mc_nodes
 
 backend mc_nodes
