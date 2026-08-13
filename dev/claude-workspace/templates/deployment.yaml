@@ -115,34 +115,10 @@ spec:
                     /home/node/.config/selfhosted/op-password
               echo "1password credentials mounted read-only (not staged to the PVC)"
               {{- end }}
-              {{- if .Values.secrets.relay.enabled }}
-              # Materialize every chart's values.local.yaml from the relay
-              # bundle. THIS is what makes a restart self-sufficient: before it,
-              # the pod came up with whatever the PVC happened to hold, and a
-              # deploy from here would fail on `required` values — or silently
-              # render a secret empty, which is worse.
-              #
-              # Not fatal when it cannot run: a fresh PVC has no checkout yet,
-              # and a brand-new cluster has no bundle. Either way there is
-              # nothing to restore, and the pod must still start.
-              if [ -x {{ .Values.secrets.relay.repoPath }}/scripts/secrets.sh ] \
-                 && [ -f /var/run/selfhosted-secrets/bundle.tar.gz ]; then
-                cd {{ .Values.secrets.relay.repoPath }} \
-                  && ./scripts/secrets.sh pull --bundle /var/run/selfhosted-secrets/bundle.tar.gz \
-                  || echo "WARNING: relay unpack failed; run 'secrets.sh pull --from-cluster' in the pod"
-              else
-                echo "no checkout or no bundle yet; skipping secret materialization"
-              fi
-              {{- end }}
               echo "home initialized"
           volumeMounts:
             - name: home
               mountPath: /home/node
-            {{- if .Values.secrets.relay.enabled }}
-            - name: secrets-relay
-              mountPath: /var/run/selfhosted-secrets
-              readOnly: true
-            {{- end }}
             {{- if .Values.secrets.onePassword.enabled }}
             - name: op-credentials
               mountPath: /var/run/op-credentials
@@ -635,15 +611,6 @@ spec:
           configMap:
             name: {{ include "claude-workspace.fullname" . }}-happy-notice
             defaultMode: 0555
-        {{- end }}
-        {{- if .Values.secrets.relay.enabled }}
-        # optional: the very first `secrets.sh publish` has not happened on a
-        # new cluster, and a missing Secret must not wedge the pod in
-        # ContainerCreating.
-        - name: secrets-relay
-          secret:
-            secretName: {{ .Values.secrets.relay.secretName }}
-            optional: true
         {{- end }}
         {{- if .Values.secrets.onePassword.enabled }}
         - name: op-credentials

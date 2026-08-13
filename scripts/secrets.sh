@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Move per-project secrets between 1Password, this checkout, the cluster, and
-# the NAS. Replaces scripts/sync-local-values.sh (now a deprecated shim).
+# the NAS.
 #
 # WHY THIS EXISTS
 # Every secret in this repo used to live in a gitignored values.local.yaml on
@@ -35,8 +35,6 @@ VAULT="${VAULT:-homelab}"
 # Secrets that carry most of these same values. Putting the bundle in a Secret
 # therefore grants it nothing it did not already have, and buys a pull-based
 # path: the pod refreshes itself after a restart without this laptop being up.
-CLUSTER_NS="${CLUSTER_NS:-claude}"
-CLUSTER_SECRET="${CLUSTER_SECRET:-selfhosted-secrets}"
 POD_DEPLOY="${POD_DEPLOY:-claude-workspace}"
 POD_REPO="${POD_REPO:-/home/node/code/selfhosted}"
 
@@ -140,9 +138,7 @@ FORCE=0
 # External clones are in scope by default now. They are where secrets actually
 # change; leaving them opt-in is what left ~/Code/whatnowgg unmanaged entirely.
 INCLUDE_EXTERNAL=1
-BUNDLE_FILE=""
 NO_BACKUP=0
-FROM_CLUSTER=0
 VERIFY_ONLY=0
 ASSUME_YES=0
 FILES_ONLY=0
@@ -519,7 +515,6 @@ cmd_status() {
 }
 
 cmd_pull() {
-  if [[ $FROM_CLUSTER -eq 1 ]]; then cmd_pull_cluster "$@"; return; fi
   need_op
   local tmp; tmp="$(scratch)"
   local logical tpl out n=0
@@ -934,8 +929,7 @@ cmd_sync() {
     # so the `||` would never fire and a NAS that happens to be down would take
     # the cluster publish down with it. The reconciliation already succeeded by
     # this point; neither of these is allowed to retroactively fail it.
-    auto_backup     || echo "    backup failed — the vault still holds the change"
-    ( cmd_publish ) || echo "    publish failed — the pod stays stale until the next run"
+    auto_backup || echo "    backup failed — the vault still holds the change"
   fi
 
   # Non-zero on anything a human has to look at. A timer that always exits 0
@@ -971,81 +965,6 @@ pack_bundle() {
   rm -rf "$tmp"
 }
 
-cmd_publish() {
-  command -v kubectl >/dev/null || die "kubectl required"
-  local tmp; tmp="$(scratch)"
-  pack_bundle "$tmp/bundle.tar.gz"
-  note "bundle: $(stat -c%s "$tmp/bundle.tar.gz") bytes, $(discover_local | wc -l) file(s)"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    discover_local | sed 's/^/    /'
-    echo "    would write secret/${CLUSTER_SECRET} in ns ${CLUSTER_NS}"
-    return 0
-  fi
-  kubectl get namespace "$CLUSTER_NS" >/dev/null 2>&1 || die "namespace ${CLUSTER_NS} not found"
-  kubectl create secret generic "$CLUSTER_SECRET" -n "$CLUSTER_NS" \
-    --from-file=bundle.tar.gz="$tmp/bundle.tar.gz" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  note "published secret/${CLUSTER_SECRET} to ns ${CLUSTER_NS}"
-
-  # Apply it immediately if the pod is up, so this is a strict improvement on
-  # the old push. If it isn't, that's fine and not an error: the Secret is
-  # durable, and the pod pulls for itself on next start — which is the whole
-  # point of moving from push to pull.
-  if kubectl -n "$CLUSTER_NS" get "deploy/${POD_DEPLOY}" >/dev/null 2>&1 \
-     && kubectl -n "$CLUSTER_NS" exec "deploy/${POD_DEPLOY}" -c term -- test -d "$POD_REPO" >/dev/null 2>&1; then
-    note "applying in ${POD_DEPLOY}"
-    kubectl -n "$CLUSTER_NS" exec "deploy/${POD_DEPLOY}" -c term -- \
-      bash -lc "cd '${POD_REPO}' && scripts/secrets.sh pull --from-cluster" \
-      || echo "    pod-side pull failed — run it there by hand"
-  else
-    echo "    pod not reachable; it will pull on next start:"
-    echo "      scripts/secrets.sh pull --from-cluster"
-  fi
-}
-
-# Run inside the claude-workspace pod: unpack the relay bundle onto the PVC.
-#
-# This is the BOOTSTRAP path, and it stays that way even though the pod can now
-# reach 1Password itself. It needs no credentials, no network beyond the API
-# server, and it is what the initContainer runs before anything else exists —
-# including, on a fresh PVC, the checkout that would hold the op templates.
-#
-# --bundle reads a mounted file instead of calling kubectl. That is what makes
-# it usable from an initContainer: no kubectl in the image, no RBAC, no API
-# round-trip, just the Secret projected as a volume.
-cmd_pull_cluster() {
-  local tmp; tmp="$(scratch)"
-  if [[ -n "$BUNDLE_FILE" ]]; then
-    [[ -f "$BUNDLE_FILE" ]] || die "no bundle at ${BUNDLE_FILE}"
-    cp "$BUNDLE_FILE" "$tmp/bundle.tar.gz"
-  else
-    command -v kubectl >/dev/null || die "kubectl required (or pass --bundle FILE)"
-    kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" >/dev/null 2>&1 \
-      || die "secret/${CLUSTER_SECRET} not found in ns ${CLUSTER_NS}. Run 'secrets.sh publish' on a machine with op."
-    kubectl get secret "$CLUSTER_SECRET" -n "$CLUSTER_NS" \
-      -o jsonpath='{.data.bundle\.tar\.gz}' | base64 -d > "$tmp/bundle.tar.gz"
-  fi
-  tar xzf "$tmp/bundle.tar.gz" -C "$tmp"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    note "bundle contents:"; sed 's/^/    /' "$tmp/MANIFEST"; return 0
-  fi
-  local f n=0
-  while IFS= read -r f; do
-    f="${f#files/}"
-    mkdir -p "${ROOT}/$(dirname "$f")"
-    install -m600 "$tmp/files/$f" "${ROOT}/${f}"
-    echo "    $f"; n=$((n+1))
-  done < <(cd "$tmp" && find files -type f 2>/dev/null | sed 's|^files/||' | sort)
-  # External app repos, if their clones exist alongside.
-  local name
-  for name in "${EXTERNAL_REPOS[@]}"; do
-    if [[ -f "$tmp/external/$name/values.local.yaml" && -d "${EXTERNAL_BASE}/${name}" ]]; then
-      install -m600 "$tmp/external/$name/values.local.yaml" "${EXTERNAL_BASE}/${name}/values.local.yaml"
-      echo "    ${EXTERNAL_BASE}/${name}/values.local.yaml"; n=$((n+1))
-    fi
-  done
-  note "$n file(s) restored from secret/${CLUSTER_SECRET}"
-}
 
 # ------------------------------------------------------------ NAS backup
 
@@ -1245,15 +1164,13 @@ Usage: scripts/secrets.sh <command> [options] [path...]
   check                    op reachable, every ref resolves AND is non-empty
   status [path...]         per-chart: in-sync / drift / not-materialized / NOT MIGRATED
   pull [path...]           materialize values.local.yaml from 1Password
-  pull --from-cluster      materialize from the cluster bundle (use inside the pod)
   verify [path...]         Gate 1 (byte-exact) + Gate 2 (rendered manifests identical)
   import <path>...         one-time: store an existing file in the vault, write its template
   push <path>...           write local edits back to the vault, then back up
-  publish                  pack every local secret into a Secret the pod can pull
   backup                   age-encrypt everything + vault dump, upload to the NAS, verify
   restore [--verify-only]  recover from the latest NAS archive
 
-Options: --dry-run  --force  --yes  --no-external  --vault NAME  --bundle FILE
+Options: --dry-run  --force  --yes  --no-external  --vault NAME
          --files-only (skip the vault dump)  --keep N (archive retention, default 20)
 
 sync is the unattended verb. It pushes when only the file moved, pulls when only
@@ -1282,8 +1199,6 @@ while [[ $# -gt 0 ]]; do
     --include-external) INCLUDE_EXTERNAL=1 ;;   # now the default; kept so old
                                                 # invocations keep working
     --no-external)      INCLUDE_EXTERNAL=0 ;;
-    --bundle)           BUNDLE_FILE="$2"; FROM_CLUSTER=1; shift ;;
-    --from-cluster)     FROM_CLUSTER=1 ;;
     --verify-only)      VERIFY_ONLY=1 ;;
     --files-only)       FILES_ONLY=1 ;;
     --keep)             KEEP="$2"; shift ;;
@@ -1307,7 +1222,6 @@ case "$CMD" in
   verify)  cmd_verify "${ARGS[@]+"${ARGS[@]}"}" ;;
   import)  cmd_import "${ARGS[@]+"${ARGS[@]}"}" ;;
   push)    cmd_push "${ARGS[@]+"${ARGS[@]}"}" ;;
-  publish) cmd_publish ;;
   backup)  cmd_backup ;;
   restore) cmd_restore ;;
   *)       usage; exit 1 ;;
