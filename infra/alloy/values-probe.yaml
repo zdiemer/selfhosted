@@ -10,7 +10,7 @@
 # ("only scrape pods on my node") makes each target the responsibility of
 # exactly one Alloy. Probe targets are not pods — they are static URLs — so
 # there is nothing to be local to. All nine DaemonSet pods would probe all
-# sixteen hostnames every interval: nine times the outbound traffic through
+# fourteen hostnames every interval: nine times the outbound traffic through
 # Cloudflare, and nine copies of every series racing each other into
 # remote_write.
 #
@@ -127,26 +127,15 @@ alloy:
           address = "https://old.diemer.codes"
           module  = "http_edge"
         }
-        target {
-          name    = "status"
-          address = "https://status.diemer.codes"
-          module  = "http_edge"
-        }
-        // /term, not /. This Ingress routes ONLY that path on this host, so a
-        // probe of / gets Traefik's own 404 and reports the service down when
-        // it is perfectly healthy. Verified: /term answers 302 to the Authelia
-        // portal, which http_edge counts as reachable. It is the only probed
-        // hostname with a non-root path.
-        target {
-          name    = "claude"
-          address = "https://claude.diemer.codes/term"
-          module  = "http_edge"
-        }
-        target {
-          name    = "happy"
-          address = "https://happy.diemer.codes"
-          module  = "http_edge"
-        }
+        // status, claude and happy USED TO BE PROBED HERE and deliberately are
+        // not any more: all three were delisted from the tunnel (their charts'
+        // `ingress.cloudflareHosts` are now empty) and are reachable over the
+        // tailnet only. Probing a hostname the tunnel no longer serves would
+        // fire a permanent, entirely correct "down" alert for a change that
+        // was the point — which is the fastest way to teach everyone to ignore
+        // this dashboard. See the tailnet-only block at the end for where each
+        // of the three went — only status is probed at all now, and the reason
+        // the other two are not is a deliberate call, not an omission.
         target {
           name    = "homes"
           address = "https://homes.diemer.codes"
@@ -189,6 +178,48 @@ alloy:
           address = "minecraft.diemer.codes:25565"
           module  = "tcp_connect"
         }
+
+        // ---- Tailnet-only services -----------------------------------------
+        // status, claude and happy left the tunnel, so there is no public
+        // address left to probe. Only ONE of the three is probed here, and the
+        // reason the other two are not is worth writing down, because the
+        // obvious fix is a security regression.
+        //
+        // WHAT AN INTERNAL PROBE COSTS. An edge probe asserts "the whole public
+        // path works", end to end. A Service probe asserts only "the app is up
+        // and serving" — no Cloudflare, no Traefik, no Authelia. For these
+        // three that narrower question is the correct one, since their public
+        // path is now deliberately gone: a probe that could still reach them
+        // from outside would be reporting a breach, not health.
+        //
+        // cluster-status has no NetworkPolicy, so probing its Service costs
+        // nothing and is a straight swap. Plain http, no TLS: an in-cluster hop
+        // to a ClusterIP that never leaves the pod network.
+        target {
+          name    = "status"
+          address = "http://cluster-status.infra.svc.cluster.local:80"
+          module  = "http_edge"
+        }
+        // claude and happy are DELIBERATELY NOT PROBED, and this is not an
+        // oversight to be tidied up later.
+        //
+        // Both charts' NetworkPolicies admit ingress from kube-system/traefik
+        // only (plus the `claude` namespace, for happy). Probing them would
+        // mean adding the `alloy` namespace to those rules — and for
+        // claude-workspace that means allowing any pod in the monitoring
+        // namespace to open :7681, a ttyd session on a pod holding
+        // cluster-admin, with Authelia bypassed because the gate lives at the
+        // Ingress. Trading a root shell's blast radius for a green dot on a
+        // dashboard is the wrong side of that trade, and it would quietly undo
+        // the delisting these probes exist to reflect.
+        //
+        // Liveness for both is covered where it does not require a hole:
+        // infra/kube-state-metrics already reports pod readiness, restarts and
+        // CrashLoop reasons for every workload, and both charts have real
+        // readiness probes. What is genuinely lost is "is it serving over the
+        // tailnet" — which this Deployment could never answer anyway, since it
+        // runs on the pod network where 100.64.0.0/10 is not routable. That
+        // check belongs on a tailnet device and does not exist yet.
       }
 
       prometheus.scrape "blackbox" {
@@ -210,7 +241,7 @@ alloy:
         //
         // The blackbox exporter component sets `instance` to the component's
         // own name — literally "prometheus.exporter.blackbox.public" for all
-        // sixteen targets — and puts the target name in `job`, as
+        // fourteen targets — and puts the target name in `job`, as
         // "integrations/blackbox/<name>". So `probe_success{instance=...}` is
         // useless for telling hosts apart, which is the entire point of the
         // availability dashboard. Rewrite instance to the target name.
@@ -221,8 +252,8 @@ alloy:
           replacement   = "$1"
         }
 
-        // The full blackbox output is ~20 series per target; sixteen targets
-        // would be ~320 for information mostly nobody reads (probe_ip_protocol,
+        // The full blackbox output is ~20 series per target; fourteen targets
+        // would be ~280 for information mostly nobody reads (probe_ip_protocol,
         // probe_http_version, content length...). These six answer every panel
         // on the availability dashboard.
         rule {

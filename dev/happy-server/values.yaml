@@ -48,11 +48,32 @@ ingress:
   enabled: false
   className: traefik
   host: happy.zachd.duckdns.org
-  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared).
-  # TLS for these terminates at Cloudflare, so they are NOT in the ACME cert
-  # list. Requires a one-time Public Hostname entry in the CF dashboard.
-  cloudflareHosts:
-    - happy.diemer.codes
+  # DELIBERATELY EMPTY — tailnet-only, and the reasoning is different from
+  # every other chart's.
+  #
+  # This is the one chart in the web tier with no Authelia forward-auth, and
+  # for a good reason (see templates/ingress.yaml): the Happy apps talk REST +
+  # WebSocket and cannot complete an interactive login. But "no forward-auth"
+  # plus "published on the Cloudflare tunnel" meant this server was an
+  # unauthenticated public endpoint whose only protection was Happy's own
+  # pairing and HANDY_MASTER_SECRET — and it is the control plane for
+  # dev/claude-workspace's happy daemon, whose spawned sessions are child
+  # processes of a pod holding cluster-admin. A break in this relay is
+  # cluster-admin RCE, not a leaked chat log.
+  #
+  # WHY NOT A GATE INSTEAD. Cloudflare Access needs either an interactive
+  # browser login or a service token in CF-Access-Client-Id headers; mTLS
+  # needs a client certificate. The Happy mobile app does none of the three,
+  # so every "gate it at the edge" option either breaks the app or is
+  # decoration. Delisting is the only control here that actually holds.
+  #
+  # THE COST, STATED PLAINLY: Happy stops working when the phone is off the
+  # tailnet. That is the trade, and it is the right way round for a personal
+  # dev tool fronting a cluster-admin shell.
+  #
+  # As with every delisting, also delete the Public Hostname entry from the
+  # tunnel in the Cloudflare dashboard — this list is only half of it.
+  cloudflareHosts: []
   tls:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain

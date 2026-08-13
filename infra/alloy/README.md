@@ -189,7 +189,7 @@ Each of the nine scrape jobs carries its own keep-list. Measured contributions:
 | kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded` phases dropped here |
 | Traefik | ~800 | `*_bucket` dropped |
 | CoreDNS, kubelet, cloudflared, k8up, Alloy, CrowdSec | ~700 | |
-| blackbox probes | ~100 | 6 metrics × 16 targets |
+| blackbox probes | ~85 | 6 metrics × 14 targets |
 
 `*_bucket` stays dropped, and there is now a strictly better source for
 percentiles than re-enabling it: the access log carries a per-request `Duration`,

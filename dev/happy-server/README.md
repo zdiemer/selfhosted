@@ -46,22 +46,32 @@ kubectl -n happy port-forward svc/happy-server 3005:3005
 ./upgrade.sh
 ```
 
-One-time Cloudflare step (per `infra/cloudflared` README): Zero Trust →
-Networks → Tunnels → the shared tunnel → Public Hostnames → add
-`happy.diemer.codes` → `https://traefik.kube-system.svc.cluster.local:443`
-with **No TLS Verify ON**. (`happy.zachd.duckdns.org` needs nothing — the
-wildcard SAN cert and DuckDNS A record already cover it.)
+**No Cloudflare step — this host is deliberately not on the tunnel.** This is
+the one chart in the web tier with no forward-auth (see
+`templates/ingress.yaml`), and it is the control plane for the happy daemon in
+`dev/claude-workspace`, whose sessions are children of a cluster-admin pod.
+Public + unauthenticated + that blast radius is not a combination worth
+keeping, and no edge gate fits: Cloudflare Access needs a browser login or a
+service-token header, mTLS needs a client cert, and the Happy app does none of
+them. So it is tailnet-only instead. `happy.zachd.duckdns.org` needs nothing —
+the wildcard SAN cert and DuckDNS record already cover it. If a
+`happy.diemer.codes` Public Hostname still exists on the tunnel, delete it.
 
 ## Wiring up the clients
 
 - **CLI (workspace pod)**: `dev/claude-workspace` sets
-  `HAPPY_SERVER_URL=https://happy.zachd.duckdns.org` on the term container —
-  nothing to do there. In tmux, run `happy` instead of `claude`; first run
-  prints a QR code.
-- **iOS app**: install Happy from the App Store, set the custom server URL to
-  `https://happy.diemer.codes` (or the duckdns host) in the app's server
-  settings **before** pairing, then scan the QR from the terminal.
+  `HAPPY_SERVER_URL=http://happy-server.happy.svc.cluster.local:3005` on the
+  term container — the cluster-local Service, not the public host, so the pod's
+  path and the phone's path cannot break each other. Nothing to do there. In
+  tmux, run `happy` instead of `claude`.
+- **iOS app**: install Happy from the App Store and set the custom server URL
+  to `https://happy.zachd.duckdns.org` **by hand**, **before** pairing. The
+  phone needs Tailscale up to reach it — that is the trade for delisting.
+  **The QR flow no longer works** for the server URL: the CLI now points at a
+  cluster-internal address, so a scanned QR would hand the phone a hostname it
+  cannot resolve.
 - **Web**: `app.happy.engineering` pointed at the same custom server URL
+  (browser must also be on the tailnet)
   (E2E crypto means the hosted web client never sees plaintext either).
 
 ## Day-2 notes

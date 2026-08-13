@@ -98,15 +98,24 @@ data:
     <meta name="theme-color" content="#09090b">
     <meta name="color-scheme" content="light dark">
 
+    {{/*
+      og: tags for a page nobody outside the tailnet can fetch. Kept, and
+      retargeted at the duckdns host rather than deleted: the link previews
+      that matter are the ones rendered by clients that CAN reach the page —
+      a Signal or iMessage link shared between our own tailnet devices — and
+      those need the URL to match what is actually served, or the preview
+      silently falls back to a bare link. The old status.diemer.codes values
+      would now point a previewer at a host the tunnel no longer routes.
+    */}}
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="status.diemer.codes">
+    <meta property="og:site_name" content="{{ .Values.ingress.host }}">
     <meta property="og:title" content="Cluster Status">
     <meta property="og:description" content="Live health for the ten-node k3s cluster at home — nodes, pods, storage and every service on top.">
-    <meta property="og:url" content="https://status.diemer.codes/">
-    <meta property="og:image" content="https://status.diemer.codes/og.png">
+    <meta property="og:url" content="https://{{ .Values.ingress.host }}/">
+    <meta property="og:image" content="https://{{ .Values.ingress.host }}/og.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="status.diemer.codes — is everything up?">
+    <meta property="og:image:alt" content="{{ .Values.ingress.host }} — is everything up?">
     <meta name="twitter:card" content="summary_large_image">
     <style>
       /* ---------------------------------------------------------------- tokens

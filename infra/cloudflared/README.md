@@ -52,19 +52,36 @@ so the only column that actually varies is the hostname:
 | Hostname | Backing ingress | Service |
 |---|---|---|
 | `auth.diemer.codes` | `auth/authelia` | `authelia:9091` |
-| `claude.diemer.codes` | `claude/claude-workspace` | `claude-workspace:7681` |
 | `docs.diemer.codes` | `docs/paperless` | `paperless:8000` |
 | `games.diemer.codes` | `games/gamedex` | `gamedex:8080` |
-| `happy.diemer.codes` | `happy/happy-server` | `happy-server:3005` |
 | `homes.diemer.codes` | `web/apartment-watch-web` | `apartment-watch-web:8080` |
 | `keepass.diemer.codes` | `auth/keepass-keeweb` | `keepass-keeweb:80` |
 | `old.diemer.codes` | `web/old-diemer-codes` | `old-diemer-codes:80` |
 | `pdf.diemer.codes` | `docs/stirling` | `stirling:8080` |
 | `romm.diemer.codes` | `games/romm` | `romm:8080` |
 | `smite.diemer.codes` | `discord/smitele-bot-web` | `smitele-bot-web:8080` |
-| `status.diemer.codes` | `infra/cluster-status` | `cluster-status:80` |
 | `webdav.diemer.codes` | `auth/keepass-webdav` | `keepass-webdav:80` |
 | `talaria.deals` | `default/talaria-deals` | `talaria-nginx:80` |
+
+### Deliberately absent from this table
+
+`claude`, `happy` and `status` were published here and have been **delisted** —
+they are tailnet-only now, reachable on their `*.zachd.duckdns.org` names and
+not from the internet at all. Short version of why:
+
+| Host | Why it left |
+|---|---|
+| `claude.diemer.codes` | A ttyd web terminal on a pod holding cluster-admin, with one boolean (`auth.forwardAuth.enabled`) between it and the internet. |
+| `happy.diemer.codes` | Unauthenticated by design (the app can't do forward-auth), and the control plane for that same cluster-admin pod's session daemon. No edge gate fits a mobile app: Access needs a browser login or a service-token header, mTLS needs a client cert. |
+| `status.diemer.codes` | Published node names, the pod inventory, namespaces and raw event text. Free reconnaissance, and its only readers were us. |
+
+**Delisting is two steps, and this file is the second one.** Emptying a chart's
+`ingress.cloudflareHosts` stops Traefik routing the host, but the Public
+Hostname entry lives on the tunnel in the dashboard — where nothing in git can
+see it. Until it is deleted there, Cloudflare still accepts the request and
+forwards it to a Traefik with no matching router. That is a 404, not an outage,
+so nothing will ever tell you it is still configured. Delete the dashboard
+entry when you empty the list.
 
 Leave the HTTP `Host` header blank (preserve original) so Traefik can match the
 ingress rule. Adding each hostname auto-creates its proxied CNAME in that

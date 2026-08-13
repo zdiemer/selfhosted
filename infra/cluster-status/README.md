@@ -1,6 +1,6 @@
-# cluster-status — public cluster dashboard
+# cluster-status — tailnet cluster dashboard
 
-Live at **<https://status.diemer.codes>** (and `status.zachd.duckdns.org`). Node
+Live at **<https://status.zachd.duckdns.org>** — tailnet only. Node
 CPU/RAM/disk with a pods-vs-k3s-vs-system breakdown, per-node pod tables, a
 problem-pods roll-up, Deployment/StatefulSet/DaemonSet health, top consumers, and
 recent warnings.
@@ -11,15 +11,28 @@ plumbing: talaria's `Handler` framework, its k8s client, protobuf, and structlog
 This drops all four and emits plain JSON. **The measurement logic is otherwise
 deliberately unchanged**: it was the valuable part and it was already right.
 
-talaria keeps its own page. This one is a separate, public, read-only view.
+talaria keeps its own page. This one is a separate, read-only view.
+
+**It used to be public**, at `status.diemer.codes` over the Cloudflare tunnel,
+on the reasoning that the page is static JSON so public traffic never touches
+the k8s API. That reasoning is sound about the *API* and beside the point about
+the *content*: the page publishes node names, the full pod inventory,
+namespaces, deployment health and raw event text — a free map of the cluster for
+anyone deciding whether it is worth attacking. Nothing was gained by that being
+public, because the audience for this page was always us. See
+`values.yaml` `ingress.cloudflareHosts` for the full note.
+
+Delisting cost no availability: the tailnet path does not depend on the
+Cloudflare tunnel, so this page still answers when the tunnel is the broken
+thing — which is exactly when a status dashboard earns its keep.
 
 ```
   collector sidecar ──reads k8s API──▶ /data/status.json  (emptyDir)
    (the only thing                            │
     talking to k8s)          nginx ───serves──┤  index.html + status.json
                                               │
-                                    Ingress ──┴──▶ status.diemer.codes  (tunnel)
-                                                   status.zachd.duckdns.org
+                                    Ingress ──┴──▶ status.zachd.duckdns.org
+                                                   (tailnet only — no tunnel)
 ```
 
 ## Why a sidecar, not a CronJob
@@ -140,7 +153,7 @@ page ship as ConfigMaps, so there's no image to build and no GHCR package; a
 Verify:
 
 ```bash
-curl -s https://status.diemer.codes/status.json | python3 -m json.tool | head -30
+curl -s https://status.zachd.duckdns.org/status.json | python3 -m json.tool | head -30
 kubectl -n infra logs -l app.kubernetes.io/name=cluster-status -c collector --tail=20
 ```
 
@@ -222,7 +235,7 @@ to a real `status.json`, and serve the directory.
 helm template cluster-status infra/cluster-status \
   | python3 -c 'import sys,yaml;[sys.stdout.write(d["data"]["index.html"]) for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind")=="ConfigMap" and d["metadata"]["name"].endswith("-web")]' \
   > /tmp/page/index.html
-curl -s https://status.diemer.codes/status.json > /tmp/page/status.json
+curl -s https://status.zachd.duckdns.org/status.json > /tmp/page/status.json
 python3 -m http.server 8899 -d /tmp/page
 ```
 

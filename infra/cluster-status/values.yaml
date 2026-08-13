@@ -1,4 +1,4 @@
-# cluster-status — the public cluster dashboard at status.diemer.codes.
+# cluster-status — the tailnet cluster dashboard at status.zachd.duckdns.org.
 #
 # Ported from talaria's authed /admin/cluster page. That page's collector was
 # already fully generic (no talaria names, no filters); its only coupling was
@@ -9,8 +9,9 @@
 #                                              │
 #                             nginx ───serves──┘  index.html + status.json
 #                                              │
-#                                    Ingress ──┴──▶ status.diemer.codes (tunnel)
-#                                                   status.zachd.duckdns.org
+#                                    Ingress ──┴──▶ status.zachd.duckdns.org
+#                                                   (tailnet only — see the
+#                                                    ingress block below)
 #
 # WHY A SIDECAR AND NOT A CRONJOB: network rates are computed by diffing
 # kubelet's cumulative rx/tx counters against the previous sample held in
@@ -18,12 +19,18 @@
 # sample and every rate would be null forever. The collector has to be a
 # long-lived process.
 #
-# WHY NOT SERVE FROM AN API: this page is PUBLIC. nginx only ever serves two
-# files off local disk, so public traffic never reaches the Kubernetes API. An
-# always-on API querying k8s per request would hand anyone on the internet a way
-# to hammer the API server and every kubelet's /stats/summary, unauthenticated.
-# The collector is the only thing that talks to k8s, on its own fixed schedule,
-# no matter how much traffic the page gets.
+# WHY NOT SERVE FROM AN API: nginx only ever serves two files off local disk, so
+# a page view never reaches the Kubernetes API. An always-on API querying k8s per
+# request would hand every viewer a way to hammer the API server and every
+# kubelet's /stats/summary, unauthenticated. The collector is the only thing that
+# talks to k8s, on its own fixed schedule, no matter how much traffic arrives.
+#
+# This argument was originally written as "this page is PUBLIC", and the page is
+# not public any more (see the ingress block). The DESIGN does not change with
+# it: the property that makes this safe is that serving cannot amplify into API
+# load, which is worth having against a tailnet full of our own devices and
+# browser tabs too. Delisting removed the internet from the threat model; it did
+# not make an unauthenticated k8s-querying API a good idea.
 
 replicaCount: 2
 
@@ -45,7 +52,7 @@ web:
   # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
   image: nginxinc/nginx-unprivileged:1.27.5-alpine
   # The unprivileged image listens high and runs as non-root out of the box,
-  # which is what we want for anything internet-facing.
+  # which is what we want for anything serving HTTP, tailnet or not.
   port: 8080
   resources:
     requests:
@@ -55,8 +62,18 @@ web:
       memory: 64Mi
 
 # What the collector is allowed to write into status.json. Everything here is
-# public the moment it's collected, so this is the redaction point — not the
-# page, not the ingress. Both default on: the page publishes everything.
+# readable by every viewer the moment it's collected, so this is the redaction
+# point — not the page, not the ingress. All four default on.
+#
+# THESE FLAGS DID NOT BECOME POINTLESS WHEN THE PAGE LEFT THE TUNNEL, and the
+# temptation to treat them that way is exactly why this note exists. Two reasons
+# they still earn their place. First, redacting at the collector means the field
+# is never written at all, so it cannot leak through a LATER misconfiguration —
+# including the obvious one, someone putting a Cloudflare host back in the
+# ingress block below. That was always the argument for redacting here rather
+# than at the ingress, and it is an argument about future mistakes, not about
+# today's threat model. Second, "tailnet-only" is not "private": it is every
+# device we have ever added, including phones and laptops that leave the house.
 #
 #   events        — Kubernetes Warning event messages. Benign on a healthy
 #                   cluster (container started, job completed), but the text is
@@ -71,7 +88,8 @@ web:
 # can't leak even if the page or ingress is later misconfigured.
 #   uptime        — the serviceChecks results below. Names and up/down only;
 #                   the probed URL is never written into status.json (several
-#                   point at ClusterIPs and LAN hosts, and this page is public).
+#                   point at ClusterIPs and LAN hosts, which are nobody's
+#                   business but ours even on the tailnet).
 #   nodeUpdates   — the weekly node-lane report scripts/k3s/versions-report.sh
 #                   writes into the versions-report ConfigMap: pending apt and
 #                   security-update counts, kernel drift, k3s vs stable,
@@ -95,9 +113,11 @@ publish:
 # ⚠️ Probe the service, not its backend. sms-relay's own health endpoint is the
 # right target; the Android gateway phone behind it is deliberately NOT checked
 # here. That would need the gateway's basic-auth credentials in this collector,
-# and it would publish "the owner's phone is off the network" to the internet —
-# a fact about a person, not about the cluster. If you ever do add it, note the
-# gateway app answers /health with a 500 and reports real status on / instead.
+# and it would publish "the owner's phone is off the network" — a fact about a
+# person, not about the cluster. Still true now the page is tailnet-only: the
+# objection was never only about who could read it. If you ever do add it, note
+# the gateway app answers /health with a 500 and reports real status on /
+# instead.
 serviceChecks:
   - name: SMS relay
     # Cluster-internal Service address, so the check works with no ingress,
@@ -110,9 +130,27 @@ ingress:
   enabled: true
   className: traefik
   host: status.zachd.duckdns.org
-  # Served over the shared Cloudflare tunnel. TLS for these terminates at
-  # Cloudflare, so they're deliberately absent from the ACME cert list.
-  cloudflareHosts:
-    - status.diemer.codes
+  # DELIBERATELY EMPTY — this dashboard is no longer public.
+  #
+  # It carried no auth, by design: the collector sidecar writes JSON and nginx
+  # serves it statically, so public traffic never touched the k8s API and the
+  # worst case was reading it. That reasoning holds for the API and misses
+  # what the page actually contains — node names, the full pod inventory,
+  # namespaces, deployment health and raw event text. That is a free map of
+  # the cluster for anyone deciding whether it is worth attacking, and event
+  # messages in particular leak far more than the page intends to show.
+  #
+  # Nothing is lost by delisting: the audience for this page is us, and the
+  # tailnet host above serves it to exactly that audience. A status page whose
+  # readers are all on the tailnet does not need a public address.
+  #
+  # NOTE the availability property this does NOT give up. The tailnet path is
+  # independent of the Cloudflare tunnel, so this page still answers when the
+  # tunnel is the thing that is broken — which is precisely when a status
+  # dashboard earns its keep.
+  #
+  # As with every delisting, also delete the Public Hostname entry from the
+  # tunnel in the Cloudflare dashboard — this list is only half of it.
+  cloudflareHosts: []
   tls:
     enabled: true

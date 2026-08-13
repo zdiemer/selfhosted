@@ -8,9 +8,12 @@ in sharing that home:
   `tmux new -A -s main`: the real Claude Code TUI. Every browser connection
   attaches to the *same* tmux session, so closing Safari — or iOS suspending
   it — leaves claude running; reopening `/term` lands back in the live
-  session. Gated behind Authelia forward-auth (same pattern as
-  `docs/stirling-pdf`) on `claude.zachd.duckdns.org` and, via the shared
-  Cloudflare tunnel, `claude.diemer.codes`.
+  session. Reachable on `claude.zachd.duckdns.org` — **tailnet only**, and
+  additionally gated behind Authelia forward-auth (same pattern as
+  `docs/stirling-pdf`). It used to be published on the Cloudflare tunnel at
+  `claude.diemer.codes`; that put a web terminal on a cluster-admin pod on the
+  open internet with a single boolean in the way. Two independent gates is the
+  right number for a root shell. See `values.yaml` `ingress.cloudflareHosts`.
 - **[Happy](https://github.com/slopus/happy) app** (iOS/Android/web) — run
   `happy` instead of `claude` in tmux and the phone gets full remote control
   of that same real-harness session (plan mode, permission prompts as push
@@ -67,10 +70,13 @@ cp values.local.yaml.example values.local.yaml   # ingress.enabled: true
 ./upgrade.sh
 ```
 
-One-time Cloudflare step (per `infra/cloudflared` README): Zero Trust →
-Networks → Tunnels → the shared tunnel → Public Hostnames → add
-`claude.diemer.codes` → `https://traefik.kube-system.svc.cluster.local:443`
-with **No TLS Verify ON**.
+**No Cloudflare step — this host is deliberately not on the tunnel.** Reaching
+it requires being on the tailnet first (`infra/duckdns` is in `mode: tailnet`,
+so `claude.zachd.duckdns.org` resolves to an unroutable 100.x address), then
+passing Authelia. If a `claude.diemer.codes` Public Hostname still exists on
+the tunnel from before the delisting, delete it: Traefik no longer has a
+matching router, so it 404s rather than failing, and nothing tells you it is
+still configured.
 
 ## First use (all from the phone, in-browser)
 
@@ -84,8 +90,11 @@ with **No TLS Verify ON**.
    persists on the PVC. (NetworkPolicy allows egress 443 + 22 to public IPs
    only.)
 4. Happy pairing (needs `dev/happy-server` deployed first): install the Happy
-   app on the phone, set its custom server URL to `https://happy.diemer.codes`
-   (or the duckdns host), then in tmux run `happy` — scan the QR it prints.
+   app on the phone, set its custom server URL to
+   `https://happy.zachd.duckdns.org` (tailnet only — the phone needs Tailscale
+   up), then in tmux run `happy`. **Do not scan the QR**: the pod now reaches
+   the relay over the cluster-local Service, so a QR minted here carries an
+   in-cluster address the phone cannot resolve. Set the URL by hand.
    Pairing keys land in `~/.happy` on the PVC. From then on, `happy` instead
    of `claude` = same session, controllable from the phone with push
    notifications for permission prompts.

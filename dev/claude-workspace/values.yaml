@@ -113,11 +113,31 @@ ingress:
   enabled: false
   className: traefik
   host: claude.zachd.duckdns.org
-  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared).
-  # TLS for these terminates at Cloudflare, so they are NOT in the ACME cert
-  # list. Requires a one-time Public Hostname entry in the CF dashboard.
-  cloudflareHosts:
-    - claude.diemer.codes
+  # DELIBERATELY EMPTY — this host is tailnet-only, and must stay that way.
+  #
+  # It used to publish claude.diemer.codes over the Cloudflare tunnel. What
+  # that meant in practice: a ttyd web terminal on a pod holding a cluster-
+  # admin ClusterRoleBinding (templates/rbac.yaml) and the repo checkout's
+  # every values.local.yaml, reachable from the open internet, with the
+  # `auth.forwardAuth.enabled` boolean below as the only thing in the way.
+  # One flag, one middleware-name typo, or one Authelia misconfiguration
+  # between the internet and cluster-admin is not a defensible number.
+  #
+  # Now that infra/duckdns is in `mode: tailnet`, the host above resolves to a
+  # 100.x address that the public internet cannot route, so reaching this
+  # requires being on the tailnet FIRST and then passing Authelia. Two
+  # independent gates, which is the right number for a root shell.
+  #
+  # Re-adding a Cloudflare host here re-opens that path in one line. Don't,
+  # without a second gate that does not depend on this chart's own values.
+  #
+  # Removing the entry from THIS list is only half the delisting: the tunnel's
+  # Public Hostname entry lives in the Cloudflare dashboard (Zero Trust ->
+  # Networks -> Tunnels), and until it is deleted there, CF still accepts the
+  # request and forwards it to a Traefik that no longer has a matching router.
+  # That is a 404 rather than an outage, so nothing tells you it is still
+  # configured.
+  cloudflareHosts: []
   tls:
     enabled: true
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
@@ -125,14 +145,26 @@ ingress:
 
 happy:
   # Relay URL for the happy CLI (HAPPY_SERVER_URL on the term container).
-  # Public URL on purpose — the QR pairing flow may embed it, and the phone
-  # can only reach the public host; pod egress rides the 443-to-public rule
-  # via hairpin NAT. If hairpin ever breaks, switch to the cluster-local
-  # Service (the netpol already allows it):
-  #   serverUrl: "http://happy-server.happy.svc.cluster.local:3005"
-  # — but then the app must be pointed at the public host manually, never
-  # via a scanned URL.
-  serverUrl: "https://happy.zachd.duckdns.org"
+  #
+  # CLUSTER-LOCAL, NOT THE PUBLIC HOST. This used to be the public URL, on the
+  # reasoning that the QR pairing flow may embed it and the phone can only
+  # reach a public address — with pod egress riding the 443-to-public rule via
+  # hairpin NAT. dev/happy-server is now tailnet-only (its cloudflareHosts is
+  # empty), so that reasoning no longer describes reality: leaving this pointed
+  # at a public hostname that no longer exists would break the daemon on the
+  # next restart, for a delisting that has nothing to do with this pod.
+  #
+  # Pointing at the Service instead DECOUPLES the two paths, which is the
+  # actual win: the pod reaches the relay over the cluster network and the
+  # phone reaches it over the tailnet, so neither can break the other. The
+  # netpol already allows this hop — it was written as the documented fallback
+  # for exactly this case.
+  #
+  # CONSEQUENCE, unchanged from when this was the fallback: the app must be
+  # pointed at the tailnet host (happy.zachd.duckdns.org) BY HAND, never via a
+  # scanned QR code — a QR minted here now carries a cluster-internal address
+  # the phone cannot resolve.
+  serverUrl: "http://happy-server.happy.svc.cluster.local:3005"
   daemon:
     # Run `happy daemon` as an always-on supervised sidecar so the Happy app
     # can spawn NEW sessions in any ~/code dir the moment the pod is up — no
