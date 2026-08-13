@@ -1548,17 +1548,27 @@ cmd_backup() {
   # Retention. Names are ISO-8601 UTC, so a lexical sort is a chronological one.
   # Prune only AFTER the new archive is verified, so a failed run never costs an
   # old good copy.
-  local -a archives; local old n
+  local -a archives; local old n pruned=0
   mapfile -t archives < <(smbclient "$NAS_SHARE" -A "$NAS_CREDS" -c "cd ${NAS_DIR}; ls" 2>/dev/null \
     | grep -oE 'selfhosted-secrets-[0-9]{8}T[0-9]{6}Z\.tar\.gz\.age' | sort -u)
   n=${#archives[@]}
   if [[ $n -gt $KEEP ]]; then
     for old in "${archives[@]:0:$((n - KEEP))}"; do
-      smbclient "$NAS_SHARE" -A "$NAS_CREDS" -c "cd ${NAS_DIR}; del ${old}" >/dev/null 2>&1 \
-        && echo "    pruned ${old}"
+      if smbclient "$NAS_SHARE" -A "$NAS_CREDS" -c "cd ${NAS_DIR}; del ${old}" >/dev/null 2>&1; then
+        echo "    pruned ${old}"; pruned=$((pruned + 1))
+      else
+        # A prune that fails is not fatal — the archive it could not delete is a
+        # spare copy, not a missing one — but it must not vanish into the count
+        # below and read as retention working.
+        echo "    WARNING: could not prune ${old}" >&2
+      fi
     done
   fi
-  note "${n} archive(s) on the NAS, keeping ${KEEP}"
+  # n is the pre-prune listing, so reporting it said "21 archive(s) on the NAS,
+  # keeping 20" on the same line it had just deleted one. Subtract what actually
+  # went, rather than re-listing: a second ls is another round trip, and it would
+  # report whatever a concurrent run had done in between as if it were this one's.
+  note "$((n - pruned)) archive(s) on the NAS, keeping ${KEEP}"
 }
 
 cmd_restore() {

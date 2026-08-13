@@ -12,6 +12,11 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v18: picks up the NAS retention count fix in scripts/secrets.sh. Inert in
+  #      the pod (it cannot reach the NAS and never backs up), rebuilt anyway:
+  #      a copy that lags its source is precisely what v17 exists to complain
+  #      about, and leaving it to warn about a change that does not affect it
+  #      is how a warning stops being read.
   # v17: the bundled `secrets` CLI can now tell it has gone stale — it carries
   #      the sha256 of the sources it was cut from and says so when the pod's
   #      checkout has moved past it. v16 fixed the drift; this is what stops
@@ -51,7 +56,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v17"
+  tag: "v18"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
