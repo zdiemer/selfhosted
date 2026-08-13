@@ -63,6 +63,40 @@ else
 fi
 HAVE_REPO=$([[ -n "$ROOT" ]] && echo 1 || echo 0)
 
+# ------------------------------------------------------- bundle staleness
+#
+# The generated CLI (scripts/build-secrets-cli.sh) is a COPY of this file, so it
+# freezes discovery — EXCLUDE_FILES, EXTRA_FILES, GATE2_SKIP, every fix — at the
+# moment it was built. Nothing used to say so. Both copies drifted at once and
+# stayed wrong for days: ~/.local/bin/secrets and the claude-workspace image
+# were built before web/apartment-watch was deprecated, so both kept resolving
+# two archived vault items and aborting the NAS archive over them, while
+# scripts/secrets.sh in the checkout had excluded them the whole time. The
+# symptom named a chart; the cause was the delivery.
+#
+# So the bundle carries the hash of the sources it was cut from, and says
+# something when a checkout it can see has moved on. A WARNING, not a failure:
+# a checkout sitting a commit ahead of the image is normal (the pod's usually
+# is), and refusing to run would make the tool useless exactly when you are
+# using it to fix that.
+BUNDLE_SRC_HASH="${BUNDLE_SRC_HASH:-}"
+
+warn_if_bundle_stale() {
+  [[ -n "$BUNDLE_SRC_HASH" && $HAVE_REPO -eq 1 ]] || return 0
+  local s="${ROOT}/scripts"
+  # A tree without the sources (SELFHOSTED_ROOT pointed at a chart-only
+  # checkout) can say nothing about staleness, and must not guess.
+  [[ -f "$s/secrets.sh" && -f "$s/op-session.sh" && -f "$s/lib/op-signin-pty.py" ]] || return 0
+  local now
+  now="$(cat "$s/secrets.sh" "$s/op-session.sh" "$s/lib/op-signin-pty.py" | sha256sum | cut -d' ' -f1)"
+  [[ "$now" == "$BUNDLE_SRC_HASH" ]] && return 0
+  # stderr, so a caller reading this tool's stdout is unaffected.
+  echo "secrets: WARNING — this bundle was built from different sources than ${s}/secrets.sh." >&2
+  echo "         Discovery and every fix since that build are missing here. Rebuild with:" >&2
+  echo "           ${ROOT}/scripts/build-secrets-cli.sh --install" >&2
+  echo "         and rebuild the claude-workspace image if the pod's copy matters." >&2
+}
+
 # Refuse clearly rather than producing an empty result from an empty tree.
 need_repo() {
   [[ $HAVE_REPO -eq 1 ]] && return 0
@@ -1624,6 +1658,8 @@ done
 
 SCRATCH="$(mktemp -d /dev/shm/secrets.XXXXXX)"
 chmod 700 "$SCRATCH"
+
+warn_if_bundle_stale
 
 case "$CMD" in
   sync)    cmd_sync ;;

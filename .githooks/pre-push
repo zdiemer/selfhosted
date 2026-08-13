@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Run the CI checks before the push, not after it.
+#
+# CI already catches these. That was never the problem: dev/claude-workspace
+# shipped Chart.yaml appVersion v14 against image.tag v15 for three consecutive
+# pushes, check-appversion-drift.sh failed the run every one of those times, on
+# main, and nobody looked. Nothing about pushing to this repo reports back, and
+# a red X on a commit you have already moved past is not a notification. So the
+# same scripts run here, where a failure can still stop something.
+#
+# Enable it — tracked hooks are not automatic, once per clone:
+#
+#   git config core.hooksPath .githooks
+#
+# `git push --no-verify` skips the lot, for when you know and mean it.
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# helm is what every chart check is built on. Without it these would all "pass"
+# by not running, which is worse than saying so and getting out of the way.
+if ! command -v helm >/dev/null 2>&1; then
+  echo "pre-push: helm not found — chart checks skipped, CI still runs them" >&2
+  exit 0
+fi
+
+CHECKS=(
+  scripts/ci-lint-charts.sh
+  scripts/check-appversion-drift.sh
+  scripts/ci-lint-availability.sh
+  scripts/ci-lint-dashboards.sh
+)
+
+failed=()
+for check in "${CHECKS[@]}"; do
+  [[ -x "$check" ]] || continue
+  # Quiet while it passes; the whole point is that it is cheap enough to leave
+  # on. Output is kept and printed only for what actually failed.
+  if ! out="$("$check" 2>&1)"; then
+    failed+=("$check")
+    printf '\n=== %s ===\n%s\n' "$check" "$out" >&2
+  fi
+done
+
+# severity=error only, matching .github/workflows/lint.yml — parse errors and
+# outright bugs, not style. Skipped silently when shellcheck is not installed:
+# it is the one check here with an external dependency CI provides and a laptop
+# may not.
+if command -v shellcheck >/dev/null 2>&1; then
+  if ! out="$(git ls-files '*.sh' | xargs shellcheck --severity=error 2>&1)"; then
+    failed+=("shellcheck")
+    printf '\n=== shellcheck ===\n%s\n' "$out" >&2
+  fi
+fi
+
+if (( ${#failed[@]} )); then
+  printf '\npre-push: %d check(s) failed: %s\n' "${#failed[@]}" "${failed[*]}" >&2
+  printf 'Fix them, or push with --no-verify if you mean to.\n' >&2
+  exit 1
+fi
+
+exit 0

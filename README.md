@@ -215,3 +215,27 @@ repo stays the full index of what runs on the cluster. Clone with
   which also means npm only ever runs in the build, so the submodule worktree is
   never dirtied. Everything else — GHCR, `build.sh`, `upgrade.sh`, appVersion
   tracking `image.tag` — is the same shape.
+- **The lint checks run before the push, not just after it.**
+  [`.github/workflows/lint.yml`](.github/workflows/lint.yml) has always run
+  `ci-lint-charts.sh`, `check-appversion-drift.sh`, `ci-lint-availability.sh`
+  and `ci-lint-dashboards.sh` on every push to `main` — and nothing about this
+  repo reports a red run back to anyone, so `dev/claude-workspace` sat at
+  `appVersion: v14` against `image.tag: v15` through three consecutive failing
+  runs. [`.githooks/pre-push`](.githooks/pre-push) runs the same scripts locally
+  (~15s, quiet unless something fails). Enable it once per clone:
+
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+
+  `git push --no-verify` bypasses it deliberately.
+- **Anything generated from `scripts/` says so when it goes stale.** The
+  `secrets` CLI is a bundle of `scripts/secrets.sh` cut at build time
+  ([`scripts/build-secrets-cli.sh`](scripts/build-secrets-cli.sh)), living both
+  in `~/.local/bin` and in the claude-workspace image — so it freezes discovery
+  and every fix at that moment. Both copies once drifted behind a chart
+  deprecation and spent days failing on vault items that no longer existed. The
+  bundle now carries the sha256 of its sources and warns on stderr when a
+  checkout it can see has moved past it. Rebuild with
+  `scripts/build-secrets-cli.sh --install`, and rebuild the workspace image
+  (`dev/claude-workspace/build.sh`) for the pod's copy.

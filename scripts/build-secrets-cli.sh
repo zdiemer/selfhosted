@@ -32,6 +32,14 @@ mkdir -p "$(dirname "$OUT")"
 # nested heredoc would mangle, and base64 has no such failure mode.
 PTY_B64="$(base64 -w0 < "${ROOT}/scripts/lib/op-signin-pty.py")"
 
+# What this bundle was cut from, so it can notice later that it is behind. The
+# copy has no other way to know: it is a file on PATH with no link back to the
+# tree it came from. secrets.sh's warn_if_bundle_stale recomputes exactly this,
+# over exactly these three files in exactly this order — keep the two in step.
+SRC_HASH="$(cat "${ROOT}/scripts/secrets.sh" \
+                "${ROOT}/scripts/op-session.sh" \
+                "${ROOT}/scripts/lib/op-signin-pty.py" | sha256sum | cut -d' ' -f1)"
+
 {
   cat <<'HEADER'
 #!/usr/bin/env bash
@@ -61,6 +69,11 @@ HEADER
 
   printf '\nbase64 -d <<%s > "$_SC_DIR/op-signin-pty.py"\n%s\nPTY_EOF\nchmod 700 "$_SC_DIR/op-signin-pty.py"\n' \
     "'PTY_EOF'" "$PTY_B64"
+
+  # Set before secrets.sh is appended; its own `BUNDLE_SRC_HASH="${BUNDLE_SRC_HASH:-}"`
+  # keeps this value rather than blanking it. Empty when run from the checkout,
+  # which is how the staleness check knows it is looking at a bundle at all.
+  printf '\n# sha256 of scripts/secrets.sh + op-session.sh + lib/op-signin-pty.py at build time.\nBUNDLE_SRC_HASH=%s\n' "$SRC_HASH"
 
   # op-session.sh, verbatim, with its own helper path pointed at the extract.
   printf '\ncat <<%s > "$_SC_DIR/op-session.sh"\n' "'OPSESSION_EOF'"
