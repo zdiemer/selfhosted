@@ -23,6 +23,8 @@
       "Write(web/whatnowgg/**)",
       "Edit(web/talaria/**)",
       "Write(web/talaria/**)",
+      "Edit(web/diemer-codes/**)",
+      "Write(web/diemer-codes/**)",
       "Edit(web/old-diemer-codes/site/**)",
       "Write(web/old-diemer-codes/site/**)"
     ],
