@@ -48,9 +48,16 @@ BODY="$(printf '%s failed on %s\n\n%s' "$UNIT" "$(hostname -s)" "${DETAIL:-no jo
 # with no state to keep here.
 IDEM="${UNIT}-$(date -u +%Y%m%dT%H)"
 
-python3 - "$SMS_RELAY_URL" "$SMS_RELAY_KEY" "$ALERT_TO" "$BODY" "$IDEM" <<'PY'
-import json, sys, urllib.request, urllib.error
-url, key, to, body, idem = sys.argv[1:6]
+# SMS_RELAY_KEY comes through the ENVIRONMENT, not argv. `set -a` above already
+# exported it, so putting it on the command line was both redundant and the more
+# exposed of the two: /proc/<pid>/cmdline is world-readable, while
+# /proc/<pid>/environ is readable only by the owning user. Every other secret in
+# this repo is kept off argv for the same reason — see the note in
+# scripts/lib/op-signin-pty.py, which takes file paths rather than values.
+python3 - "$SMS_RELAY_URL" "$ALERT_TO" "$BODY" "$IDEM" <<'PY'
+import json, os, sys, urllib.request, urllib.error
+url, to, body, idem = sys.argv[1:5]
+key = os.environ["SMS_RELAY_KEY"]
 req = urllib.request.Request(
     url.rstrip("/") + "/api/v1/messages",
     data=json.dumps({"to": to, "body": body, "idempotency_key": idem}).encode(),
