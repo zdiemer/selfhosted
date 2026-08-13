@@ -53,8 +53,21 @@ ARG OP_VERSION=2.38.1
 # (gateway/ + the signal-cli pod container). Signal's servers reject stale
 # clients, so bump this deliberately but don't let it rot — a too-old client
 # stops receiving. Registration state lives on the PVC (~/.local/share/signal-cli).
+#
+# ⚠️ HELD AT 0.14.6: 0.14.7 added "Set width/height on outgoing image
+# attachments" (AsamK/signal-cli#2093), which reads the image through
+# javax.imageio — and the GraalVM NATIVE build ships no ImageIO/AWT at all.
+# So on 0.14.7 every outgoing image dies with "Can't load library: awt
+# (UnsatisfiedLinkError)", or "Could not initialize class javax.imageio.ImageIO"
+# when the type is declared. Text and non-image attachments are unaffected,
+# which is why this only showed up the first time a photo was sent.
+# Before bumping, send yourself a photo from chat and confirm it arrives as an
+# image rather than a "MacBinary archive" file card. The JVM distribution
+# (signal-cli-<v>.tar.gz + a Java 21 runtime) is the other way out, and would
+# even shrink the image ~200MB, but it replaces the daemon this surface talks
+# over — not worth it to recover a dimensions field.
 # renovate: datasource=github-releases depName=AsamK/signal-cli extractVersion=^v(?<version>.+)$
-ARG SIGNAL_CLI_VERSION=0.14.7
+ARG SIGNAL_CLI_VERSION=0.14.6
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
