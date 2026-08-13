@@ -20,7 +20,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LOCAL_VALUES="${HERE}/values.local.yaml"
+# The Grafana service-account token comes from 1Password into memory and never
+# onto a disk. See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
 DASHBOARD_DIR="${HERE}/dashboards"
 ALERT_FILE="${HERE}/alerts/rules.json"
 FOLDER_TITLE="${FOLDER_TITLE:-selfhosted}"
@@ -38,25 +40,19 @@ done
 command -v curl    >/dev/null || { echo "curl required"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
 
-# Same convenience as every other chart here: materialize from 1Password when
-# the file is missing. values.local.yaml remains the contract.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
-
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "missing ${LOCAL_VALUES}"
-  echo "  cp values.local.yaml.example values.local.yaml   # then add the Grafana service-account token"
+sv_load "$HERE" || exit 1
+if ! sv_has; then
+  echo "no Grafana credentials resolved from 1Password"
+  echo "  check with:  ./scripts/secrets.sh check infra/grafana-dashboards"
   exit 1
 fi
 
+# Reads the document off stdin rather than a path: every call gets its own fresh
+# pipe from sv_fd, which is what makes calling this twice safe.
 read_cfg() {
-  python3 -c "
+  sv_fd | python3 -c "
 import sys, yaml
-d = yaml.safe_load(open('${LOCAL_VALUES}')) or {}
+d = yaml.safe_load(sys.stdin) or {}
 v = str((d.get('grafana') or {}).get('$1', ''))
 if not v or 'REPLACE_ME' in v or v.startswith('glsa_0000'):
     sys.exit(1)
@@ -64,15 +60,20 @@ print(v.rstrip('/'))
 "
 }
 
-GRAFANA_URL="$(read_cfg url)" || { echo "FAIL: grafana.url is unset or still a placeholder in ${LOCAL_VALUES}"; exit 1; }
-GRAFANA_TOKEN="$(read_cfg token)" || { echo "FAIL: grafana.token is unset or still a placeholder in ${LOCAL_VALUES}"; exit 1; }
+GRAFANA_URL="$(read_cfg url)" || { echo "FAIL: grafana.url is unset or still a placeholder in the vault item"; exit 1; }
+GRAFANA_TOKEN="$(read_cfg token)" || { echo "FAIL: grafana.token is unset or still a placeholder in the vault item"; exit 1; }
 
 # Never put the token on a command line: argv is world-readable in /proc and
 # lands in shell history. curl reads it from a file descriptor instead.
-AUTH_HEADER_FILE="$(mktemp)"
+# sv_file, not mktemp: mktemp lands in /tmp, which is ext4 on this machine, so
+# the bearer token was being written to a disk by the very code that exists to
+# keep it off argv. sv_file is tmpfs and 0600.
+AUTH_HEADER_FILE="$(sv_file auth-header)"
 cleanup() { rm -f "$AUTH_HEADER_FILE" "${TMP_FILES[@]:-}"; }
 TMP_FILES=()
-trap cleanup EXIT
+# sv_trap_add, not trap: a bare `trap ... EXIT` replaces the helper's own
+# cleanup and would leave the tmpfs directory behind.
+sv_trap_add cleanup
 printf 'Authorization: Bearer %s\n' "$GRAFANA_TOKEN" >"$AUTH_HEADER_FILE"
 
 api() {
@@ -133,7 +134,7 @@ fi
 # way these files rot: the UID is per-stack, so a committed one is wrong for
 # anybody else and silently wrong after a stack migration.
 echo "==> resolving datasource UIDs"
-DS_JSON="$(mktemp)"; TMP_FILES+=("$DS_JSON")
+DS_JSON="$(sv_mktemp ds)"; TMP_FILES+=("$DS_JSON")
 api GET /api/datasources >"$DS_JSON"
 
 eval "$(python3 - "$DS_JSON" <<'PY'
@@ -243,7 +244,7 @@ fi
 FOLDER_UID="selfhosted"
 if [[ "$(api_code GET "/api/folders/${FOLDER_UID}")" != "200" ]]; then
   echo "==> creating folder '${FOLDER_TITLE}'"
-  BODY="$(mktemp)"; TMP_FILES+=("$BODY")
+  BODY="$(sv_mktemp body)"; TMP_FILES+=("$BODY")
   printf '{"uid":"%s","title":"%s"}' "$FOLDER_UID" "$FOLDER_TITLE" >"$BODY"
   api POST /api/folders "$BODY" >/dev/null
 fi
@@ -256,7 +257,7 @@ PUSHED=()
 for f in "$DASHBOARD_DIR"/*.json; do
   [[ -e "$f" ]] || continue
   name="$(basename "$f")"
-  BODY="$(mktemp)"; TMP_FILES+=("$BODY")
+  BODY="$(sv_mktemp body)"; TMP_FILES+=("$BODY")
 
   # overwrite:true is what makes a re-push an update rather than a conflict.
   # The dashboard's own `version` is stripped for the same reason: keeping it
@@ -306,7 +307,7 @@ if [[ -f "$ALERT_FILE" ]]; then
   #   plus an X-API-Key header — matching scripts/notify-failure.sh, which is
   #   how the systemd timers already text on failure.
   echo "==> ensuring the 'unwired' contact point exists"
-  CP_BODY="$(mktemp)"; TMP_FILES+=("$CP_BODY")
+  CP_BODY="$(sv_mktemp cp-body)"; TMP_FILES+=("$CP_BODY")
   cat >"$CP_BODY" <<'JSON'
 {
   "uid": "unwired",
@@ -326,7 +327,7 @@ JSON
   echo "==> provisioning alert rules"
   RULE_COUNT="$(python3 -c "import json;print(len(json.load(open('${ALERT_FILE}'))))")"
   for i in $(seq 0 $((RULE_COUNT - 1))); do
-    BODY="$(mktemp)"; TMP_FILES+=("$BODY")
+    BODY="$(sv_mktemp body)"; TMP_FILES+=("$BODY")
     substitute "$ALERT_FILE" | python3 -c "
 import json, sys
 rules = json.load(sys.stdin)
@@ -366,7 +367,7 @@ fi
 if [[ "$VERIFY" -eq 1 ]]; then
   echo "==> verifying panel queries against live data"
   for f in "${PUSHED[@]}"; do
-    QUERIES="$(mktemp)"; TMP_FILES+=("$QUERIES")
+    QUERIES="$(sv_mktemp queries)"; TMP_FILES+=("$QUERIES")
     substitute "$f" >"$QUERIES"
     python3 - "$QUERIES" "$GRAFANA_URL" "$AUTH_HEADER_FILE" <<'PY'
 import json, subprocess, sys, time

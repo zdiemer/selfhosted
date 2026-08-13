@@ -31,26 +31,17 @@ SECRET="alloy-grafana-cloud"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 PROBE_VALUES="${HERE}/values-probe.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
-
-# Materialize values.local.yaml from 1Password when it's missing and a template
-# exists. Convenience only: values.local.yaml is still the contract, so this
-# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
-# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
-
+# The five Grafana Cloud credentials come from 1Password into memory and never
+# onto a disk. See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "missing ${LOCAL_VALUES}"
-  echo "  cp values.local.yaml.example values.local.yaml   # then add the Grafana Cloud token"
+if ! sv_has; then
+  echo "no Grafana Cloud credentials resolved from 1Password"
+  echo "  check with:  ./scripts/secrets.sh check infra/alloy"
   exit 1
 fi
 
@@ -59,10 +50,12 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 # Pull the five credential fields out of values.local.yaml. They go into a
 # Secret rather than into the chart values so they never land in the rendered
 # ConfigMap, which is world-readable to anyone with namespace access.
+# Reads the document off stdin rather than a path: this is called eight times
+# below, and each call gets its own fresh pipe from sv_fd.
 read_cred() {
-  python3 -c "
+  sv_fd | python3 -c "
 import sys, yaml
-d = yaml.safe_load(open('${LOCAL_VALUES}')) or {}
+d = yaml.safe_load(sys.stdin) or {}
 v = str((d.get('grafanaCloud') or {}).get('$1', ''))
 # Reject the literal values shipped in values.local.yaml.example. '123456' is
 # the one that actually bit: it looks like a real instance ID, so it survives a
@@ -77,7 +70,7 @@ print(v)
 
 for f in lokiUrl lokiUser promUrl promUser token; do
   if ! read_cred "$f" >/dev/null; then
-    echo "FAIL: grafanaCloud.${f} is unset or still an example placeholder in ${LOCAL_VALUES}"
+    echo "FAIL: grafanaCloud.${f} is unset or still an example placeholder in the vault item"
     echo
     echo "  The two instance IDs are DIFFERENT numbers and are easy to conflate:"
     echo "    lokiUser -> grafana.com -> your stack -> Loki  -> Send Logs    -> 'User'"
@@ -94,12 +87,27 @@ if [[ "$(read_cred lokiUser)" == "$(read_cred promUser)" ]]; then
 fi
 
 echo "==> writing Secret ${SECRET} in ${NAMESPACE}"
+# --from-file, NOT --from-literal: argv is world-readable in /proc for as long
+# as kubectl runs, so --from-literal published all five credentials — including
+# the Grafana Cloud token — to every user on the box. --from-file takes the key
+# from the basename, so the Secret's shape is unchanged. The directory is in the
+# same tmpfs as everything else this run and goes away with it.
+# printf '%s' "$(...)", not a plain redirect. read_cred ends in python's print(),
+# so a direct redirect writes "value\n" and --from-file keeps that newline INSIDE
+# the secret — where --from-literal stripped it via command substitution. A
+# Grafana Cloud token with a trailing newline authenticates against nothing, and
+# the failure surfaces as HTTP 530 from the push endpoint rather than as
+# anything that mentions whitespace.
+CRED_DIR="$(sv_scratch grafana-cloud)"
+for f in lokiUrl lokiUser promUrl promUser token; do
+  ( umask 077; printf '%s' "$(read_cred "$f")" > "${CRED_DIR}/${f}" )
+done
 kubectl create secret generic "$SECRET" -n "$NAMESPACE" \
-  --from-literal=lokiUrl="$(read_cred lokiUrl)" \
-  --from-literal=lokiUser="$(read_cred lokiUser)" \
-  --from-literal=promUrl="$(read_cred promUrl)" \
-  --from-literal=promUser="$(read_cred promUser)" \
-  --from-literal=token="$(read_cred token)" \
+  --from-file="${CRED_DIR}/lokiUrl" \
+  --from-file="${CRED_DIR}/lokiUser" \
+  --from-file="${CRED_DIR}/promUrl" \
+  --from-file="${CRED_DIR}/promUser" \
+  --from-file="${CRED_DIR}/token" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 echo "==> helm repo add grafana"

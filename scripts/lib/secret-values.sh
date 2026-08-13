@@ -119,11 +119,22 @@ sv_scratch() {
   chmod 700 "$d"; printf '%s\n' "$d"
 }
 
-# An empty 0600 file inside this run's tmpfs. Replaces `mktemp` — as in
-# infra/grafana-dashboards/upgrade.sh:72, which held a Grafana bearer token.
+# An empty 0600 file inside this run's tmpfs, at a name you choose. Replaces
+# `mktemp` — as in infra/grafana-dashboards/upgrade.sh:72, which held a Grafana
+# bearer token in /tmp, i.e. on ext4.
 sv_file() {
   local f="${SV_DIR}/${1:?sv_file needs a name}"
   ( umask 077; : > "$f" ) || return 1
+  printf '%s\n' "$f"
+}
+
+# The same thing with a unique name, for call sites inside a loop where a fixed
+# name would have two live users at once. This is the drop-in for a bare
+# `mktemp`, which would otherwise put the file on whatever /tmp happens to be.
+sv_mktemp() {
+  local f
+  f="$(mktemp "${SV_DIR}/${1:-t}.XXXXXX")" || return 1
+  chmod 600 "$f"
   printf '%s\n' "$f"
 }
 
