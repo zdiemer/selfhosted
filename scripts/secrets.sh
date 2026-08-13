@@ -91,10 +91,15 @@ warn_if_bundle_stale() {
   now="$(cat "$s/secrets.sh" "$s/op-session.sh" "$s/lib/op-signin-pty.py" | sha256sum | cut -d' ' -f1)"
   [[ "$now" == "$BUNDLE_SRC_HASH" ]] && return 0
   # stderr, so a caller reading this tool's stdout is unaffected.
-  echo "secrets: WARNING — this bundle was built from different sources than ${s}/secrets.sh." >&2
-  echo "         Discovery and every fix since that build are missing here. Rebuild with:" >&2
-  echo "           ${ROOT}/scripts/build-secrets-cli.sh --install" >&2
-  echo "         and rebuild the claude-workspace image if the pod's copy matters." >&2
+  # Deliberately does not claim which side is older. It cannot tell from a hash,
+  # and both directions happen: a laptop editing scripts/ leaves its installed
+  # copy behind, while a pod whose checkout has not been pulled is behind its
+  # own image. Saying "you are missing fixes" would be wrong half the time.
+  echo "secrets: WARNING — this copy was built from different sources than ${s}/secrets.sh," >&2
+  echo "         so discovery here is not what that tree says. Move whichever is older:" >&2
+  echo "           ${ROOT}/scripts/build-secrets-cli.sh --install   # rebuild this copy" >&2
+  echo "           git -C ${ROOT} pull                              # or catch the tree up" >&2
+  echo "         The pod's copy comes from the image (dev/claude-workspace/build.sh)." >&2
 }
 
 # Refuse clearly rather than producing an empty result from an empty tree.

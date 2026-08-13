@@ -4,7 +4,7 @@ description: Always-on Claude Code workspace pod — ttyd/tmux web terminal + ba
 type: application
 version: 0.3.0
 # appVersion tracks the workspace image tag in values.yaml (image.tag).
-appVersion: "v16"
+appVersion: "v17"
 sources:
   - https://github.com/slopus/happy
   - https://github.com/tsl0922/ttyd

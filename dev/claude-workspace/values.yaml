@@ -12,6 +12,10 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v17: the bundled `secrets` CLI can now tell it has gone stale — it carries
+  #      the sha256 of the sources it was cut from and says so when the pod's
+  #      checkout has moved past it. v16 fixed the drift; this is what stops
+  #      the pod's copy from drifting again unnoticed.
   # v16: rebuilds the bundled `secrets` CLI, which had drifted from its source.
   #      The bundle is generated at build time, so it freezes scripts/ as of
   #      the last image build — v15 shipped a copy from before apartment-watch
@@ -47,7 +51,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v16"
+  tag: "v17"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
