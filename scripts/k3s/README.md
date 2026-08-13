@@ -73,3 +73,63 @@ Drain-based operations move pods around. Per the root README's convention, don't
 roll nodes hosting the Minecraft server while players are on — use
 [`minecraft/upgrade.sh`](../../minecraft/upgrade.sh) to flush the world first, or
 pick an offline window.
+
+## Secrets encryption at rest
+
+Enabled 2026-08-13 on all three servers. Every Secret in etcd is AES-CBC
+encrypted, including the ~405 that predated it.
+
+**The procedure is not the one in the k3s docs' single-server example, and
+getting it wrong takes a control-plane node down.** Each server that starts with
+`secrets-encryption: true` and no existing config GENERATES ITS OWN KEY. In HA
+that is fatal on contact: the first server encrypts `k3s-serving`, the second
+cannot decrypt what its peer wrote, and its apiserver fails to list Secrets and
+never finishes starting —
+
+    failed to decrypt data: invalid padding on input
+    cacher (secrets): unexpected ListAndWatch error ... reinitializing...
+
+To enable it, or to bring a rebuilt server back in:
+
+```sh
+# 1. On a server that already has it, copy BOTH cred files to the new one.
+#    Both. See below.
+ssh root@<new-server> 'systemctl stop k3s'
+sudo cat /var/lib/rancher/k3s/server/cred/encryption-config.json \
+  | ssh root@<new-server> 'install -m600 /dev/stdin \
+      /var/lib/rancher/k3s/server/cred/encryption-config.json'
+
+# 2. Only then set the flag and start.
+ssh root@<new-server> '
+  grep -q secrets-encryption /etc/rancher/k3s/config.yaml 2>/dev/null \
+    || echo "secrets-encryption: true" >> /etc/rancher/k3s/config.yaml
+  systemctl start k3s'
+
+# 3. Every server must agree before any rotation will run.
+sudo k3s secrets-encrypt status      # expect: All hashes match
+sudo k3s secrets-encrypt reencrypt --force
+# then restart the OTHER servers so they pick up the finished stage.
+```
+
+**`encryption-state.json` is the one that bites.** It is a separate file next to
+the config, it is not JSON despite the name, and it records the hash k3s
+publishes as the `k3s.io/encryption-config-hash` node annotation. Replace the
+config alone and the node keeps advertising the OLD hash forever — `status` says
+`hash does not match`, every rotation is refused, and nothing in the logs
+explains why. Restarting does not refresh it; deleting the annotation does not
+either, because k3s rewrites it from that file.
+
+The fix is to remove `encryption-state.json` (keeping the config) and restart:
+k3s regenerates the state from the key it already has rather than minting a new
+one. Verified — the config hash was unchanged across the restart.
+
+Reading the truth without sudo, which is often faster than logging in:
+
+```sh
+kubectl get node <server> -o jsonpath='{.metadata.annotations.k3s\.io/encryption-config-hash}'
+```
+
+The stage prefix is part of the value (`start-<hash>`,
+`reencrypt_finished-<hash>`), so servers mid-rotation differ legitimately. Compare
+the hash AFTER the prefix; if those match, only the stage is lagging and a
+restart settles it.
