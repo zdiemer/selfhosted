@@ -305,6 +305,18 @@ if [[ "$MEDIA_RELAY" == "true" ]]; then
     "${HERE}/caddy-media.Caddyfile.template" > /etc/caddy/Caddyfile
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || {
     echo "FAIL: Caddy rejected the config"; caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; exit 1; }
+  # AFTER validate, and that ordering is the entire point.
+  #
+  # `caddy validate` runs as root here and does not merely parse — it
+  # instantiates the config's log writer, which CREATES /var/log/caddy/access.log
+  # owned by root:root mode 0600. The service then starts as the `caddy` user,
+  # cannot open its own log file, and exits 1 with `permission denied`. The
+  # install -d above is not enough: it fixes the directory, and validate then
+  # creates a file inside it that the directory's ownership says nothing about.
+  #
+  # Found the hard way — this took the media lane down on the first run that
+  # added an access log.
+  chown -R caddy:caddy /var/log/caddy
   systemctl enable caddy >/dev/null 2>&1 || true
   systemctl restart caddy
   systemctl is-active --quiet caddy && echo "    caddy running" || {
@@ -357,7 +369,14 @@ if [[ "$CROWDSEC" == "true" ]]; then
   #
   # `cscli collections install` is idempotent and quiet about already-installed
   # items, so this is safe on every re-run.
-  for c in crowdsecurity/sshd crowdsecurity/caddy crowdsecurity/base-http-scenarios \
+  #
+  # `cscli setup` (run by the installer) already installs sshd, caddy, haproxy
+  # and linux, so most of this list is a no-op confirming what is there. The two
+  # that it does NOT infer from the running services are http-cve and
+  # base-http-scenarios — generic HTTP attack patterns, which is precisely what
+  # a public Caddy needs and what service detection cannot know to want.
+  for c in crowdsecurity/sshd crowdsecurity/caddy crowdsecurity/haproxy \
+           crowdsecurity/base-http-scenarios \
            crowdsecurity/http-cve crowdsecurity/whitelist-good-actors; do
     cscli collections install "$c" >/dev/null 2>&1 || echo "    WARN: could not install $c"
   done
