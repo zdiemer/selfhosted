@@ -17,6 +17,11 @@ The exception is [`scripts/k3s/`](scripts/k3s/), which isn't a project: it
 operates on the nodes themselves (health, disk cleanup, rolling restarts, OS
 and k3s upgrades) over `tailscale ssh`, so it lives at the repo root.
 
+[`plans/`](plans/) is the other non-project folder: designs that are decided but
+not yet deployed, usually blocked on hardware or a maintenance window. A plan is
+deleted once its work ships and the reasoning has moved into the READMEs it
+touched.
+
 Some projects live in their own repo and are tracked here as submodules, so this
 repo stays the full index of what runs on the cluster. Clone with
 `git clone --recurse-submodules`; an existing clone catches up with
