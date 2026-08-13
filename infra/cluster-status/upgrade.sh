@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Apply the cluster-status chart.
 #
-# This page is public, so the deploy check is deliberately about what's being
-# published, not just whether pods came up: it prints what the collector is
-# actually writing into status.json before you walk away.
+# The deploy check is deliberately about what's being published, not just
+# whether pods came up: it prints what the collector is actually writing into
+# status.json before you walk away.
+#
+# That check was written when the page was public and is if anything MORE
+# useful now that it is tailnet-only, because the way this page becomes a
+# problem again is a quiet re-listing. The reachability line below reads the
+# live Ingress rather than assuming, so re-adding a Cloudflare host shows up
+# here on the very next deploy.
 
 set -euo pipefail
 
@@ -42,7 +48,7 @@ if ! $K exec "$POD" -c collector -- test -f /data/status.json 2>/dev/null; then
   exit 1
 fi
 
-# Read the payload the collector produced and say plainly what is now public.
+# Read the payload the collector produced and say plainly what is now readable.
 # Deliberately prints the field list: if a `publish.*` flag was meant to be off,
 # this is where you'd notice it isn't.
 echo "==> What the page is publishing"
@@ -60,8 +66,21 @@ print("    workloads:    %d deploy / %d sts / %d ds" % (
 print("    events:       %d warning(s)" % len(d.get("recentEvents") or []))
 print("    node fields:  %s" % ", ".join(sorted(n.keys())))
 print("")
-print("    PUBLIC - anyone can read all of the above at the URLs below.")
 '
+
+# Say who can actually read it, derived from the live Ingress hosts rather than
+# asserted. A host that is not *.duckdns is on the tunnel, i.e. public.
+PUBLIC_HOSTS="$($K get ingress "$RELEASE" -o jsonpath='{.spec.rules[*].host}' \
+  | tr ' ' '\n' | grep -v '\.duckdns\.org$' || true)"
+if [[ -n "$PUBLIC_HOSTS" ]]; then
+  echo ""
+  echo "    !! PUBLIC - anyone on the internet can read all of the above at:"
+  echo "$PUBLIC_HOSTS" | sed 's/^/       https:\/\//'
+  echo "    If that is not deliberate, see ingress.cloudflareHosts in values.yaml."
+else
+  echo ""
+  echo "    Tailnet only - readable by anyone on the tailnet, not the internet."
+fi
 
 echo "==> Ingress"
 $K get ingress "$RELEASE"
