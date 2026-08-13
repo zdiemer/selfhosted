@@ -16,29 +16,24 @@ RELEASE="${RELEASE:-duckdns}"
 NAMESPACE="${NAMESPACE:-infra}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
-
-# Materialize values.local.yaml from 1Password when it's missing and a template
-# exists. Convenience only: values.local.yaml is still the contract, so this
-# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
-# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
+# The secrets are resolved from 1Password into memory for the life of this run
+# and never written to a disk. Each helm call spells out its own `-f <(sv_fd)`
+# rather than carrying it in VALUE_ARGS: that fd is a pipe, readable once, so a
+# shared one would hand the second reader an empty values file. See
+# scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
 
 VALUE_ARGS=(-f "$VALUES")
-[[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
 K="kubectl -n ${NAMESPACE}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "missing ${LOCAL_VALUES} — copy values.local.yaml.example and add the DuckDNS token"
+if ! sv_has; then
+  echo "no DuckDNS token resolved from 1Password — every cert in the cluster renews with this."
+  echo "  check with:  ./scripts/secrets.sh check infra/duckdns"
   exit 1
 fi
 
@@ -46,7 +41,7 @@ fi
 # values.local.yaml override still points the adoption at the right place. The
 # second Secret copy is the only thing this chart still puts outside its own
 # namespace — the Traefik config itself moved to infra/traefik.
-TRAEFIK_NS="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" \
+TRAEFIK_NS="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) \
   -s templates/secret.yaml 2>/dev/null \
   | awk '/^  namespace:/ {print $2}' | grep -v "^${NAMESPACE}$" | head -1)"
 TRAEFIK_NS="${TRAEFIK_NS:-kube-system}"
@@ -97,7 +92,7 @@ if kubectl get helmchartconfig traefik -n "$TRAEFIK_NS" >/dev/null 2>&1; then
 fi
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
 
 # The CronJob only proves itself on its own schedule, which is up to 5 minutes
 # away. Force one now so a broken token fails here, in front of you, rather

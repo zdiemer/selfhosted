@@ -24,9 +24,12 @@ RELEASE="${RELEASE:-traefik}"
 NAMESPACE="${NAMESPACE:-infra}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
+# The CrowdSec bouncer key comes from 1Password into memory and never onto a
+# disk. See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
+
 VALUE_ARGS=(-f "$VALUES")
-[[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
@@ -38,7 +41,10 @@ command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 # document" the first time a second template joined the chart. Same shape as
 # the strategy keys elsewhere in this repo: a fix that reads as applied and
 # isn't.
-render() { helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" "$@"; }
+# `-f <(sv_fd)` lives INSIDE the function, not in VALUE_ARGS: render() is called
+# four times below, and a process substitution evaluated once would be an
+# exhausted pipe by the second call. Here each invocation opens a fresh one.
+render() { helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) "$@"; }
 # The chart renders more than one document now (the edge-ratelimit Middleware
 # joined the HelmChartConfig), and everything below that parses rendered YAML
 # line-by-line assumes exactly one. Scope those to the one template they mean.
@@ -149,7 +155,7 @@ if kubectl get helmchartconfig "$HCC_NAME" -n "$HCC_NS" >/dev/null 2>&1; then
 fi
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
 
 if [[ "$REDEPLOY" == "1" ]]; then
   # helm-controller runs the actual Traefik upgrade as a Job, asynchronously —
