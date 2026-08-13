@@ -31,6 +31,9 @@ TEMPLATE_SKIP=(
   infra/egress-proxy
   infra/k8up
   infra/renovate
+  # Added dee5b0d, which made crowdsec.bouncerKey a `required` — templating from
+  # tracked values alone has failed since, and this list is where that belongs.
+  infra/traefik
   media/arr
   web/apartment-watch
   web/kelsey-green
