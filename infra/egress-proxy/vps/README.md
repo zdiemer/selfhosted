@@ -243,6 +243,25 @@ control.
   global, so without it one source can take every slot and lock out real players
   — a denial of service that never reaches the Minecraft whitelist, because the
   whitelist lives on the far side of a connection that was never established.
+- **The box can only reach two ports on the tailnet.** The input chain was
+  always careful about who may reach this box; nothing was careful about what
+  this box may reach, and it shares a tailnet with ten cluster nodes, the NAS
+  and every personal device. It is simultaneously the most exposed machine here
+  — public sshd, public HTTPS, public game port — and, until now, one with
+  unrestricted L3 access to all of them. Tailscale SSH's own auth is a real
+  control for *logging in* to a node; it does nothing about this box opening
+  `:6443` on the API server or `:445` on the NAS.
+
+  The output chain now permits only `25565` (haproxy → the Minecraft pod) and
+  `30096` (Caddy → the jellyfin NodePort) toward `tailscale0`, plus ICMP and
+  established flows. Everything else into the tailnet is dropped; outbound to
+  the internet stays open, because being a forward proxy is the job.
+
+  Verified after applying: both relay ports reachable, and `:6443`/`:22` on a
+  node and `:445`/`:80` on the NAS all blocked. Applied behind a
+  `systemd-run --on-active=300` auto-revert so a mistake would have restored
+  itself, since inbound Tailscale SSH is answered *from* this chain and getting
+  it wrong locks you out of the box the rule protects.
 - **The firewall no longer flushes the whole ruleset.** `nftables.conf` resets
   only `table inet egress`. It used to open with `flush ruleset`, which was
   harmless with one firewall on the box and became a real bug the moment
