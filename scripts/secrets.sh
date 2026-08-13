@@ -939,22 +939,32 @@ cmd_sync() {
 
 # ------------------------------------------------------- cluster relay
 
+# MATERIALIZES FROM THE VAULT, rather than copying whatever happens to be lying
+# around. It used to `cp` each discovered file off the disk, which was fine while
+# every secret was also a file — and became a silent hole the moment they were
+# not: with the files gone, discover_local yields nothing, the files/ half of the
+# archive is empty, and the tar still builds and still uploads and still passes
+# its read-back check. A backup that quietly drops half its content is the one
+# failure mode a backup must not have; this script's own header says so.
+#
+# Driven off discover_pairs (templates), not discover_local (files), so what
+# lands in the archive is what the VAULT can produce — which is exactly what a
+# restore would give you back.
 pack_bundle() {
-  local dest="$1" tmp f name
+  local dest="$1" tmp logical tpl out name missing=0
   tmp="$(scratch)"
   mkdir -p "$tmp/files"
-  while IFS= read -r f; do
-    mkdir -p "$tmp/files/$(dirname "$f")"
-    cp -p "${ROOT}/${f}" "$tmp/files/$f"
-  done < <(discover_local)
-  if [[ $INCLUDE_EXTERNAL -eq 1 ]]; then
-    for name in "${EXTERNAL_REPOS[@]}"; do
-      if [[ -f "${EXTERNAL_BASE}/${name}/values.local.yaml" ]]; then
-        mkdir -p "$tmp/external/$name"
-        cp -p "${EXTERNAL_BASE}/${name}/values.local.yaml" "$tmp/external/$name/"
-      fi
-    done
-  fi
+  while IFS=$'\t' read -r logical tpl out; do
+    [[ -n "$logical" ]] || continue
+    mkdir -p "$tmp/files/$(dirname "$logical")"
+    if inject_probe "$tpl" "$tmp/files/$logical"; then
+      chmod 600 "$tmp/files/$logical"
+    else
+      note "WARNING: ${logical} could not be resolved — omitted from the archive"
+      missing=$((missing+1))
+    fi
+  done < <(discover_pairs)
+  [[ $missing -eq 0 ]] || die "${missing} secret(s) unresolvable; refusing to write a partial archive"
   # Exclude MANIFEST from its own listing: the shell creates it at redirect time,
   # so find would catch it mid-write and record a hash that never matches. A
   # wrong hash in the integrity record is worse than no entry.
