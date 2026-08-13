@@ -694,7 +694,23 @@ cmd_new() {
   # import, not push: push only EDITS an item that already exists, and it also
   # writes and stages the template — which is the artifact that makes the secret
   # visible to every other machine.
-  ITEM_OVERRIDE="$title" PUSH_FROM="$f" cmd_import "$logical"
+  #
+  # WHICH TREE GETS THE TEMPLATE. For an app-repo chart, $dir is the standalone
+  # clone, because that is the tree its own upgrade.sh runs from and the tree
+  # where a commit can actually be made. Handing import the repo-relative path
+  # would target the SUBMODULE checkout instead — which submodules-lock.sh keeps
+  # at 0555, so the write fails AFTER the vault item has been created, leaving an
+  # item with no template. That orphan state is exactly what made
+  # web/diemer-codes invisible to check, status and every backup.
+  #
+  # import's out-of-repo branch handles this: an absolute path outside $ROOT
+  # writes the template beside it, and --item keeps the vault name matching the
+  # submodule path so a deploy from either tree resolves the same reference.
+  if [[ "$dir" == "$ROOT"/* ]]; then
+    ITEM_OVERRIDE="$title" PUSH_FROM="$f" cmd_import "$logical"
+  else
+    ITEM_OVERRIDE="$title" PUSH_FROM="$f" cmd_import "${dir}/$(field_label "$logical")"
+  fi
 }
 
 # Keys only unless asked otherwise. A terminal is not a safe sink for a secret:
@@ -742,12 +758,20 @@ cmd_import() {
     # must be named for the SUBMODULE path, because the same committed template
     # is what a deploy from selfhosted/games/gamedex reads. Hence --item.
     if [[ "$f" = /* && "$f" != "$ROOT"/* ]]; then
-      src="$f"
+      # --from-file applies here too: `new` for an app-repo chart resolves the
+      # buffer in tmpfs and names the destination in the clone, which does not
+      # exist yet by definition.
+      src="${PUSH_FROM:-$f}"
       [[ -f "$src" ]] || die "no such file: $src"
       [[ -n "$ITEM_OVERRIDE" ]] \
         || die "$src is outside the repo — pass --item <title> so it matches the submodule path"
-      title="$ITEM_OVERRIDE"; label="$(field_label "$src")"
-      tplabs="$(dirname "$src")/$([[ "$label" == values.local.yaml ]] && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
+      # Derived from $f, the NAMED DESTINATION, never from $src. With --from-file
+      # those differ: src is a tmpfs buffer, and deriving the template path from
+      # it writes the template into tmpfs, where it evaporates — leaving a vault
+      # item with no template, which is the invisible-secret state this whole
+      # change exists to prevent.
+      title="$ITEM_OVERRIDE"; label="$(field_label "$f")"
+      tplabs="$(dirname "$f")/$([[ "$label" == values.local.yaml ]] && echo values.local.tpl.yaml || echo "${label%.yaml}.tpl.yaml")"
     else
       f="${f#"$ROOT"/}"; f="${f#./}"
       # --from-file: the bytes may live in tmpfs (see cmd_new). The path
