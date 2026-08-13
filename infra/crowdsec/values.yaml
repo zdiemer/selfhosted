@@ -23,6 +23,67 @@
 # k3s runs containerd — the raw-log parser needs to know (docker vs cri format).
 container_runtime: containerd
 
+# ---------------------------------------------------------------------------
+# Whitelist — the prerequisite for ever enforcing
+# ---------------------------------------------------------------------------
+# THIS MUST LAND BEFORE A BOUNCER DOES, not with it. While CrowdSec is
+# detection-only a false positive is a row in a table; the moment anything
+# enforces, the same false positive is an outage, and the ranges below are
+# exactly the ones whose loss you would feel: the tunnel, the LAN, the tailnet.
+#
+# Mounted into the agent pods as a parser in s02-enrich (see config.parsers
+# below). A whitelist at the PARSER stage drops the event before any scenario
+# counts it, so a whitelisted source cannot accumulate toward a decision at all
+# — as opposed to being banned and then ignored, which still fills the
+# decisions table with noise you learn to scroll past.
+#
+# WHY EACH RANGE:
+#
+#   10.42.0.0/16   the pod CIDR. Traefik's ClientHost is frequently an internal
+#                  hop rather than the real origin — cloudflared pods on the
+#                  tunnel path, klipper-lb SNAT on the direct one. infra/traefik
+#                  sets forwardedHeaders.trustedIPs so the real client IP is
+#                  recovered from X-Forwarded-For / CF-Connecting-IP, and the
+#                  live alerts confirm it works (every decision so far names a
+#                  real public address). But if that config is ever lost or
+#                  mis-set, EVERY request looks like it comes from a cloudflared
+#                  pod, and the first scenario to fire bans the tunnel itself —
+#                  taking down every public host at once. This range is the
+#                  guard against a self-inflicted total outage.
+#   10.43.0.0/16   the service CIDR, same reasoning for in-cluster callers.
+#   192.168.4.0/24 the node LAN. Also what klipper-lb SNATs to.
+#   100.64.0.0/10  the tailnet. Every host worth reaching is now tailnet-only,
+#                  so this is the range that carries all of our own traffic —
+#                  and the recovery path if a decision ever needs removing.
+#   127.0.0.1      loopback, for completeness; health probes and Traefik's own
+#                  internal routers.
+#
+# Deliberately NOT here: the Cloudflare edge ranges. Requests arriving from
+# Cloudflare carry the real client in CF-Connecting-IP, which is what the
+# parser reads — whitelisting CF's own addresses would be whitelisting the
+# entire internet that reaches us through the tunnel.
+#
+# NOTE ON SHAPE: this is an upstream chart driven values-only (no local
+# Chart.yaml, see upgrade.sh), so there is nothing here that can template a
+# friendlier `whitelist:` block into place. The key below is the chart's own
+# (`config.parsers.s02-enrich`) and the value is the literal parser file
+# CrowdSec will load. Inventing a nicer-looking key would render nothing and
+# report nothing — the same silent no-op this repo keeps running into.
+config:
+  parsers:
+    s02-enrich:
+      trusted-networks.yaml: |
+        name: home-k3s/trusted-networks
+        description: "Never ban cluster-internal hops, the LAN, or the tailnet"
+        whitelist:
+          reason: "cluster-internal hops, the LAN, and the tailnet"
+          cidr:
+            - "10.42.0.0/16"
+            - "10.43.0.0/16"
+            - "192.168.4.0/24"
+            - "100.64.0.0/10"
+            - "127.0.0.1/32"
+
 agent:
   # Which pod logs the DaemonSet tails from /var/log/containers on each node.
   # Traefik is the cluster's single ingress choke point, so this one program is
