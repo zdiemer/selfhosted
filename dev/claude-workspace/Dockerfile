@@ -66,6 +66,21 @@ ARG OP_VERSION=2.38.1
 # (signal-cli-<v>.tar.gz + a Java 21 runtime) is the other way out, and would
 # even shrink the image ~200MB, but it replaces the daemon this surface talks
 # over — not worth it to recover a dimensions field.
+#
+# The pin alone was not enough: 0.14.7 had already run once, and it migrates
+# account.db to schema 30 (0.14.6 tops out at 28). A downgraded daemon then
+# refuses to start — "Database has been updated by a newer signal-cli version",
+# CrashLoopBackOff on the signal-cli container only. Fixed by rolling the
+# schema marker back on the PVC:
+#   sqlite3 ~/.local/share/signal-cli/data/<acct>.d/account.db \
+#     'PRAGMA user_version = 28;'
+# Safe here because migrations 29/30 are purely additive (sticker storage-sync
+# columns + recipient.pni_signature_verified, all NOT NULL DEFAULT or nullable)
+# and every 0.14.6 INSERT names its columns. So the DB now carries 0.14.7's
+# columns while claiming 28 — going FORWARD again would re-run 29/30 and die on
+# "duplicate column name". Set user_version back to 30 before any bump past
+# 0.14.6, and back it up first: k8up snapshots this PVC, but the Signal
+# registration is not re-creatable without a fresh SMS verify.
 # renovate: datasource=github-releases depName=AsamK/signal-cli extractVersion=^v(?<version>.+)$
 ARG SIGNAL_CLI_VERSION=0.14.6
 
