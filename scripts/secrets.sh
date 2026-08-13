@@ -59,6 +59,28 @@ EXTRA_FILES=("web/apartment-watch/criteria.yaml")
 # cluster DNS logging and restart CoreDNS.
 EXCLUDE_FILES=("infra/coredns-config/values.local.yaml")
 
+# Charts whose GATE2 render needs inputs beyond values.yaml + the secret, so the
+# generic render in cmd_verify cannot stand them up and a plain failure would be
+# a lie. Same idea as TEMPLATE_SKIP in scripts/ci-lint-charts.sh, and the same
+# rule applies: this list is for charts the GATE cannot express, never for
+# charts that are actually broken.
+#
+#   infra/democratic-csi   renders twice, once per driver, each needing its own
+#                          -f values-<driver>.yaml; without one the chart fails
+#                          on `csiDriver.name is required`.
+#   web/apartment-watch    criteria arrives via --set-file from tmpfs (see its
+#                          upgrade.sh), so a render without it hits the
+#                          templates/configmap.yaml `fail` guard.
+GATE2_SKIP=(
+  "infra/democratic-csi"
+  "web/apartment-watch"
+)
+gate2_skipped() {
+  local d="$1" s
+  for s in "${GATE2_SKIP[@]}"; do [[ "$d" == "$s" ]] && return 0; done
+  return 1
+}
+
 # Apps whose charts live in their own repo and deploy from a standalone clone
 # (README §Conventions). Their secrets are outside this checkout entirely.
 #
@@ -683,11 +705,28 @@ PY
 # here and for the standalone app clones. (This used to be two near-identical
 # functions, verify_one and verify_abs, differing only in whether they prepended
 # $ROOT; making every path absolute collapsed them.) Gate 2 is cmd_verify.
+# GATE 1: can the vault produce this secret, and — if a local file still exists —
+# does it reproduce that file byte for byte?
+#
+# THE MISSING-FILE CASE IS SUCCESS, NOT FAILURE. This used to `cmp` against $out
+# with no existence check, so a chart with no local file reported
+# "GATE1 FAIL (differs)" and GATE2 told you not to commit a template that was
+# perfectly correct. That was harmless while every secret was also a file. It
+# stopped being harmless the moment the files were deleted: not-materialized is
+# now the NORMAL state for all thirty charts, so verify failed on a completely
+# healthy fleet — and a check that cries wolf every time is one you stop reading,
+# which costs more than not having it.
 verify_one() {
   local tpl="$1" out="$2" tmp rc=0
   tmp="$(scratch)"
   if ! inject_probe "$tpl" "$tmp/probe"; then rm -rf "$tmp"; echo "    GATE1 FAIL (unresolvable)"; return 1; fi
-  if cmp -s "$out" "$tmp/probe"; then echo "    GATE1 byte-exact"; else echo "    GATE1 FAIL (differs)"; rc=1; fi
+  if [[ ! -f "$out" ]]; then
+    echo "    GATE1 resolves (nothing on disk to compare — expected)"
+  elif cmp -s "$out" "$tmp/probe"; then
+    echo "    GATE1 byte-exact"
+  else
+    echo "    GATE1 FAIL (differs from the on-disk file)"; rc=1
+  fi
   rm -rf "$tmp"; return $rc
 }
 
@@ -816,14 +855,36 @@ cmd_verify() {
       echo "    GATE2 skipped (values-only project — render against the upstream chart by hand)"
       continue
     fi
+    if gate2_skipped "$(dirname "$logical")"; then
+      echo "    GATE2 skipped (render needs inputs this gate does not supply — see GATE2_SKIP)"
+      continue
+    fi
     inject_probe "$tpl" "$tmp/probe" || { rc=1; continue; }
-    if diff -q \
-        <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$out" 2>/dev/null) \
-        <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$tmp/probe" 2>/dev/null) >/dev/null; then
-      echo "    GATE2 render-identical"
+    if [[ -f "$out" ]]; then
+      # Migration gate: the vault and the file must render the same manifests.
+      if diff -q \
+          <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$out" 2>/dev/null) \
+          <(helm template gate "$dir" -f "${dir}/values.yaml" -f "$tmp/probe" 2>/dev/null) >/dev/null; then
+        echo "    GATE2 render-identical"
+      else
+        echo "    GATE2 FAIL — rendered manifests differ. Do NOT commit this template."
+        rc=1
+      fi
     else
-      echo "    GATE2 FAIL — rendered manifests differ. Do NOT commit this template."
-      rc=1
+      # Steady state: there is no file to compare against, so the question is
+      # simply whether what the vault produces renders at all. A chart that
+      # renders EMPTY is the failure worth catching — that is what a `required`
+      # gate silently passing, or a vault field gone blank, looks like from here.
+      if [[ -s "$tmp/render" ]] || helm template gate "$dir" -f "${dir}/values.yaml" -f "$tmp/probe" > "$tmp/render" 2>/dev/null; then
+        if [[ -s "$tmp/render" ]]; then
+          echo "    GATE2 renders from the vault ($(wc -l < "$tmp/render") lines)"
+        else
+          echo "    GATE2 FAIL — renders empty from the vault"; rc=1
+        fi
+      else
+        echo "    GATE2 FAIL — does not render from the vault"; rc=1
+      fi
+      rm -f "$tmp/render"
     fi
     rm -f "$tmp/probe"
   done < <(discover_pairs)
