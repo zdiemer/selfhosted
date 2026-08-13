@@ -11,18 +11,14 @@ RELEASE="${RELEASE:-k8up}"
 NAMESPACE="${NAMESPACE:-k8up}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
-
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-# Materialize from 1Password when missing, as the other charts do.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
+# The restic repository password comes from 1Password into memory and never onto
+# a disk. Each reader below gets its own `<(sv_fd)` — that fd is a pipe, good for
+# exactly one read. See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
 
 # ------------------------------------------------------------------------------
 # Pre-flight 1: the repository password
@@ -31,15 +27,15 @@ fi
 # path: without it every backup on the NAS is unreadable ciphertext, however
 # intact the files are. Losing it is strictly worse than having no backups,
 # because you will believe you are covered.
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "FAIL: missing ${LOCAL_VALUES}"
-  echo "      cp values.local.yaml.example values.local.yaml, generate a password"
-  echo "      (openssl rand -base64 32), then:"
-  echo "        ./scripts/secrets.sh import infra/k8up/values.local.yaml"
+if ! sv_has; then
+  echo "FAIL: no restic password resolved from 1Password."
+  echo "      check with:  ./scripts/secrets.sh check infra/k8up"
   exit 1
 fi
-if grep -q 'CHANGE-ME' "$LOCAL_VALUES"; then
-  echo "FAIL: restic.password is still the placeholder in ${LOCAL_VALUES}"
+if sv_fd | grep -q 'CHANGE-ME'; then
+  echo "FAIL: restic.password is still the placeholder in the vault item"
+  echo "      op://homelab/infra-k8up/values.local.yaml — generate one with"
+  echo "      openssl rand -base64 32 and:  ./scripts/secrets.sh edit infra/k8up"
   exit 1
 fi
 
@@ -50,7 +46,7 @@ if ! kubectl get secret -n "$NAMESPACE" k8up-restic-password >/dev/null 2>&1; th
   echo "    (no existing repository password in-cluster — first install)"
 else
   LIVE="$(kubectl get secret -n "$NAMESPACE" k8up-restic-password -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)"
-  WANT="$(grep -A2 '^restic:' "$LOCAL_VALUES" | sed -n 's/^ *password: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' | head -1)"
+  WANT="$(sv_fd | grep -A2 '^restic:' | sed -n 's/^ *password: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' | head -1)"
   if [[ -n "$LIVE" && -n "$WANT" && "$LIVE" != "$WANT" ]]; then
     echo "FAIL: restic.password differs from the one already in the cluster."
     echo "      Applying it would not re-key the repository — it would start a new"
@@ -89,7 +85,7 @@ echo "==> helm dependency update"
 helm dependency update "$HERE" >/dev/null
 
 echo "==> helm upgrade --install ${RELEASE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f "$LOCAL_VALUES" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
 
 echo "==> Waiting for the operator"
 kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}" --timeout=300s

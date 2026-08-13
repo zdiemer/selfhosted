@@ -1,12 +1,21 @@
 {{/*
-criteria.yaml is gitignored (it carries the alert phone number and a personal
-shortlist of neighbourhoods), so a fresh clone won't have it. Fail loudly here
-rather than mounting an empty file and running a search with no criteria —
-config.load() would reject it anyway, but the error is much clearer from here.
+criteria carries the alert phone number and a personal shortlist of
+neighbourhoods, so it is never in git and never on a disk. upgrade.sh resolves
+it from 1Password into tmpfs and passes it with --set-file, which is why
+.Values.criteria comes first here.
+
+.Files.Get stays as the fallback for a fresh clone that copied
+criteria.example.yaml by hand, and because it only sees files inside the chart
+directory it is also the reason this value exists at all — it is the one input
+in this repo that a process substitution cannot satisfy.
+
+Either way, refuse to render on empty rather than mounting a blank config and
+running a search with no criteria. config.load() would reject it too, but the
+error is much clearer from here.
 */}}
-{{- $criteria := .Files.Get "criteria.yaml" }}
+{{- $criteria := .Values.criteria | default (.Files.Get "criteria.yaml") }}
 {{- if not $criteria }}
-{{- fail "criteria.yaml not found. Copy criteria.example.yaml to criteria.yaml and fill it in (it is gitignored on purpose)." }}
+{{- fail "no criteria. Run ./upgrade.sh (resolves it from 1Password), or copy criteria.example.yaml to criteria.yaml (gitignored on purpose)." }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap

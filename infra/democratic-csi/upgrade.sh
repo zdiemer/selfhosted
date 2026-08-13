@@ -19,24 +19,18 @@ NAMESPACE="${NAMESPACE:-democratic-csi}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
-
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-# Materialize values.local.yaml from 1Password when missing, same as
-# infra/cloudflared. No-ops without `op` — values.local.yaml is still the
-# contract, and scripts/secrets.sh publish feeds the claude-workspace pod.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
+# The TrueNAS API key comes from 1Password into memory and never onto a disk.
+# Each reader gets its own `<(sv_fd)`; that fd is a pipe, good for one read.
+# See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
 
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "FAIL: missing ${LOCAL_VALUES}"
-  echo "      cp values.local.yaml.example values.local.yaml and add the TrueNAS API key"
+if ! sv_has; then
+  echo "FAIL: no TrueNAS API key resolved from 1Password."
+  echo "      check with:  ./scripts/secrets.sh check infra/democratic-csi"
   exit 1
 fi
 
@@ -115,7 +109,7 @@ fi
 # democratic-csi creates a CHILD dataset per volume; it does not create the
 # parents. A missing parent shows up as a PVC that stays Pending with the real
 # reason buried in the controller log.
-API_KEY="$(awk '/apiKey:/ {gsub(/"/,"",$2); print $2; exit}' "$LOCAL_VALUES" 2>/dev/null || true)"
+API_KEY="$(sv_fd | awk '/apiKey:/ {gsub(/"/,"",$2); print $2; exit}' 2>/dev/null || true)"
 echo "==> Pre-flight: parent datasets"
 if [[ -z "$API_KEY" ]]; then
   echo "    SKIP: could not read apiKey from values.local.yaml"
@@ -161,7 +155,7 @@ for driver in iscsi nfs; do
   helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" --cleanup-on-fail \
     -f "$VALUES" \
     -f "${HERE}/values-${driver}.yaml" \
-    -f "$LOCAL_VALUES"
+    -f <(sv_fd)
 
   echo "==> Waiting for ${RELEASE} rollout"
   kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}-controller" --timeout=300s

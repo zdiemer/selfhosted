@@ -16,47 +16,42 @@ RELEASE="${RELEASE:-apartment-watch}"
 NAMESPACE="${NAMESPACE:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
+# This chart owns TWO secret files, and they reach helm by different routes.
+# Both are resolved from 1Password into memory; neither touches a disk.
+#
+#   values.local.yaml  the sms-relay API key       -> -f <(sv_fd)
+#   criteria.yaml      phone number + shortlist    -> --set-file
+#
+# criteria.yaml used to be read off disk by templates/configmap.yaml through
+# .Files.Get, which only sees files INSIDE the chart directory — the one place a
+# pipe genuinely cannot substitute for a path. It is now passed as a value, with
+# .Files.Get kept as the fresh-clone fallback (see templates/configmap.yaml).
+# --set-file is a single read, so a tmpfs path rather than a process
+# substitution: the validator below reads it a second time.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE"          || exit 1
+sv_load "$HERE" criteria || exit 1
 
-# Materialize values.local.yaml from 1Password when it's missing and a template
-# exists. Convenience only: values.local.yaml is still the contract, so this
-# no-ops without `op` — e.g. in the claude-workspace pod, which is fed by
-# `scripts/secrets.sh publish` instead. See values.local.tpl.yaml.
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "$LOCAL_VALUES"
-fi
-
-# criteria.yaml is read off disk by templates/configmap.yaml via .Files.Get, so
-# it must exist before helm runs — same contract as a -f file.
-if [[ ! -f "${HERE}/criteria.yaml" && -f "${HERE}/criteria.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing criteria.yaml from 1Password"
-  op inject -i "${HERE}/criteria.tpl.yaml" -o "${HERE}/criteria.yaml" \
-    || { echo "FAIL: op inject failed. Signed in?  eval \$(op signin)"; exit 1; }
-  chmod 600 "${HERE}/criteria.yaml"
-fi
+CRITERIA="$(sv_file criteria.yaml)"
+sv_fd criteria > "$CRITERIA"
 
 VALUE_ARGS=(-f "$VALUES")
-[[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
 K="kubectl -n ${NAMESPACE}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-# Both local files are gitignored, so a fresh clone has neither. Say which one
-# is missing instead of letting helm render an empty secret or an empty config.
-if [[ ! -f "${HERE}/criteria.yaml" ]]; then
-  echo "FAIL: criteria.yaml is missing (it's gitignored — it holds your phone"
-  echo "      number and neighbourhood list)."
-  echo "      cp ${HERE}/criteria.example.yaml ${HERE}/criteria.yaml"
+# Say which one the vault could not answer for, rather than letting helm render
+# an empty secret or an empty config.
+if ! sv_has criteria; then
+  echo "FAIL: no criteria resolved from 1Password (phone number + neighbourhood list)."
+  echo "      check with:  ./scripts/secrets.sh check web/apartment-watch"
   exit 1
 fi
-if [[ ! -f "$LOCAL_VALUES" ]]; then
-  echo "FAIL: values.local.yaml is missing — it holds the sms-relay API key."
-  echo "      cp ${HERE}/values.local.yaml.example ${LOCAL_VALUES}"
+if ! sv_has; then
+  echo "FAIL: no values resolved from 1Password — this holds the sms-relay API key."
+  echo "      check with:  ./scripts/secrets.sh check web/apartment-watch"
   exit 1
 fi
 
@@ -68,7 +63,7 @@ if command -v python3 >/dev/null; then
 import sys
 sys.path.insert(0, '${HERE}/src')
 import config
-c = config.load('${HERE}/criteria.yaml')
+c = config.load('${CRITERIA}')
 print(f'    ok: <= \${c.search.max_effective_rent}, {c.search.min_bedrooms}-{c.search.max_bedrooms}br, '
       f'excluding {len(c.exclude_neighborhoods)} neighbourhoods, sources: {\", \".join(c.enabled_sources)}')
 " || { echo "criteria.yaml is invalid — fix it before deploying"; exit 1; }
@@ -113,7 +108,8 @@ fi
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE} $*"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" "$@" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" \
+  -f <(sv_fd) --set-file "criteria=${CRITERIA}" "$@" --cleanup-on-fail
 
 echo "==> CronJob"
 $K get cronjob "$RELEASE"
