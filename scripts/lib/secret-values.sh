@@ -146,14 +146,28 @@ _sv_session() {
 declare -gA SV_YAML_MAP=()
 SV_YAML=""
 
-# _sv_inject <template> -> prints the resolved document on stdout
+# _sv_inject <template> -> sets _SV_OUT, returns nonzero on failure
+#
+# Sets a variable rather than printing, because the caller would otherwise wrap
+# it in another command substitution and strip the trailing newline a second
+# time — the exact byte the `printf x` dance below exists to preserve.
 _sv_inject() {
   local tpl="$1" out
+  _SV_OUT=""
   command -v op >/dev/null 2>&1 || { sv_fail "op not found; cannot resolve ${tpl}"; return 1; }
   _sv_session || { sv_fail "no 1Password session — run: ${SV_ROOT}/scripts/op-session.sh login"; return 1; }
 
-  out="$(op inject -i "$tpl" 2>/dev/null)" \
+  # The trailing 'x' is not a typo. Command substitution strips EVERY trailing
+  # newline, so a plain out="$(op inject ...)" hands helm a document one byte
+  # short of what op produced and of what scripts/secrets.sh writes. Nothing
+  # about helm cares, but "the helper's output is byte-identical to op inject"
+  # is the invariant every gate in this migration is checked against, and an
+  # off-by-one-newline turns those comparisons into noise you learn to ignore.
+  # `exit $rc` is what keeps the || below testing op inject rather than printf,
+  # which would always succeed and make every failure look like a success.
+  out="$(op inject -i "$tpl" 2>/dev/null; rc=$?; printf x; exit $rc)" \
     || { sv_fail "op inject failed for ${tpl}"; return 1; }
+  out="${out%x}"
 
   # The same three assertions scripts/secrets.sh makes in inject_to() before it
   # will replace a working file. They matter MORE here, because there is no
@@ -167,7 +181,7 @@ _sv_inject() {
     printf '%s' "$out" | python3 -c 'import sys,yaml; yaml.safe_load(sys.stdin)' 2>/dev/null \
       || { sv_fail "${tpl} produced invalid YAML (op inject is a raw text substitution)"; return 1; }
   fi
-  printf '%s' "$out"
+  _SV_OUT="$out"
 }
 
 # ------------------------------------------------------------- entry points
@@ -191,9 +205,10 @@ sv_load() {
   fi
 
   sv_note "resolving ${stem}.yaml from 1Password (memory only, this run)"
-  out="$(_sv_inject "$tpl")" || return 1
-  SV_YAML_MAP["$stem"]="$out"
-  [[ "$stem" == "values.local" ]] && SV_YAML="$out"
+  _sv_inject "$tpl" || return 1
+  SV_YAML_MAP["$stem"]="$_SV_OUT"
+  [[ "$stem" == "values.local" ]] && SV_YAML="$_SV_OUT"
+  _SV_OUT=""
   return 0
 }
 

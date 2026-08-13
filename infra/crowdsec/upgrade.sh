@@ -17,17 +17,22 @@ NAMESPACE="${NAMESPACE:-crowdsec}"
 CHART_VERSION="${CHART_VERSION:-0.24.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
-LOCAL_VALUES="${HERE}/values.local.yaml"
-
-if [[ ! -f "$LOCAL_VALUES" && -f "${HERE}/values.local.tpl.yaml" ]] && command -v op >/dev/null 2>&1; then
-  echo "==> materializing values.local.yaml from 1Password"
-  op inject -i "${HERE}/values.local.tpl.yaml" -o "$LOCAL_VALUES" \
-    || { echo "WARN: op inject failed — continuing without console enrollment"; rm -f "$LOCAL_VALUES"; }
-  [[ -f "$LOCAL_VALUES" ]] && chmod 600 "$LOCAL_VALUES"
-fi
+# The console enrolment token and the SMS notifier config come from 1Password
+# into memory, never onto a disk. See scripts/lib/secret-values.sh.
+#
+# sv_load_OPTIONAL, uniquely in this repo. Everywhere else a vault that cannot
+# answer is fatal; here it must not be. Without these values the default profile
+# from values.yaml applies, which bans exactly the same things and notifies
+# nobody — so a run with no vault is still correct and still enforcing, just
+# silent. Making it fatal would take the cluster's enforcement layer offline
+# over a notifier.
+#
+# `-f <(sv_fd)` stays unconditional: when nothing loaded, that pipe is empty, and
+# helm treats an empty values file as no overrides at all (verified).
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load_optional "$HERE" || true
 
 VALUE_ARGS=(-f "$VALUES")
-[[ -f "$LOCAL_VALUES" ]] && VALUE_ARGS+=(-f "$LOCAL_VALUES")
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
@@ -39,7 +44,7 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 
 echo "==> helm upgrade --install ${RELEASE} crowdsec/crowdsec@${CHART_VERSION} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" crowdsec/crowdsec --cleanup-on-fail \
-  --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}"
+  --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd)
 
 echo "==> waiting for the LAPI"
 kubectl -n "$NAMESPACE" rollout status deployment/crowdsec-lapi --timeout=180s
