@@ -634,11 +634,19 @@ print(json.dumps({"title": title, "category": "SECURE_NOTE", "fields": fields}))
 PY
     chmod 600 "$body_json"
 
+    # </dev/null IS LOAD-BEARING, on both verbs. op refuses --template when it
+    # also sees data on stdin ("cannot edit an item from template and stdin at
+    # the same time"), and it decides that by whether stdin is a terminal — not
+    # by whether anything was actually written. Every caller here runs inside
+    # `done < <(discover_pairs)`, so stdin is a pipe; under systemd there is no
+    # tty either. Both conditions are invisible until a push has something to
+    # push, which is why this survived: the timer reported "0 pushed" for days
+    # and then failed the first time a file actually differed.
     if [[ -s "$existing" ]]; then
-      op item edit "$title" --vault "$VAULT" --template "$body_json" >/dev/null \
+      op item edit "$title" --vault "$VAULT" --template "$body_json" >/dev/null </dev/null \
         || die "op item edit failed for ${title}"
     else
-      op item create --vault "$VAULT" --template "$body_json" >/dev/null \
+      op item create --vault "$VAULT" --template "$body_json" >/dev/null </dev/null \
         || die "op item create failed for ${title}"
     fi
 
@@ -768,7 +776,10 @@ fields.append({"id": label, "label": label, "type": "STRING", "value": body})
 print(json.dumps({"title": title, "category": "SECURE_NOTE", "fields": fields}))
 PY
     chmod 600 "$bj"
-    op item edit "$title" --vault "$VAULT" --template "$bj" >/dev/null \
+    # </dev/null: see the note on the same call in cmd_import. This is the site
+    # that actually broke — 2026-08-13, "cannot edit an item from template and
+    # stdin at the same time", every 15 minutes once a file finally differed.
+    op item edit "$title" --vault "$VAULT" --template "$bj" >/dev/null </dev/null \
       || die "push failed for ${f}"
 
     # PROVE IT LANDED. The whole reason this bug survived is that op reported
