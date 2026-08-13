@@ -94,13 +94,26 @@ spec:
               chmod 700 /home/node/.config/selfhosted/messaging-gateway
               {{- end }}
               {{- if .Values.secrets.onePassword.enabled }}
-              # Copied off the projected Secret rather than mounted in place:
-              # op refuses to use a config directory it cannot write, and a
-              # Secret volume is read-only.
-              for f in op-account op-secret-key op-password; do
-                install -m600 "/var/run/op-credentials/$f" "/home/node/.config/selfhosted/$f"
-              done
-              echo "1password credentials staged"
+              # NOT copied onto the PVC any more. The old comment here said op
+              # refuses a config directory it cannot write, which conflated two
+              # directories: these three files are read-only INPUTS to
+              # scripts/op-session.sh and op never opens them. The directory op
+              # needs writable is ~/.config/op, which is still on the PVC.
+              #
+              # The copy mattered because the PVC is a zvol reached over
+              # cleartext iSCSI, so staging them here wrote the account password
+              # across the LAN and left it on a second machine's disk. They are
+              # mounted read-only at /var/run/op-credentials instead, on tmpfs
+              # like every Secret volume, and the containers are pointed at them
+              # with OP_ACCOUNT_FILE / OP_SECRET_KEY_FILE / OP_PASSWORD_FILE —
+              # which op-session.sh has always honoured.
+              #
+              # Leftovers from before this change would keep working and keep
+              # being the copy that gets read, so remove them.
+              rm -f /home/node/.config/selfhosted/op-account \
+                    /home/node/.config/selfhosted/op-secret-key \
+                    /home/node/.config/selfhosted/op-password
+              echo "1password credentials mounted read-only (not staged to the PVC)"
               {{- end }}
               {{- if .Values.secrets.relay.enabled }}
               # Materialize every chart's values.local.yaml from the relay
@@ -180,6 +193,18 @@ spec:
             # fallback — see happy.serverUrl in values.yaml.
             - name: HAPPY_SERVER_URL
               value: {{ .Values.happy.serverUrl | quote }}
+            {{- if .Values.secrets.onePassword.enabled }}
+            # scripts/op-session.sh reads these three paths rather than
+            # ~/.config/selfhosted, so the credentials stay on the read-only
+            # Secret mount and never reach the PVC. The variables are its own
+            # documented interface, so the script needs no change.
+            - name: OP_ACCOUNT_FILE
+              value: /var/run/op-credentials/op-account
+            - name: OP_SECRET_KEY_FILE
+              value: /var/run/op-credentials/op-secret-key
+            - name: OP_PASSWORD_FILE
+              value: /var/run/op-credentials/op-password
+            {{- end }}
           # Endpoint removal races SIGTERM, so Traefik can still route here
           # while the container is shutting down.
           lifecycle:
@@ -206,6 +231,14 @@ spec:
               mountPath: /home/node
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.secrets.onePassword.enabled }}
+            # Only `term` gets these: it is the container a human works in and
+            # the only one that runs scripts/secrets.sh. The others have no use
+            # for vault access, so they do not get it.
+            - name: op-credentials
+              mountPath: /var/run/op-credentials
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources.term | nindent 12 }}
         {{- if .Values.happy.daemon.enabled }}
@@ -615,5 +648,9 @@ spec:
         {{- if .Values.secrets.onePassword.enabled }}
         - name: op-credentials
           secret:
-            secretName: {{ include "claude-workspace.fullname" . }}-1password
+            secretName: {{ include "claude-workspace.opSecretName" . }}
+            # 0400 and read-only. These are inputs to scripts/op-session.sh,
+            # which never writes them; the directory op itself needs writable is
+            # ~/.config/op, which stays on the PVC.
+            defaultMode: 0400
         {{- end }}

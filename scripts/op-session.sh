@@ -108,10 +108,20 @@ write_cached() {
 
 # A credential readable by anyone else on the box makes every other precaution
 # here decorative.
+# Enumerating acceptable modes was wrong in both directions. It rejected 0440,
+# which is what a read-only Kubernetes Secret volume necessarily produces once
+# fsGroup applies — so the claude-workspace pod would die on a perfectly safe
+# file. And it accepted 0400 on a file owned by somebody else, which is not
+# safe at all. The property that actually matters is that no OTHER user can
+# read it.
+# stat -L, not stat: a Kubernetes Secret volume presents each key as a SYMLINK
+# into ..data/, and a symlink's own mode is always 0777. Without -L this reports
+# 777 for a file that is really 0440 and refuses to start.
 check_mode() {
-  local f="$1" mode; mode="$(stat -c '%a' "$f")"
-  [[ "$mode" == "600" || "$mode" == "400" ]] \
-    || die "${f} is mode ${mode} — must be 600. Fix: chmod 600 ${f}"
+  local f="$1" mode; mode="$(stat -Lc '%a' "$f")"
+  (( 8#$mode & 8#007 )) \
+    && die "${f} is mode ${mode} — world-readable. Fix: chmod o-rwx ${f}"
+  return 0
 }
 
 account_known() { op account list 2>/dev/null | grep -q "$ACCOUNT"; }

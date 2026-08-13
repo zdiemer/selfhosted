@@ -22,3 +22,18 @@ Selector labels (stable across upgrades — never include Chart.Version).
 app.kubernetes.io/name: claude-workspace
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{/*
+The Secret holding the three op-session.sh credential files.
+
+Prefers one created out-of-band, so the account password never passes through
+helm values and therefore never lands in sh.helm.release.v1.* — see the note in
+values.yaml. Falls back to the chart-rendered name for a first bootstrap.
+*/}}
+{{- define "claude-workspace.opSecretName" -}}
+{{- if .Values.secrets.onePassword.existingSecret -}}
+{{ .Values.secrets.onePassword.existingSecret }}
+{{- else -}}
+{{ include "claude-workspace.fullname" . }}-1password
+{{- end -}}
+{{- end -}}

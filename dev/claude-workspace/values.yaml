@@ -427,20 +427,35 @@ secrets:
   onePassword:
     # Give the pod its own vault access, so a secret edited HERE reaches
     # 1Password instead of waiting for the laptop to publish over the top of it.
-    # The relay above stays regardless — it is the bootstrap path and needs no
-    # credentials.
-    #
-    # This does put the account password on the PVC. The honest accounting: this
-    # SA is already cluster-admin (templates/rbac.yaml) and can read every
-    # rendered chart Secret, which carries most of these same values; what is
-    # genuinely new is reach into vault items no chart has deployed yet.
-    # Everything is gated behind Authelia. Values belong in values.local.yaml.
     enabled: false
     # Shorthand from `op account list`.
     account: my
+
+    # THE CREDENTIALS DO NOT PASS THROUGH HELM. Name a Secret created
+    # out-of-band and the chart renders none of its own:
+    #
+    #   op read "op://homelab/1password-account/values.local.yaml" \
+    #     | kubectl -n claude create secret generic claude-workspace-1password \
+    #         --from-file=/dev/stdin --dry-run=client -o yaml | kubectl apply -f -
+    #
+    # WHY, since this reverses how it was set up on 2026-08-12: putting the
+    # account password in values.local.yaml made it a managed secret like any
+    # other, which meant it was pushed to the vault as its own item, packed into
+    # the weekly NAS archive, shipped in the relay bundle, and written into
+    # sh.helm.release.v1.* on every upgrade — helm keeps ten of those. The
+    # password to the vault was inside the vault, inside the backup of the
+    # vault, and in ten copies in etcd. scripts/systemd/README.md promises the
+    # opposite: "they are not put inside the thing they protect."
+    #
+    # An existingSecret is the only shape that keeps it out of the helm release
+    # history, because values are what release history stores.
+    existingSecret: ""
+
+    # Only used when existingSecret is empty, which should be never outside a
+    # first bootstrap. Left in so the old path still renders rather than
+    # silently producing a Secret with blank fields.
     address: my.1password.com
     email: ""
-    # Both of these are secrets — set them in values.local.yaml, never here.
     secretKey: ""
     password: ""
 
