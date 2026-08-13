@@ -145,6 +145,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # A read-only digest of public rental listings. No accounts, no writes, and
+    # nothing personal in the page itself — the alert phone number and the
+    # search stipulations live in the gitignored criteria.yaml, never in what is
+    # served.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

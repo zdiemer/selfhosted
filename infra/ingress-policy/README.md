@@ -31,7 +31,22 @@ that will never read this one — is what this chart is for.
 |---|---|---|
 | 1 | `spec.ingressClassName: traefik` | Otherwise the Ingress silently depends on whichever IngressClass is currently the cluster default — invisible in the manifest, and able to change under you. |
 | 2 | `router.entrypoints: websecure` | Otherwise Traefik binds the router to every non-internal entrypoint, so the host also answers unencrypted on `:80`. |
-| 3 | `router.tls.certresolver`, **or** `ingress.zachd/tls-terminates-at-edge: "true"` | Otherwise Traefik falls back to its self-signed default certificate. |
+| 3 | `router.tls.certresolver`, `router.tls: "true"`, **or** `ingress.zachd/tls-terminates-at-edge: "true"` | Otherwise Traefik falls back to its self-signed default certificate. |
+| 4 | a forward-auth middleware, **or** `ingress.zachd/public-unauthenticated: "true"` | Otherwise a service can be published with nothing in front of it, and nothing distinguishes that from an oversight. |
+
+Rule 4 lives in a **separate policy object** (`ingress-policy-auth`) with its own
+binding, because `validationActions` applies to every rule in the policy it
+binds. Rules 1–3 are enforcing; rule 4 would reject 18 of the 24 live Ingresses
+the day it shipped, several of them from repos this one cannot edit. Splitting it
+is what lets it be advisory while the rest stay `Deny` — the same staged path
+rules 1–3 took.
+
+**Rule 4 does not require authentication.** Most of the hosts it flags are right
+not to have it: Authelia cannot sit behind itself, sms-relay's webhook is
+HMAC-signed because a phone cannot log in, Jellyfin's TV apps need the raw API,
+gamedex is published on purpose. It requires an *answer* — a forward-auth
+middleware, or an annotation saying the host is unauthenticated deliberately. The
+failure it catches is silence.
 
 ## The one legitimate exemption
 
@@ -64,6 +79,37 @@ server.
 `failurePolicy: Ignore` for the same reason: if a rule is ever malformed, an
 unevaluatable policy must not become an outage that blocks every Ingress write.
 Drift is a slow problem; not being able to deploy is a fast one.
+
+## What still warns
+
+Thirteen in-repo charts now carry `ingress.zachd/public-unauthenticated: "true"`
+with a per-chart note explaining why. Five remain, all of them Ingresses this
+repo cannot edit — they live in submodules or foreign repos, which is the exact
+drift problem this chart exists for:
+
+| Ingress | Owner |
+|---|---|
+| `discord/smitele-bot-web` | `zdiemer/smitele-bot` submodule |
+| `games/gamedex` | `zdiemer/gamedex` submodule |
+| `infra/sms-relay-webhook` | `zdiemer/sms-relay` submodule |
+| `talaria/talaria` | `zdiemer/talaria`, separate repo |
+| `whatnow/whatnowgg` | separate private repo, redeploys hourly |
+
+Each is believed deliberate — the webhook is HMAC-signed, gamedex is public by
+design, talaria and whatnowgg own their own auth — but "believed" is the word
+rule 4 exists to eliminate. Annotating them is a change in those repos.
+
+`upgrade.sh` reports the count on every run, separately from rules 1–3, so the
+number that gates flipping rule 4 to `Deny` is legible on its own. When it
+reaches zero:
+
+```yaml
+authPolicy:
+  binding:
+    validationActions:
+      - Deny
+      - Audit
+```
 
 ## Advisory first, enforcing later
 

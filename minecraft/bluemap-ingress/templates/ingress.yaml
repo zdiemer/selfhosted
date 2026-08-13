@@ -17,6 +17,11 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # A rendered read-only map of the Minecraft world. Public on purpose — the
+    # point is that friends can open a link — and it exposes nothing but terrain
+    # the players can already see in game.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

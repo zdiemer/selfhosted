@@ -8,6 +8,13 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # RomM has its own login plus optional Authelia OIDC, so a request here is
+    # authenticated by the app rather than at the edge. Deliberately no
+    # forward-auth: auth/authelia's access-control notes explain that a rule for
+    # romm.* would never evaluate, because the request never reaches Authelia's
+    # authz endpoint.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

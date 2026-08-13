@@ -8,6 +8,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # Authelia is the forward-auth provider. It cannot sit behind itself:
+    # gating this host would make the login portal require a login, so every
+    # protected service in the cluster would 302 into a loop. The portal's own
+    # auth is the login form it serves.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

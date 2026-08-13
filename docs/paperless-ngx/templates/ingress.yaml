@@ -8,6 +8,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # Paperless has its own session login and is DuckDNS-only (no
+    # cloudflareHosts), so it is tailnet-reachable rather than public. Its own
+    # auth is the control; forward-auth on top would mean two login prompts for
+    # one document search.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

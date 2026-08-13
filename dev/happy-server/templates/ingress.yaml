@@ -18,6 +18,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # See the header above: the Happy apps speak REST + WebSocket and cannot
+    # complete an interactive forward-auth flow. Security is Happy's own E2E
+    # crypto plus pairing, and the host is tailnet-only precisely because that
+    # is a thinner guarantee than Authelia.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

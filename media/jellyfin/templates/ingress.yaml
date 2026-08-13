@@ -8,6 +8,13 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # TV and phone apps authenticate to Jellyfin's own API and cannot follow a
+    # forward-auth redirect — putting Authelia here breaks every client in the
+    # house. Jellyfin's accounts are the control. This is the most exposed
+    # unauthenticated surface in the estate; it is also the one with the least
+    # choice about it.
+    ingress.zachd/public-unauthenticated: "true"
     # Deliberately NO Authelia forward-auth: native Jellyfin apps (TVs,
     # phones) talk the API directly and can't complete a portal bounce.
     # Jellyfin's own login is the gate.

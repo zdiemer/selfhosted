@@ -75,6 +75,67 @@ rules:
 # entire point of the rule.
 edgeTlsAnnotation: ingress.zachd/tls-terminates-at-edge
 
+# ---------------------------------------------------------------------------
+# RULE 4, IN ITS OWN POLICY: is this host authenticated, or deliberately not?
+# ---------------------------------------------------------------------------
+# The three rules above are about how a host is SERVED — class, entrypoint,
+# certificate. None of them ask the question that actually matters for a new
+# Ingress: is anything in front of it?
+#
+# Nothing did. An Ingress could publish a service to the internet with no
+# forward-auth and no note explaining why, and the cluster would accept it in
+# silence — which is exactly the shape of the whatnowgg drift that created this
+# chart, one layer up. 18 of the 24 live Ingresses carry no forward-auth
+# middleware, and most of them are RIGHT not to: Authelia cannot sit behind
+# itself, sms-relay's webhook is HMAC-signed because a phone cannot complete a
+# login, Jellyfin's TV apps need the raw API, gamedex is published deliberately.
+# The problem was never the absence of auth. It was that "deliberate" and
+# "forgot" looked identical.
+#
+# So this rule does not require auth. It requires an ANSWER: either a
+# forward-auth middleware, or an explicit annotation saying this host is
+# unauthenticated on purpose.
+#
+# WHY A SEPARATE POLICY OBJECT, and not a fourth expression in the one above.
+# `validationActions` lives on the BINDING and applies to every rule in the
+# policy it binds. The rules above are enforcing (Deny) and have been verified
+# against every live Ingress; this one would reject 18 of them today, including
+# Ingresses from repos that cannot see this file — talaria, whatnowgg and the
+# gamedex/smitele-bot submodules are read-only from here, so their charts cannot
+# be annotated by us. Adding this as a fourth expression would silently promote
+# it to Deny and break the next foreign deploy on a rule its authors never read.
+#
+# A second policy with its own binding is what buys the staged rollout: Warn
+# while the in-repo charts get annotated and the foreign ones are chased, then
+# flipped independently, exactly as the rules above were.
+authPolicy:
+  enabled: true
+
+  # The annotation that says "unauthenticated, and that is the decision".
+  # Same spirit as edgeTlsAnnotation above — stated, not inferred.
+  publicAnnotation: ingress.zachd/public-unauthenticated
+
+  # A middleware reference counts as authenticated when its value mentions
+  # forward-auth. Deliberately a substring match rather than an exact name:
+  # every chart here names its own middleware
+  # (<ns>-<release>-forwardauth@kubernetescrd), so there is no single string to
+  # compare against, and requiring one would mean this policy needs editing
+  # every time a chart is added.
+  #
+  # The looseness is acceptable because of what this rule is FOR. It is not an
+  # access control — Authelia is. It is a prompt to answer a question, and a
+  # chart that names a forward-auth middleware has answered it.
+  forwardAuthMarker: forwardauth
+
+  binding:
+    # Warn + Audit, NOT Deny. See above: 18 live Ingresses fail this today and
+    # some of them live in repos this one cannot edit. Flip to Deny once
+    # upgrade.sh's pre-flight reports zero failures — the same gate the rules
+    # above passed through.
+    validationActions:
+      - Warn
+      - Audit
+
 # Namespaces the policy ignores entirely. kube-system holds objects created by
 # k3s itself, which answer to upstream defaults rather than to ours.
 exemptNamespaces:

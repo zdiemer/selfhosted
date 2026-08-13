@@ -102,3 +102,65 @@ spec:
           values:
             {{- toYaml . | nindent 12 }}
     {{- end }}
+{{- if .Values.authPolicy.enabled }}
+---
+{{/*
+RULE 4, in its own policy object so it can be advisory while the three above
+stay enforcing. See values.yaml for why that separation is load-bearing.
+
+The question this asks is not "is this authenticated" but "did anyone decide".
+A forward-auth middleware answers it one way; the public annotation answers it
+the other. Silence is the only failure.
+*/}}
+{{- $mw := "traefik.ingress.kubernetes.io/router.middlewares" }}
+{{- $pub := .Values.authPolicy.publicAnnotation }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "ingress-policy.fullname" . }}-auth
+  labels:
+    {{- include "ingress-policy.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups:   ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["ingresses"]
+  validations:
+    - expression: >-
+        has(object.metadata.annotations) && (
+          ('{{ $mw }}' in object.metadata.annotations &&
+           object.metadata.annotations['{{ $mw }}'].lowerAscii().contains('{{ .Values.authPolicy.forwardAuthMarker }}')) ||
+          ('{{ $pub }}' in object.metadata.annotations &&
+           object.metadata.annotations['{{ $pub }}'] == 'true')
+        )
+      message: >-
+        Ingress must either route through Authelia forward-auth (a
+        {{ $mw }} value naming a forwardauth middleware), or declare
+        {{ $pub }}: "true" to state that this host is deliberately
+        unauthenticated. Plenty of hosts here are legitimately public — the
+        point is that "deliberate" and "forgotten" must not look identical.
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "ingress-policy.fullname" . }}-auth
+  labels:
+    {{- include "ingress-policy.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "ingress-policy.fullname" . }}-auth
+  validationActions:
+    {{- toYaml .Values.authPolicy.binding.validationActions | nindent 4 }}
+  matchResources:
+    {{- with .Values.exemptNamespaces }}
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            {{- toYaml . | nindent 12 }}
+    {{- end }}
+{{- end }}

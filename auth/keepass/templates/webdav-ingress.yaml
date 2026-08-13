@@ -8,6 +8,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # Static Basic auth, not Authelia — native KeePass clients speak WebDAV and
+    # cannot complete an OIDC redirect. Differently authenticated, not
+    # unauthenticated; see values.yaml and the keeweb ingress next door, which
+    # IS behind forward-auth because a browser can redirect.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.webdav.ingress.className }}
   rules:

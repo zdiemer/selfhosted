@@ -16,6 +16,11 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # Publishes talaria's existing public frontend on its own domain. The app
+    # owns its own auth, and this chart is one Ingress — adding forward-auth
+    # here would gate a site that is public by design in its own repo.
+    ingress.zachd/public-unauthenticated: "true"
     # dials in with No TLS Verify. See values.yaml.
     #
     # Say so out loud. infra/ingress-policy requires every Ingress to name a

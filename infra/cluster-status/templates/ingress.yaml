@@ -8,6 +8,12 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # A static page of already-collected JSON, tailnet-only since it left the
+    # Cloudflare tunnel. Nothing here is writable and nothing reaches the k8s
+    # API on request. Redaction is done at the collector instead — see
+    # values.yaml `publish`.
+    ingress.zachd/public-unauthenticated: "true"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:

@@ -8,6 +8,11 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # Jellyseerr signs users in with their Jellyfin account, so it owns its own
+    # session. Forward-auth would add a second, unrelated login in front of a
+    # service whose whole purpose is to be handed to family.
+    ingress.zachd/public-unauthenticated: "true"
     # Deliberately NO Authelia forward-auth: Jellyseerr signs users in with
     # their Jellyfin account, so a second portal is just a second login.
 spec:

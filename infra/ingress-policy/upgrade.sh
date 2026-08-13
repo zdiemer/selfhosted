@@ -40,7 +40,9 @@ kubectl get ingress -A -o json | python3 -c '
 import sys, json
 P    = "traefik.ingress.kubernetes.io/router."
 EDGE = "ingress.zachd/tls-terminates-at-edge"
+PUB  = "ingress.zachd/public-unauthenticated"
 bad = []
+auth_bad = []
 total = 0
 for i in json.load(sys.stdin)["items"]:
     total += 1
@@ -52,8 +54,21 @@ for i in json.load(sys.stdin)["items"]:
         fails.append("ingressClassName != traefik")
     if a.get(P + "entrypoints") != "websecure":
         fails.append("router.entrypoints != websecure")
-    if not a.get(P + "tls.certresolver") and a.get(EDGE) != "true":
-        fails.append("no certresolver and no " + EDGE)
+    # THREE accepted forms, matching policy.yaml. This check used to test only
+    # two of them and reported 23 of 24 live Ingresses as failing — every host
+    # that had dropped its certresolver for the cluster-wide default cert, i.e.
+    # all of them. A pre-flight whose job is to answer "what breaks if I flip to
+    # Deny" is worthless when it cries wolf, and this one was the tool standing
+    # between us and doing exactly that. Keep it in step with the policy.
+    if (not a.get(P + "tls.certresolver")
+            and a.get(P + "tls") != "true"
+            and a.get(EDGE) != "true"):
+        fails.append("no certresolver, no router.tls=true, and no " + EDGE)
+    # Rule 4 (separate policy, advisory today). Reported separately so the
+    # count that matters for flipping THAT rule is legible on its own.
+    mw = (a.get(P + "middlewares") or "").lower()
+    if "forwardauth" not in mw and a.get(PUB) != "true":
+        auth_bad.append(m["namespace"] + "/" + m["name"])
     if fails:
         bad.append((m["namespace"] + "/" + m["name"], fails))
 print(f"    {total} Ingresses checked")
@@ -64,6 +79,13 @@ if not bad:
     print("    all conform — safe to set validationActions: [Deny]")
 else:
     print(f"    {len(bad)} would be rejected under Deny; they are only warned about today")
+print()
+print(f"    auth rule (advisory): {len(auth_bad)} Ingress(es) neither route through")
+print("    forward-auth nor declare " + PUB + ": \"true\"")
+for n in sorted(auth_bad):
+    print(f"      warn {n}")
+if not auth_bad:
+    print("    all answered — safe to set authPolicy.binding.validationActions: [Deny]")
 '
 
 ACTIONS="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" \
