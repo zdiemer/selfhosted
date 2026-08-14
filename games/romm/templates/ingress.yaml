@@ -1,4 +1,6 @@
 {{- if .Values.ingress.enabled }}
+{{- $fa := .Values.auth.forwardAuth -}}
+{{- $split := and $fa.enabled $fa.publicOnly (gt (len .Values.ingress.cloudflareHosts) 0) -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -8,13 +10,16 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
-    # RomM has its own login plus optional Authelia OIDC, so a request here is
-    # authenticated by the app rather than at the edge. Deliberately no
-    # forward-auth: auth/authelia's access-control notes explain that a rule for
-    # romm.* would never evaluate, because the request never reaches Authelia's
-    # authz endpoint.
+    {{- if and $fa.enabled (not $fa.publicOnly) }}
+    # Gate EVERY host (tailnet + public) behind Authelia. Only reached when
+    # auth.forwardAuth.publicOnly is false — see values.yaml for why RomM
+    # normally gates the public host only.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "romm.fullname" . }}-forwardauth@kubernetescrd
+    {{- else if not $fa.enabled }}
+    # UNAUTHENTICATED at the edge, DELIBERATELY (infra/ingress-policy rule 4).
+    # RomM has its own login; a request here is authenticated by the app.
     ingress.zachd/public-unauthenticated: "true"
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
@@ -32,9 +37,14 @@ spec:
       Extra hosts served over the Cloudflare tunnel: TLS is terminated at
       Cloudflare's edge, so these are deliberately absent from the ACME cert list
       below. Traefik routes them by Host header; the tunnel dials in with No TLS
-      Verify. A list, so the service can be published across any number of
-      external domains. See infra/cloudflared.
+      Verify. See infra/cloudflared.
+
+      When $split is true these hosts move to the second Ingress below so the
+      Authelia middleware lands on them WITHOUT also gating the tailnet host
+      above (native RomM clients can't complete a forward-auth bounce — see
+      auth.forwardAuth.publicOnly in values.yaml).
     */}}
+    {{- if not $split }}
     {{- range .Values.ingress.cloudflareHosts }}
     - host: {{ . | quote }}
       http:
@@ -47,9 +57,41 @@ spec:
                 port:
                   number: {{ $.Values.service.port }}
     {{- end }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
   {{- end }}
+{{- if $split }}
+---
+# Public (Cloudflare-fronted) hosts ONLY, gated behind Authelia forward-auth.
+# Split out from the tailnet host above so native RomM clients keep working on
+# the DuckDNS/tailnet path. See auth.forwardAuth.publicOnly in values.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "romm.fullname" . }}-public
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "romm.fullname" . }}-forwardauth@kubernetescrd
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "romm.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+{{- end }}
 {{- end }}

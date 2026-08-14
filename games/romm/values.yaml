@@ -353,6 +353,31 @@ ingress:
     # DuckDNS can only write TXT at the account's top-level, so sub-subdomain
     # certs must ride a wildcard SAN. See README §DuckDNS follow-up.
 
+# Authelia forward-auth at the Traefik edge — a second gate IN FRONT of RomM's
+# own login, so an unauthenticated RomM bug (or a future auth-bypass CVE) is not
+# reachable from the open internet. Same pattern as docs/stirling-pdf and
+# media/arr.
+#
+# publicOnly matters here in a way it doesn't for those charts: RomM has native
+# clients (the mobile app, muOS/Playnite save-sync, the REST API) that CANNOT
+# complete an interactive forward-auth bounce. So the gate is applied ONLY to
+# the Cloudflare-fronted host(s) in ingress.cloudflareHosts — the ONLY path that
+# is actually on the public internet. The DuckDNS host (ingress.host) is left
+# untouched: it already resolves to a Tailscale-only address, so being on the
+# tailnet is its gate, and native clients keep working there.
+#
+# If you ever use the RomM mobile app OFF the tailnet, it will hit the gated
+# public host and fail the bounce — in that case prefer wiring romm.oidc instead
+# (app-level SSO that native clients can complete), and set enabled:false here.
+auth:
+  forwardAuth:
+    enabled: true
+    publicOnly: true          # gate cloudflareHosts only; leave the tailnet host open
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
 resources:
   requests:
     cpu: 100m

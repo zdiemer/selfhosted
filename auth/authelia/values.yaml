@@ -85,12 +85,13 @@ users: {}
 accessControl:
   default_policy: "two_factor"
   rules:
-    # NOTE: no RomM rules here, deliberately. RomM's Ingress carries no
-    # forward-auth middleware (it uses its own login + optional OIDC), so a
-    # request for romm.* never reaches Authelia's authz endpoint and any rule
-    # for it would never evaluate. If RomM is ever put behind forward-auth,
-    # default_policy: two_factor already covers it — add an explicit rule only
-    # to loosen it.
+    # RomM: the DuckDNS/tailnet host (romm.zachd.duckdns.org) carries NO
+    # forward-auth middleware — it uses RomM's own login (+ optional OIDC) and
+    # is already gated by being tailnet-only, so native RomM clients work there.
+    # The PUBLIC host romm.diemer.codes IS behind forward-auth (games/romm,
+    # auth.forwardAuth.publicOnly), so it lands here; the explicit rule for it
+    # sits with the other diemer.codes hosts below. default_policy: two_factor
+    # already covers it — the rule is explicit-for-parity.
     # KeeWeb (browser KeePass client). WebDAV is NOT here — native KeePass
     # apps can't do an OIDC redirect, so webdav.zachd uses its own static
     # Basic auth (see ../keepass/).
@@ -111,8 +112,12 @@ accessControl:
     # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
     # already two_factor, so these are explicit-for-parity rather than strictly
     # required; keeping them mirrors the duckdns hosts as those get retired.
-    # (No romm.diemer.codes here either — same reason as above.)
     - domain: "keepass.diemer.codes"
+      policy: "two_factor"
+    # romm.diemer.codes — public (Cloudflare) host only; the tailnet host stays
+    # on RomM's own login so native clients keep working. See games/romm
+    # auth.forwardAuth.publicOnly.
+    - domain: "romm.diemer.codes"
       policy: "two_factor"
 
 # OIDC clients (values.local.yaml holds the real secrets). Each entry is a
