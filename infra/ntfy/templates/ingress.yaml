@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+No Authelia middleware here, unlike most hosts in this repo — see the note in
+values.yaml. Every client of this host is an API client that cannot complete an
+interactive login, so the gate is ntfy's deny-all ACL rather than forward-auth.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ntfy.fullname" . }}
+  labels:
+    {{- include "ntfy.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # Declared for infra/ingress-policy: this host really is published without
+    # forward-auth in front of it, and that is a decision. The authentication
+    # is ntfy's own — deny-all plus per-user ACL — a layer the policy cannot
+    # see from the Ingress.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ntfy.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ntfy.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

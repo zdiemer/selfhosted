@@ -1,0 +1,27 @@
+# The shape of op://homelab/infra-ntfy/values.local.yaml. Not read by any deploy
+# path — upgrade.sh resolves the vault item through values.local.tpl.yaml — but
+# this is the only human-readable record of what that item holds and why.
+#
+# Everything here is a password, because ntfy has no other kind of credential:
+# accounts are rows in user.db and the seeder writes them from these values on
+# every pod start. Generate them with `openssl rand -base64 24`.
+
+ntfy:
+  users:
+    # You. Admin implies read-write on every topic, including ones that don't
+    # exist yet — which is what you want for the phone app, since a new alert
+    # source shouldn't need an ACL change before you can see it.
+    - name: zach
+      role: admin
+      password: "..."
+
+    # The publisher every automated sender uses: Grafana alert webhooks,
+    # scripts/notify-failure.sh, CronJobs. Write-only and nothing else — a
+    # leaked publisher credential should be able to send you a notification,
+    # not read the history of everything the cluster has ever told you.
+    - name: alerts
+      role: user
+      password: "..."
+      access:
+        - topic: "*"
+          permission: write-only

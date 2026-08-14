@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ntfy.fullname" . }}
+  labels:
+    {{- include "ntfy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+spec:
+  replicas: 1
+  # Recreate: one RWO volume holding two SQLite databases, and on truenas-iscsi
+  # RWO is single-node *attach* — a surge pod elsewhere would block on
+  # FailedAttachVolume and wedge the rollout rather than fail it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ntfy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ntfy
+  template:
+    metadata:
+      annotations:
+        # Restart on a config or user change — the seeder only runs at start, so
+        # without this a rotated password in the vault would sit unapplied.
+        checksum/server: {{ include (print $.Template.BasePath "/configmap-server.yaml") . | sha256sum }}
+        checksum/seed: {{ include (print $.Template.BasePath "/secret-seed.yaml") . | sha256sum }}
+      labels:
+        {{- include "ntfy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ntfy
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's own
+        # ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      enableServiceLinks: false
+      # Covers the preStop sleep plus closing out the long-lived subscription
+      # streams. ntfy's own shutdown is quick — SQLite is written on publish,
+      # not on exit — so this does not need the 60s the databases take.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        # The image runs as root by default; nothing here needs it. The PVC is
+        # chowned to this GID on attach so both databases stay writable.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ntfy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image's entrypoint is `ntfy`, so the shell has to be named
+          # explicitly to get a wrapper at all. The seeder is backgrounded and
+          # the server `exec`s, which keeps ntfy as PID 1 and therefore keeps it
+          # receiving SIGTERM directly — a `sh` parent would swallow it and the
+          # pod would die on the grace period instead of shutting down.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sh /etc/ntfy/seed/seed.sh &
+              exec ntfy serve
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: http
+              containerPort: {{ .Values.ntfy.listenPort }}
+            {{- if .Values.ntfy.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ntfy/server.yml
+              subPath: server.yml
+              readOnly: true
+            - name: seed
+              mountPath: /etc/ntfy/seed
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /var/lib/ntfy
+            {{- end }}
+          # /v1/health is unauthenticated by design (it is the one endpoint
+          # deny-all does not cover), so the probes work without a credential.
+          startupProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ntfy.fullname" . }}-server
+        - name: seed
+          secret:
+            secretName: {{ include "ntfy.fullname" . }}-seed
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ntfy.fullname" . }}-data
+        {{- end }}

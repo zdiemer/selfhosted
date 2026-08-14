@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ntfy.fullname" . }}
+  labels:
+    {{- include "ntfy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.ntfy.metrics.enabled }}
+    # Second listener, ClusterIP only. The Ingress names the `http` port by
+    # number, so this is never routable from outside the cluster.
+    - port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- end }}
+  selector:
+    {{- include "ntfy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy

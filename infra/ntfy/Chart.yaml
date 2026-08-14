@@ -1,0 +1,13 @@
+apiVersion: v2
+name: ntfy
+description: ntfy — self-hosted push notification server. The cluster's fan-out to phones and desktops; the counterpart to infra/sms-relay for anything that doesn't need to be an actual text message.
+type: application
+version: 0.1.0
+# appVersion tracks the ntfy image tag in values.yaml (image.tag).
+# renovate: image=docker.io/binwiederhier/ntfy
+appVersion: "v2.27.0"
+home: https://docs.ntfy.sh
+sources:
+  - https://github.com/binwiederhier/ntfy
+maintainers:
+  - name: zachd

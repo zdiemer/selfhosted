@@ -1,0 +1,44 @@
+{{/*
+server.yml, mounted at ntfy's default config path (/etc/ntfy/server.yml) so the
+server AND the `ntfy user` / `ntfy access` CLI in the same container agree about
+where user.db lives without either being told twice.
+
+Nothing secret goes in here — it is a ConfigMap, and the passwords are in the
+sibling Secret that renders seed.sh.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ntfy.fullname" . }}-server
+  labels:
+    {{- include "ntfy.labels" . | nindent 4 }}
+data:
+  server.yml: |
+    {{- $cfg := dict
+      "base-url" .Values.ntfy.baseUrl
+      "listen-http" (printf ":%d" (int .Values.ntfy.listenPort))
+      "behind-proxy" .Values.ntfy.behindProxy
+      "cache-file" "/var/lib/ntfy/cache.db"
+      "cache-duration" .Values.ntfy.cacheDuration
+      "auth-file" "/var/lib/ntfy/user.db"
+      "auth-default-access" .Values.ntfy.authDefaultAccess
+      "attachment-cache-dir" "/var/lib/ntfy/attachments"
+      "attachment-total-size-limit" .Values.ntfy.attachments.totalSizeLimit
+      "attachment-file-size-limit" .Values.ntfy.attachments.fileSizeLimit
+      "attachment-expiry-duration" .Values.ntfy.attachments.expiryDuration
+      "enable-signup" .Values.ntfy.enableSignup
+      "enable-login" .Values.ntfy.enableLogin
+      "enable-reservations" .Values.ntfy.enableReservations
+      "log-level" "INFO"
+    }}
+    {{- if .Values.ntfy.upstreamBaseUrl }}
+    {{- $_ := set $cfg "upstream-base-url" .Values.ntfy.upstreamBaseUrl }}
+    {{- end }}
+    {{- if .Values.ntfy.metrics.enabled }}
+    {{- $_ := set $cfg "enable-metrics" true }}
+    {{- $_ := set $cfg "metrics-listen-http" (printf ":%d" (int .Values.service.metricsPort)) }}
+    {{- end }}
+    {{- range $k, $v := .Values.ntfy.extraConfig }}
+    {{- $_ := set $cfg $k $v }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

@@ -1,0 +1,123 @@
+image:
+  repository: docker.io/binwiederhier/ntfy
+  # renovate: image=docker.io/binwiederhier/ntfy
+  tag: "v2.27.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  # Prometheus endpoint, on its own listener so it is never reachable from the
+  # ingress. ClusterIP only — nothing publishes :9090.
+  metricsPort: 9090
+
+ntfy:
+  # ntfy's default listener is :80, which a non-root container cannot bind.
+  # The pod runs as UID 1000 (see the deployment's securityContext), so the
+  # server listens high and the Service maps :80 onto it.
+  listenPort: 8080
+
+  # Externally visible URL. ntfy bakes this into the links it hands clients
+  # (attachments, click actions, the web app's own subscribe URLs), so a wrong
+  # value produces notifications that arrive and then 404 when tapped.
+  baseUrl: https://ntfy.zachd.duckdns.org
+
+  # How long a message stays in cache.db and is replayable with `?since=`.
+  # This is what makes a phone that was off for the morning still receive the
+  # night's alerts, so it is deliberately longer than a poll interval.
+  cacheDuration: "12h"
+
+  # Trust X-Forwarded-For. Every request arrives from Traefik, so without this
+  # rate limiting and the per-visitor budget apply to *the ingress pod* — one
+  # visitor, cluster-wide, and the first burst locks everyone out.
+  behindProxy: true
+
+  attachments:
+    # Attachments live on the same PVC as the databases; the total limit is the
+    # one that keeps a runaway publisher from filling it.
+    totalSizeLimit: "1G"
+    fileSizeLimit: "15M"
+    expiryDuration: "3h"
+
+  # iOS has no background push except through APNs, and APNs certificates are
+  # per-app — the App Store ntfy client can only be woken by ntfy.sh. Setting
+  # this makes this server forward a *poll request* upstream on publish: the
+  # payload stays here, but ntfy.sh learns a sha256 of the topic name and the
+  # timing of every message. That is a real disclosure, and it is the price of
+  # instant delivery on an iPhone. Set to "" to opt out — Android (F-Droid or
+  # Play) holds its own connection here and needs none of this.
+  upstreamBaseUrl: "https://ntfy.sh"
+
+  # No self-service accounts. Users are seeded from the vault (see `users`).
+  enableSignup: false
+  # The web app's login form. Needed to read topics at all, since
+  # auth-default-access is deny-all.
+  enableLogin: true
+  enableReservations: false
+
+  # Anonymous access is denied outright: this host is public on DuckDNS, and an
+  # open ntfy is a message queue anyone can publish to and read from. Every
+  # publisher and subscriber authenticates.
+  authDefaultAccess: deny-all
+
+  metrics:
+    enabled: true
+
+  # Users and their topic grants. Deliberately EMPTY here and supplied from the
+  # vault (values.local.yaml → op://homelab/infra-ntfy), because each entry
+  # carries a password. A release with no users installs cleanly and accepts
+  # nothing, which is the correct failure for a deny-all server.
+  #
+  #   - name: zach
+  #     role: admin              # admin implies read-write on every topic
+  #     password: "..."
+  #   - name: alerts
+  #     role: user
+  #     password: "..."
+  #     access:
+  #       - topic: "*"           # wildcards allowed, e.g. "alerts-*"
+  #         permission: write-only
+  users: []
+
+  # Free-form server.yml keys merged over the rendered config, for anything
+  # this chart doesn't model. See https://docs.ntfy.sh/config/
+  extraConfig: {}
+  # extraConfig:
+  #   visitor-message-daily-limit: 500
+
+persistence:
+  # cache.db (messages), user.db (accounts + ACL) and the attachment dir.
+  # SQLite → truenas-iscsi: NAS-backed block, real fsync, and the single-node
+  # attach that pairs with the Recreate strategy below.
+  enabled: true
+  size: 5Gi
+  storageClass: truenas-iscsi
+  accessMode: ReadWriteOnce
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ntfy.zachd.duckdns.org
+  # Additional hosts published via the Cloudflare tunnel (infra/cloudflared).
+  # Empty on purpose: the tunnel buffers and can break the long-lived
+  # JSON-stream/WebSocket subscriptions the phone clients hold open, and the
+  # DuckDNS host already reaches the app from anywhere.
+  cloudflareHosts: []
+  tls:
+    enabled: true
+
+# NOT behind Authelia forward-auth, and that is a decision rather than an
+# omission: every client here is an API client. The phone apps send
+# `Authorization: Bearer`, `curl` publishes with basic auth, and Grafana posts
+# a webhook — none of them can complete an interactive Authelia login, so a
+# forward-auth middleware would turn every one of them into a 302. ntfy's own
+# deny-all ACL is the gate instead.
+
+resources:
+  # A Go binary serving long-lived connections. Idle is tiny; memory tracks the
+  # number of held subscriptions rather than message volume.
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
