@@ -756,6 +756,26 @@ data:
           }).join('') + '</div>';
       }
 
+      // Which folded cards the reader has opened.
+      //
+      // A <details> keeps its open state in the DOM, and render() replaces the
+      // whole of #root every poll — so every card the reader had opened snapped
+      // shut on the next scrape, 15 seconds after they opened it. Long enough
+      // to start reading, short enough to be infuriating. Same class of problem
+      // as `expanded` for the node rows, and it wants the same answer: the
+      // state belongs in the module, not in the markup, because the markup is
+      // rebuilt from data and the reader's intent is not part of that data.
+      var folds = {};
+
+      function foldCard(key, fold, head, body) {
+        // fold decides whether this card COLLAPSES at all — never fold when
+        // something is wrong, so a problem can't hide behind a click. folds[key]
+        // only decides whether an already-foldable card is currently open.
+        if (!fold) return '<div class="card"><div class="card-h">' + head + '</div>' + body + '</div>';
+        return '<div class="card"><details data-fold="' + esc(key) + '"' + (folds[key] ? ' open' : '') + '>' +
+          '<summary class="card-h">' + head + '</summary>' + body + '</details></div>';
+      }
+
       function tag(text, color, title) {
         // One pill, one colour. Every badge on this page was an inline
         // color-mix string copy-pasted five times before the new panels needed
@@ -974,8 +994,7 @@ data:
         var fold = list.length > 8;
         var head = '<span class="card-t">Namespaces <span class="count">' + list.length + '</span></span>' +
           '<span class="sub">by memory</span>';
-        return '<div class="card">' +
-          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+        return foldCard('namespaces', fold, head,
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Namespace</th><th class="r">Pods</th>' +
           '<th class="r">CPU</th><th class="r">RAM</th><th class="r opt">Req CPU</th><th class="r opt">Req RAM</th>' +
           '</tr></thead><tbody>' +
@@ -986,8 +1005,7 @@ data:
               '<td class="r mono" style="font-size:12px" data-l="RAM">' + esc(fmtBytes(r.ramBytes)) + '</td>' +
               '<td class="r mono opt" style="font-size:12px;color:var(--muted)" data-l="Req CPU">' + esc(fmtCores(r.reqCpuCores)) + '</td>' +
               '<td class="r mono opt" style="font-size:12px;color:var(--muted)" data-l="Req RAM">' + esc(fmtBytes(r.reqRamBytes)) + '</td></tr>';
-          }).join('') + '</tbody></table></div></div>' +
-          (fold ? '</details>' : '') + '</div>';
+          }).join('') + '</tbody></table></div></div>');
       }
 
       function storage(list) {
@@ -1003,8 +1021,7 @@ data:
           (unbound.length ? tag(unbound.length + ' not bound', 'var(--destructive)') : '') +
           (full.length ? tag(full.length + ' over 80%', 'var(--warn)') : '') +
           (!unbound.length && !full.length ? '<span class="sub">all bound, none full</span>' : '');
-        return '<div class="card">' +
-          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+        return foldCard('storage', fold, head,
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Claim</th><th>Namespace</th>' +
           '<th class="opt">Class</th><th class="r">Size</th><th class="r">Used</th><th class="r">Full</th>' +
           '<th class="c opt">Phase</th></tr></thead><tbody>' +
@@ -1024,8 +1041,7 @@ data:
               '<td class="c opt" data-l="Phase">' +
               (r.phase === 'Bound' ? '<span class="sub">Bound</span>' : tag(r.phase || 'Unknown', 'var(--destructive)')) +
               '</td></tr>';
-          }).join('') + '</tbody></table></div></div>' +
-          (fold ? '</details>' : '') + '</div>';
+          }).join('') + '</tbody></table></div></div>');
       }
 
       function routing(list) {
@@ -1054,8 +1070,7 @@ data:
             'ingress.zachd/public-unauthenticated annotation — see infra/ingress-policy rule 4');
         }
 
-        return '<div class="card">' +
-          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+        return foldCard('routing', fold, head,
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Host</th><th class="opt">Path</th>' +
           '<th class="opt">Backend</th><th class="c">Exposure</th><th class="c">TLS</th><th class="c">Auth</th>' +
           '</tr></thead><tbody>' +
@@ -1070,8 +1085,7 @@ data:
               '<td class="c mono" style="font-size:11px" data-l="TLS">' +
               (r.tls ? esc(r.tls) : tag('none', 'var(--destructive)')) + '</td>' +
               '<td class="c" data-l="Auth">' + authCell(r) + '</td></tr>';
-          }).join('') + '</tbody></table></div></div>' +
-          (fold ? '</details>' : '') + '</div>';
+          }).join('') + '</tbody></table></div></div>');
       }
 
       function cronJobs(list) {
@@ -1081,8 +1095,7 @@ data:
         var head = '<span class="card-t">CronJobs <span class="count">' + list.length + '</span></span>' +
           (failing.length ? tag(plural(failing.length, 'last run') + ' failed', 'var(--warn)')
                           : '<span class="sub">all last runs succeeded</span>');
-        return '<div class="card">' +
-          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+        return foldCard('cronjobs', fold, head,
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th>' +
           '<th class="mono">Schedule</th><th class="r">Last run</th><th class="r">Last success</th>' +
           '<th class="c opt">Active</th></tr></thead><tbody>' +
@@ -1097,8 +1110,7 @@ data:
               '<td class="r" style="font-size:11px;color:' + (r.lastRunFailed ? 'var(--warn)' : 'var(--muted)') + '" data-l="Last success">' +
               esc(fmtRel(r.lastSuccessfulTime) || 'never') + '</td>' +
               '<td class="c opt mono" style="font-size:12px" data-l="Active">' + (r.activeCount || 0) + '</td></tr>';
-          }).join('') + '</tbody></table></div></div>' +
-          (fold ? '</details>' : '') + '</div>';
+          }).join('') + '</tbody></table></div></div>');
       }
 
       function jobFailures(list) {
@@ -1142,9 +1154,7 @@ data:
               unhealthy.length + ' not available</span>'
             : '<span class="sub">all available</span>');
 
-        return '<div class="card">' +
-          (fold ? '<details><summary class="card-h">' + head + '</summary>'
-                : '<div class="card-h">' + head + '</div>') +
+        return foldCard(title, fold, head,
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th><th class="r">Ready</th>' +
           '<th class="r">Available</th><th class="r">Updated</th><th class="c">Status</th></tr></thead><tbody>' +
           ds.map(function (d) {
@@ -1155,8 +1165,7 @@ data:
               '<td class="r mono" style="font-size:12px" data-l="Updated">' + d.updated + '</td>' +
               '<td class="c" data-l="Status"><span class="pill" style="color:' + color(d.condition) +
               ';background:color-mix(in srgb,' + color(d.condition) + ' 15%,transparent)">' + esc(d.condition) + '</span></td></tr>';
-          }).join('') + '</tbody></table></div></div>' +
-          (fold ? '</details>' : '') + '</div>';
+          }).join('') + '</tbody></table></div></div>');
       }
 
       function events(evs) {
@@ -1309,6 +1318,15 @@ data:
           b.addEventListener('click', function () {
             eventFilter = b.getAttribute('data-evfilter');
             render(d);
+          });
+        });
+        // 'toggle', not 'click' on the summary: a <details> can also be opened
+        // by keyboard, by find-in-page, and by the browser restoring it — and
+        // only 'toggle' hears all of those. Recording state without re-rendering
+        // is the point; the DOM already did the work.
+        Array.prototype.forEach.call(document.querySelectorAll('[data-fold]'), function (el) {
+          el.addEventListener('toggle', function () {
+            folds[el.getAttribute('data-fold')] = el.open;
           });
         });
       }

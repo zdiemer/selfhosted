@@ -361,6 +361,15 @@ in each case the longest string on the row and the least useful at a glance. The
 routing table is the one to check hardest at 390px: hosts and backends are long
 unbreakable strings, which is exactly what produced the 593px-wide bug.
 
+**Anything the reader opens has to survive a poll.** `render()` replaces the
+whole of `#root` every 15s, and a `<details>` keeps its open state in the DOM —
+so every card that had been opened snapped shut on the next scrape, which is
+long enough to start reading and short enough to be maddening. Open state lives
+in `folds` beside `expanded` and `eventFilter`, for the same reason: the markup
+is rebuilt from data, and what the reader chose to look at is not part of that
+data. The listener is on `toggle` rather than a click on the `<summary>`,
+because a `<details>` also opens by keyboard and by find-in-page.
+
 Storage, routing, CronJobs and namespaces all fold behind `<details>` on the same
 rule as the workload lists — and all of them force open the moment something is
 wrong (an unbound or ≥80% claim, an Ingress with no TLS or no auth answer, a
