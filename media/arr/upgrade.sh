@@ -31,7 +31,7 @@ command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
 
-for d in prowlarr sonarr radarr qbittorrent; do
+for d in prowlarr sonarr radarr qbittorrent flaresolverr; do
   echo "==> Waiting for ${RELEASE}-${d} rollout"
   $K rollout status "deployment/${RELEASE}-${d}" --timeout=300s
 done

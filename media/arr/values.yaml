@@ -46,6 +46,21 @@ apps:
     media: true
     configSize: 5Gi
 
+# Cloudflare-challenge solver Prowlarr proxies the blocked public indexers
+# through. Stateless and cluster-internal only — no PVC, no ingress. Egresses
+# normally (NOT through the PIA pod): it has to look like an ordinary browser
+# from an ordinary address, which is the opposite of what a VPN exit gives it.
+flaresolverr:
+  enabled: true
+  image: ghcr.io/flaresolverr/flaresolverr
+  tag: "v3.5.0"
+  port: 8191
+  logLevel: info
+  sessionTtlMinutes: 10
+  # /dev/shm for Chrome. The container default of 64Mi is where renderers
+  # start dying once more than one solve is in flight.
+  shmSize: 256Mi
+
 qbittorrent:
   image: lscr.io/linuxserver/qbittorrent
   tag: "5.2.3"
@@ -129,6 +144,14 @@ resources:
       memory: 256Mi
     limits:
       memory: 1Gi
+  # It is a real Chrome. Idle it sits near 200Mi; a solve spikes hard and
+  # briefly, so the limit is headroom for the spike, not the steady state.
+  flaresolverr:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
   qbittorrent:
     requests:
       cpu: 100m

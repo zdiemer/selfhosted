@@ -1,0 +1,99 @@
+{{/*
+FlareSolverr — headless Chrome that solves the Cloudflare interstitial for
+the public indexers that sit behind one (1337x, EZTV, KickAss, ExtraTorrent
+and friends all reject a plain HTTP client). Prowlarr calls it as an indexer
+proxy: the request goes here, Chrome does the challenge, cookies come back.
+
+Not one of .Values.apps — no /config PVC (entirely stateless, every session
+is thrown away), no /media mount, no ingress. Nothing outside the cluster
+should reach an endpoint that fetches arbitrary URLs on request.
+*/}}
+{{- if .Values.flaresolverr.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arr.fullname" . }}-flaresolverr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flaresolverr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 8 }}
+    spec:
+      containers:
+        - name: flaresolverr
+          image: "{{ .Values.flaresolverr.image }}:{{ .Values.flaresolverr.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: {{ .Values.timezone }}
+            - name: LOG_LEVEL
+              value: {{ .Values.flaresolverr.logLevel }}
+            # Chrome is only ever driven by Prowlarr over the ClusterIP
+            # Service, so it listens on all interfaces inside the pod.
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: {{ .Values.flaresolverr.port | quote }}
+            # A solved challenge is reusable, so sessions are cached rather
+            # than spawning a browser per query. They still expire — a stale
+            # clearance cookie fails the same as no cookie.
+            - name: SESSION_TTL_MINUTES
+              value: {{ .Values.flaresolverr.sessionTtlMinutes | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.flaresolverr.port }}
+          # Chrome wants somewhere real to put its shared memory; the default
+          # 64Mi /dev/shm is the classic renderer-crash-under-load footgun.
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          # Chrome is slow to come up and a solve can block the event loop for
+          # a while, so the liveness probe is deliberately loose — restarting
+          # mid-solve just throws away work and re-queues the same challenge.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 15
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.resources.flaresolverr | nindent 12 }}
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.flaresolverr.shmSize }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arr.fullname" . }}-flaresolverr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flaresolverr
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.flaresolverr.port }}
+      targetPort: http
+{{- end }}
