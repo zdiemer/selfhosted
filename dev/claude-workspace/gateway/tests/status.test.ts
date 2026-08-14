@@ -96,23 +96,48 @@ test("edits are throttled and coalesced, and the last state still lands", async 
 
   await settle();
   // One edit for three events, showing the newest.
-  expect(h.edits.length).toBe(1);
   expect(h.edits[0]).toContain("Grep sendReaction");
   expect(h.edits[0]).toContain("3 tools");
 });
 
-test("an unchanged render is not re-sent", async () => {
+test("the clock keeps ticking while a long tool call produces no events", async () => {
+  // The failure this guards: one Bash call that runs for a minute emits
+  // nothing, and the status used to sit frozen on whatever came before it.
   const h = harness();
-  await h.status.begin();
-  h.status.onEvent(textEvent("thinking about it"));
-  await settle();
-  const after = h.edits.length;
-  expect(after).toBe(1);
+  // A fake clock advancing a second per tick: the display counts in whole
+  // seconds, so real time would make this a multi-second test for nothing.
+  let clock = 0;
+  const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 1000));
+  await status.begin();
+  h.edits.length = 0;
 
-  // Same event again, no time passing: identical text, so no edit.
-  h.status.onEvent(textEvent("thinking about it"));
-  await settle();
-  expect(h.edits.length).toBe(after);
+  status.onEvent(toolEvent("Bash", { command: "sleep 60" }));
+  // Long enough for several ticks with no further events at all.
+  await new Promise((r) => setTimeout(r, INTERVAL * 6));
+  await status.finish(true);
+
+  const ticks = h.edits.filter((e) => e.includes("Bash: sleep 60"));
+  expect(ticks.length).toBeGreaterThan(1);
+  // Every tick carries the elapsed clock, and it only goes up.
+  const secs = ticks.map((e) => Number(e.match(/working… (\d+)s/)![1]));
+  expect(secs).toEqual([...secs].sort((a, b) => a - b));
+});
+
+test("a tick that would render identical text is not sent", async () => {
+  // Sub-second intervals redraw faster than the clock changes; that must not
+  // spend an edit per tick on an unchanged line.
+  const h = harness();
+  const status = new Status("stdin:test", h.io, 5);
+  await status.begin();
+  h.edits.length = 0;
+  status.onEvent(textEvent("thinking about it"));
+  await new Promise((r) => setTimeout(r, 60));
+  await status.finish(true);
+
+  const working = h.edits.filter((e) => e.startsWith("⏺"));
+  // ~12 ticks in that window, but at most a couple of distinct renders.
+  expect(working.length).toBeLessThan(4);
+  expect(new Set(working).size).toBe(working.length);
 });
 
 test("finish collapses to a one-line receipt and stops updating", async () => {

@@ -345,6 +345,10 @@ export function startSignal(): void {
         });
       }
     },
+    // An edit is one local socket call to signal-cli, so the status message
+    // can tick its clock about once a second without the volume concerns that
+    // hold WhatsApp back.
+    editIntervalMs: config.progress.signalIntervalMs,
     async edit(chatKey, target, text) {
       // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL
       // send timestamp across successive edits rather than the last revision's

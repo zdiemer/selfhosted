@@ -1,6 +1,12 @@
 import { config } from "./config.ts";
 import type { StreamEvent } from "./claude.ts";
-import { editMsg, canEdit, sendOne, type MsgRef } from "./transport.ts";
+import {
+  editMsg,
+  canEdit,
+  editIntervalFor,
+  sendOne,
+  type MsgRef,
+} from "./transport.ts";
 
 // The live status message: one message per run, sent when the run starts and
 // edited in place as tool calls land, then collapsed to a single line when the
@@ -121,9 +127,11 @@ export class Status {
   private tokens = 0;
   private costUsd = 0;
   private lastText = "";
-  private lastSig = "";
-  private lastEditAt = 0;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  /** True while an edit is out on the wire. A tick that arrives mid-edit is
+   * dropped rather than queued: on a slow link the queue would grow forever
+   * and the status would fall further behind the run with every tick. */
+  private editing = false;
   /** Edits are chained rather than fired in parallel: two in flight at once can
    * land out of order, leaving the status showing a step the run already
    * finished. */
@@ -135,28 +143,28 @@ export class Status {
     private io: StatusIO = defaultIO,
     /** Overridable so tests can run the throttle at millisecond scale rather
      * than waiting out the real one. */
-    private intervalMs: number = config.progress.editIntervalMs,
+    private intervalMs: number = editIntervalFor(chatKey),
+    /** Also test-only: a fake clock lets the tick behaviour be checked in
+     * milliseconds instead of the real seconds the display counts in. */
+    private now: () => number = Date.now,
   ) {}
 
-  private now(): number {
-    return Date.now();
-  }
-
-  private signature(): string {
-    return `${this.tools}|${this.action}|${this.note}`;
-  }
-
-  /** Send the initial message. No-op if progress is off or the surface can't
-   * edit — a status message that never updates is worse than none. */
+  /** Send the initial message and start the clock. No-op if progress is off or
+   * the surface can't edit — a status message that never updates is worse than
+   * none. */
   async begin(): Promise<void> {
     this.started = this.now();
     if (!config.progress.enabled || !this.io.supported(this.chatKey)) return;
     this.ref = await this.io.send(this.chatKey, INITIAL);
     this.lastText = INITIAL;
-    // The message just sent already IS the empty state, so an early event that
-    // carries nothing new (a blank text block, say) must not redraw it.
-    this.lastSig = this.signature();
-    this.lastEditAt = this.now();
+    // A free-running ticker, not a timer armed by events. Events are exactly
+    // what a long tool call stops producing, and that silence used to freeze
+    // the status mid-run; on a ticker the elapsed clock keeps counting and the
+    // message stays visibly alive whatever claude is busy with.
+    this.timer = setInterval(() => void this.flush(), this.intervalMs);
+    // Bun/Node keep the process alive for a pending timer; a status message
+    // must never be the reason the gateway won't exit.
+    this.timer.unref?.();
   }
 
   get active(): boolean {
@@ -188,41 +196,28 @@ export class Status {
         if (text) this.note = oneLine(text.split("\n")[0], 140);
       }
     }
-    this.schedule();
   }
 
-  /** Rate-limited redraw. Baileys is an unofficial WhatsApp client and the
-   * chart README is explicit about ban risk, so an edit per event is not an
-   * option; the trailing timer guarantees the last state still lands. */
-  private schedule(): void {
-    if (!this.active || this.timer) return;
-    const wait = Math.max(0, this.intervalMs - (this.now() - this.lastEditAt));
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.flush();
-    }, wait);
-  }
-
+  /** One redraw, at most one edit in flight. The rendered text is what gets
+   * compared: the elapsed clock is part of it, so a run that is merely still
+   * running does redraw — that is the point — while a tick that would produce
+   * byte-identical text (sub-second intervals, a stopped clock) does not. */
   private flush(): Promise<unknown> {
-    if (!this.active) return this.chain;
-    // Compare the *content*, not the rendered text — the elapsed clock changes
-    // on every event, so comparing rendered text would spend an edit on a run
-    // that has not actually done anything new. Empty text blocks between tool
-    // calls are common enough for this to matter.
-    const sig = this.signature();
-    if (sig === this.lastSig) return this.chain;
-    this.lastSig = sig;
+    if (!this.active || this.editing) return this.chain;
     const text = renderStatus({
       action: this.action,
       note: this.note,
       tools: this.tools,
       elapsedMs: this.now() - this.started,
     });
+    if (text === this.lastText) return this.chain;
     this.lastText = text;
-    this.lastEditAt = this.now();
-    this.chain = this.chain.then(() =>
-      this.io.edit(this.chatKey, this.ref, text),
-    );
+    this.editing = true;
+    this.chain = this.chain
+      .then(() => this.io.edit(this.chatKey, this.ref, text))
+      .finally(() => {
+        this.editing = false;
+      });
     return this.chain;
   }
 
@@ -240,7 +235,7 @@ export class Status {
   /** Overwrite with an arbitrary line and stop updating (SIGTERM path). */
   async replace(text: string): Promise<void> {
     if (this.timer) {
-      clearTimeout(this.timer);
+      clearInterval(this.timer);
       this.timer = null;
     }
     if (!this.active) {

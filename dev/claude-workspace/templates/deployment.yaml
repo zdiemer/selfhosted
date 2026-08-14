@@ -467,6 +467,8 @@ spec:
               value: {{ .Values.messaging.progress.enabled | quote }}
             - name: GW_PROGRESS_EDIT_SECONDS
               value: {{ .Values.messaging.progress.editSeconds | quote }}
+            - name: GW_PROGRESS_SIGNAL_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.signalEditSeconds | quote }}
             - name: GW_REACTIONS_ENABLED
               value: {{ .Values.messaging.reactions.enabled | quote }}
             - name: GW_REACT_QUEUED

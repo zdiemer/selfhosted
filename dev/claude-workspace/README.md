@@ -437,10 +437,14 @@ While a run is going, three things say so, in increasing order of detail:
   the answer goes out. It is deliberately a separate message from the answer:
   the answer is chunked across up to four messages, so it has no single
   identity to edit, and WhatsApp refuses edits more than ~15 minutes after the
-  original — a long run would lose the thread partway. Edits are throttled to
-  one every `messaging.progress.editSeconds` for the same reason `!bash` output
-  is capped: this is a metered connection and, on WhatsApp, an unofficial
-  client. Groups get no status message — the room did not ask to watch, and a
+  original — a long run would lose the thread partway. It redraws on a free-
+  running ticker rather than only when an event arrives, so the elapsed clock
+  keeps counting through a single tool call that runs for a minute in silence;
+  a tick that would render identical text is skipped. The cadence is
+  `messaging.progress.signalEditSeconds` (1s — an edit is one local signal-cli
+  call) and `messaging.progress.editSeconds` on WhatsApp (3s, for the same
+  reason `!bash` output is capped: a metered connection and an unofficial
+  client). Groups get no status message — the room did not ask to watch, and a
   group run only has `WebFetch`/`WebSearch` to show.
 
 The run itself is driven off `claude -p --output-format stream-json`, which is

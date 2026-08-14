@@ -65,11 +65,15 @@ export const config = {
   // and nothing until the answer.
   progress: {
     enabled: (process.env.GW_PROGRESS_ENABLED ?? "true") === "true",
-    // Minimum gap between edits of that message. Baileys is an unofficial
-    // WhatsApp client (see the chart README on ban risk), so an edit per event
-    // is not on the table; the status still lands its final state because the
-    // throttle keeps a trailing timer.
+    // Redraw cadence, and so also the minimum gap between edits. Baileys is an
+    // unofficial WhatsApp client (see the chart README on ban risk), so it
+    // keeps the conservative default; Signal talks to signal-cli over a local
+    // socket and sets its own, faster interval when it registers.
     editIntervalMs: envInt("GW_PROGRESS_EDIT_SECONDS", 3) * 1000,
+    // Signal's cadence. The clock ticks on its own timer, so this is about how
+    // often a still-running status redraws — five seconds reads as alive
+    // without turning a long run into hundreds of revisions of one message.
+    signalIntervalMs: envInt("GW_PROGRESS_SIGNAL_EDIT_SECONDS", 5) * 1000,
   },
   // Reactions on the sender's own message: accepted → working → done/failed.
   // This is the one feature that shows up in a group whether the room asked

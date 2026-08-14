@@ -12,6 +12,10 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v19: the live status message redraws on its own ticker instead of only when
+  #      a stream event lands, so a single tool call that runs for a minute in
+  #      silence no longer freezes it — the elapsed clock keeps counting. Signal
+  #      redraws every 5s (its own knob), WhatsApp stays at 3s.
   # v18: picks up the NAS retention count fix in scripts/secrets.sh. Inert in
   #      the pod (it cannot reach the NAS and never backs up), rebuilt anyway:
   #      a copy that lags its source is precisely what v17 exists to complain
@@ -56,7 +60,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v18"
+  tag: "v19"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -315,10 +319,17 @@ messaging:
     # It is always a separate message from the reply — the reply is chunked
     # across up to four messages and can't be an edit target.
     enabled: true
-    # Minimum gap between edits of that message. Not a cosmetic knob: WhatsApp
-    # is reached through an unofficial client (see "ban risk"), so an edit per
-    # event is not on the table. The last state always lands regardless.
+    # Redraw cadence for that message on WhatsApp. Not a cosmetic knob:
+    # WhatsApp is reached through an unofficial client (see "ban risk"), so a
+    # fast tick is not on the table. The last state always lands regardless.
     editSeconds: 3
+    # The same cadence on Signal, where an edit is one call to signal-cli over
+    # a local socket. The clock ticks on its own here — a tool call that runs
+    # for a minute in silence still moves the status — so this is a legibility
+    # knob, not a liveness one: five seconds reads as alive without turning a
+    # long run into hundreds of revisions of one message. Drop it to 1 for a
+    # second-by-second clock.
+    signalEditSeconds: 5
   reactions:
     # Emoji on the sender's own message: working → done/failed, with the queued
     # one while another run in the same chat is still going. This is the only

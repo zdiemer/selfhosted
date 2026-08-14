@@ -1,4 +1,5 @@
 import { chunkText } from "./chunk.ts";
+import { config } from "./config.ts";
 
 // The outbound side of a chat surface, split out of router.ts so the status
 // message (status.ts) can reach it without importing the inbound dispatcher.
@@ -30,6 +31,10 @@ export interface Transport {
     remove?: boolean,
   ): Promise<void>;
   edit?(chatKey: string, target: MsgRef, text: string): Promise<void>;
+  /** How often the live status message may be redrawn on this surface, in ms.
+   * Absent means the shared default — a surface only sets this if its own rate
+   * limits differ, which on an unofficial client they very much do. */
+  editIntervalMs?: number;
   /** A stable string identity for a ref, so an inbound reaction can be matched
    * against the outbound message it points at. The two arrive in different
    * shapes on both networks — Signal gives a target timestamp rather than the
@@ -215,4 +220,9 @@ export async function sendFileTo(
 
 export function canEdit(chatKey: string): boolean {
   return Boolean(transportFor(chatKey)?.edit);
+}
+
+/** Redraw cadence for this chat's surface. */
+export function editIntervalFor(chatKey: string): number {
+  return transportFor(chatKey)?.editIntervalMs ?? config.progress.editIntervalMs;
 }
