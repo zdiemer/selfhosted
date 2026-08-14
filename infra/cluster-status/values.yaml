@@ -38,9 +38,22 @@ collector:
   # renovate: datasource=docker depName=python
   image: python:3.12.13-alpine
   # Seconds between scrapes. Also the page's poll interval. Each scrape is
-  # 1 nodes + 1 pods + 1 deployments + 1 events call, plus one /stats/summary
-  # per node — so ~14 calls per cycle on a 10-node cluster, per replica.
+  # 1 nodes + 1 pods + 3 workload lists + 1 events + 1 configmap, plus one
+  # /stats/summary per node — so ~17 calls per cycle on a 10-node cluster, per
+  # replica. (This said ~14 for a long time; it predated the statefulsets,
+  # daemonsets and versions-report calls.)
   intervalSeconds: 15
+  # The rest of what this page reads — Ingresses, PVCs, PVs, Jobs, CronJobs —
+  # changes on a DEPLOY, not on a tick. Fetching those five every 15s would be
+  # a 30% larger API bill for data that is byte-identical three cycles out of
+  # four, so they get their own interval: ~17 calls per cycle with a +5 spike
+  # every fourth, i.e. about 7% more traffic rather than 30%.
+  #
+  # Nothing time-sensitive rides on it. The number on that panel that actually
+  # moves — how full a PVC is — comes from kubelet's /stats/summary, which is
+  # still fetched every cycle with everything else. Raising this only makes
+  # "which Ingresses exist" more stale, which is a question with a slow answer.
+  slowIntervalSeconds: 60
   resources:
     requests:
       cpu: 20m
@@ -63,7 +76,7 @@ web:
 
 # What the collector is allowed to write into status.json. Everything here is
 # readable by every viewer the moment it's collected, so this is the redaction
-# point — not the page, not the ingress. All four default on.
+# point — not the page, not the ingress. All ten default on.
 #
 # THESE FLAGS DID NOT BECOME POINTLESS WHEN THE PAGE LEFT THE TUNNEL, and the
 # temptation to treat them that way is exactly why this note exists. Two reasons
@@ -96,11 +109,61 @@ web:
 #                   tailscale spread. Same CVE-exposure caveat as nodeVersions —
 #                   it advertises exactly how far behind each node is. The two
 #                   flags should move together.
+#
+# The six below were added when the page was expanded for a tailnet-only
+# audience. They are the reason the note above is not decorative: each one is a
+# class of information that would have been a bad idea to publish on the tunnel,
+# and every one of them is off by a single line if that ever changes.
+#
+#   nodeAddresses — each node's internal IP and its tailnet (100.64/10) address.
+#                   Names alone are an inventory; addresses are a map you can
+#                   act on. Nothing else on this page has ever carried an IP.
+#   podImages     — the first container's image:tag per pod. This is a version
+#                   inventory of every piece of software in the house, which is
+#                   exactly the nodeVersions argument one layer up: it tells a
+#                   reader which CVEs apply without their having to probe. The
+#                   two flags should move together.
+#   ingresses     — the routing table: host, path, backend service, TLS
+#                   resolver, and whether each host answers on the tunnel or
+#                   only on the tailnet. This is the strongest disclosure on the
+#                   page by some distance — it is a prioritised target list, not
+#                   merely an inventory — AND it is the single most useful new
+#                   panel for the audience that can actually reach the page.
+#                   That tension is the whole reason it gets its own flag rather
+#                   than riding on one of the others.
+#   storage       — PersistentVolumeClaims: name, class, capacity and how full.
+#                   Capacities are dull; claim names are app names and sometimes
+#                   person names, and a fill percentage tells an observer which
+#                   service is about to break without their touching it.
+#   jobs          — CronJob schedules and recent Job failures. A schedule is a
+#                   timetable of when this cluster is busy and when the backups
+#                   run, which is information about the house rather than about
+#                   Kubernetes.
+#   serviceCheckUrls
+#                 — the target of each uptime probe below. Withheld
+#                   unconditionally while the page was public, because the
+#                   targets are ClusterIPs and LAN hosts and publishing them
+#                   would have handed the internet an internal host inventory.
+#                   Published now because "SMS relay is down" and "this
+#                   ClusterIP is refusing on :8000" are different diagnoses and
+#                   only the second says where to look. upgrade.sh shouts if
+#                   this is on at the same time as a public Ingress host.
+#
+# There is deliberately NO flag for the namespace roll-up. It is a sum of
+# per-pod figures this page already publishes one card up, so a flag there would
+# redact nothing — and a flag that hides nothing quietly suggests the rest are
+# decorative too.
 publish:
   events: true
   nodeVersions: true
   uptime: true
   nodeUpdates: true
+  nodeAddresses: true
+  podImages: true
+  ingresses: true
+  storage: true
+  jobs: true
+  serviceCheckUrls: true
 
 # HTTP endpoints the collector probes each cycle, for services whose failure is
 # invisible in pod status — a Running pod whose upstream is unreachable still
@@ -118,13 +181,64 @@ publish:
 # objection was never only about who could read it. If you ever do add it, note
 # the gateway app answers /health with a 500 and reports real status on /
 # instead.
+#
+# Six checks at 3-5s each is up to ~25s of budget against a 15s interval if
+# every one of them hangs — which cannot happen unless the whole cluster is
+# already gone, but it is why the timeouts below are tight rather than generous.
+# A scrape that overruns the interval just delays the next one; main() sleeps
+# for the remainder, never a negative.
 serviceChecks:
   - name: SMS relay
     # Cluster-internal Service address, so the check works with no ingress,
-    # no TLS, and no dependency on DNS or the tunnel being up.
+    # no TLS, and no dependency on DNS or the tunnel being up. Same for all
+    # of the below.
     url: http://sms-relay.infra.svc.cluster.local:8000/api/health
     expectStatus: 200
     timeoutSeconds: 5
+  - name: Authelia
+    # The biggest blast radius on the cluster: this is the forward-auth for
+    # every gated host, so when it stops answering, half the estate returns
+    # 502 while every one of those services' own pods stays green — the exact
+    # failure this whole section exists to catch, one layer bigger than the
+    # sms-relay case that motivated it.
+    url: http://authelia.auth.svc.cluster.local:9091/api/health
+    expectStatus: 200
+    timeoutSeconds: 3
+  - name: Jellyfin
+    # The most-used service in the house and the one whose outages get
+    # reported last, and least politely.
+    url: http://jellyfin.media.svc.cluster.local:8096/health
+    expectStatus: 200
+    timeoutSeconds: 3
+  - name: CrowdSec LAPI
+    # Traefik's bouncer talks to this. If it is unreachable the bouncer either
+    # fails open or fails closed, and neither shows up in pod status.
+    url: http://crowdsec-service.crowdsec.svc.cluster.local:8080/health
+    expectStatus: 200
+    timeoutSeconds: 3
+  - name: BlueMap
+    # Served on :8100 on every node IP, bypassing Traefik entirely — so it is
+    # invisible to anything that checks by ingress host.
+    url: http://mc-minecraft-bluemap.minecraft.svc.cluster.local:8100/
+    expectStatus: 200
+    timeoutSeconds: 5
+  - name: Paperless
+    # Bundles its own Postgres, Redis, Tika and Gotenberg. The web pod stays
+    # 1/1 Running when its database doesn't, which is the sms-relay shape again.
+    url: http://paperless.docs.svc.cluster.local:8000/
+    expectStatus: 200
+    timeoutSeconds: 5
+#
+# Deliberately NOT checked, so the next person doesn't have to re-derive it:
+#
+#   egress-proxy    — CONNECT-only squid. A plain GET is not a valid health
+#                     signal for it, so a check would be a permanent false red.
+#   cluster-status  — infra/alloy already blackbox-probes this Service, and a
+#                     page reporting on its own liveness answers the wrong
+#                     question anyway: if it can render, it is up.
+#   Traefik /ping   — worth having, but the k3s Traefik Service publishes only
+#                     80 and 443; port 9000 is not on it. A check aimed at a
+#                     closed port burns its entire timeout every single cycle.
 
 ingress:
   enabled: true

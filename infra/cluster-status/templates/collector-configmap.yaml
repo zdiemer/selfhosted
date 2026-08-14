@@ -16,6 +16,10 @@ data:
     #
     # Stdlib only, so this runs on a stock python image with nothing to build.
     # Loops forever writing /data/status.json; nginx serves that file.
+    #
+    # extras.py is the one local import — pure parsers for everything the page
+    # grew after it left the Cloudflare tunnel (node identity, pod detail,
+    # routing, storage, jobs). Everything that TALKS to Kubernetes stays here.
 
     import json
     import os
@@ -26,15 +30,26 @@ data:
     import urllib.parse
     import urllib.request
 
+    import extras
+    from extras import fmt_bytes, parse_cpu, parse_memory, prune
+
     SA = "/var/run/secrets/kubernetes.io/serviceaccount"
     API = "https://kubernetes.default.svc"
     OUT = "/data/status.json"
 
     INTERVAL = float(os.environ.get("INTERVAL_SECONDS", "15"))
+    # How often the deploy-cadence objects are re-fetched. See slow_api_get.
+    SLOW_INTERVAL = float(os.environ.get("SLOW_INTERVAL_SECONDS", "60"))
     PUBLISH_EVENTS = os.environ.get("PUBLISH_EVENTS", "true") == "true"
     PUBLISH_NODE_VERSIONS = os.environ.get("PUBLISH_NODE_VERSIONS", "true") == "true"
     PUBLISH_UPTIME = os.environ.get("PUBLISH_UPTIME", "true") == "true"
     PUBLISH_NODE_UPDATES = os.environ.get("PUBLISH_NODE_UPDATES", "true") == "true"
+    PUBLISH_NODE_ADDRESSES = os.environ.get("PUBLISH_NODE_ADDRESSES", "true") == "true"
+    PUBLISH_POD_IMAGES = os.environ.get("PUBLISH_POD_IMAGES", "true") == "true"
+    PUBLISH_INGRESSES = os.environ.get("PUBLISH_INGRESSES", "true") == "true"
+    PUBLISH_STORAGE = os.environ.get("PUBLISH_STORAGE", "true") == "true"
+    PUBLISH_JOBS = os.environ.get("PUBLISH_JOBS", "true") == "true"
+    PUBLISH_SERVICE_CHECK_URLS = os.environ.get("PUBLISH_SERVICE_CHECK_URLS", "true") == "true"
     OWN_NAMESPACE = os.environ.get("OWN_NAMESPACE", "infra")
     SERVICE_CHECKS = json.loads(os.environ.get("SERVICE_CHECKS", "[]"))
     TOP_N = 5
@@ -59,36 +74,37 @@ data:
             return json.load(r)
 
 
-    def fmt_bytes(n):
-        n = float(n)
-        for unit in ("B", "KB", "MB", "GB", "TB"):
-            if n < 1024:
-                return f"{n:.1f} {unit}"
-            n /= 1024
-        return f"{n:.1f} PB"
+    # Ingresses, PersistentVolumes, PVCs, Jobs and CronJobs all change on a
+    # DEPLOY, not on a tick. Fetching five more lists every 15s would be a 30%
+    # larger API bill for data that is byte-identical three cycles out of four,
+    # and the numbers on this page that actually move — how full a PVC is —
+    # come from /stats/summary, which is still every cycle.
+    #
+    # So they get their own interval and the page's freshness promise is
+    # unchanged. Steady state is ~17 calls per cycle with a +5 spike every
+    # fourth, i.e. this whole expansion costs about 7% more API traffic.
+    #
+    # A failed slow fetch keeps the previous value rather than blanking the
+    # panel, which is the same choice main() makes about status.json as a whole:
+    # stale data with a visible age beats an error.
+    _SLOW_CACHE = {}
 
 
-    def parse_cpu(val):
-        val = str(val)
-        if val.endswith("m"):
-            return float(val[:-1]) / 1000.0
-        if val.endswith("n"):
-            return float(val[:-1]) / 1e9
-        if val.endswith("u"):
-            return float(val[:-1]) / 1e6
-        return float(val)
-
-
-    def parse_memory(val):
-        val = str(val)
-        suffixes = {
-            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
-            "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4,
-        }
-        for suf, mult in suffixes.items():
-            if val.endswith(suf):
-                return int(float(val[: -len(suf)]) * mult)
-        return int(float(val))
+    def slow_api_get(path, params=None):
+        key = (path, tuple(sorted((params or {}).items())))
+        now = time.monotonic()
+        cached = _SLOW_CACHE.get(key)
+        if cached and now - cached[0] < SLOW_INTERVAL:
+            return cached[1], round(now - cached[0])
+        try:
+            payload = api_get(path, params)
+        except Exception:
+            if cached:
+                log("slow_fetch_stale", path=path, age=round(now - cached[0]))
+                return cached[1], round(now - cached[0])
+            raise
+        _SLOW_CACHE[key] = (now, payload)
+        return payload, 0
 
 
     def make_disk(label, total, used):
@@ -121,7 +137,35 @@ data:
         return f"{head}{f' (+{extra} more)' if extra > 0 else ''}"
 
 
-    def collect_disks(node_stat, pods):
+    def pvc_volume_stats(stat_pods):
+        # (namespace, claim) -> (capacityBytes, usedBytes), from kubelet's pod
+        # volume stats.
+        #
+        # This traversal used to live inside collect_disks, which walked it,
+        # bucketed it, and threw the per-claim identities away. Pulled out so
+        # the storage panel and the node disk bars are computed from ONE walk of
+        # the same numbers and cannot disagree about how full a claim is.
+        #
+        # kubelet only reports volumes that are currently MOUNTED, so a Bound
+        # claim whose pod is not running is simply absent here — which is not
+        # the same as empty, and extras.parse_storage is careful about it.
+        out = {}
+        for pod in stat_pods:
+            for vol in pod.get("volume", []) or []:
+                pvc_ref = vol.get("pvcRef") or {}
+                ns = pvc_ref.get("namespace")
+                name = pvc_ref.get("name")
+                if not ns or not name:
+                    continue
+                cap = int(vol.get("capacityBytes") or 0)
+                used = int(vol.get("usedBytes") or 0)
+                if cap <= 0:
+                    continue
+                out[(ns, name)] = (cap, used)
+        return out
+
+
+    def collect_disks(node_stat, vol_stats):
         disks = []
         fs = node_stat.get("fs") or {}
         primary_total = int(fs.get("capacityBytes") or 0)
@@ -137,21 +181,13 @@ data:
         if image_total > 0 and (primary_bucket is None or bucket(image_total) != primary_bucket):
             disks.append(make_disk("imagefs (containers)", image_total, image_used))
 
+        # Bucketing unchanged — it is load-bearing and subtle. The only
+        # difference is that the per-claim numbers arrive pre-walked.
         grouped = {}
-        for pod in pods:
-            for vol in pod.get("volume", []) or []:
-                pvc_ref = vol.get("pvcRef") or {}
-                ns = pvc_ref.get("namespace")
-                name = pvc_ref.get("name")
-                if not ns or not name:
-                    continue
-                cap = int(vol.get("capacityBytes") or 0)
-                used = int(vol.get("usedBytes") or 0)
-                if cap <= 0:
-                    continue
-                key = (bucket(cap), bucket(used))
-                entry = grouped.setdefault(key, {"capacity": cap, "used": used, "pvcs": []})
-                entry["pvcs"].append((ns, name))
+        for (ns, name), (cap, used) in vol_stats.items():
+            key = (bucket(cap), bucket(used))
+            entry = grouped.setdefault(key, {"capacity": cap, "used": used, "pvcs": []})
+            entry["pvcs"].append((ns, name))
 
         seen = {bucket(t) for t in (primary_total, image_total) if t}
         for (cap_bucket, _used_bucket), entry in grouped.items():
@@ -438,7 +474,7 @@ data:
     }
 
 
-    def parse_problem_pods(pods, limit=50):
+    def parse_problem_pods(pods, job_owner=None, publish_images=True, limit=50):
         rows = []
         for p in pods:
             label = pod_status_label(p)
@@ -462,28 +498,42 @@ data:
                         break
             restarts = sum(cs.get("restartCount", 0)
                            for cs in status.get("containerStatuses", []) or [])
-            rows.append((_PROBLEM_ORDER.get(label, 9), {
+            row = {
                 "namespace": meta.get("namespace", ""),
                 "name": meta.get("name", ""),
                 "node": p.get("spec", {}).get("nodeName") or "",
                 "status": _STATUS_DISPLAY.get(label, label),
                 "reason": reason,
                 "restarts": restarts,
-            }))
+                "owner": extras.pod_owner(p, job_owner),
+            }
+            row.update(extras.pod_detail(p, publish_images))
+            rows.append((_PROBLEM_ORDER.get(label, 9), prune(row)))
         rows.sort(key=lambda r: (r[0], r[1]["namespace"], r[1]["name"]))
         return [r[1] for r in rows[:limit]]
 
 
-    def parse_events(items, limit=25):
+    def parse_events(items, warn_limit=40, all_limit=120):
+        # The page now shows Normal events too, behind a filter that defaults to
+        # Warnings — so this has to cap TWO populations, not one.
+        #
+        # The trap: taking the newest `all_limit` of everything lets routine
+        # Normal chatter (Scheduled, Pulled, Started — hundreds an hour on a
+        # cluster this size) evict warnings from the payload entirely. The
+        # default view would then show FEWER warnings than before the feature
+        # was added, and nothing on the page would say so.
+        #
+        # So take the newest warn_limit warnings AND the newest all_limit
+        # overall, then union them. The Warnings view is guaranteed no worse
+        # than it was when Warning was the only thing collected.
         out = []
         for e in items:
-            if e.get("type") != "Warning":
-                continue
             meta = e.get("metadata", {})
             involved = e.get("involvedObject", {})
             last_seen = e.get("lastTimestamp") or e.get("eventTime") or ""
             out.append({
                 "namespace": meta.get("namespace", ""),
+                "type": e.get("type", ""),
                 "reason": e.get("reason", ""),
                 "message": e.get("message", ""),
                 "involvedKind": involved.get("kind", ""),
@@ -493,7 +543,18 @@ data:
             })
         # Most recent first; events without a timestamp sink to the bottom.
         out.sort(key=lambda x: x["lastSeen"] or "", reverse=True)
-        return out[:limit]
+
+        keep = []
+        seen = set()
+        warnings = [e for e in out if e["type"] == "Warning"][:warn_limit]
+        for e in warnings + out[:all_limit]:
+            ident = id(e)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            keep.append(e)
+        keep.sort(key=lambda x: x["lastSeen"] or "", reverse=True)
+        return keep
 
 
     class Totals:
@@ -507,6 +568,10 @@ data:
             self.req_ram = 0
             self.observed = []
             self.pod_status = None
+            # (namespace, claim) -> (capacityBytes, usedBytes), unioned across
+            # every node's kubelet stats so the storage panel sees every mounted
+            # claim regardless of which node its pod landed on.
+            self.pvc_usage = {}
 
         def add(self, cpu, ram, storage_total, storage_used, pod_count, ready, requests):
             self.pods_cpu += cpu["pods"]
@@ -541,6 +606,10 @@ data:
                 "unknown": counts["unknown"], "crashLooping": counts["crash_looping"],
             }
 
+        # observed rows are (namespace, name, node, cpu, ram, req_cpu, req_ram).
+        # NOTE if you extend this again: top_pods below indexes positionally AND
+        # unpacks the whole row. Appending a field keeps the indices valid and
+        # breaks the unpack, silently, at runtime. Both have to move together.
         def top_pods(self, by_cpu):
             idx = 3 if by_cpu else 4
             ranked = sorted(self.observed, key=lambda p: p[idx], reverse=True)[:TOP_N]
@@ -548,9 +617,26 @@ data:
                 {"namespace": ns, "name": n, "node": node,
                  "cpuCores": cpu if by_cpu else None,
                  "ramBytes": ram if not by_cpu else None}
-                for ns, n, node, cpu, ram in ranked
+                for ns, n, node, cpu, ram, _req_cpu, _req_ram in ranked
                 if (cpu if by_cpu else ram) > 0
             ]
+
+        def namespaces(self):
+            # "What is actually eating this cluster" at one altitude coarser
+            # than the top-consumers cards, out of data already collected — no
+            # extra API call, and no publish flag either: every figure here is
+            # a sum of per-pod numbers this page already prints one card up.
+            agg = {}
+            for ns, _name, _node, cpu, ram, req_cpu, req_ram in self.observed:
+                row = agg.setdefault(ns, {"namespace": ns, "pods": 0, "cpuCores": 0.0,
+                                          "ramBytes": 0, "reqCpuCores": 0.0,
+                                          "reqRamBytes": 0})
+                row["pods"] += 1
+                row["cpuCores"] += cpu
+                row["ramBytes"] += ram
+                row["reqCpuCores"] += req_cpu
+                row["reqRamBytes"] += req_ram
+            return sorted(agg.values(), key=lambda r: r["ramBytes"], reverse=True)
 
         def build(self, node_count):
             if node_count == 0:
@@ -568,6 +654,7 @@ data:
                 "podStatus": self.pod_status,
                 "topCpuPods": self.top_pods(True),
                 "topRamPods": self.top_pods(False),
+                "namespaces": self.namespaces(),
                 "requests": {"cpuCores": self.req_cpu, "ramBytes": self.req_ram},
             }
 
@@ -577,7 +664,9 @@ data:
         node_stat = stats.get("node", {})
         stat_pods = stats.get("pods", []) or []
 
-        disks = collect_disks(node_stat, stat_pods)
+        vol_stats = pvc_volume_stats(stat_pods)
+        totals.pvc_usage.update(vol_stats)
+        disks = collect_disks(node_stat, vol_stats)
         disk_percent = max((d["percent"] for d in disks), default=0.0) if disks else None
 
         cpu_usage = node_stat.get("cpu", {}).get("usageNanoCores", 0) / 1e9
@@ -616,7 +705,7 @@ data:
             p_cpu = m.get("cpu", {}).get("usageNanoCores", 0) / 1e9
             p_ram = m.get("memory", {}).get("workingSetBytes", 0)
 
-            pods_info.append({
+            row = {
                 "name": pod_name,
                 "namespace": pod_ns,
                 "cpuPercent": (p_cpu / cpu_cap * 100) if cpu_cap > 0 else 0.0,
@@ -625,12 +714,15 @@ data:
                 "status": status.get("phase", "Unknown"),
                 "restarts": restarts,
                 "lastRestartTime": last_restart,
-            })
+            }
+            row.update(extras.pod_detail(p, PUBLISH_POD_IMAGES))
+            pods_info.append(prune(row))
 
             req_cpu, req_ram = pod_requests(p)
             node_req_cpu += req_cpu
             node_req_ram += req_ram
-            totals.observed.append((pod_ns, pod_name, name, p_cpu, p_ram))
+            totals.observed.append((pod_ns, pod_name, name, p_cpu, p_ram,
+                                    req_cpu, req_ram))
 
         storage_total, storage_used = node_storage_bytes(node_stat)
         requests = {"cpuCores": node_req_cpu, "ramBytes": node_req_ram}
@@ -657,17 +749,30 @@ data:
         if PUBLISH_NODE_VERSIONS:
             out["kernelVersion"] = kernel
             out["osImage"] = os_image
+        out.update(extras.node_identity(node, PUBLISH_NODE_ADDRESSES,
+                                        PUBLISH_NODE_VERSIONS))
         return out
 
 
     def check_service(check):
         # Probe one HTTP endpoint and report whether it answered as expected.
         #
-        # ⚠️ The URL is NEVER published — only the display name and the result.
-        # Checks legitimately point at in-cluster ClusterIPs and LAN addresses
-        # (the SMS relay's backend is a phone on the house network), and this
-        # page is public. Publishing the target would hand the internet an
-        # internal host inventory.
+        # THE URL USED TO BE WITHHELD UNCONDITIONALLY, and the comment here said
+        # so in capitals. The reason was sound and is now spent: checks point at
+        # ClusterIPs and LAN addresses, and while this page was on the Cloudflare
+        # tunnel, publishing them would have handed the internet an internal host
+        # inventory for free.
+        #
+        # On the tailnet the target is the most useful column in that table.
+        # "SMS relay is down" and "this specific ClusterIP is refusing on :8000"
+        # are different diagnoses, and only the second one tells you where to
+        # look. So it is published, behind publish.serviceCheckUrls.
+        #
+        # Turning that flag off restores the old behaviour EXACTLY — the field is
+        # never written, so it cannot leak through a later ingress mistake. And
+        # upgrade.sh now treats "URLs published" plus "a public host in the
+        # Ingress" as a combination worth shouting about at deploy time, which is
+        # the interlock that makes flipping this back on safe to forget.
         name = check.get("name") or "service"
         expect = int(check.get("expectStatus", 200))
         timeout = float(check.get("timeoutSeconds", 5))
@@ -682,18 +787,20 @@ data:
             # and unhealthy, which reads differently from unreachable.
             code = e.code
         except Exception as e:
-            return {
+            return prune({
                 "name": name,
                 "ok": False,
                 "reason": type(e).__name__,
                 "latencyMs": round((time.monotonic() - started) * 1000),
-            }
-        return {
+                "url": check["url"] if PUBLISH_SERVICE_CHECK_URLS else None,
+            })
+        return prune({
             "name": name,
             "ok": code == expect,
             "status": code,
             "latencyMs": round((time.monotonic() - started) * 1000),
-        }
+            "url": check["url"] if PUBLISH_SERVICE_CHECK_URLS else None,
+        })
 
 
     def collect():
@@ -726,12 +833,40 @@ data:
         events = []
         if PUBLISH_EVENTS:
             try:
+                # No type filter any more — the page carries a Warnings/All
+                # toggle. The limit rises with it, because dropping the filter
+                # means Normal chatter now competes for the same window; see
+                # parse_events for how the two populations are capped.
                 events = parse_events(
-                    api_get("/api/v1/events",
-                            {"fieldSelector": "type=Warning", "limit": "200"}).get("items", [])
+                    api_get("/api/v1/events", {"limit": "500"}).get("items", [])
                 )
             except Exception as e:
                 log("k8s_events_api_error", error=e)
+
+        # The deploy-cadence lane. Each of these is cached by slow_api_get and
+        # re-fetched on SLOW_INTERVAL, not every cycle.
+        ingresses = []
+        if PUBLISH_INGRESSES:
+            try:
+                items, _age = slow_api_get("/apis/networking.k8s.io/v1/ingresses")
+                ingresses = extras.parse_ingresses(items.get("items", []))
+            except Exception as e:
+                log("k8s_ingresses_api_error", error=e)
+
+        cron_jobs = []
+        job_failures = []
+        job_owner = {}
+        if PUBLISH_JOBS:
+            try:
+                items, _age = slow_api_get("/apis/batch/v1/cronjobs")
+                cron_jobs = extras.parse_cronjobs(items.get("items", []))
+            except Exception as e:
+                log("k8s_cronjobs_api_error", error=e)
+            try:
+                items, _age = slow_api_get("/apis/batch/v1/jobs")
+                job_failures, job_owner = extras.parse_jobs(items.get("items", []))
+            except Exception as e:
+                log("k8s_jobs_api_error", error=e)
 
         # scripts/k3s/versions-report.sh publishes the node-lane upgrade
         # backlog (apt/kernel/k3s/tailscale drift) into this ConfigMap weekly.
@@ -779,8 +914,26 @@ data:
                 if PUBLISH_NODE_VERSIONS:
                     fallback["kernelVersion"] = kernel
                     fallback["osImage"] = os_image
+                # Identity comes from the node object, not from kubelet — so a
+                # node whose kubelet will not answer still gets its role, IPs,
+                # taints and cordon flag. That is the moment they matter most.
+                fallback.update(extras.node_identity(node, PUBLISH_NODE_ADDRESSES,
+                                                     PUBLISH_NODE_VERSIONS))
                 result.append(fallback)
                 totals.add_unreachable(ready)
+
+        # Storage is fetched AFTER the node loop, because it needs the volume
+        # stats that loop unions into totals.pvc_usage.
+        storage = []
+        if PUBLISH_STORAGE:
+            try:
+                pvcs, _age = slow_api_get("/api/v1/persistentvolumeclaims")
+                pvs, _age = slow_api_get("/api/v1/persistentvolumes")
+                storage = extras.parse_storage(pvcs.get("items", []),
+                                               pvs.get("items", []),
+                                               totals.pvc_usage)
+            except Exception as e:
+                log("k8s_storage_api_error", error=e)
 
         # Pod-status counts walk the full pod list, not the union of per-node
         # lists, so unscheduled Pending/Failed pods are still counted.
@@ -789,29 +942,43 @@ data:
             "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "nodeDisks": result,
             "totals": totals.build(len(result)),
-            "problemPods": parse_problem_pods(all_pods),
+            "problemPods": parse_problem_pods(all_pods, job_owner, PUBLISH_POD_IMAGES),
             "deployments": deployments,
             "statefulSets": statefulsets,
             "daemonSets": daemonsets,
             "recentEvents": events,
             "services": services,
             "nodeUpdates": node_updates,
+            "ingresses": ingresses,
+            "storage": storage,
+            "cronJobs": cron_jobs,
+            "jobFailures": job_failures,
         }
 
 
     def write(payload):
         # Write-then-rename: nginx must never see a half-written file.
         tmp = OUT + ".tmp"
+        body = json.dumps(payload, separators=(",", ":"))
         with open(tmp, "w") as f:
-            json.dump(payload, f, separators=(",", ":"))
+            f.write(body)
         os.replace(tmp, OUT)
+        return len(body)
 
 
     def main():
         while True:
             started = time.monotonic()
             try:
-                write(collect())
+                size = write(collect())
+                # The measurement for the two things that bound this page:
+                # how long a scrape takes (it must finish inside INTERVAL, and
+                # every fourth one carries the slow-lane fetches) and how big
+                # the payload has become (every open tab re-fetches it on the
+                # same interval). Both are cheap to print and expensive to
+                # guess at.
+                log("scrape_done", seconds=round(time.monotonic() - started, 2),
+                    bytes=size)
             except Exception as e:
                 log("collect_failed", error=e)
                 # Leave the previous status.json in place: stale data with a
@@ -822,3 +989,480 @@ data:
 
     if __name__ == "__main__":
         main()
+  extras.py: |
+    # Pure parsers for everything the page grew after it left the Cloudflare
+    # tunnel: node identity, per-pod detail, the routing table, storage claims,
+    # and the job/cronjob lane.
+    #
+    # WHY A SECOND FILE AND NOT MORE OF collect.py. collect.py is the faithful
+    # port of talaria's collector and the README makes a point of the
+    # measurement logic being deliberately unchanged. Growing it by another 400
+    # lines of unrelated parsing would bury that. More usefully: nothing in here
+    # touches the network, reads an environment variable, or holds state, so
+    # every function is a value in / value out transform of a list the caller
+    # already fetched. That is what makes it testable against a saved
+    # status.json fixture, and it is why there is no circular import — extras
+    # never needs api_get.
+    #
+    # collect.py imports this by name from the same read-only ConfigMap mount
+    # (/app is sys.path[0]), so there is nothing to package.
+
+    # ------------------------------------------------------------------ units
+    # These live here rather than in collect.py because extras is the module
+    # with no dependencies; collect.py imports them back. One definition.
+
+    def fmt_bytes(n):
+        n = float(n)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if n < 1024:
+                return f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{n:.1f} PB"
+
+
+    def parse_cpu(val):
+        val = str(val)
+        if val.endswith("m"):
+            return float(val[:-1]) / 1000.0
+        if val.endswith("n"):
+            return float(val[:-1]) / 1e9
+        if val.endswith("u"):
+            return float(val[:-1]) / 1e6
+        return float(val)
+
+
+    def parse_memory(val):
+        val = str(val)
+        suffixes = {
+            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+            "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4,
+        }
+        for suf, mult in suffixes.items():
+            if val.endswith(suf):
+                return int(float(val[: -len(suf)]) * mult)
+        return int(float(val))
+
+
+    def prune(d):
+        # Drop empty values rather than writing them out. This is not tidiness:
+        # "restartReason": null on 250 pods, "message": "" on 90 workloads and
+        # so on is most of the payload growth this expansion would otherwise
+        # cost, and the page already reads every optional field as `x || ''`.
+        # False and 0 are meaningful and survive.
+        return {k: v for k, v in d.items()
+                if not (v is None or v == "" or v == [] or v == {})}
+
+
+    # -------------------------------------------------------------- node identity
+    # k3s's own vocabulary, not upstream's: a node is a "server" or an "agent".
+    # etcd is included because a dedicated etcd node is a server that may carry
+    # neither of the other two labels.
+    _SERVER_LABELS = (
+        "node-role.kubernetes.io/control-plane",
+        "node-role.kubernetes.io/master",
+        "node-role.kubernetes.io/etcd",
+    )
+
+
+    def _is_cgnat(ip):
+        # Tailscale allocates out of 100.64.0.0/10, i.e. first octet 100 and
+        # second in [64, 127]. Done by hand rather than with ipaddress so this
+        # stays a string transform with no import.
+        parts = ip.split(".")
+        if len(parts) != 4:
+            return False
+        try:
+            return parts[0] == "100" and 64 <= int(parts[1]) <= 127
+        except ValueError:
+            return False
+
+
+    def _node_addresses(addresses):
+        internal = None
+        tailscale = None
+        for a in addresses:
+            if a.get("type") != "InternalIP":
+                continue
+            ip = a.get("address") or ""
+            if not ip:
+                continue
+            if _is_cgnat(ip):
+                tailscale = tailscale or ip
+            else:
+                internal = internal or ip
+        out = {}
+        if internal:
+            out["internalIP"] = internal
+        # NOT printed twice when they are the same address. A cluster whose k3s
+        # was started with --node-ip on the tailnet reports exactly one
+        # InternalIP, and showing it under two labels would suggest the node has
+        # two paths to it when it has one.
+        if tailscale and tailscale != internal:
+            out["tailscaleIP"] = tailscale
+        return out
+
+
+    def _resources(block):
+        out = {}
+        if block.get("cpu"):
+            out["cpuCores"] = parse_cpu(block["cpu"])
+        if block.get("memory"):
+            out["ramBytes"] = parse_memory(block["memory"])
+        if block.get("pods"):
+            out["pods"] = int(block["pods"])
+        if block.get("ephemeral-storage"):
+            out["ephemeralBytes"] = parse_memory(block["ephemeral-storage"])
+        return out
+
+
+    def node_identity(node, publish_addresses=True, publish_versions=True):
+        # Everything here comes from the /api/v1/nodes item the caller already
+        # holds — no kubelet call. That matters: build_node's stats fetch is the
+        # thing that fails when a node is sick, and a node whose kubelet will not
+        # answer is exactly when you want to know it is cordoned and what taints
+        # are on it. So this is safe to call on the unreachable-node path too.
+        meta = node.get("metadata") or {}
+        spec = node.get("spec") or {}
+        status = node.get("status") or {}
+        info = status.get("nodeInfo") or {}
+        labels = meta.get("labels") or {}
+
+        taints = []
+        for t in spec.get("taints") or []:
+            key = t.get("key") or ""
+            value = t.get("value")
+            effect = t.get("effect") or ""
+            taints.append(f"{key}={value}:{effect}" if value else f"{key}:{effect}")
+
+        out = {
+            "role": "server" if any(l in labels for l in _SERVER_LABELS) else "agent",
+            "createdAt": meta.get("creationTimestamp") or None,
+            "unschedulable": spec.get("unschedulable") is True,
+            "taints": taints,
+            "capacity": _resources(status.get("capacity") or {}),
+            "allocatable": _resources(status.get("allocatable") or {}),
+        }
+        if publish_addresses:
+            out.update(_node_addresses(status.get("addresses") or []))
+        if publish_versions:
+            # Gated by the same flag as kernelVersion/osImage, and for the same
+            # reason: a precise version string tells a reader which CVEs apply.
+            out["kubeletVersion"] = info.get("kubeletVersion") or ""
+            out["containerRuntimeVersion"] = info.get("containerRuntimeVersion") or ""
+        return prune(out)
+
+
+    # ------------------------------------------------------------------ pod detail
+    def _restart_reason(status):
+        # Why a container last died, from containerStatuses[].lastState.
+        #
+        # OOMKilled WINS over Error when containers in one pod disagree. They are
+        # different faults with different fixes — an OOM means the limit is wrong,
+        # a non-zero exit means the program is — and the OOM is the one that is
+        # both actionable and invisible everywhere else on this page.
+        #
+        # An exit code rides along with Error because "Error" on its own says
+        # nothing; 137 (SIGKILL) and 1 send you to different places.
+        best = None
+        for cs in status.get("containerStatuses") or []:
+            term = (cs.get("lastState") or {}).get("terminated") or {}
+            reason = term.get("reason")
+            if not reason:
+                continue
+            if reason == "OOMKilled":
+                return reason
+            if best is None:
+                code = term.get("exitCode")
+                best = (f"{reason} ({code})"
+                        if reason == "Error" and code is not None else reason)
+        return best
+
+
+    def pod_detail(pod, publish_images=True):
+        # Used by BOTH the per-node pod tables and the problem-pods roll-up, so
+        # the two can never drift into describing the same pod differently.
+        spec = pod.get("spec") or {}
+        status = pod.get("status") or {}
+        containers = spec.get("containers") or []
+        out = {
+            "startedAt": status.get("startTime") or None,
+            "qos": status.get("qosClass") or "",
+            "restartReason": _restart_reason(status),
+        }
+        if publish_images and containers:
+            # First container only, plus a count. Publishing every container's
+            # full registry path across ~250 pods is most of the payload growth
+            # for almost none of the information: sidecars are overwhelmingly
+            # the same handful of images, and the app image is container zero.
+            out["image"] = containers[0].get("image") or ""
+            if len(containers) > 1:
+                out["imageCount"] = len(containers)
+        return prune(out)
+
+
+    # --------------------------------------------------------------------- routing
+    # Annotation names are the ones infra/ingress-policy enforces. They are
+    # duplicated here rather than read from that chart because these two charts
+    # deploy independently and a status page must not fail to render because a
+    # policy chart was uninstalled — but they must not DRIFT either, so if a name
+    # changes there, it changes here. See infra/ingress-policy/values.yaml.
+    _ANN_ENTRYPOINTS = "traefik.ingress.kubernetes.io/router.entrypoints"
+    _ANN_RESOLVER = "traefik.ingress.kubernetes.io/router.tls.certresolver"
+    _ANN_TLS = "traefik.ingress.kubernetes.io/router.tls"
+    _ANN_MIDDLEWARES = "traefik.ingress.kubernetes.io/router.middlewares"
+    _ANN_EDGE_TLS = "ingress.zachd/tls-terminates-at-edge"
+    _ANN_PUBLIC_UNAUTH = "ingress.zachd/public-unauthenticated"
+    # Substring, not an exact name — every chart names its own middleware
+    # (<ns>-<release>-forwardauth@kubernetescrd). Same match ingress-policy does.
+    _FORWARD_AUTH_MARKER = "forwardauth"
+
+    # THE SAME RULE upgrade.sh uses to decide whether this very page is public:
+    # a host that is not *.duckdns.org is reached over the Cloudflare tunnel and
+    # is therefore on the internet. Kept identical on purpose — two different
+    # answers to "is this host public" is worse than either answer.
+    _TAILNET_SUFFIX = ".duckdns.org"
+
+
+    def _backend(path):
+        svc = ((path.get("backend") or {}).get("service") or {})
+        name = svc.get("name") or ""
+        port = (svc.get("port") or {})
+        target = port.get("number") or port.get("name") or ""
+        return f"{name}:{target}" if name and target else name
+
+
+    def parse_ingresses(items, limit=200):
+        rows = []
+        for ing in items:
+            meta = ing.get("metadata") or {}
+            spec = ing.get("spec") or {}
+            ann = meta.get("annotations") or {}
+
+            middlewares = ann.get(_ANN_MIDDLEWARES) or ""
+            forward_auth = _FORWARD_AUTH_MARKER in middlewares.lower()
+            declared_public = ann.get(_ANN_PUBLIC_UNAUTH) == "true"
+            edge_tls = ann.get(_ANN_EDGE_TLS) == "true"
+            resolver = ann.get(_ANN_RESOLVER) or ""
+
+            # Rule 4's three states, and the distinction is the whole point:
+            #   authed    — a forward-auth middleware is in front of it
+            #   declared  — deliberately unauthenticated, and said so
+            #   silent    — neither, which is the ONLY failure. Most hosts here
+            #               are correctly unauthenticated (Authelia cannot sit
+            #               behind itself; the sms-relay webhook is HMAC-signed;
+            #               Jellyfin's TV apps need the raw API). Colouring
+            #               "declared" as a problem would paint most of the
+            #               cluster red and teach the reader to ignore it.
+            if forward_auth:
+                auth = "authed"
+            elif declared_public:
+                auth = "declared"
+            else:
+                auth = "silent"
+
+            # Rule 3's states, in the order the policy accepts them.
+            #
+            # "wildcard" is the normal answer on this cluster and not a
+            # fallback: Traefik holds no ACME state at all any more, and
+            # infra/traefik-certs renews the *.zachd.duckdns.org wildcard into
+            # the Secret Traefik serves as its defaultCertificate. So
+            # `router.tls: "true"` with no certresolver is the healthy,
+            # deliberate arrangement — do NOT read it as "Traefik's self-signed
+            # default", which is the thing rule 3 exists to catch and which
+            # shows up here as an empty tls field instead.
+            if resolver:
+                tls = resolver
+            elif edge_tls:
+                tls = "edge"
+            elif ann.get(_ANN_TLS) == "true":
+                tls = "wildcard"
+            else:
+                tls = ""
+
+            for rule in spec.get("rules") or []:
+                host = rule.get("host") or ""
+                paths = ((rule.get("http") or {}).get("paths") or [])
+                for p in paths or [{}]:
+                    rows.append(prune({
+                        "namespace": meta.get("namespace", ""),
+                        "name": meta.get("name", ""),
+                        "host": host,
+                        "path": p.get("path") or "/",
+                        "backend": _backend(p),
+                        "ingressClass": spec.get("ingressClassName") or "",
+                        "entrypoints": ann.get(_ANN_ENTRYPOINTS) or "",
+                        "tls": tls,
+                        "auth": auth,
+                        "exposure": ("tailnet" if host.endswith(_TAILNET_SUFFIX)
+                                     else "public"),
+                    }))
+        # Anything a reader should act on first: a silent host, then one with no
+        # TLS answer, then public hosts, then alphabetical.
+        rows.sort(key=lambda r: (r.get("auth") != "silent",
+                                 bool(r.get("tls")),
+                                 r.get("exposure") != "public",
+                                 r.get("host", ""), r.get("path", "")))
+        return rows[:limit]
+
+
+    # --------------------------------------------------------------------- storage
+    def parse_storage(pvc_items, pv_items, usage, limit=200):
+        # `usage` is (namespace, claim) -> (capacityBytes, usedBytes), built by
+        # collect.py from the same kubelet volume stats the disk bars are drawn
+        # from, so the two can never disagree about how full a claim is.
+        pvs = {}
+        for pv in pv_items:
+            pvs[(pv.get("metadata") or {}).get("name") or ""] = pv
+
+        rows = []
+        for pvc in pvc_items:
+            meta = pvc.get("metadata") or {}
+            spec = pvc.get("spec") or {}
+            status = pvc.get("status") or {}
+            ns = meta.get("namespace", "")
+            name = meta.get("name", "")
+
+            requested = ((spec.get("resources") or {}).get("requests") or {}).get("storage")
+            # status.capacity is what was actually provisioned, which can exceed
+            # the request; prefer it and fall back to the ask.
+            actual = (status.get("capacity") or {}).get("storage") or requested
+
+            volume_name = spec.get("volumeName") or ""
+            pv = pvs.get(volume_name) or {}
+            pv_spec = pv.get("spec") or {}
+
+            cap_used = usage.get((ns, name))
+            used_bytes = None
+            percent = None
+            if cap_used:
+                stat_cap, stat_used = cap_used
+                used_bytes = stat_used
+                if stat_cap > 0:
+                    percent = stat_used / stat_cap * 100
+
+            rows.append(prune({
+                "namespace": ns,
+                "name": name,
+                "phase": status.get("phase") or "",
+                "capacityBytes": parse_memory(actual) if actual else None,
+                "storageClass": spec.get("storageClassName") or "",
+                "accessModes": spec.get("accessModes") or [],
+                "volumeName": volume_name,
+                "reclaimPolicy": pv_spec.get("persistentVolumeReclaimPolicy") or "",
+                # NOT zero when kubelet has nothing to say. kubelet only reports
+                # volumes that are currently MOUNTED, so a Bound claim whose pod
+                # is not running has no stats at all — and rendering that as 0%
+                # would read as "empty" when the truth is "unknown". The page
+                # prints an em dash. Same class of mistake as the network
+                # counters talaria still gets wrong (see the chart README).
+                "usedBytes": used_bytes,
+                "percent": percent,
+            }))
+
+        # Anything not Bound first, then fullest first, then alphabetical.
+        rows.sort(key=lambda r: (r.get("phase") == "Bound",
+                                 -(r.get("percent") or 0),
+                                 r.get("namespace", ""), r.get("name", "")))
+        return rows[:limit]
+
+
+    # ------------------------------------------------------------------ jobs lane
+    def parse_cronjobs(items, limit=100):
+        rows = []
+        for cj in items:
+            meta = cj.get("metadata") or {}
+            spec = cj.get("spec") or {}
+            status = cj.get("status") or {}
+            last_schedule = status.get("lastScheduleTime") or ""
+            last_success = status.get("lastSuccessfulTime") or ""
+            rows.append(prune({
+                "namespace": meta.get("namespace", ""),
+                "name": meta.get("name", ""),
+                "schedule": spec.get("schedule") or "",
+                "suspended": spec.get("suspend") is True,
+                "concurrencyPolicy": spec.get("concurrencyPolicy") or "",
+                "lastScheduleTime": last_schedule or None,
+                "lastSuccessfulTime": last_success or None,
+                "activeCount": len(status.get("active") or []),
+                # The question this table exists to answer. A CronJob that ran
+                # more recently than it last succeeded failed its last run —
+                # which is invisible in every other section, because the pod it
+                # left behind is Failed and the README's own rule says Failed
+                # pods are not critical.
+                "lastRunFailed": bool(last_schedule and last_success
+                                      and last_success < last_schedule),
+            }))
+        # Failing first, then suspended last, then alphabetical.
+        rows.sort(key=lambda r: (not r.get("lastRunFailed"),
+                                 bool(r.get("suspended")),
+                                 r.get("namespace", ""), r.get("name", "")))
+        return rows[:limit]
+
+
+    def parse_jobs(items, limit=50):
+        # Returns (rows, job_owner). Only ACTIVE and FAILED jobs get rows — a
+        # Job that completed is not news, and this cluster keeps hundreds of
+        # them. job_owner maps every Job name to its CronJob regardless, because
+        # parse_problem_pods needs it for jobs that succeeded too.
+        rows = []
+        job_owner = {}
+        for job in items:
+            meta = job.get("metadata") or {}
+            status = job.get("status") or {}
+            name = meta.get("name", "")
+            ns = meta.get("namespace", "")
+
+            owner = ""
+            for ref in meta.get("ownerReferences") or []:
+                if ref.get("kind") == "CronJob":
+                    owner = ref.get("name") or ""
+                    break
+            if owner:
+                job_owner[(ns, name)] = owner
+
+            failed = int(status.get("failed") or 0)
+            active = int(status.get("active") or 0)
+            if not failed and not active:
+                continue
+
+            reason = ""
+            message = ""
+            for c in status.get("conditions") or []:
+                if c.get("type") == "Failed" and c.get("status") == "True":
+                    reason = c.get("reason") or ""
+                    message = c.get("message") or ""
+                    break
+
+            rows.append(prune({
+                "namespace": ns,
+                "name": name,
+                "owner": owner,
+                "startTime": status.get("startTime") or None,
+                "completionTime": status.get("completionTime") or None,
+                "failed": failed,
+                "succeeded": int(status.get("succeeded") or 0),
+                "active": active,
+                "reason": reason,
+                "message": message,
+            }))
+
+        rows.sort(key=lambda r: (not r.get("failed"), r.get("startTime") or ""),
+                  reverse=False)
+        return rows[:limit], job_owner
+
+
+    def pod_owner(pod, job_owner):
+        # "CronJob/paperless-backup" for a pod two hops down. The chart README
+        # has always carried the caveat that most Failed pods here are CronJob
+        # pods kept for their logs; this turns that from something the reader
+        # has to remember into a column they can read.
+        ns = (pod.get("metadata") or {}).get("namespace", "")
+        for ref in (pod.get("metadata") or {}).get("ownerReferences") or []:
+            kind = ref.get("kind") or ""
+            name = ref.get("name") or ""
+            if kind == "Job":
+                cron = (job_owner or {}).get((ns, name))
+                return f"CronJob/{cron}" if cron else f"Job/{name}"
+            if kind:
+                return f"{kind}/{name}"
+        return ""

@@ -12,6 +12,26 @@ data:
       root /usr/share/nginx/html;
       index index.html;
 
+      # status.json is a few hundred KB of JSON whose key names repeat once per
+      # pod, so it compresses 8-10x — and it is re-fetched by every open tab
+      # every {{ .Values.collector.intervalSeconds }}s, which is the whole reason this matters. nginx's
+      # stock config ships gzip commented out, so this was going over the wire
+      # uncompressed for as long as the page existed.
+      #
+      # Three things here are easy to get wrong:
+      #   - text/html is ALWAYS gzipped and must not appear in gzip_types;
+      #     listing it is a warning at best and confusing at worst.
+      #   - gzip_vary matters because Traefik sits in front of this. Without it
+      #     a cache upstream can hand a gzipped body to a client that did not
+      #     ask for one.
+      #   - level 5, not 9. Nine buys ~3% more on JSON for roughly double the
+      #     CPU, on a container with a 10m CPU request.
+      gzip on;
+      gzip_types application/json application/javascript text/css application/manifest+json image/svg+xml;
+      gzip_min_length 1024;
+      gzip_comp_level 5;
+      gzip_vary on;
+
       # The collector's output lives on the shared emptyDir, not in the web root.
       # no-store because it changes every {{ .Values.collector.intervalSeconds }}s and
       # Cloudflare would otherwise happily serve a cached copy for ages.
@@ -61,14 +81,21 @@ data:
         add_header Cache-Control "public, max-age=86400" always;
       }
 
-      # The page shell must revalidate on every load. It carries all the
-      # rendering logic, and it is served with no content hash in the URL — so
-      # without an explicit header a browser applies *heuristic* caching (a
-      # fraction of the Last-Modified age) and can keep showing an old shell for
-      # hours after a deploy. The symptom is the worst kind: status.json is
-      # no-store and therefore current, so the page renders fresh data through
-      # stale code and simply omits whatever the new version added. no-cache
-      # still allows a 304, so this costs a conditional request, not a re-download.
+      # The page shell must revalidate on every load. So must app.css and
+      # app.js, which is what this block now covers: the rendering logic moved
+      # out of the shell into app.js, and all three are served with no content
+      # hash in the URL — so without an explicit header a browser applies
+      # *heuristic* caching (a fraction of the Last-Modified age) and can keep
+      # showing old code for hours after a deploy. The symptom is the worst
+      # kind: status.json is no-store and therefore current, so the page renders
+      # fresh data through stale code and simply omits whatever the new version
+      # added. no-cache still allows a 304, so this costs a conditional request,
+      # not a re-download.
+      #
+      # Splitting the page into three files did not weaken that. It does mean a
+      # deploy can briefly pair a new index.html with a not-yet-revalidated
+      # app.js — but no-cache forces a conditional request on each, so that
+      # window is one round-trip rather than the hours the heuristic would give.
       location / {
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache" always;
@@ -117,7 +144,51 @@ data:
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="{{ .Values.ingress.host }} — is everything up?">
     <meta name="twitter:card" content="summary_large_image">
-    <style>
+
+    <!--
+      The stylesheet and the script are separate files, not inline blocks —
+      see the Cache-Control note on `location /` above, which now governs all
+      three. They are all no-cache, so a deploy costs three conditional
+      requests and the window in which a new shell could pair with a
+      revalidating old app.js is one round-trip rather than hours.
+
+      defer, not async: app.js reads #root and #verdict on load, and async
+      would let it run mid-parse before they exist.
+    -->
+    <link rel="stylesheet" href="/app.css">
+    <script src="/app.js" defer></script>
+    </head>
+    <body>
+    <div class="wrap">
+      <!--
+        The verdict, above everything. This page used to open on the summary
+        card, which meant working out whether anything was wrong by reading four
+        figures and a pill row — on a phone, below the fold. Now it says so.
+
+        Sticky, because the node list is long and the answer is the one thing
+        that should not scroll away.
+
+        The mark is <img src="/icon.svg"> rather than an inline <svg>. The
+        artwork already exists as two transcriptions (the SVG and the Pillow
+        calls in scripts/gen-brand.py); pasting the paths in here would make it
+        three, and this one would be the copy nobody remembers to update.
+      -->
+      <header class="top">
+        <div class="top-row">
+          <span class="brand">
+            <img src="/icon.svg" width="22" height="22" alt="">
+            <h1>Cluster Status</h1>
+          </span>
+          <span class="verdict" id="verdict"><i class="dot"></i><span id="verdict-t">Checking…</span></span>
+        </div>
+        <div class="sub" id="meta">Loading…</div>
+        <div class="why" id="why" hidden></div>
+      </header>
+      <div id="root"></div>
+    </div>
+    </body>
+    </html>
+  app.css: |
       /* ---------------------------------------------------------------- tokens
          Zinc neutrals, and the three series colours the page has always used
          for pods / k3s / system. Semantic state (ok / warn / bad) is kept
@@ -368,43 +439,17 @@ data:
       li { margin: 2px 0; }
       .between { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; }
       .trunc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    </style>
-    </head>
-    <body>
-    <div class="wrap">
-      <!--
-        The verdict, above everything. This page used to open on the summary
-        card, which meant working out whether anything was wrong by reading four
-        figures and a pill row — on a phone, below the fold. Now it says so.
-
-        Sticky, because the node list is long and the answer is the one thing
-        that should not scroll away.
-
-        The mark is <img src="/icon.svg"> rather than an inline <svg>. The
-        artwork already exists as two transcriptions (the SVG and the Pillow
-        calls in scripts/gen-brand.py); pasting the paths in here would make it
-        three, and this one would be the copy nobody remembers to update.
-      -->
-      <header class="top">
-        <div class="top-row">
-          <span class="brand">
-            <img src="/icon.svg" width="22" height="22" alt="">
-            <h1>Cluster Status</h1>
-          </span>
-          <span class="verdict" id="verdict"><i class="dot"></i><span id="verdict-t">Checking…</span></span>
-        </div>
-        <div class="sub" id="meta">Loading…</div>
-        <div class="why" id="why" hidden></div>
-      </header>
-      <div id="root"></div>
-    </div>
-    <script>
+  app.js: |
     (function () {
       'use strict';
       // Matches the collector's scrape interval: polling faster than it collects
       // just re-fetches the same file.
       var POLL_MS = {{ mul .Values.collector.intervalSeconds 1000 }};
       var expanded = {};
+      // Warnings by default. The collector now sends Normal events too, but
+      // making the page noisier out of the box would undo the reason the
+      // warnings card was readable in the first place.
+      var eventFilter = 'warn';
 
       function esc(s) {
         // Event messages are arbitrary text straight from Kubernetes and this
@@ -604,6 +649,38 @@ data:
         });
         if (pressured.length) bad.push(plural(pressured.length, 'node') + ' under pressure');
 
+        // A cordoned node is "somebody should look", not "users would notice" —
+        // it is usually a drain in progress, and the one thing you want is for
+        // the badge to remember it when the drain is not.
+        var cordoned = nodes.filter(function (n) { return n.unschedulable; });
+        if (cordoned.length) warn.push(plural(cordoned.length, 'node') + ' cordoned');
+
+        // Same reasoning as the worst-filesystem check above, one layer in: the
+        // node aggregate stays comfortable while a single claim fills.
+        var worstPvc = null;
+        (d.storage || []).forEach(function (r) {
+          if (r.percent != null && (!worstPvc || r.percent > worstPvc.percent)) worstPvc = r;
+        });
+        if (worstPvc && worstPvc.percent >= 90) {
+          bad.push('PVC ' + worstPvc.name + ' ' + worstPvc.percent.toFixed(0) + '% full');
+        } else if (worstPvc && worstPvc.percent >= 80) {
+          warn.push('PVC ' + worstPvc.name + ' ' + worstPvc.percent.toFixed(0) + '% full');
+        }
+        var unbound = (d.storage || []).filter(function (r) { return r.phase && r.phase !== 'Bound'; });
+        if (unbound.length) warn.push(plural(unbound.length, 'PVC') + ' not bound');
+
+        // Warn, not bad, for the same reason Failed pods are: a failed run is
+        // usually a flaky scrape that will retry on schedule.
+        var failedJobs = (d.jobFailures || []).filter(function (j) { return j.failed; });
+        if (failedJobs.length) warn.push(plural(failedJobs.length, 'job') + ' failed');
+
+        // Ingresses with no rule-4 answer are DELIBERATELY not in the verdict,
+        // only on the routing card. There are half a dozen of them, they all
+        // live in repos this cluster cannot edit, and they change on nobody's
+        // schedule — so they would pin the badge amber permanently, which is
+        // the same mistake as making Failed pods critical: a badge that is
+        // always amber is a badge nobody reads.
+
         if (bad.length) return { level: 'bad', color: 'var(--destructive)', label: bad[0], rest: bad.slice(1).concat(warn) };
         if (warn.length) return { level: 'warn', color: 'var(--warn)', label: warn[0], rest: warn.slice(1) };
         return {
@@ -679,6 +756,16 @@ data:
           }).join('') + '</div>';
       }
 
+      function tag(text, color, title) {
+        // One pill, one colour. Every badge on this page was an inline
+        // color-mix string copy-pasted five times before the new panels needed
+        // a sixth; this is that string, once.
+        var c = color || 'var(--muted)';
+        return '<span class="pill"' + (title ? ' title="' + esc(title) + '"' : '') +
+          ' style="color:' + c + ';background:color-mix(in srgb,' + c + ' 15%,transparent)">' +
+          esc(text) + '</span>';
+      }
+
       function conditionBadges(c) {
         if (!c) return '';
         var flags = [
@@ -707,6 +794,65 @@ data:
           '<div><div class="lbl">RAM</div>' + ramBar(t.ram, t.requests ? Number(t.requests.ramBytes) : 0) + '</div>' +
           '<div><div class="lbl">Disk (' + fmtBytes(dUsed) + ' of ' + fmtBytes(dCap) + ')</div>' + diskBar(t.disk) + '</div>' +
           '</div></div></div>';
+      }
+
+      function nodeIdentity(n) {
+        // Who this node is, as opposed to how hard it is working. Sits at the
+        // top of the expanded detail because it is the context for everything
+        // under it — and because a cordoned node with a taint on it explains a
+        // pod table that looks emptier than its neighbours'.
+        var ip = n.internalIP || n.tailscaleIP || '';
+        // The collector deliberately omits tailscaleIP when it equals the
+        // internal one (k3s --node-ip on the tailnet reports a single address),
+        // so this is a genuine second path when it is present, not a repeat.
+        var ipSub = (n.internalIP && n.tailscaleIP) ? 'tailnet ' + n.tailscaleIP : '';
+        var alloc = '';
+        if (n.allocatable && n.capacity && n.allocatable.cpuCores && n.capacity.cpuCores) {
+          // The GAP is the interesting number — what k3s reserves before a pod
+          // can have any of it — so both sides are shown rather than either.
+          alloc = fmtCores(n.allocatable.cpuCores) + ' / ' + fmtCores(n.capacity.cpuCores) +
+            ' cores · ' + fmtBytes(n.allocatable.ramBytes) + ' / ' + fmtBytes(n.capacity.ramBytes);
+        }
+        var tiles = '<div class="grid g4">' +
+          stat('Role', n.role || '—', n.unschedulable ? 'cordoned' : '') +
+          stat('Address', ip || '—', ipSub) +
+          stat('k3s', n.kubeletVersion || '—', n.containerRuntimeVersion || '') +
+          stat('Age', fmtUptime(n.createdAt) || '—', n.createdAt ? 'joined ' + n.createdAt.slice(0, 10) : '') +
+          '</div>';
+
+        var pills = '';
+        if (n.unschedulable) pills += tag('Cordoned', 'var(--destructive)');
+        (n.taints || []).forEach(function (t) {
+          pills += '<span class="pill mono" style="background:var(--muted-bg);font-size:11px">' + esc(t) + '</span>';
+        });
+        if (n.kernelVersion) {
+          pills += '<span class="pill mono" style="background:var(--muted-bg);font-size:11px">' + esc(n.kernelVersion) + '</span>';
+        }
+
+        return '<div class="lbl">Identity</div>' + tiles +
+          (pills ? '<div class="pills" style="margin-top:.5rem">' + pills + '</div>' : '') +
+          (alloc ? '<div class="sub" style="margin-top:.5rem">Allocatable: <span class="mono">' + esc(alloc) + '</span></div>' : '');
+      }
+
+      function podExtra(p) {
+        // The three columns the per-node and problem-pod tables share, so they
+        // cannot describe the same pod differently. Image is .opt: it is the
+        // longest string on the row and the least useful one at a glance.
+        return '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Image">' +
+          esc(p.image || '—') + (p.imageCount ? ' +' + (p.imageCount - 1) : '') + '</td>' +
+          '<td class="r" style="font-size:11px;color:var(--muted)" data-l="Age">' +
+          esc(fmtUptime(p.startedAt) || '—') + '</td>' +
+          '<td class="c opt" style="font-size:11px;color:var(--muted)" data-l="QoS">' +
+          esc(p.qos || '—') + '</td>';
+      }
+
+      function restartReason(p) {
+        // OOMKilled is red and everything else is amber, because they are
+        // different jobs: an OOM means the limit is wrong and you can fix it
+        // now; a non-zero exit means the program is, and you need its logs.
+        if (!p.restartReason) return '';
+        var oom = p.restartReason.indexOf('OOMKilled') === 0;
+        return tag(p.restartReason, oom ? 'var(--destructive)' : 'var(--warn)');
       }
 
       function nodeRow(n) {
@@ -739,6 +885,7 @@ data:
 
         if (open) {
           h += '<div class="detail">';
+          h += nodeIdentity(n);
           if (n.disks && n.disks.length) {
             h += '<div class="lbl">Disks</div><div class="scroll"><table><thead><tr><th>Mount</th><th class="r">Used</th>' +
               '<th class="r">Total</th><th class="r">Free</th><th class="r">%</th></tr></thead><tbody>' +
@@ -752,11 +899,13 @@ data:
           }
           if (n.pods && n.pods.length) {
             h += '<div class="lbl" style="margin-top:1rem">Pods (' + n.pods.length + ')</div><div class="scroll"><table><thead><tr>' +
-              '<th>Pod</th><th>Namespace</th><th class="c">Status</th><th class="r">Restarts</th>' +
+              '<th>Pod</th><th>Namespace</th><th class="opt">Image</th><th class="r">Age</th><th class="c opt">QoS</th>' +
+              '<th class="c">Status</th><th class="r">Restarts</th>' +
               '<th class="r">Last Restart</th><th class="r">CPU</th><th class="r">RAM</th></tr></thead><tbody>' +
               n.pods.map(function (p) {
                 return '<tr><td class="mono" style="font-size:12px" data-l="Pod">' + esc(p.name) + '</td>' +
                   '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(p.namespace || '-') + '</td>' +
+                  podExtra(p) +
                   '<td class="c" style="color:' + podStatusColor(p.status) + ';text-transform:capitalize" data-l="Status">' + esc(p.status || 'N/A') + '</td>' +
                   '<td class="r" data-l="Restarts">' + (p.restarts || 0) + '</td>' +
                   '<td class="r" style="font-size:11px;color:var(--muted)" data-l="Last restart">' +
@@ -787,17 +936,188 @@ data:
         // pods behind a non-zero Pending/Failed/CrashLoop/Unknown count, including
         // unscheduled ones that appear in no node's table.
         if (!pods || !pods.length) return '';
+        // The README has always carried the caveat that most Failed pods here
+        // are CronJob pods kept around for their logs. Now that every row knows
+        // its owner, the caveat can be counted instead of remembered.
+        var cron = pods.filter(function (p) {
+          return String(p.owner || '').indexOf('CronJob/') === 0;
+        }).length;
         return '<div class="card"><div class="card-h"><span class="card-t" style="color:var(--destructive)">Problem pods ' +
-          '<span class="count">' + pods.length + '</span></span></div>' +
+          '<span class="count">' + pods.length + '</span></span>' +
+          (cron ? '<span class="sub">' + cron + ' of these are CronJob pods kept for logs</span>' : '') + '</div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Pod</th><th>Namespace</th>' +
-          '<th class="c">Status</th><th>Reason</th><th>Node</th><th class="r">Restarts</th></tr></thead><tbody>' +
+          '<th class="opt">Image</th><th class="r">Age</th><th class="c opt">QoS</th>' +
+          '<th class="c">Status</th><th>Reason</th><th class="opt">Owner</th><th>Node</th><th class="r">Restarts</th></tr></thead><tbody>' +
           pods.map(function (p) {
+            var reason = esc(p.reason || '');
+            var extra = restartReason(p);
             return '<tr><td class="mono" style="font-size:12px" data-l="Pod">' + esc(p.name) + '</td>' +
               '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(p.namespace || '-') + '</td>' +
+              podExtra(p) +
               '<td class="c" style="color:' + podStatusColor(p.status) + '" data-l="Status">' + esc(p.status || 'N/A') + '</td>' +
-              '<td class="mono" style="font-size:12px" data-l="Reason">' + esc(p.reason || '') + '</td>' +
+              '<td class="mono" style="font-size:12px" data-l="Reason">' + (reason || '—') +
+              (extra ? ' ' + extra : '') + '</td>' +
+              '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Owner">' + esc(p.owner || '—') + '</td>' +
               '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Node">' + esc(p.node || '—') + '</td>' +
               '<td class="r" data-l="Restarts">' + (p.restarts || 0) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div></div>';
+      }
+
+      function namespaces(list) {
+        // "What is actually eating this cluster", one altitude coarser than the
+        // top-consumer cards beside it. No publish flag and no API call: every
+        // figure is a sum of per-pod numbers already on this page.
+        if (!list || !list.length) return '';
+        // Folded above 8 rows. The usual rule — never fold when something is
+        // wrong — is satisfied vacuously here rather than forgotten: a
+        // namespace has no failure state to hide.
+        var fold = list.length > 8;
+        var head = '<span class="card-t">Namespaces <span class="count">' + list.length + '</span></span>' +
+          '<span class="sub">by memory</span>';
+        return '<div class="card">' +
+          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Namespace</th><th class="r">Pods</th>' +
+          '<th class="r">CPU</th><th class="r">RAM</th><th class="r opt">Req CPU</th><th class="r opt">Req RAM</th>' +
+          '</tr></thead><tbody>' +
+          list.map(function (r) {
+            return '<tr><td class="mono" style="font-size:12px" data-l="Namespace">' + esc(r.namespace || '-') + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Pods">' + r.pods + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="CPU">' + esc(fmtCores(r.cpuCores)) + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="RAM">' + esc(fmtBytes(r.ramBytes)) + '</td>' +
+              '<td class="r mono opt" style="font-size:12px;color:var(--muted)" data-l="Req CPU">' + esc(fmtCores(r.reqCpuCores)) + '</td>' +
+              '<td class="r mono opt" style="font-size:12px;color:var(--muted)" data-l="Req RAM">' + esc(fmtBytes(r.reqRamBytes)) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>' +
+          (fold ? '</details>' : '') + '</div>';
+      }
+
+      function storage(list) {
+        // PersistentVolumeClaims, with live fill from the same kubelet volume
+        // stats the node disk bars are drawn from — so the two cannot disagree.
+        if (!list || !list.length) return '';
+        var unbound = list.filter(function (r) { return r.phase !== 'Bound'; });
+        var full = list.filter(function (r) { return (r.percent || 0) >= 80; });
+        // Same rule as the workload cards: fold only when there is nothing to
+        // say, and never hide a problem behind a click.
+        var fold = !unbound.length && !full.length && list.length > 8;
+        var head = '<span class="card-t">Storage <span class="count">' + list.length + '</span></span>' +
+          (unbound.length ? tag(unbound.length + ' not bound', 'var(--destructive)') : '') +
+          (full.length ? tag(full.length + ' over 80%', 'var(--warn)') : '') +
+          (!unbound.length && !full.length ? '<span class="sub">all bound, none full</span>' : '');
+        return '<div class="card">' +
+          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Claim</th><th>Namespace</th>' +
+          '<th class="opt">Class</th><th class="r">Size</th><th class="r">Used</th><th class="r">Full</th>' +
+          '<th class="c opt">Phase</th></tr></thead><tbody>' +
+          list.map(function (r) {
+            // An em dash, NOT 0%. kubelet only reports volumes that are
+            // currently mounted, so a Bound claim whose pod is not running has
+            // no stats at all — and "0%" would read as empty when the honest
+            // answer is unknown.
+            var used = r.usedBytes == null ? '<span style="color:var(--muted)">—</span>' : esc(fmtBytes(r.usedBytes));
+            var fullCell = r.percent == null ? '<span style="color:var(--muted)">—</span>' : pct(r.percent);
+            return '<tr><td class="mono" style="font-size:12px" data-l="Claim">' + esc(r.name) + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(r.namespace || '-') + '</td>' +
+              '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Class">' + esc(r.storageClass || '—') + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Size">' + esc(r.capacityBytes ? fmtBytes(r.capacityBytes) : '—') + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Used">' + used + '</td>' +
+              '<td class="r" data-l="Full">' + fullCell + '</td>' +
+              '<td class="c opt" data-l="Phase">' +
+              (r.phase === 'Bound' ? '<span class="sub">Bound</span>' : tag(r.phase || 'Unknown', 'var(--destructive)')) +
+              '</td></tr>';
+          }).join('') + '</tbody></table></div></div>' +
+          (fold ? '</details>' : '') + '</div>';
+      }
+
+      function routing(list) {
+        // The routing table for the whole estate. Reference material rather
+        // than health, which is why it sits below the workload cards.
+        if (!list || !list.length) return '';
+        var silent = list.filter(function (r) { return r.auth === 'silent'; });
+        var noTls = list.filter(function (r) { return !r.tls; });
+        var pub = list.filter(function (r) { return r.exposure === 'public'; }).length;
+        var fold = !silent.length && !noTls.length && list.length > 8;
+        var head = '<span class="card-t">Routing <span class="count">' + list.length + '</span></span>' +
+          '<span class="sub">' + pub + ' on the tunnel</span>' +
+          (silent.length ? tag(silent.length + ' unanswered', 'var(--warn)') : '') +
+          (noTls.length ? tag(noTls.length + ' without TLS', 'var(--destructive)') : '');
+
+        function authCell(r) {
+          // "declared" is NEUTRAL, and getting this backwards would paint most
+          // of the cluster red. Authelia cannot sit behind itself, the
+          // sms-relay webhook is HMAC-signed, Jellyfin's TV apps need the raw
+          // API — all of them correctly unauthenticated, and all of them say
+          // so with an annotation. What infra/ingress-policy rule 4 catches is
+          // SILENCE: no forward-auth and no annotation, i.e. nobody decided.
+          if (r.auth === 'authed') return tag('forward-auth', 'var(--ok)');
+          if (r.auth === 'declared') return '<span class="sub">unauth (declared)</span>';
+          return tag('no answer', 'var(--warn)', 'No forward-auth middleware and no ' +
+            'ingress.zachd/public-unauthenticated annotation — see infra/ingress-policy rule 4');
+        }
+
+        return '<div class="card">' +
+          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Host</th><th class="opt">Path</th>' +
+          '<th class="opt">Backend</th><th class="c">Exposure</th><th class="c">TLS</th><th class="c">Auth</th>' +
+          '</tr></thead><tbody>' +
+          list.map(function (r) {
+            return '<tr><td class="mono" style="font-size:12px" data-l="Host">' + esc(r.host || '—') + '</td>' +
+              '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Path">' + esc(r.path || '/') + '</td>' +
+              '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Backend">' + esc(r.backend || '—') + '</td>' +
+              '<td class="c" data-l="Exposure">' +
+              (r.exposure === 'public'
+                ? tag('tunnel', 'var(--warn)', 'Reachable from the internet via the Cloudflare tunnel')
+                : '<span class="sub">tailnet</span>') + '</td>' +
+              '<td class="c mono" style="font-size:11px" data-l="TLS">' +
+              (r.tls ? esc(r.tls) : tag('none', 'var(--destructive)')) + '</td>' +
+              '<td class="c" data-l="Auth">' + authCell(r) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>' +
+          (fold ? '</details>' : '') + '</div>';
+      }
+
+      function cronJobs(list) {
+        if (!list || !list.length) return '';
+        var failing = list.filter(function (r) { return r.lastRunFailed; });
+        var fold = !failing.length && list.length > 8;
+        var head = '<span class="card-t">CronJobs <span class="count">' + list.length + '</span></span>' +
+          (failing.length ? tag(plural(failing.length, 'last run') + ' failed', 'var(--warn)')
+                          : '<span class="sub">all last runs succeeded</span>');
+        return '<div class="card">' +
+          (fold ? '<details><summary class="card-h">' + head + '</summary>' : '<div class="card-h">' + head + '</div>') +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Name</th><th>Namespace</th>' +
+          '<th class="mono">Schedule</th><th class="r">Last run</th><th class="r">Last success</th>' +
+          '<th class="c opt">Active</th></tr></thead><tbody>' +
+          list.map(function (r) {
+            return '<tr><td class="mono" style="font-size:12px" data-l="Name">' + esc(r.name) +
+              (r.suspended ? ' <span class="pill" style="background:var(--muted-bg);font-size:10px">suspended</span>' : '') +
+              (r.lastRunFailed ? ' ' + tag('last run failed', 'var(--warn)') : '') + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(r.namespace || '-') + '</td>' +
+              '<td class="mono" style="font-size:11px" data-l="Schedule">' + esc(r.schedule || '—') + '</td>' +
+              '<td class="r" style="font-size:11px;color:var(--muted)" data-l="Last run">' +
+              esc(fmtRel(r.lastScheduleTime) || '—') + '</td>' +
+              '<td class="r" style="font-size:11px;color:' + (r.lastRunFailed ? 'var(--warn)' : 'var(--muted)') + '" data-l="Last success">' +
+              esc(fmtRel(r.lastSuccessfulTime) || 'never') + '</td>' +
+              '<td class="c opt mono" style="font-size:12px" data-l="Active">' + (r.activeCount || 0) + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>' +
+          (fold ? '</details>' : '') + '</div>';
+      }
+
+      function jobFailures(list) {
+        // Rendered only when non-empty, like problem pods: a cluster with no
+        // failed jobs should not carry a card saying so twice.
+        if (!list || !list.length) return '';
+        return '<div class="card"><div class="card-h"><span class="card-t" style="color:var(--warn)">Job failures ' +
+          '<span class="count">' + list.length + '</span></span></div>' +
+          '<div class="card-c"><div class="scroll"><table><thead><tr><th>Job</th><th>Namespace</th>' +
+          '<th class="opt">Owner</th><th class="r">Started</th><th class="r">Failed</th><th>Reason</th>' +
+          '</tr></thead><tbody>' +
+          list.map(function (r) {
+            return '<tr><td class="mono" style="font-size:12px" data-l="Job"' +
+              (r.message ? ' title="' + esc(r.message) + '"' : '') + '>' + esc(r.name) + '</td>' +
+              '<td class="mono" style="font-size:12px;color:var(--muted)" data-l="Namespace">' + esc(r.namespace || '-') + '</td>' +
+              '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Owner">' + esc(r.owner || '—') + '</td>' +
+              '<td class="r" style="font-size:11px;color:var(--muted)" data-l="Started">' + esc(fmtRel(r.startTime) || '—') + '</td>' +
+              '<td class="r mono" style="font-size:12px" data-l="Failed">' + (r.failed || 0) + '</td>' +
+              '<td class="mono" style="font-size:11px" data-l="Reason">' + esc(r.reason || '—') + '</td></tr>';
           }).join('') + '</tbody></table></div></div></div>';
       }
 
@@ -841,16 +1161,30 @@ data:
 
       function events(evs) {
         if (!evs) return '';
-        if (!evs.length) {
-          return '<div class="card"><div class="card-h"><span class="card-t">Recent warnings</span>' +
-            '<span class="sub">none</span></div>' +
-            '<div class="card-c"><div class="sub">No recent warnings.</div></div></div>';
+        var warns = evs.filter(function (e) { return e.type === 'Warning'; });
+        // Two pills, not a dropdown: the whole control is one tap on a phone
+        // and its state is readable without opening anything.
+        var toggle = ['warn', 'all'].map(function (k) {
+          var on = eventFilter === k;
+          return '<button class="pill" data-evfilter="' + k + '" style="cursor:pointer;border:0;' +
+            (on ? 'color:var(--fg);background:var(--muted-bg);font-weight:600'
+                : 'color:var(--muted);background:transparent') + '">' +
+            (k === 'warn' ? 'Warnings' : 'All') + '</button>';
+        }).join('');
+        var shown = eventFilter === 'warn' ? warns : evs;
+        var head = '<span class="card-t">Events <span class="count">' + shown.length + '</span></span>' +
+          '<span class="sub">' + warns.length + ' warning' + (warns.length === 1 ? '' : 's') +
+          ' of ' + evs.length + '</span>' +
+          '<span style="margin-left:auto;display:flex;gap:2px">' + toggle + '</span>';
+        if (!shown.length) {
+          return '<div class="card"><div class="card-h">' + head + '</div>' +
+            '<div class="card-c"><div class="sub">Nothing to show.</div></div></div>';
         }
-        return '<div class="card"><div class="card-h"><span class="card-t">Recent warnings ' +
-          '<span class="count">' + evs.length + '</span></span></div><div class="card-c">' +
-          evs.map(function (e) {
+        return '<div class="card"><div class="card-h">' + head + '</div><div class="card-c">' +
+          shown.map(function (e) {
+            var warn = e.type === 'Warning';
             return '<div class="ev"><div class="ev-h">' +
-              '<b style="color:var(--destructive)">' + esc(e.reason) + '</b>' +
+              '<b style="color:' + (warn ? 'var(--destructive)' : 'var(--muted)') + '">' + esc(e.reason) + '</b>' +
               '<span class="mono" style="font-size:11px;color:var(--muted)">' + esc(e.involvedKind) + '/' + esc(e.involvedName) + '</span>' +
               (e.namespace ? '<span class="mono" style="font-size:11px;color:var(--muted)">in ' + esc(e.namespace) + '</span>' : '') +
               (e.count > 1 ? '<span class="pill" style="background:var(--muted-bg)">×' + e.count + '</span>' : '') +
@@ -862,9 +1196,11 @@ data:
       function services(list) {
         // Endpoint health for things whose failure is invisible in pod status:
         // a Running pod whose upstream is unreachable still looks green above.
-        // Only the display name and the result are published — never the URL
-        // that was probed (see the collector's check_service).
+        //
+        // The Target column renders only when the collector wrote a url, so
+        // publish.serviceCheckUrls can be flipped off without touching this.
         if (!list || !list.length) return '';
+        var showUrl = list.some(function (s) { return !!s.url; });
         var down = list.filter(function (s) { return !s.ok; }).length;
         return '<div class="card"><div class="card-h"><span class="card-t"' +
           (down ? ' style="color:var(--destructive)"' : '') + '>Services ' +
@@ -872,6 +1208,7 @@ data:
           (down ? '<span class="pill" style="color:var(--destructive);background:color-mix(in srgb,var(--destructive) 15%,transparent)">' +
                   down + ' down</span>' : '<span class="sub">all up</span>') + '</div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Service</th>' +
+          (showUrl ? '<th class="opt">Target</th>' : '') +
           '<th class="c">State</th><th class="c">Detail</th><th class="r">Latency</th>' +
           '</tr></thead><tbody>' +
           list.map(function (s) {
@@ -880,6 +1217,8 @@ data:
             // unreachable one reports why the connection failed.
             var detail = s.reason ? s.reason : ('HTTP ' + (s.status == null ? '—' : s.status));
             return '<tr><td data-l="Service">' + esc(s.name) + '</td>' +
+              (showUrl ? '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Target">' +
+                esc(s.url || '—') + '</td>' : '') +
               '<td class="c" style="color:' + c + '" data-l="State">' + (s.ok ? 'up' : 'down') + '</td>' +
               '<td class="c mono" style="font-size:12px;color:var(--muted)" data-l="Detail">' + esc(detail) + '</td>' +
               '<td class="r mono" style="font-size:12px" data-l="Latency">' +
@@ -942,10 +1281,18 @@ data:
           h += '<div class="grid g2">' + topPods('Top CPU consumers', d.totals.topCpuPods, 'cpu') +
             topPods('Top RAM consumers', d.totals.topRamPods, 'ram') + '</div>';
         }
+        // Same question as the two cards above, one altitude coarser.
+        h += namespaces(d.totals && d.totals.namespaces);
+        h += storage(d.storage);
         h += nodeUpdates(d.nodeUpdates);
         h += workloads('Deployments', d.deployments);
         h += workloads('StatefulSets', d.statefulSets);
         h += workloads('DaemonSets', d.daemonSets);
+        // The fourth workload kind, and the failures it explains.
+        h += cronJobs(d.cronJobs);
+        h += jobFailures(d.jobFailures);
+        // Reference material, not health — so it sits below everything that is.
+        h += routing(d.ingresses);
         h += events(d.recentEvents);
         document.getElementById('root').innerHTML = h;
 
@@ -953,6 +1300,14 @@ data:
           b.addEventListener('click', function () {
             var k = b.getAttribute('data-node');
             expanded[k] = !expanded[k];
+            render(d);
+          });
+        });
+        // Same delegation pattern as the node expander above, deliberately —
+        // one more querySelectorAll rather than any new machinery.
+        Array.prototype.forEach.call(document.querySelectorAll('[data-evfilter]'), function (b) {
+          b.addEventListener('click', function () {
+            eventFilter = b.getAttribute('data-evfilter');
             render(d);
           });
         });
@@ -1006,6 +1361,3 @@ data:
       // rather than on a response.
       setInterval(function () { if (last) { setMeta(last); setVerdict(verdict(last)); } }, 1000);
     })();
-    </script>
-    </body>
-    </html>

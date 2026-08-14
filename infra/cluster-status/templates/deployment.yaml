@@ -96,8 +96,16 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            # collect.py imports extras.py from the same read-only ConfigMap
+            # mount, so CPython cannot write __pycache__ there. It degrades
+            # silently either way; this makes it a decision rather than a
+            # surprise in the logs.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
             - name: INTERVAL_SECONDS
               value: {{ .Values.collector.intervalSeconds | quote }}
+            - name: SLOW_INTERVAL_SECONDS
+              value: {{ .Values.collector.slowIntervalSeconds | quote }}
             - name: PUBLISH_EVENTS
               value: {{ .Values.publish.events | quote }}
             - name: PUBLISH_NODE_VERSIONS
@@ -106,6 +114,18 @@ spec:
               value: {{ .Values.publish.uptime | quote }}
             - name: PUBLISH_NODE_UPDATES
               value: {{ .Values.publish.nodeUpdates | quote }}
+            - name: PUBLISH_NODE_ADDRESSES
+              value: {{ .Values.publish.nodeAddresses | quote }}
+            - name: PUBLISH_POD_IMAGES
+              value: {{ .Values.publish.podImages | quote }}
+            - name: PUBLISH_INGRESSES
+              value: {{ .Values.publish.ingresses | quote }}
+            - name: PUBLISH_STORAGE
+              value: {{ .Values.publish.storage | quote }}
+            - name: PUBLISH_JOBS
+              value: {{ .Values.publish.jobs | quote }}
+            - name: PUBLISH_SERVICE_CHECK_URLS
+              value: {{ .Values.publish.serviceCheckUrls | quote }}
             - name: OWN_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: SERVICE_CHECKS
@@ -119,7 +139,7 @@ spec:
           resources:
             {{- toYaml .Values.collector.resources | nindent 12 }}
 
-        # Serves two files off local disk and nothing else.
+        # Serves a handful of static files off local disk and nothing else.
         - name: web
           image: {{ .Values.web.image }}
           securityContext:
@@ -142,9 +162,21 @@ spec:
             - name: data
               mountPath: /data
               readOnly: true
+            # Three subPaths rather than one directory mount, because the same
+            # ConfigMap also holds default.conf, which belongs in /etc/nginx.
+            # Adding a fourth page asset means adding a mount here — the cost of
+            # keeping the nginx config in the same object as the page it serves.
             - name: web
               mountPath: /usr/share/nginx/html/index.html
               subPath: index.html
+              readOnly: true
+            - name: web
+              mountPath: /usr/share/nginx/html/app.css
+              subPath: app.css
+              readOnly: true
+            - name: web
+              mountPath: /usr/share/nginx/html/app.js
+              subPath: app.js
               readOnly: true
             - name: web
               mountPath: /etc/nginx/conf.d/default.conf

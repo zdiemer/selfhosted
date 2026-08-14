@@ -1,12 +1,21 @@
 {{/*
-Read-only, and deliberately narrower than talaria's backend ClusterRole this was
-ported from: that one also carries pods/log, jobs and cronjobs for other admin
-handlers. The status collector needs none of those.
+Read-only, and still narrower than talaria's backend ClusterRole this was ported
+from — but the gap has closed. That role also carried pods/log, jobs and
+cronjobs; the jobs lane now needs the last two, so pods/log is what remains, and
+it is the one that matters: log text is unbounded application output, which is a
+different class of disclosure from object metadata and is not going on a page.
 
-nodes/proxy is the powerful one — it's what reaches kubelet's /stats/summary for
-the CPU/RAM/disk/network numbers, and it means no metrics-server is required.
-It also means this ServiceAccount can proxy to kubelets, so nothing else should
-borrow it.
+Every rule below is `list` or `get`. The five added for the routing, storage and
+jobs panels (ingresses, persistentvolumeclaims, persistentvolumes, jobs,
+cronjobs) are all plain object reads — none of them is a proxy or subresource
+verb, so none of them widens what this ServiceAccount can REACH, only what it
+can enumerate.
+
+nodes/proxy remains the powerful one — it's what reaches kubelet's
+/stats/summary for the CPU/RAM/disk/network numbers, and it means no
+metrics-server is required. It also means this ServiceAccount can proxy to
+kubelets, so nothing else should borrow it. That warning still points at exactly
+one grant.
 */}}
 apiVersion: v1
 kind: ServiceAccount
@@ -34,8 +43,17 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["list"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
     verbs: ["list"]
 ---
 # Namespaced and name-scoped: the collector may read exactly one ConfigMap —
