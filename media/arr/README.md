@@ -72,6 +72,32 @@ login:
    `movies`.
 5. **Jellyseerr**: see [`media/jellyseerr`](../jellyseerr/README.md) — it
    talks to Sonarr/Radarr, not to this pod.
+6. **Jellyfin rescan** (both Sonarr and Radarr): Settings → Connect → add
+   **Emby / Jellyfin**, host `jellyfin.media.svc.cluster.local`, port 8096,
+   API key from Jellyfin's Dashboard → API Keys, **Update Library on**.
+   See below — without this, new media takes up to an hour to appear.
+
+### The Jellyfin rescan is not optional
+
+Jellyfin has real-time monitoring enabled on both libraries, and it does
+nothing for us: it is inotify on an NFS mount, and inotify never sees writes
+made by another NFS client. Every import in this stack is exactly that —
+Sonarr and Radarr write to `/media` from their own pods, on their own nodes.
+So Jellyfin learns about new files from two places only, and this Connect is
+the fast one: on import/upgrade/rename/delete it POSTs the changed folder to
+Jellyfin's `/Library/Media/Updated`, which rescans just that path within
+about a minute (`LibraryMonitorDelay`, 60s).
+
+The other place is Jellyfin's scheduled "Scan Media Library" task, now at 1h
+(default is 12h). That is the backstop for files nobody announced — anything
+dropped into the SMB share from a desktop — not the path for arr imports. A
+full scan of this library measures ~10s, so the hourly cost is noise.
+
+Leave **Send Notifications** off: that's an Emby feature, Jellyfin returns an
+error for it, and it's what makes Connect's *Test* button fail even though
+the library update itself works fine. Save past the test.
+
+Paths need no mapping: one NFS export at `/media`, identical on both sides.
 
 Sonarr/Radarr reach qBittorrent *through* gluetun's firewall:
 `FIREWALL_INPUT_PORTS=8080` admits the web UI, `FIREWALL_OUTBOUND_SUBNETS`

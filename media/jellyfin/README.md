@@ -46,6 +46,32 @@ as democratic-csi's exports); the SMB `media` share is the same directory, so
 anything dropped there from a desktop appears in the library too. First-run
 wizard: add `/media/movies` as a Movies library and `/media/tv` as Shows.
 
+### How new media actually shows up
+
+Not through real-time monitoring, even though it's switched on for both
+libraries. That's inotify against an NFS mount, and inotify doesn't see
+writes from other NFS clients — which is every import, since Sonarr and
+Radarr write to `/media` from their own pods.
+
+What works instead:
+
+1. **Sonarr/Radarr → Connect → Emby / Jellyfin** (`Update Library` on),
+   pointed at `jellyfin.media.svc.cluster.local:8096` with a Dashboard → API
+   Keys key. On import it POSTs the changed folder to
+   `/Library/Media/Updated` and that path is rescanned inside a minute
+   (`LibraryMonitorDelay`, 60s). This is the path that matters — see
+   [`media/arr`](../arr/README.md#the-jellyfin-rescan-is-not-optional).
+2. **Scheduled "Scan Media Library"**, set to every 1h (Jellyfin's default is
+   12h). Backstop for files dropped straight onto the SMB share, which
+   nothing announces. A full scan measures ~10s here, so the interval is
+   cheap.
+
+Both live in the config PVC, not in this chart — the API key is a runtime
+secret and the task trigger is Jellyfin state, so neither is templated.
+Rebuilding the config PVC from scratch means redoing both, and the symptom
+if you forget is exactly the one that led here: the library only updates
+when you scan by hand.
+
 Metadata, artwork and watch state live in the 30Gi `truenas-iscsi` config
 PVC (SQLite — same reasoning as RomM's DB), which k8up backs up by default.
 The library itself is not a PVC and is never backed up from here.
