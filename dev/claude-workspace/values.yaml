@@ -12,6 +12,12 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v21: identity hardening. Only cryptographic identifiers authenticate — a
+  #      Signal ACI, or the WhatsApp JID the session is with; phone numbers and
+  #      the server's LID↔number alias fields no longer admit anyone. Adds the
+  #      TOTP session unlock (messaging.unlock), with `!bash`/`!auto` needing a
+  #      code from the last few minutes. ⚠️ REQUIRES `SIGNAL_ALLOWED_SENDERS`
+  #      to contain the ACI: a number-only allowlist locks you out.
   # v20: the status message's edits actually land. Each one now targets the
   #      revision the last one produced — Signal ignores an edit aimed at a
   #      superseded revision, which is why v19's ticker still showed stale
@@ -65,7 +71,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v20"
+  tag: "v21"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -310,6 +316,35 @@ messaging:
     timeoutSeconds: 120
     # Output is capped before chunking, so a runaway `cat` can't grow the heap.
     maxOutputChars: 8000
+  unlock:
+    # TOTP session unlock for 1:1 chats — the second half of the auth story.
+    #
+    # The allowlist answers "is this the owner's account?". It cannot answer "is
+    # the owner holding the phone?", which is the question a stolen or linked
+    # device asks. And the read-only baseline is not a consolation prize here:
+    # Read/Grep over ~/code in a pod with 1Password access can exfiltrate every
+    # secret in the fleet, so the gate is on the session, not on writes.
+    #
+    # A chat locks after `idleHours` of silence, after any pod restart (state is
+    # in memory deliberately), and at `maxHours` regardless. Unlocking is one
+    # message containing the six digits. `!bash` and `!auto` additionally need a
+    # code from the last `freshSeconds` — a session open since this morning is
+    # permission to talk, not to hand over a shell.
+    #
+    # OFF until `totpSecret` is set, so an existing deploy is unchanged until
+    # you have actually enrolled the secret in an authenticator.
+    #
+    # Base32, generated locally: `openssl rand -base32 20 | tr -d '='`. Enrol it
+    # with otpauth://totp/claude-gateway?secret=<SECRET>&issuer=selfhosted —
+    # any app (Google Authenticator, 1Password, Aegis) computes codes offline,
+    # nothing is sent anywhere. values.local.yaml.
+    totpSecret: ""
+    idleHours: 12
+    maxHours: 24
+    freshSeconds: 300
+    # Wrong codes before a cooldown, and how long it lasts.
+    maxAttempts: 5
+    lockoutMinutes: 15
   # Days `!usage` sums when called bare (`!usage 30` overrides, max 90). It adds
   # up the usage blocks in ~/.claude transcripts — every claude run in this pod,
   # chat and tmux and Happy alike — because there is no CLI or API for the
@@ -422,11 +457,15 @@ messaging:
     # the term container — a dedicated number, NOT a linked device on a
     # personal account. Secret-ish: set in values.local.yaml.
     number: ""
-    # ONLY these senders are heard at all (E.164). This gateway is a shell on
-    # the cluster — keep it to your own numbers. values.local.yaml.
+    # ONLY these senders are heard at all, and ONLY as ACIs (UUIDs) — a phone
+    # number here is ignored, with a warning at startup.
     #
-    # Signal identifies senders by ACI (UUID), not number, under phone-number
-    # privacy — list BOTH. Find the UUID in the daemon log's `Envelope from:`.
+    # The ACI is the identity Signal's sealed-sender certificate is issued for;
+    # a number is recyclable by the carrier, moveable by SIM swap, and
+    # re-registerable by whoever holds it next. Since a match on ANY identifier
+    # admits the sender, listing both made the number the real gate — for a
+    # shell on a cluster-admin pod. Find the UUID in the daemon log:
+    # `Envelope from: "Name" <uuid>`. values.local.yaml.
     allowedSenders: []
     # Group IDs whose members may all address the bot (see messaging.groups).
     # Base64, from the daemon log's `Group info: Id:`. values.local.yaml.
@@ -437,7 +476,12 @@ messaging:
     # on a dedicated number, keep volume low, and expect to re-pair after a
     # ban. Off by default; Signal is the primary channel.
     enabled: false
-    # Sender phone numbers, digits only (JID user part, e.g. "15551234567").
+    # The JID user part the sender's client actually sends: digits for a phone
+    # JID ("15551234567"), or the LID user part for a client that has migrated.
+    # Only the JID the encrypted session is with is matched — the server's
+    # LID↔number alias fields are not, since they are WhatsApp's claim about
+    # who someone is rather than proof. If a client moves to LIDs the gateway
+    # logs `sender not allowlisted (ids: …)`; list what it prints.
     allowedSenders: []
     # Group JIDs whose members may all address the bot, e.g.
     # "1234567890-1234567890@g.us". values.local.yaml.

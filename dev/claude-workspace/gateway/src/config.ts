@@ -44,10 +44,33 @@ export const config = {
   // here by the claude child. Defaults to the source tree when run in dev.
   appDir: process.env.GW_APP_DIR ?? path.resolve(import.meta.dirname, ".."),
 
+  // TOTP session unlock (unlock.ts). Inert unless a secret is set, so an
+  // existing deploy keeps behaving exactly as it did until it is provisioned.
+  unlock: {
+    // Base32, as an authenticator app enrols it. Lives in the messaging Secret
+    // beside the allowlists; generate with `openssl rand -base32 20`.
+    secret: process.env.GW_TOTP_SECRET ?? "",
+    // Silence that relocks the chat. Twelve hours is roughly "you slept" — the
+    // window slides on every message, so a working day costs one code.
+    idleMs: envInt("GW_UNLOCK_IDLE_HOURS", 12) * 3_600_000,
+    // Hard ceiling on one unlock regardless of activity, so a chat that is
+    // never quiet is still re-authenticated daily.
+    maxMs: envInt("GW_UNLOCK_MAX_HOURS", 24) * 3_600_000,
+    // How recently a code must have been entered to authorise `!bash`/`!auto`.
+    freshMs: envInt("GW_UNLOCK_FRESH_SECONDS", 300) * 1000,
+    // Wrong codes before a cooldown. Six digits is 10^6, and a 30s step with
+    // ±1 skew means guessing is only worth attempting at volume — this is what
+    // makes volume impossible.
+    maxAttempts: envInt("GW_UNLOCK_MAX_ATTEMPTS", 5),
+    lockoutMs: envInt("GW_UNLOCK_LOCKOUT_MINUTES", 15) * 60_000,
+  },
+
   signal: {
     enabled: (process.env.GW_SIGNAL_ENABLED ?? "true") === "true",
     number: process.env.SIGNAL_NUMBER ?? "",
     socket: process.env.GW_SIGNAL_SOCKET ?? "/tmp/signal-gw/signal-cli.sock",
+    // ACIs (UUIDs) only — see identity.ts. A phone number here can never match
+    // and is reported at startup rather than silently ignored.
     allowedSenders: envList("SIGNAL_ALLOWED_SENDERS"),
     // Group IDs (base64, from the signal-cli log's `Group info: Id:`). In a
     // group the GROUP is the credential, not the sender — see groups below.

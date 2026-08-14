@@ -36,6 +36,18 @@ import {
 } from "./state.ts";
 import { createStatus, type Status } from "./status.ts";
 import {
+  attempt as attemptUnlock,
+  isFresh,
+  isUnlocked,
+  lock,
+  looksLikeCode,
+  refresh,
+  touch,
+  unlockEnabled,
+  unlockSummary,
+  verifyCode,
+} from "./unlock.ts";
+import {
   type MsgRef,
   overflowSize,
   sendFileTo,
@@ -177,6 +189,36 @@ export function handleInbound(
     }
   } else if (!meta.allowed) {
     return;
+  } else if (unlockEnabled()) {
+    // 1:1 only. A group has no filesystem, no shell and no `!` commands, and
+    // the room — not a person — is its credential, so there is nothing for a
+    // code to attest to and no one phone to type it.
+    if (!isUnlocked(chatKey)) {
+      const result = attemptUnlock(chatKey, body);
+      void sendTo(chatKey, result.reply);
+      if (result.status === "unlocked")
+        console.log(`${chatKey}: unlocked by TOTP`);
+      // Either way this message is spent: a code is not also a prompt, and
+      // anything else arrived while locked and is not going to claude.
+      return;
+    }
+    // A code sent into an already-open chat re-stamps freshness, which is how
+    // "code, then !bash" works when the session has been open all day. Guarded
+    // on hasPending so it can never eat an answer to a permission prompt —
+    // those are 1/2/3, but a plan reply is free text and could be anything.
+    if (looksLikeCode(body) && !hasPending(chatKey)) {
+      const ok = verifyCode(body) !== null;
+      if (ok) refresh(chatKey);
+      void sendTo(
+        chatKey,
+        ok
+          ? `🔓 code accepted — !bash / !auto for the next ` +
+              `${Math.round(config.unlock.freshMs / 60_000)}m`
+          : "🔒 wrong code",
+      );
+      return;
+    }
+    touch(chatKey);
   }
 
   // Digit replies feed a pending permission prompt, never claude.
@@ -352,7 +394,42 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
   const rawArg = body.slice(cmd.length).trim();
   const chat = getChat(chatKey);
 
+  // Escalation needs a code entered in the last `unlock.freshMs`, not merely an
+  // open session. `!bash` is a shell with no model in the loop and `!auto` is a
+  // standing grant to run anything unprompted — both are worth re-asking "are
+  // you actually holding the phone?" for, which a window that slid open hours
+  // ago does not answer. `!auto off` is exempt: turning a grant OFF is never
+  // the thing to gate.
+  const escalating =
+    cmd === "!bash" || (cmd === "!auto" && arg !== "off" && arg !== "");
+  if (escalating && !isFresh(chatKey)) {
+    return sendTo(
+      chatKey,
+      `🔒 ${cmd} needs a fresh code — send your 6 digits, then repeat the command ` +
+        `(valid ${Math.round(config.unlock.freshMs / 1000)}s)`,
+    );
+  }
+
   switch (cmd) {
+    case "!lock":
+      // The panic button, and the reason the unlock notice tells you about it:
+      // if a 🔓 lands on your phone and it wasn't you, this is the reply.
+      lock(chatKey);
+      return sendTo(
+        chatKey,
+        unlockEnabled()
+          ? "🔒 locked — the next message needs a code"
+          : "unlock is not configured (no TOTP secret), so there is nothing to lock",
+      );
+    case "!unlock":
+      // Bare `!unlock` inside an open session re-stamps freshness, so the
+      // shape "code, then !bash" also works as "!unlock, code, !bash".
+      return sendTo(
+        chatKey,
+        !unlockEnabled()
+          ? "unlock is not configured (no TOTP secret)"
+          : "send your 6-digit code as its own message",
+      );
     case "!new":
     case "!clear":
       // Drops the session pointer, so the next message starts a run with no
@@ -529,6 +606,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           isGroupChat(chatKey)
             ? `group: tools limited to ${config.groups.allowedTools}`
             : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
+          ...(isGroupChat(chatKey) ? [] : [unlockSummary(chatKey)]),
           `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}` +
             (isBashRunning(chatKey) ? ", bash running" : "") +
             (overflowSize(chatKey) ? `, ${overflowSize(chatKey)} chars unsent (!more)` : ""),
@@ -544,6 +622,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           "!more shows the rest of a reply that was cut short\n" +
           "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
+          "!lock locks the chat now; a 6-digit code unlocks it. !bash and !auto " +
+          "need a code from the last few minutes\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +
           "A ❓ question takes a number or your own words · a 📋 plan takes " +
           "1 to approve, or say what to change",
@@ -556,12 +636,11 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
 /**
  * Allowlist gate. Logs (rate-limited) and drops anything unknown.
  *
- * Takes several identifiers because one sender can arrive under more than one:
- * Signal sends an ACI (UUID) and only includes the phone number when the sender
- * shares it, which phone-number privacy makes the exception rather than the
- * rule. A match on ANY identifier admits the sender, so an entry in
- * values.local.yaml may be an E.164 number or a UUID, and listing both survives
- * either one going missing.
+ * Takes several identifiers because one sender can arrive under more than one —
+ * but the callers pass only the ones that AUTHENTICATE (identity.ts): a Signal
+ * ACI, or the WhatsApp JID the session is with. Phone numbers and the server's
+ * alias fields are filtered out before they get here, because a match on ANY
+ * identifier admits the sender and the weakest id would otherwise be the gate.
  */
 export function matchesAllowlist(
   sender: string | string[],
@@ -571,15 +650,23 @@ export function matchesAllowlist(
   return ids.some((id) => allowed.includes(id));
 }
 
+/**
+ * `logIds` is what gets printed on a drop — everything the envelope said about
+ * the sender, including the identifiers that are not allowed to authenticate.
+ * Without it, "dropped message from" for a sender who sent only a phone number
+ * would print nothing at all.
+ */
 export function isAllowed(
   sender: string | string[],
   allowed: string[],
+  logIds?: string[],
 ): boolean {
   const ids = (Array.isArray(sender) ? sender : [sender]).filter(Boolean);
   if (matchesAllowlist(ids, allowed)) return true;
   if (droppedLog++ % 20 === 0)
     console.warn(
-      `dropped message from non-allowlisted sender ${ids.join(" / ") || "(unidentified)"}`,
+      `dropped message from non-allowlisted sender ` +
+        `${(logIds ?? ids).join(" / ") || "(unidentified)"}`,
     );
   return false;
 }

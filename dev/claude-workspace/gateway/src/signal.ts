@@ -3,6 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import { importSignalAttachment } from "./attachments.ts";
 import { config } from "./config.ts";
+import { signalAuthIds, unusableSignalEntries } from "./identity.ts";
 import {
   handleInbound,
   handleReaction,
@@ -118,14 +119,15 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
   if (method !== "receive") return;
   const env = params.envelope;
   const msg = env?.dataMessage;
-  // Signal identifies a sender by ACI (UUID) and includes `sourceNumber` only
-  // when they share their phone number — phone-number privacy has been the
-  // default since 2024, so for most senders it is simply absent. Check every
-  // identifier the envelope carries against the allowlist instead of picking
-  // one, so an E.164 number and a UUID are both valid config.
+  // Two different lists on purpose. `ids` is everything the envelope says
+  // about the sender, used for addressing and logs; `authIds` is the subset
+  // that may be matched against the allowlist — the ACI only. A phone number
+  // is a recyclable, SIM-swappable identifier, and this gateway is a shell on a
+  // cluster-admin pod; see identity.ts.
   const ids = [env?.sourceNumber, env?.sourceUuid, env?.source].filter(
     (v): v is string => Boolean(v),
   );
+  const authIds = signalAuthIds(ids);
   // Reply to the number when there is one (it keeps logs and !status readable),
   // otherwise the UUID — signal-cli accepts either as a recipient.
   const sender = ids[0];
@@ -149,7 +151,7 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
         groupId ? `signal:g:${groupId}` : `signal:${sender}`,
         String(target),
         reaction.emoji,
-        { owner: matchesAllowlist(ids, config.signal.allowedSenders) },
+        { owner: matchesAllowlist(authIds, config.signal.allowedSenders) },
       );
     }
     return;
@@ -169,8 +171,8 @@ function onNotification(method: string, params: { envelope?: Envelope }): void {
   // In a group the room is the credential; in a 1:1 the sender is. `owner`
   // tracks the sender separately either way, because `!` commands need it.
   const owner = groupId
-    ? matchesAllowlist(ids, config.signal.allowedSenders)
-    : isAllowed(ids, config.signal.allowedSenders);
+    ? matchesAllowlist(authIds, config.signal.allowedSenders)
+    : isAllowed(authIds, config.signal.allowedSenders, ids);
   const allowed = groupId ? true : owner;
 
   const mentioned = groupId ? mentionsBot(env!) : true;
@@ -288,8 +290,31 @@ function addressOf(chatKey: string): Record<string, unknown> {
     : { recipient: [target] };
 }
 
+/**
+ * Phone numbers left in SIGNAL_ALLOWED_SENDERS no longer authenticate anything.
+ * Said loudly at startup because the alternative is a silent lockout: messages
+ * from the owner would simply stop being answered, with nothing in the log
+ * connecting that to the config.
+ */
+function warnWeakAllowlist(): void {
+  const weak = unusableSignalEntries(config.signal.allowedSenders);
+  if (!weak.length) return;
+  console.warn(
+    `signal: ignoring ${weak.length} non-ACI allowlist entr${weak.length === 1 ? "y" : "ies"} ` +
+      `(${weak.join(", ")}) — only ACIs (UUIDs) authenticate; find yours in the ` +
+      `daemon log's 'Envelope from: "Name" <uuid>'`,
+  );
+  if (unusableSignalEntries(config.signal.allowedSenders).length ===
+    config.signal.allowedSenders.length)
+    console.error(
+      "signal: NO usable allowlist entries — every sender will be dropped until " +
+        "SIGNAL_ALLOWED_SENDERS lists at least one ACI",
+    );
+}
+
 export function startSignal(): void {
   loadSelfUuid();
+  warnWeakAllowlist();
   registerTransport("signal", {
     // Some Signal clients truncate near 2000 chars; stay under it.
     chunkLimit: 1900,
