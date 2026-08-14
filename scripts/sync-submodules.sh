@@ -126,7 +126,12 @@ sync_one() {
   fi
 
   branch="$(git config -f .gitmodules --get "submodule.${path}.branch" 2>/dev/null || echo main)"
-  current="$(git -C "$path" rev-parse HEAD)"
+  # The PIN, from the index — not the worktree's HEAD. They disagree whenever
+  # this clone has pulled a pin move it never checked out, and the worktree is
+  # then the older of the two. Reading HEAD there let a stale checkout defeat
+  # the never-travel-backwards guard below and re-pin an already-recorded
+  # commit. scripts/submodules-refresh.sh keeps them equal; this is the belt.
+  current="$(git rev-parse "HEAD:${path}" 2>/dev/null || git -C "$path" rev-parse HEAD)"
 
   git -C "$path" fetch --quiet --tags origin "$branch" 2>/dev/null \
     || { REPORT+=("$(printf '%-28s %s' "$path" 'fetch failed')"); return 0; }
@@ -148,10 +153,10 @@ sync_one() {
     REPORT+=("$(printf '%-28s %s' "$path" 'up to date')"); return 0
   fi
 
-  # A pin must never travel backwards. web/whatnowgg is pinned to
-  # v1.0.98-1-gb74d159 — one commit PAST its newest tag — so the tag strategy
-  # would otherwise "advance" it to an older commit and quietly un-record a
-  # deploy. Only move when the candidate is genuinely ahead.
+  # A pin must never travel backwards. web/whatnowgg is pinned several commits
+  # PAST its newest tag (v1.0.98-12-g834e537 as of this writing), so the tag
+  # strategy would otherwise "advance" it to an older commit and quietly
+  # un-record a deploy. Only move when the candidate is genuinely ahead.
   if git -C "$path" merge-base --is-ancestor "$target" "$current" 2>/dev/null; then
     REPORT+=("$(printf '%-28s %s' "$path" "pin is already ahead of $(short "$path" "$target") — left alone")")
     return 0

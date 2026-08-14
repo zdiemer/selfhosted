@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# $3 is 1 for a branch checkout, 0 for a file checkout. Only the former can
+# move the submodule pins, and `git checkout -- some/file` must stay cheap.
+[[ "${3:-0}" == "1" ]] || exit 0
+exec "$(git rev-parse --show-toplevel)/scripts/submodules-refresh.sh" --quiet

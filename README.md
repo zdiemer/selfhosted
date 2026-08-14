@@ -207,6 +207,23 @@ repo stays the full index of what runs on the cluster. Clone with
   pin follows the branch head with that stated plainly; `web/old-diemer-codes/site`
   is a frozen archive and is skipped.
 
+  **A pulled pin does not check itself out**, and that is where the "why is
+  `web/whatnowgg` modified again?" state comes from. The timer runs in one clone
+  (`~/Code/selfhosted`); every other clone pulls the pin move into its index and
+  leaves the worktree on the old commit, which `git status` then reports as a
+  dirty gitlink forever. It is not a change — it is that clone being behind — and
+  committing it with a broad `git add -A` walks the pin *backwards*, so the repo
+  claims the cluster runs older code than it does. Exactly what the verified sync
+  exists to prevent, arriving through the back door.
+  [`.githooks/post-merge`](.githooks/post-merge) and
+  [`post-checkout`](.githooks/post-checkout) close it: after any pull or branch
+  switch, [`scripts/submodules-refresh.sh`](scripts/submodules-refresh.sh) puts
+  the worktrees back on the recorded commits (unlocking and re-locking around the
+  checkout, and doing nothing at all when there is no drift). Both need
+  `core.hooksPath` set — same one-liner as the pre-push hook below. As a belt,
+  `sync-submodules.sh` now reads the current pin from the index rather than the
+  worktree, so a stale checkout cannot talk it into re-pinning old code.
+
   The one exception is [`web/old-diemer-codes/`](web/old-diemer-codes/), where the
   app repo is a frozen 2019 archive that is deliberately not being modified: the
   chart and the Dockerfile live in *this* repo and the app is the submodule
@@ -222,7 +239,9 @@ repo stays the full index of what runs on the cluster. Clone with
   repo reports a red run back to anyone, so `dev/claude-workspace` sat at
   `appVersion: v14` against `image.tag: v15` through three consecutive failing
   runs. [`.githooks/pre-push`](.githooks/pre-push) runs the same scripts locally
-  (~15s, quiet unless something fails). Enable it once per clone:
+  (~15s, quiet unless something fails). Enable it once per clone — this is also
+  what turns on the submodule refresh hooks above, so a clone without it drifts
+  in both directions at once:
 
   ```bash
   git config core.hooksPath .githooks

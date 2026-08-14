@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A pull moves the submodule pins in the index and leaves the worktrees behind.
+# Put them back — see scripts/submodules-refresh.sh for why that matters.
+exec "$(git rev-parse --show-toplevel)/scripts/submodules-refresh.sh" --quiet
