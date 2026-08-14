@@ -29,6 +29,7 @@ SUBMODULES=(
   "finance/money:.:cluster"
   "discord/smitele-bot:.:cluster"
   "infra/sms-relay:.:cluster"
+  "web/diemer-codes:.:cluster"
   "web/whatnowgg:deploy/chart:tag"
   "web/talaria:helm/talaria:head"
   "web/old-diemer-codes/site::skip"
@@ -224,7 +225,9 @@ for m in "${MOVED[@]}"; do
   p="${m%%:*}"; rest="${m#*:}"; target="${rest%%:*}"; desc="${rest#*:}"
   git -C "$p" checkout --quiet --detach "$target"
   git add "$p"
-  BODY+="$(printf '  %-28s %s  %s\n' "$p" "$(short "$p" "$target")" "$desc")"
+  # The newline goes outside the substitution: $(...) strips trailing newlines,
+  # so building the line with a \n inside it ran every pin onto one line.
+  BODY+="$(printf '  %-28s %s  %s' "$p" "$(short "$p" "$target")" "$desc")"$'\n'
 done
 
 git diff --cached --quiet -- "${MOVED[@]%%:*}" && { note "pins already matched — nothing staged"; exit 0; }
