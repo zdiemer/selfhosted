@@ -208,9 +208,13 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- if .Values.secrets.onePassword.enabled }}
-            # Only `term` gets these: it is the container a human works in and
-            # the only one that runs scripts/secrets.sh. The others have no use
-            # for vault access, so they do not get it.
+            # Every container a Claude seat runs in gets these (term,
+            # happy-daemon, messaging-gateway): a seat spawned by the Happy
+            # daemon or the Signal gateway runs `secrets` the same as one in
+            # /term, and without the mount a cold pod (empty shared /dev/shm,
+            # so no cached session) fails with "no session, no password file,
+            # and no terminal". The pure-infra containers (bakery, signal-cli,
+            # tailscaled) have no use for vault access and do not get it.
             - name: op-credentials
               mountPath: /var/run/op-credentials
               readOnly: true
@@ -277,6 +281,17 @@ spec:
             # HAPPY_SERVER_URL with highest precedence over ~/.happy/settings.json.
             - name: HAPPY_SERVER_URL
               value: {{ .Values.happy.serverUrl | quote }}
+            {{- if .Values.secrets.onePassword.enabled }}
+            # Phone-spawned seats are children of this container and run
+            # `secrets` like the /term one — see the op-credentials note on
+            # term's volumeMounts.
+            - name: OP_ACCOUNT_FILE
+              value: /var/run/op-credentials/op-account
+            - name: OP_SECRET_KEY_FILE
+              value: /var/run/op-credentials/op-secret-key
+            - name: OP_PASSWORD_FILE
+              value: /var/run/op-credentials/op-password
+            {{- end }}
           # No probes: the daemon's only health surface is an HTTP control
           # server on a 127.0.0.1 EPHEMERAL port recorded in
           # ~/.happy/daemon.state.json (`happy daemon status` always exits 0 and
@@ -290,6 +305,11 @@ spec:
             {{- if .Values.happy.restartNotice.enabled }}
             - name: happy-notice
               mountPath: /etc/claude-workspace
+              readOnly: true
+            {{- end }}
+            {{- if .Values.secrets.onePassword.enabled }}
+            - name: op-credentials
+              mountPath: /var/run/op-credentials
               readOnly: true
             {{- end }}
           resources:
@@ -507,6 +527,17 @@ spec:
             - name: GW_GROUP_SYSTEM_PROMPT
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.secrets.onePassword.enabled }}
+            # Signal/WhatsApp seats are children of this container and run
+            # `secrets` like the /term one — see the op-credentials note on
+            # term's volumeMounts.
+            - name: OP_ACCOUNT_FILE
+              value: /var/run/op-credentials/op-account
+            - name: OP_SECRET_KEY_FILE
+              value: /var/run/op-credentials/op-secret-key
+            - name: OP_PASSWORD_FILE
+              value: /var/run/op-credentials/op-password
+            {{- end }}
           envFrom:
             # SIGNAL_NUMBER / SIGNAL_ALLOWED_SENDERS / WA_ALLOWED_SENDERS —
             # the sender allowlist is the gateway's ONLY auth.
@@ -517,6 +548,11 @@ spec:
               mountPath: /home/node
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.secrets.onePassword.enabled }}
+            - name: op-credentials
+              mountPath: /var/run/op-credentials
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources.messagingGateway | nindent 12 }}
         {{- if .Values.messaging.signal.enabled }}
