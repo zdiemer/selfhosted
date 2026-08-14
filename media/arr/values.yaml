@@ -46,6 +46,22 @@ apps:
     media: true
     configSize: 5Gi
 
+# The Usenet download client, sitting beside qBittorrent rather than
+# replacing it — Sonarr/Radarr hold both and choose per release. Normal
+# egress, NOT the PIA pod: it is an authenticated TLS session to a provider
+# that already knows who you are, so the tunnel would buy nothing and cost
+# throughput. Needs a provider (Eweka/Newshosting/…) and at least one Usenet
+# indexer in Prowlarr before it can do anything; see the README.
+sabnzbd:
+  enabled: true
+  image: lscr.io/linuxserver/sabnzbd
+  tag: "4.5.4"
+  port: 8080
+  host: sab.zachd.duckdns.org
+  # History db + queue state. Larger than prowlarr's because the history
+  # table keeps a row per job forever and nobody ever prunes it.
+  configSize: 5Gi
+
 # Cloudflare-challenge solver Prowlarr proxies the blocked public indexers
 # through. Stateless and cluster-internal only — no PVC, no ingress. Egresses
 # normally (NOT through the PIA pod): it has to look like an ordinary browser
@@ -144,6 +160,14 @@ resources:
       memory: 256Mi
     limits:
       memory: 1Gi
+  # par2 repair and unpack are the spiky parts — both CPU-bound, and both
+  # only run after a job finishes downloading.
+  sabnzbd:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
   # It is a real Chrome. Idle it sits near 200Mi; a solve spikes hard and
   # briefly, so the limit is headroom for the spike, not the steady state.
   flaresolverr:

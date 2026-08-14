@@ -1,6 +1,6 @@
 apiVersion: v2
 name: arr
-description: The acquisition stack behind Jellyfin — Prowlarr (indexers), Sonarr (TV), Radarr (movies), and qBittorrent locked inside a gluetun/PIA VPN sidecar with port forwarding. Requests arrive from Jellyseerr; imports are hardlinks into the shared NFS media volume.
+description: The acquisition stack behind Jellyfin — Prowlarr (indexers), Sonarr (TV), Radarr (movies), qBittorrent locked inside a gluetun/PIA VPN sidecar with port forwarding, SABnzbd for Usenet, and FlareSolverr so the Cloudflare-gated indexers are addable at all. Requests arrive from Jellyseerr; imports are hardlinks into the shared NFS media volume.
 type: application
 version: 0.1.0
 # appVersion tracks the four app image tags in values.yaml; sonarr's leads.
@@ -13,5 +13,7 @@ sources:
   - https://github.com/Prowlarr/Prowlarr
   - https://github.com/qbittorrent/qBittorrent
   - https://github.com/qdm12/gluetun
+  - https://github.com/sabnzbd/sabnzbd
+  - https://github.com/FlareSolverr/FlareSolverr
 maintainers:
   - name: zachd

@@ -1,11 +1,15 @@
 # arr — acquisition for the media library
 
-Prowlarr + Sonarr + Radarr + qBittorrent-inside-gluetun, the automation
+Prowlarr + Sonarr + Radarr + qBittorrent-inside-gluetun, plus SABnzbd for
+Usenet and FlareSolverr for the Cloudflare-gated indexers — the automation
 behind [Jellyfin](../jellyfin/). The flow:
 
 ```
 Jellyseerr request → Radarr/Sonarr → search via Prowlarr's indexers
-  → grab handed to qBittorrent (all traffic inside the PIA tunnel)
+  → (Cloudflare-gated ones proxied through FlareSolverr)
+  → grab handed to whichever client fits the release:
+      torrent → qBittorrent (all traffic inside the PIA tunnel)
+      nzb     → SABnzbd (normal egress; nothing to hide from a paid provider)
   → completed download hardlinked into /media/movies|tv (instant, no copy)
   → Jellyfin rescan; Jellyseerr marks it available
 ```
@@ -48,6 +52,34 @@ login:
 | Sonarr | https://sonarr.zachd.duckdns.org | `arr-sonarr.media.svc:8989` |
 | Radarr | https://radarr.zachd.duckdns.org | `arr-radarr.media.svc:7878` |
 | qBittorrent | https://qbit.zachd.duckdns.org | `arr-qbittorrent.media.svc:8080` |
+| SABnzbd | https://sab.zachd.duckdns.org | `arr-sabnzbd.media.svc:8080` |
+
+FlareSolverr has no UI and no ingress on purpose — it is reachable only at
+`arr-flaresolverr.media.svc:8191`, from Prowlarr.
+
+## Usenet
+
+qBittorrent covers what someone is still seeding. That is most things, and
+not the long tail: a 1990s season can sit at zero peers on every public
+indexer at once, which is unfixable by adding more indexers because the
+bytes are genuinely gone. Usenet retention does not depend on a live swarm,
+so SABnzbd exists for the back catalogue rather than for day-to-day grabs.
+
+Both clients stay enabled in Sonarr and Radarr simultaneously — a release is
+either a torrent or an nzb, and each goes to the client that can fetch it.
+
+Three accounts, none of them in this chart:
+
+| Piece | What it is | Notes |
+|---|---|---|
+| Provider | The actual Usenet feed (Eweka, Newshosting, …) | A block account is the right shape here — this fills gaps, it does not run continuously |
+| Indexer | NZBgeek, DrunkenSlug, NZBFinder, NZBPlanet | Prowlarr ships all four definitions; they need your API key |
+| SABnzbd | Deployed by this chart | Provider server + categories set in its UI |
+
+SABnzbd is **not** in the VPN pod, and that is deliberate: it is an
+authenticated TLS session to a provider billing your name. There is no swarm
+to hide from, the provider already knows exactly who you are, and routing it
+through PIA would only cost throughput.
 
 ## First-run wiring (once, in the UIs)
 
@@ -63,15 +95,37 @@ login:
    `/media/downloads/movies`, `tv` → `/media/downloads/tv`, and set
    **Default Torrent Management Mode: Automatic** or the category save paths
    are decorative (see below).
-2. **Prowlarr**: add your indexers. Settings → Apps → add Sonarr and Radarr
+2. **SABnzbd**: the API key is in Config → General (nothing is preseeded).
+   Config → Servers → add the provider; Config → Folders → temporary
+   `/media/downloads/incomplete`, completed `/media/downloads`; Config →
+   Categories → `tv` → `/media/downloads/tv`, `movies` →
+   `/media/downloads/movies`, matching the qBittorrent categories so both
+   clients land in the same place and imports stay hardlinks either way.
+   Config → General → **Host whitelist** must include
+   `arr-sabnzbd.media.svc.cluster.local` and the ingress host, or every
+   request through the Service arrives as an unknown Host and 403s.
+3. **Prowlarr**: add your indexers. Settings → Apps → add Sonarr and Radarr
    (their URLs + API keys from Settings → General); Prowlarr then syncs
    indexers into both.
-3. **Sonarr**: root folder `/media/tv`; Download Client → qBittorrent at
-   `arr-qbittorrent.media.svc.cluster.local:8080`, category `tv`.
-4. **Radarr**: root folder `/media/movies`; same download client, category
+   - Cloudflare-gated indexers (1337x, EZTV, KickAss, ExtraTorrent…) will
+     not even *save* without FlareSolverr — Prowlarr test-fetches on add and
+     the challenge fails it. Settings → Indexer Proxies → FlareSolverr at
+     `http://arr-flaresolverr.media.svc.cluster.local:8191/`, give it a tag,
+     put the same tag on each blocked indexer.
+   - Usenet indexers are added the same way; they carry an API key instead
+     of a URL, and sync to Sonarr/Radarr as `usenet` protocol.
+4. **Sonarr**: root folder `/media/tv`; Download Client → qBittorrent at
+   `arr-qbittorrent.media.svc.cluster.local:8080`, category `tv`, **and**
+   SABnzbd at `arr-sabnzbd.media.svc.cluster.local:8080`, category `tv`.
+   Both stay enabled — protocol decides which one a release goes to.
+5. **Radarr**: root folder `/media/movies`; same two clients, category
    `movies`.
-5. **Jellyseerr**: see [`media/jellyseerr`](../jellyseerr/README.md) — it
+6. **Jellyseerr**: see [`media/jellyseerr`](../jellyseerr/README.md) — it
    talks to Sonarr/Radarr, not to this pod.
+
+Indexers, download clients and quality profiles all live in the apps' config
+PVCs, not in this chart — there is no env-var surface for any of them. The
+PVCs are in k8up's backup, which is the only reason that is survivable.
 
 Sonarr/Radarr reach qBittorrent *through* gluetun's firewall:
 `FIREWALL_INPUT_PORTS=8080` admits the web UI, `FIREWALL_OUTBOUND_SUBNETS`

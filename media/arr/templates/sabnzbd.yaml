@@ -1,0 +1,122 @@
+{{/*
+SABnzbd — the Usenet half of acquisition, alongside qBittorrent rather than
+replacing it. Sonarr and Radarr each hold both clients and pick per release:
+torrent grabs keep going to qBittorrent, nzb grabs come here.
+
+The reason it exists is the long tail. Public torrents only hold what someone
+is still seeding, so a 1990s season can be sitting at zero peers with nobody
+to fetch it from; Usenet retention does not depend on a live swarm.
+
+Deliberately NOT in the qBittorrent pod, so deliberately NOT behind the VPN:
+this is an authenticated TLS session to a provider you pay by name. There is
+no swarm to hide from, the provider already knows exactly who you are, and
+pushing it through PIA would only cost throughput. Normal egress, same as
+flaresolverr.
+*/}}
+{{- if .Values.sabnzbd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arr.fullname" . }}-sabnzbd
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sabnzbd
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "arr.appSelectorLabels" (dict "root" . "app" "sabnzbd") | nindent 8 }}
+        ingress.enabled: "true"
+    spec:
+      # Same reasoning as the arr apps: state is a SQLite history db plus an
+      # in-progress queue, and a job killed mid-assembly leaves partial files
+      # in the incomplete dir for the next start to sort out.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: sabnzbd
+          image: "{{ .Values.sabnzbd.image }}:{{ .Values.sabnzbd.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: {{ .Values.puid | quote }}
+            - name: PGID
+              value: {{ .Values.pgid | quote }}
+            - name: TZ
+              value: {{ .Values.timezone }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: http
+              containerPort: {{ .Values.sabnzbd.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # The whole point of the shared NFS export: SABnzbd assembles into
+            # /media/downloads and Sonarr/Radarr hardlink out of it, so an
+            # import is a link and not a second copy of the season.
+            - name: media
+              mountPath: {{ .Values.media.mountPath }}
+          # SABnzbd has no /ping. /api?mode=version answers without a key and
+          # without touching the queue, which is what a probe wants.
+          readinessProbe:
+            httpGet:
+              path: /api?mode=version
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api?mode=version
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.sabnzbd | nindent 12 }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ include "arr.fullname" . }}-sabnzbd-config
+        - name: media
+          nfs:
+            server: {{ .Values.media.server | quote }}
+            path: {{ .Values.media.path | quote }}
+  selector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" . "app" "sabnzbd") | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arr.fullname" . }}-sabnzbd
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sabnzbd
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "arr.appSelectorLabels" (dict "root" . "app" "sabnzbd") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.sabnzbd.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "arr.fullname" . }}-sabnzbd-config
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sabnzbd
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.sabnzbd.configSize }}
+{{- end }}

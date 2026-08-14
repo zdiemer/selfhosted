@@ -41,6 +41,18 @@ spec:
                 name: {{ include "arr.fullname" . }}-qbittorrent
                 port:
                   number: {{ .Values.qbittorrent.port }}
+    {{- if .Values.sabnzbd.enabled }}
+    - host: {{ .Values.sabnzbd.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arr.fullname" . }}-sabnzbd
+                port:
+                  number: {{ .Values.sabnzbd.port }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
@@ -48,5 +60,8 @@ spec:
         - {{ $app.host }}
         {{- end }}
         - {{ .Values.qbittorrent.host }}
+        {{- if .Values.sabnzbd.enabled }}
+        - {{ .Values.sabnzbd.host }}
+        {{- end }}
   {{- end }}
 {{- end }}
