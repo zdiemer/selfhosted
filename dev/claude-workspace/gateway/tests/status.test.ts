@@ -7,7 +7,7 @@ import {
   renderStatus,
   toolLabel,
 } from "../src/status.ts";
-import type { MsgRef } from "../src/transport.ts";
+import type { EditResult, MsgRef } from "../src/transport.ts";
 
 // A transport that records instead of sending. The throttle runs at
 // millisecond scale here so the tests exercise the real timer rather than a
@@ -17,20 +17,27 @@ const INTERVAL = 30;
 function harness() {
   const sends: string[] = [];
   const edits: string[] = [];
+  // Every edit target the status aimed at, in order — this is what proves the
+  // chain follows Signal's revisions instead of re-aiming at the original.
+  const targets: MsgRef[] = [];
+  let revision = 1;
   const io = {
     async send(_c: string, text: string): Promise<MsgRef> {
       sends.push(text);
-      return 1;
+      return revision;
     },
-    async edit(_c: string, _r: MsgRef, text: string): Promise<boolean> {
+    async edit(_c: string, ref: MsgRef, text: string): Promise<EditResult> {
       edits.push(text);
-      return true;
+      targets.push(ref);
+      // Stand in for a surface that makes each revision its own message.
+      return { ok: true, next: ++revision };
     },
     supported: () => true,
   };
   return {
     sends,
     edits,
+    targets,
     io,
     status: new Status("stdin:test", io, INTERVAL),
   };
@@ -121,6 +128,44 @@ test("the clock keeps ticking while a long tool call produces no events", async 
   // Every tick carries the elapsed clock, and it only goes up.
   const secs = ticks.map((e) => Number(e.match(/working… (\d+)s/)![1]));
   expect(secs).toEqual([...secs].sort((a, b) => a - b));
+});
+
+test("each edit targets the revision the last one produced", async () => {
+  // Signal makes every revision its own message and stops accepting edits
+  // aimed at a superseded one: re-targeting the original lands an edit or two
+  // and is then ignored, which is what froze the status mid-run.
+  const h = harness();
+  let clock = 0;
+  const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 5000));
+  await status.begin();
+  status.onEvent(toolEvent("Read", { file_path: "a.ts" }));
+  await new Promise((r) => setTimeout(r, INTERVAL * 4));
+  await status.finish(true);
+
+  // First edit aims at the sent message; each later one at the newest revision.
+  expect(h.targets.length).toBeGreaterThan(1);
+  expect(h.targets).toEqual(h.targets.map((_, i) => i + 1));
+});
+
+test("progress edits stay inside the ten-revision budget, receipt included", async () => {
+  // Signal drops edits past MAX_EDIT_COUNT (10), so a long run must not spend
+  // the whole budget on the clock and have nothing left for the receipt.
+  const h = harness();
+  // A clock that leaps, so the doubling gap never holds a tick back — this
+  // measures the budget, not the pacing.
+  let clock = 0;
+  const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 3_600_000));
+  await status.begin();
+  for (let i = 0; i < 40; i++) {
+    status.onEvent(toolEvent("Read", { file_path: `f${i}.ts` }));
+    await new Promise((r) => setTimeout(r, INTERVAL));
+  }
+  const beforeReceipt = h.edits.length;
+  await status.finish(true);
+
+  expect(beforeReceipt).toBe(9);
+  expect(h.edits.length).toBe(10);
+  expect(h.edits[9]).toStartWith("✓ done");
 });
 
 test("a tick that would render identical text is not sent", async () => {

@@ -5,6 +5,7 @@ import {
   canEdit,
   editIntervalFor,
   sendOne,
+  type EditResult,
   type MsgRef,
 } from "./transport.ts";
 
@@ -21,9 +22,16 @@ import {
 /** Text shown while nothing has happened yet. */
 const INITIAL = "⏺ working…";
 
+/** How many edits one message is worth. Signal caps a message at ten revisions
+ * (MessageConstraintsUtil.MAX_EDIT_COUNT in Signal-Android) and silently drops
+ * the rest, so this is a hard budget, not a preference: the last one is
+ * reserved for the receipt, leaving nine for progress. */
+const MAX_EDITS = 10;
+const RECEIPT_EDITS = 1;
+
 export interface StatusIO {
   send(chatKey: string, text: string): Promise<MsgRef | undefined>;
-  edit(chatKey: string, ref: MsgRef, text: string): Promise<boolean>;
+  edit(chatKey: string, ref: MsgRef, text: string): Promise<EditResult>;
   supported(chatKey: string): boolean;
 }
 
@@ -132,6 +140,9 @@ export class Status {
    * dropped rather than queued: on a slow link the queue would grow forever
    * and the status would fall further behind the run with every tick. */
   private editing = false;
+  /** Progress edits spent so far, against the budget. */
+  private spent = 0;
+  private lastEditAt = 0;
   /** Edits are chained rather than fired in parallel: two in flight at once can
    * land out of order, leaving the status showing a step the run already
    * finished. */
@@ -157,6 +168,7 @@ export class Status {
     if (!config.progress.enabled || !this.io.supported(this.chatKey)) return;
     this.ref = await this.io.send(this.chatKey, INITIAL);
     this.lastText = INITIAL;
+    this.lastEditAt = this.now();
     // A free-running ticker, not a timer armed by events. Events are exactly
     // what a long tool call stops producing, and that silence used to freeze
     // the status mid-run; on a ticker the elapsed clock keeps counting and the
@@ -198,12 +210,24 @@ export class Status {
     }
   }
 
+  /** How long to wait before spending the next progress edit. The budget is
+   * small and a run's length is unknown at the start, so the gap doubles each
+   * time: the first minute of a run is where the interesting steps are, and
+   * nine edits spaced 5s, 10s, 20s … cover roughly three quarters of an hour
+   * without a fixed cadence's choice between "detailed but blind after a
+   * minute" and "alive for an hour but useless early". */
+  private gap(): number {
+    return this.intervalMs * 2 ** this.spent;
+  }
+
   /** One redraw, at most one edit in flight. The rendered text is what gets
    * compared: the elapsed clock is part of it, so a run that is merely still
    * running does redraw — that is the point — while a tick that would produce
    * byte-identical text (sub-second intervals, a stopped clock) does not. */
   private flush(): Promise<unknown> {
     if (!this.active || this.editing) return this.chain;
+    if (this.spent >= MAX_EDITS - RECEIPT_EDITS) return this.chain;
+    if (this.now() - this.lastEditAt < this.gap()) return this.chain;
     const text = renderStatus({
       action: this.action,
       note: this.note,
@@ -213,8 +237,16 @@ export class Status {
     if (text === this.lastText) return this.chain;
     this.lastText = text;
     this.editing = true;
+    this.spent++;
+    this.lastEditAt = this.now();
     this.chain = this.chain
       .then(() => this.io.edit(this.chatKey, this.ref, text))
+      // Signal makes every revision its own message and only the newest can be
+      // edited again, so the target has to move with it or the rest of the run
+      // is written to a message the clients have stopped listening to.
+      .then((res) => {
+        if (res.next !== undefined) this.ref = res.next;
+      })
       .finally(() => {
         this.editing = false;
       });

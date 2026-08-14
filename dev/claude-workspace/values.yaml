@@ -12,6 +12,11 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
+  # v20: the status message's edits actually land. Each one now targets the
+  #      revision the last one produced — Signal ignores an edit aimed at a
+  #      superseded revision, which is why v19's ticker still showed stale
+  #      text — and they are budgeted against Signal's ten-revision cap:
+  #      nine progress edits on a doubling gap, the tenth kept for the receipt.
   # v19: the live status message redraws on its own ticker instead of only when
   #      a stream event lands, so a single tool call that runs for a minute in
   #      silence no longer freezes it — the elapsed clock keeps counting. Signal
@@ -60,7 +65,7 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v19"
+  tag: "v20"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -323,12 +328,12 @@ messaging:
     # WhatsApp is reached through an unofficial client (see "ban risk"), so a
     # fast tick is not on the table. The last state always lands regardless.
     editSeconds: 3
-    # The same cadence on Signal, where an edit is one call to signal-cli over
-    # a local socket. The clock ticks on its own here — a tool call that runs
-    # for a minute in silence still moves the status — so this is a legibility
-    # knob, not a liveness one: five seconds reads as alive without turning a
-    # long run into hundreds of revisions of one message. Drop it to 1 for a
-    # second-by-second clock.
+    # Signal's FIRST gap; each later one doubles (5s, 10s, 20s …). Not a
+    # cadence, because Signal caps a message at ten revisions and drops the
+    # rest: the status gets nine progress edits and keeps the tenth for the
+    # receipt, so they are spent densely while the interesting steps happen
+    # and sparsely after, covering ~45 minutes. Raising this stretches the
+    # whole run at the cost of the early detail.
     signalEditSeconds: 5
   reactions:
     # Emoji on the sender's own message: working → done/failed, with the queued

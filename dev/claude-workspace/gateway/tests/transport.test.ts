@@ -75,7 +75,7 @@ test("reactions and edits reach the transport", async () => {
   edited.length = 0;
   await reactTo("fake:1", 7, "👀");
   await reactTo("fake:1", 7, "👀", true);
-  expect(await editMsg("fake:1", 7, "updated")).toBe(true);
+  expect((await editMsg("fake:1", 7, "updated")).ok).toBe(true);
   expect(reacted).toEqual([
     { target: 7, emoji: "👀", remove: false },
     { target: 7, emoji: "👀", remove: true },
@@ -86,21 +86,21 @@ test("reactions and edits reach the transport", async () => {
 test("a surface without reactions or edits is skipped, not an error", async () => {
   await reactTo("plain:1", 1, "👀");
   expect(canEdit("plain:1")).toBe(false);
-  expect(await editMsg("plain:1", 1, "x")).toBe(false);
+  expect((await editMsg("plain:1", 1, "x")).ok).toBe(false);
 });
 
 test("a missing target is skipped — an undefined ref is not an edit of nothing", async () => {
   reacted.length = 0;
   await reactTo("fake:1", undefined, "👀");
   expect(reacted).toEqual([]);
-  expect(await editMsg("fake:1", undefined, "x")).toBe(false);
+  expect((await editMsg("fake:1", undefined, "x")).ok).toBe(false);
 });
 
 test("a failed acknowledgement never propagates", async () => {
   // The whole point: a reaction the network refused must not take down the
   // message handling that triggered it.
   await reactTo("broken:1", 1, "👀");
-  expect(await editMsg("broken:1", 1, "x")).toBe(false);
+  expect((await editMsg("broken:1", 1, "x")).ok).toBe(false);
 });
 
 test("ready fires once per surface, and late subscribers still hear it", () => {

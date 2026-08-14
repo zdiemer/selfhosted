@@ -350,15 +350,22 @@ export function startSignal(): void {
     // hold WhatsApp back.
     editIntervalMs: config.progress.signalIntervalMs,
     async edit(chatKey, target, text) {
-      // signal-cli's `send --edit-timestamp`. The target stays the ORIGINAL
-      // send timestamp across successive edits rather than the last revision's
-      // — clients resolve an edit chain from its root.
-      await rpc("send", {
+      // signal-cli's `send --edit-timestamp`, targeting the LATEST revision:
+      // each edit is its own message with its own timestamp, and the next one
+      // has to chain off that. Targeting the original across every edit — what
+      // this did until 2026-08-14 — lands the first revision or two and is then
+      // quietly ignored, so the status froze while the run carried on. Verified
+      // against this account: ten edits chained all landed, ten aimed at the
+      // root did not.
+      const res = (await rpc("send", {
         account: config.signal.number,
         message: text,
         editTimestamp: (target as SignalRef).ts,
         ...addressOf(chatKey),
-      });
+      })) as { timestamp?: number } | undefined;
+      return res?.timestamp
+        ? ({ ts: res.timestamp, author: config.signal.number } as SignalRef)
+        : undefined;
     },
   });
   connect();

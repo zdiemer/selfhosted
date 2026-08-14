@@ -30,7 +30,11 @@ export interface Transport {
     emoji: string,
     remove?: boolean,
   ): Promise<void>;
-  edit?(chatKey: string, target: MsgRef, text: string): Promise<void>;
+  /** Resolves to the ref the NEXT edit should target, or undefined to keep
+   * targeting the current one. Signal makes each revision its own message and
+   * only tracks the newest as editable, so it hands back the new timestamp;
+   * WhatsApp keeps addressing the original key and returns nothing. */
+  edit?(chatKey: string, target: MsgRef, text: string): Promise<MsgRef | void>;
   /** How often the live status message may be redrawn on this surface, in ms.
    * Absent means the shared default — a surface only sets this if its own rate
    * limits differ, which on an unofficial client they very much do. */
@@ -176,21 +180,27 @@ export async function reactTo(
   }
 }
 
-/** Returns false if the edit didn't happen — the caller may want to fall back
- * to sending a fresh message (WhatsApp refuses edits past ~15 minutes). */
+/** The outcome of one edit: whether it happened at all — the caller may want
+ * to fall back to sending a fresh message (WhatsApp refuses edits past ~15
+ * minutes) — and what the next edit should target. */
+export interface EditResult {
+  ok: boolean;
+  next?: MsgRef;
+}
+
 export async function editMsg(
   chatKey: string,
   target: MsgRef | undefined,
   text: string,
-): Promise<boolean> {
+): Promise<EditResult> {
   const t = transportFor(chatKey);
-  if (!t?.edit || target === undefined) return false;
+  if (!t?.edit || target === undefined) return { ok: false };
   try {
-    await t.edit(chatKey, target, clampToLimit(text, t.chunkLimit));
-    return true;
+    const next = await t.edit(chatKey, target, clampToLimit(text, t.chunkLimit));
+    return { ok: true, next: next ?? undefined };
   } catch (err) {
     console.warn(`edit failed on ${chatKey}: ${(err as Error).message}`);
-    return false;
+    return { ok: false };
   }
 }
 

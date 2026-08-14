@@ -440,11 +440,18 @@ While a run is going, three things say so, in increasing order of detail:
   original — a long run would lose the thread partway. It redraws on a free-
   running ticker rather than only when an event arrives, so the elapsed clock
   keeps counting through a single tool call that runs for a minute in silence;
-  a tick that would render identical text is skipped. The cadence is
-  `messaging.progress.signalEditSeconds` (1s — an edit is one local signal-cli
-  call) and `messaging.progress.editSeconds` on WhatsApp (3s, for the same
-  reason `!bash` output is capped: a metered connection and an unofficial
-  client). Groups get no status message — the room did not ask to watch, and a
+  a tick that would render identical text is skipped. Two constraints shape the
+  rest. Signal makes every revision its own message and only accepts an edit
+  aimed at the newest one, so each edit chains off the timestamp the last one
+  returned — re-aiming at the original lands a revision or two and is then
+  ignored. And a message is capped at ten revisions
+  (`MessageConstraintsUtil.MAX_EDIT_COUNT`), which is a budget, not a rate
+  limit: nine progress edits with the tenth held back for the receipt, spaced
+  by a gap that starts at `messaging.progress.signalEditSeconds` (5s) and
+  doubles, so they cover about 45 minutes without wasting the lot on the first
+  minute. WhatsApp keeps `messaging.progress.editSeconds` (3s first gap) and
+  targets the original key throughout, which is what that surface expects.
+  Groups get no status message — the room did not ask to watch, and a
   group run only has `WebFetch`/`WebSearch` to show.
 
 The run itself is driven off `claude -p --output-format stream-json`, which is
