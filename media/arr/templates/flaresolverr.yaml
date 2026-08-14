@@ -28,6 +28,9 @@ spec:
       labels:
         {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 8 }}
     spec:
+      # A solve holds Chrome for tens of seconds; 60 matches the sibling apps
+      # and leaves room for the preStop sleep below.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: flaresolverr
           image: "{{ .Values.flaresolverr.image }}:{{ .Values.flaresolverr.tag }}"
@@ -48,6 +51,12 @@ spec:
             # clearance cookie fails the same as no cookie.
             - name: SESSION_TTL_MINUTES
               value: {{ .Values.flaresolverr.sessionTtlMinutes | quote }}
+          # Endpoint removal races SIGTERM: Prowlarr reaches this over the
+          # ClusterIP Service, so a dying pod can still be handed a solve.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           ports:
             - name: http
               containerPort: {{ .Values.flaresolverr.port }}
