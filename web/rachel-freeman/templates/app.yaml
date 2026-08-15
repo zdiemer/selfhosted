@@ -72,20 +72,25 @@ spec:
         - name: {{ include "rachel-freeman.fullname" . }}-ghcr
         {{- end }}
       {{- end }}
-      # Prefer replicas on different nodes, so losing one node cannot take the
-      # whole site with it. Preferred rather than required: on a cluster this
-      # size a hard rule would leave a pod unschedulable during a drain, which
-      # trades one outage for another.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    {{- include "rachel-freeman.selectorLabels" . | nindent 20 }}
-                    app.kubernetes.io/component: app
+      # Replicas MUST land on different nodes. This was a `preferred`
+      # podAntiAffinity until scripts/ci-lint-availability.sh rejected it, and
+      # the rejection was right: a preference the scheduler declines still looks
+      # correct in the manifest, so two copies can quietly end up on one node and
+      # the second replica buys nothing.
+      #
+      # matchLabelKeys on pod-template-hash scopes the skew to ONE ReplicaSet.
+      # Without it the old and new pods are counted together during a rollout,
+      # the surge pod appears to break the skew, and the rollout wedges.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "rachel-freeman.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: app
       # Long enough for in-flight requests to finish after the preStop sleep
       # below. A checkout redirect being cut off mid-flight is a lost sale.
       terminationGracePeriodSeconds: 40

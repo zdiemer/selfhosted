@@ -37,6 +37,9 @@ TEMPLATE_SKIP=(
   media/arr
   web/apartment-watch
   web/kelsey-green
+  # payloadSecret and postgres.password are `required`, so a render from tracked
+  # values alone cannot succeed.
+  web/rachel-freeman
 )
 
 in_list() {
