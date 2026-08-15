@@ -2,10 +2,10 @@ apiVersion: v2
 name: rachel-freeman
 description: Rachel Freeman's art store — Payload CMS admin + Next.js storefront + Postgres, selling originals and prints through Stripe Checkout
 type: application
-version: 0.16.0
+version: 0.17.0
 # appVersion tracks image.tag in values.yaml. Both move together; build.sh warns
 # if they drift.
-appVersion: "0.16.0"
+appVersion: "0.17.0"
 sources:
   - https://github.com/zdiemer/rachelfreeman
 maintainers:
