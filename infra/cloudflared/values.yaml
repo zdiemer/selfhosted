@@ -36,7 +36,7 @@ replicaCount: 2
 
 image:
   repository: cloudflare/cloudflared
-  tag: "2026.8.1"
+  tag: "2026.8.2"
   pullPolicy: IfNotPresent
 
 # REQUIRED — set in values.local.yaml (gitignored). The connector token from the
