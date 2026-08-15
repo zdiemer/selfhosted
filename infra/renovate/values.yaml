@@ -4,7 +4,7 @@
 # tag here via the helm-values manager — it PRs its own upgrades.
 image:
   repository: renovate/renovate
-  tag: "44.23.0-full"
+  tag: "44.30.3-full"
   pullPolicy: IfNotPresent
 
 # Saturday 05:30 — PRs and the dependency dashboard are waiting with coffee.
