@@ -1,0 +1,95 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # A shop. The storefront is public because that is the point, and `/admin`
+    # is gated by Payload's own login rather than forward-auth: Rachel is not on
+    # this cluster's Authelia and never will be, and a second login in front of
+    # the one she already has would be a support call, not security.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rachel-freeman.fullname" . }}
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        # DuckDNS can only write TXT at the account top-level, so sub-subdomain
+        # certs ride the wildcard SAN. Mirrors every other service in this repo.
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.ingress.cloudflareHosts }}
+---
+{{/*
+The public domain, served through the SHARED connector in infra/cloudflared.
+Nothing here runs cloudflared: the hostname -> service map lives on the tunnel in
+the Cloudflare dashboard, and the connector pulls it down with its token. This
+object only teaches Traefik to answer for the name once the tunnel dials in.
+
+A SEPARATE Ingress from the DuckDNS one above, not another rule on it, because
+the two have incompatible TLS stories — and `tls:` is a property of the object,
+not of the rule. Mixing them would put an external domain into the DuckDNS ACME
+order (see below).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}-public
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4). As above.
+    ingress.zachd/public-unauthenticated: "true"
+    # TLS for these names ends at Cloudflare's edge; the tunnel then dials
+    # Traefik with No TLS Verify on, so the certificate Traefik presents here is
+    # never validated.
+    #
+    # Say so out loud. infra/ingress-policy requires every Ingress to name a
+    # certresolver, precisely so that a host quietly falling back to Traefik's
+    # self-signed cert gets caught. This one genuinely must not name one, so it
+    # declares that rather than being silently skipped — the whole value of the
+    # rule is that "edge-terminated on purpose" stays distinguishable from
+    # "someone forgot".
+    ingress.zachd/tls-terminates-at-edge: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rachel-freeman.fullname" $ }}
+                port:
+                  number: 80
+    {{- end }}
+{{- /*
+  No `tls:` block: that list is what Traefik feeds to ACME, and rachelfreeman.art
+  must never end up in a DuckDNS cert request — DNS-01 can only answer for the
+  duckdns.org zone, so including it would fail the whole order and could take the
+  wildcard down with it.
+*/}}
+{{- end }}

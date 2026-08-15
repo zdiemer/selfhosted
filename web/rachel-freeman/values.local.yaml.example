@@ -1,0 +1,28 @@
+# Copy to values.local.yaml (gitignored) and fill in. In the normal flow this
+# file is rendered from 1Password by scripts/secrets.sh — see values.local.tpl.yaml.
+#
+#   ./scripts/secrets.sh check web/rachel-freeman
+
+app:
+  # REQUIRED. Any long random string: `openssl rand -hex 32`.
+  # Changing it logs Rachel out of the admin panel and nothing worse.
+  payloadSecret: ""
+
+  # OPTIONAL until the shop actually takes money. Empty here means the gallery,
+  # the admin panel and uploads all work, and the Buy button answers "payments
+  # are not set up yet" instead of failing obscurely.
+  #
+  # Stripe → Developers → API keys. The TEST key (sk_test_…) until go-live.
+  stripeSecretKey: ""
+
+  # OPTIONAL, same as above — but the store cannot mark anything SOLD without
+  # it, because the webhook is the only signal that money moved.
+  # Stripe → Developers → Webhooks → an endpoint pointing at
+  # https://<host>/stripe/webhook, subscribed to checkout.session.completed.
+  # This is that endpoint's signing secret, not the API key.
+  stripeWebhookSecret: ""
+
+postgres:
+  # REQUIRED. `openssl rand -hex 24`.
+  # Only ever read by the app and by infra/k8up's dump.
+  password: ""

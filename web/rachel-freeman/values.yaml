@@ -1,0 +1,144 @@
+# rachel-freeman — https://github.com/zdiemer/rachelfreeman
+#
+# An art store for original paintings and prints: Payload CMS for the admin
+# panel, a Next.js storefront on the same image, Postgres for the catalogue,
+# Stripe Checkout for the money.
+#
+# THE SHAPE. One image serves both halves. `/admin` is Payload; everything else
+# is the shop. Rachel only ever touches `/admin` — she adds a piece, uploads
+# photos, sets a price, ticks Published. There is no second dashboard and
+# nothing to keep in sync, because prices live in Postgres and Stripe is handed
+# an amount per checkout session rather than a product catalogue of its own.
+#
+# WHAT IS STATEFUL. Two volumes and they are not equally replaceable:
+#   postgres   the catalogue and orders. Dumped weekly by infra/k8up's
+#              PreBackupPod (rachel-freeman-postgres-dump) — that dump is the
+#              restore path, per the note in that chart.
+#   media      the uploaded photographs. These exist NOWHERE else: a database
+#              can be rebuilt from a dump, a photo of a sold painting cannot.
+#
+# STRIPE. Test keys until the shop is real; the webhook at /stripe/webhook is
+# what marks a piece sold, because it is the only signal money actually moved.
+# A buyer who reaches Stripe and abandons must not take a painting off sale.
+
+image:
+  repository: ghcr.io/zdiemer/rachelfreeman
+  tag: "0.13.1"
+  pullPolicy: IfNotPresent
+
+# The GHCR package is PRIVATE here, unlike the rest of this repo — see the note
+# in templates/imagepullsecret.yaml. That means every node needs the pull
+# credential, so imageCredentials.pat is REQUIRED in values.local.yaml rather
+# than optional the way it is in web/apartment-watch.
+imageCredentials:
+  registry: ghcr.io
+  username: zdiemer
+  # REQUIRED — set in values.local.yaml. A PAT with read:packages.
+  pat: ""
+
+imagePullSecrets: []
+
+# Two replicas, so a rollout is invisible to visitors.
+#
+# This is only possible because the media volume moved from truenas-iscsi
+# (ReadWriteOnce — a BLOCK device, attachable to exactly one node) to
+# truenas-nfs (ReadWriteMany). With RWO the second pod could not mount the
+# volume at all, which is why this ran a single replica and a Recreate strategy
+# until now: every deploy was a real, if brief, outage.
+replicaCount: 2
+
+app:
+  # Where the site is reached from outside. Stripe redirects back to this after
+  # payment and Payload builds admin links from it, so a mismatch here surfaces
+  # as a successful payment landing on a broken URL.
+  #
+  # The real domain, now that the tunnel is up. This is what Stripe redirects
+  # back to and what Payload builds admin + upload URLs from, so it must be the
+  # name the public actually uses — the DuckDNS host below keeps working as a
+  # way in that does not depend on Cloudflare.
+  serverURL: https://rachelfreeman.art
+
+  # REQUIRED — set in values.local.yaml. Signs admin login cookies. Any long
+  # random string; changing it logs Rachel out and nothing worse.
+  payloadSecret: ""
+
+  # REQUIRED — set in values.local.yaml. From the Stripe dashboard.
+  # Test keys (sk_test_…) until the store goes live for real.
+  stripeSecretKey: ""
+  # REQUIRED — set in values.local.yaml. The signing secret of the webhook
+  # endpoint created in Stripe pointing at <serverURL>/stripe/webhook.
+  stripeWebhookSecret: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      # Next.js server + sharp. sharp resizes uploads in-process and a phone
+      # photo at 4000px is the peak; this is sized for that, not for idle.
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+postgres:
+  image:
+    repository: postgres
+    # renovate: datasource=docker depName=postgres
+    tag: "17.6-alpine"
+    pullPolicy: IfNotPresent
+  user: payload
+  database: rachelfreeman
+  # REQUIRED — set in values.local.yaml.
+  password: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+persistence:
+  postgres:
+    accessMode: ReadWriteOnce
+    storageClass: truenas-iscsi
+    # A catalogue of a few hundred artworks and their orders. Tiny; the size is
+    # headroom, not a forecast.
+    size: 8Gi
+  media:
+    # ReadWriteMany over NFS, NOT iscsi. This is the single decision that makes
+    # zero-downtime deploys possible: an iscsi RWO volume is a block device and
+    # can only attach to one node, so a second replica could never start. NFS is
+    # a filesystem — every replica mounts it at once.
+    #
+    # The cost is that uploads now cross the network to the NAS rather than
+    # hitting a local block device. For a handful of photographs a day that is
+    # not a cost anyone will notice.
+    accessMode: ReadWriteMany
+    storageClass: truenas-nfs
+    # The originals of every photo, plus three resized variants each. 20Gi is
+    # roughly a thousand phone photographs after the webp conversion.
+    size: 20Gi
+
+# A DuckDNS hostname on the existing Traefik ingress, riding the wildcard cert
+# like everything else in this repo. This is how the site is reachable on the
+# VPN today, before the domain exists — and it stays afterwards as a way in
+# that does not depend on Cloudflare.
+ingress:
+  enabled: true
+  className: traefik
+  host: rachelfreeman.zachd.duckdns.org
+  tls:
+    enabled: true
+
+  # The public domain, served through the SHARED connector in infra/cloudflared
+  # — nothing in this chart runs cloudflared. The hostname -> service map lives
+  # on the tunnel in the Cloudflare dashboard (pointing at
+  # https://traefik.kube-system.svc.cluster.local:443, No TLS Verify ON, Host
+  # header blank); these entries are what make Traefik answer for the name once
+  # the tunnel dials in.
+  #
+  # Rendered as a SEPARATE Ingress with `tls-terminates-at-edge`, never in the
+  # DuckDNS object's `tls:` list. See templates/ingress.yaml.
+  #
+  # Add "www.rachelfreeman.art" here too if a public hostname for it is created
+  # on the tunnel.
+  cloudflareHosts:
+    - rachelfreeman.art

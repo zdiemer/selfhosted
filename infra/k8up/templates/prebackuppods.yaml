@@ -202,6 +202,44 @@ spec:
             requests: { cpu: 50m, memory: 128Mi }
             # A 75G database dumps through a compression pipeline; give it room.
             limits: { memory: 1Gi }
+---
+apiVersion: k8up.io/v1
+kind: PreBackupPod
+metadata:
+  name: rachel-freeman-postgres-dump
+  namespace: web
+  labels:
+    {{- include "k8up-wrapper.labels" . | nindent 4 }}
+spec:
+  # Small — a catalogue of artworks and a table of orders — but it is the record
+  # of what sold, to whom, and where it was posted. The uploaded PHOTOS are on a
+  # separate PVC and are copied by the volume backup; those are the half that
+  # exists nowhere else, since a database can be rebuilt from this dump and a
+  # photograph of a sold painting cannot.
+  #
+  # -F c for the same reason as paperless: compressed, and restorable
+  # table-by-table with pg_restore rather than all-or-nothing.
+  backupCommand: /bin/sh -c 'PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h rachel-freeman-postgres -U $POSTGRES_USER -d $POSTGRES_DB -F c'
+  fileExtension: .pgdump
+  pod:
+    spec:
+      # No restartPolicy. k8up realises a PreBackupPod as a DEPLOYMENT, and a
+      # Deployment's pod template only accepts restartPolicy: Always — "Never"
+      # is rejected by the API server, the operator retries forever, and the
+      # Backup sits with PreBackupPodReady=True and no job ever created.
+      containers:
+        - name: dump
+          # Matches the server's major version. pg_dump refuses to dump a server
+          # newer than itself, so this tracks web/rachel-freeman's postgres image.
+          # renovate: datasource=docker depName=postgres
+          image: postgres:17.6-alpine
+          command: ["sleep", "infinity"]
+          envFrom:
+            - secretRef:
+                name: rachel-freeman-postgres
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
 {{- end }}
 {{/*
 WHY THE DUMPS ARE THE BACKUP, NOT A BONUS.

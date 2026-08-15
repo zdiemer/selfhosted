@@ -1,0 +1,195 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}-media-shared
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+    app.kubernetes.io/component: media
+spec:
+  accessModes:
+    - {{ .Values.persistence.media.accessMode }}
+  {{- with .Values.persistence.media.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.media.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    {{- include "rachel-freeman.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    # Zero downtime: bring one new pod up, wait for it to pass its readiness
+    # probe, and only then take an old one away.
+    #
+    # maxUnavailable MUST be 0. With the default (25%, which rounds to 1 here)
+    # Kubernetes is permitted to kill the old pod before the new one is ready,
+    # which is exactly the gap this is meant to close.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "rachel-freeman.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "rachel-freeman.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: app
+    spec:
+      {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
+      imagePullSecrets:
+        {{- with .Values.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.imageCredentials.pat }}
+        - name: {{ include "rachel-freeman.fullname" . }}-ghcr
+        {{- end }}
+      {{- end }}
+      # Prefer replicas on different nodes, so losing one node cannot take the
+      # whole site with it. Preferred rather than required: on a cluster this
+      # size a hard rule would leave a pod unschedulable during a drain, which
+      # trades one outage for another.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "rachel-freeman.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: app
+      # Long enough for in-flight requests to finish after the preStop sleep
+      # below. A checkout redirect being cut off mid-flight is a lost sale.
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        # The image's `nextjs` user. fsGroup so the CSI-provisioned media volume
+        # is group-writable by it — without this the first upload fails on a
+        # root-owned mountpoint.
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+        # Payload creates its own schema on boot (postgresAdapter push), and
+        # doing that against a database that is not up yet leaves the pod in a
+        # crash loop until it happens to line up. Wait instead.
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -h {{ include "rachel-freeman.fullname" . }}-postgres -U "$POSTGRES_USER" -q; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+          envFrom:
+            - secretRef:
+                name: {{ include "rachel-freeman.fullname" . }}-postgres
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Endpoint removal is ASYNCHRONOUS: when a pod is deleted, Traefik can
+          # still be routing to it for a second or two after SIGTERM lands.
+          # Sleeping first means the pod keeps serving during exactly that
+          # window, and only then begins shutting down. Without this a rollout
+          # is still nearly seamless but drops the occasional request.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 8
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: SERVER_URL
+              value: {{ .Values.app.serverURL | quote }}
+            - name: MEDIA_DIR
+              value: /app/media
+          envFrom:
+            - secretRef:
+                name: {{ include "rachel-freeman.fullname" . }}
+          volumeMounts:
+            - name: media
+              mountPath: /app/media
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            # /healthz deliberately does not touch Postgres: a probe that fails
+            # on a database blip would restart the app, which does not fix the
+            # database and does throw away a warm Next.js process.
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          # Payload runs its schema push on first boot, which on a cold database
+          # takes longer than the liveness probe's patience would allow.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: {{ include "rachel-freeman.fullname" . }}-media-shared
+---
+{{/*
+Protects the site during VOLUNTARY disruption — a node drain for an OS upgrade,
+say — which the Deployment's rollingUpdate settings say nothing about. Without
+this, draining a node can evict both replicas at once and the site is down for
+as long as the reschedule takes.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+spec:
+  # One, not a percentage: with two replicas `minAvailable: 50%` permits both to
+  # go at once on some rounding paths. A flat 1 cannot be misread.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "rachel-freeman.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: app

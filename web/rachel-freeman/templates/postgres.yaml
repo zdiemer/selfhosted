@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}-postgres
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes:
+    - {{ .Values.persistence.postgres.accessMode }}
+  {{- with .Values.persistence.postgres.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.postgres.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}-postgres
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    {{- include "rachel-freeman.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rachel-freeman.fullname" . }}-postgres
+  labels:
+    {{- include "rachel-freeman.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate           # single RWO PVC → never two pods at once
+  selector:
+    matchLabels:
+      {{- include "rachel-freeman.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/postgres-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "rachel-freeman.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      # The shop is a shop: with the database gone there is nothing to sell.
+      # platform-core rather than the globalDefault platform-app, so it is not
+      # level with the stateless frontends when the scheduler makes room.
+      priorityClassName: platform-core
+      # 30s is the k8s default and it is not enough for a database. A drain
+      # sends SIGTERM and then hard-kills at the deadline mid-checkpoint; the
+      # next start then has to recover, which is slower than shutting down
+      # cleanly would have been and is the window where corruption lives.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          # Endpoint removal races SIGTERM: the app can still be handed this
+          # pod's address while it is shutting down, which surfaces as a
+          # connection error in the storefront rather than anything visible here.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: {{ include "rachel-freeman.fullname" . }}-postgres
+          # Postgres on Alpine writes its pgdata under /var/lib/postgresql/data;
+          # use a subPath so initdb doesn't trip over the lost+found dir some
+          # CSI drivers leave at the volume root.
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.user }}", "-d", "{{ .Values.postgres.database }}"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.user }}", "-d", "{{ .Values.postgres.database }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "rachel-freeman.fullname" . }}-postgres

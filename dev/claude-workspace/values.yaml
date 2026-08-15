@@ -533,12 +533,27 @@ resources:
   # The gateway process is tiny, but claude runs are its CHILDREN (same shape
   # as happyDaemon) — claude-sized ceiling, idle-sized request. The gateway
   # caps itself at 2 concurrent claude runs (GW_MAX_CONCURRENT).
+  #
+  # Sized like `term` rather than like the gateway process, because a chat
+  # session is not only a model in a loop: it runs whatever the work needs, and
+  # that lands in THIS cgroup. On 2026-08-15 an `npm install` for a new project
+  # (652 packages, Next + Payload build tooling) took the container past 3Gi
+  # twice and the kernel OOM-killed it — exit 137, taking Signal and WhatsApp
+  # down with it mid-conversation. The gateway's own logs were clean, which is
+  # the tell: nothing crashed, the cgroup was simply full.
+  #
+  # The request matters as much as the limit. At 128Mi the scheduler was booking
+  # this pod at a few percent of what it actually holds, so the node accepted
+  # neighbours it had no room for.
   messagingGateway:
     requests:
       cpu: 50m
-      memory: 128Mi
+      memory: 1536Mi
     limits:
-      memory: 3Gi
+      # 4Gi to match `term`: the same claude-sized session, plus room for one
+      # build alongside it. Heavy image builds should still go to the in-cluster
+      # buildkitd (BUILDKIT_HOST) rather than run here.
+      memory: 4Gi
   # Native-image signal-cli daemon: no JVM heap ballooning, but give it room
   # for attachment buffers and the receive queue.
   signalCli:
