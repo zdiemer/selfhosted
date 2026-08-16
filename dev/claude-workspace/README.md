@@ -613,7 +613,9 @@ Without auto mode, claude runs with a read-only `--allowedTools` baseline
 stdio MCP server → the gateway's approvals socket → a chat message. Reply
 `1` allow once, `2` deny, `3` allow that tool for the rest of the session
 (in-memory; resets with the pod, which is the safe direction). No reply for
-`messaging.approvalTimeoutSeconds` (default 5m) denies.
+`messaging.approvalTimeoutSeconds` (default 30m) denies — long, because most of
+what arrives here is claude asking a question or proposing a plan, and five
+minutes denied those while you were still walking back to the phone.
 
 **AskUserQuestion and ExitPlanMode arrive on this same socket but are not
 permission requests** — they're claude talking to you, and the generic prompt

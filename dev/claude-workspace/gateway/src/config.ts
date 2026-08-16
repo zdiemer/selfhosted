@@ -211,7 +211,13 @@ export const config = {
   },
   // Days of transcript history `!usage` sums when called with no argument.
   usageDays: envInt("GW_USAGE_DAYS", 7),
-  approvalTimeoutMs: envInt("GW_APPROVAL_TIMEOUT_SECONDS", 300) * 1000,
+  // How long a prompt waits for an answer. Generous, because half of these are
+  // now questions and plans rather than permission asks: claude stopping to ask
+  // which way you want something is worth the walk back to your phone, and the
+  // old five minutes denied it while you were still in the other room. Not
+  // unbounded — an unanswered prompt holds a claude slot and its socket until
+  // it resolves.
+  approvalTimeoutMs: envInt("GW_APPROVAL_TIMEOUT_SECONDS", 1800) * 1000,
   // No wall-clock ceiling on a run by default. A build, a migration, a long
   // research sweep or a run parked on an approval legitimately outlast any
   // number worth picking, and the old 30m cap killed exactly those — the work

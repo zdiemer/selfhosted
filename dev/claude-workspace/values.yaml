@@ -288,9 +288,12 @@ messaging:
   enabled: false
   # Where a fresh chat runs claude. `!cwd <repo>` switches per chat.
   defaultCwd: /home/node/code/selfhosted
-  # Minutes a permission prompt waits for a 1/2/3 reply before denying — in
-  # seconds. Generous because the whole point is spotty connectivity.
-  approvalTimeoutSeconds: 300
+  # How long a prompt waits for a reply before denying, in seconds. Generous
+  # because the whole point is spotty connectivity — and because most of these
+  # are now claude asking a question or proposing a plan, which is worth the
+  # walk back to the phone. Not unbounded: an unanswered prompt holds a claude
+  # slot until it resolves.
+  approvalTimeoutSeconds: 1800
   # Wall-clock ceiling on one claude run, in seconds. 0 = none, which is the
   # default: the only runs a fixed cap reliably kills are the long ones that
   # were working (a build, a migration, one parked on an approval), and the
