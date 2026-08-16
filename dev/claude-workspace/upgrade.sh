@@ -53,6 +53,11 @@ K="kubectl -n ${NAMESPACE}"
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
+# A delegated instance (PROFILE=…) lands in its own namespace, which will not
+# exist on the first install. Created on demand, same as infra/traefik. Harmless
+# for the main release, whose namespace has existed since the cluster did.
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
+
 # Refuse to roll onto a tag that isn't in the registry (ported from
 # infra/sms-relay). strategy: Recreate tears the pod down *before* the
 # replacement pulls, so a missing tag doesn't fail safe — it takes every
