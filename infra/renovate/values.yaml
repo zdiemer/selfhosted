@@ -26,6 +26,7 @@ repositories:
   - zdiemer/kelsey-dot-green
   - zdiemer/romnas
   - zdiemer/simplescraper
+  - zdiemer/rachelfreeman
 
 # "extract" | "lookup" | "full" — set to see what Renovate WOULD do (job
 # logs) without it opening PRs. Empty = live. The rollout dry-run was
