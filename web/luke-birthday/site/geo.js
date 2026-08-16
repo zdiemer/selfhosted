@@ -28,6 +28,20 @@
   tickAlive();
   setInterval(tickAlive, 1000);
 
+  /* ---------------- engaged for ---------------- */
+  var ENGAGED = new Date(2026, 5, 20, 0, 0, 0); // June 20 2026
+  function tickEngaged() {
+    var ms = Date.now() - ENGAGED.getTime();
+    var days = Math.floor(ms / 86400000);
+    var hrs = Math.floor(ms / 3600000) % 24;
+    var mins = Math.floor(ms / 60000) % 60;
+    var secs = Math.floor(ms / 1000) % 60;
+    $('engagedfor').textContent = days + ' DAYS, ' + hrs + 'h ' + mins + 'm ' + secs + 's';
+    $('engageddays').textContent = days + ' days ago';
+  }
+  tickEngaged();
+  setInterval(tickEngaged, 1000);
+
   /* ---------------- fake status bar ---------------- */
   var sb = $('statusbar');
   var statuses = [
