@@ -1,0 +1,14 @@
+# The site itself is build context for the Dockerfile, not chart input — no
+# template reads it. Helm otherwise packs it into the release Secret, and ~900KB
+# of already-compressed GIFs and JPEGs does not gzip: the install fails with
+# `Secret "sh.helm.release.v1.luke-birthday.v1" is invalid: data: Too long`.
+site/
+Dockerfile
+nginx.conf
+build.sh
+upgrade.sh
+README.md
+
+.git/
+.gitignore
+*.tmpl

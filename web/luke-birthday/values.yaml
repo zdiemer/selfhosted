@@ -1,0 +1,48 @@
+# luke.diemer.codes — Luke's 30th birthday page (2026-08-16).
+#
+# A one-off. Hand-written HTML/CSS/JS with no build step: the whole site is the
+# files under site/, copied verbatim into an nginx image. There is no submodule
+# and no npm here — if the page needs a change, edit site/, bump the tag, and
+# run ./build.sh && ./upgrade.sh.
+
+image:
+  # Built + pushed to GHCR by build.sh; the package must be PUBLIC so every node
+  # can pull it anonymously (multi-node cluster, no in-cluster registry).
+  repository: ghcr.io/zdiemer/luke-birthday
+  tag: "1.1.0"
+  # IfNotPresent — so NEVER reuse a tag. Rebuilding over an existing tag will not
+  # re-pull and the cluster will keep serving the old bytes.
+  pullPolicy: IfNotPresent
+
+# The site is baked into the image and the pod stores nothing, so this rolls
+# with zero unavailable. Two means a node drain is invisible — which matters for
+# exactly one day, but that day is the whole point.
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: traefik
+  host: luke.zachd.duckdns.org
+  # Published via the SHARED Cloudflare tunnel (infra/cloudflared). The tunnel's
+  # hostname -> origin map lives in the Cloudflare DASHBOARD, not here:
+  # luke.diemer.codes must be added there pointing at
+  # https://traefik.kube-system.svc.cluster.local:443, No TLS Verify on, Host
+  # header blank. Until that entry exists this host 404s at the edge.
+  cloudflareHosts:
+    - luke.diemer.codes
+  tls:
+    enabled: true
+    # DuckDNS can only write TXT at the account top level, so the sub-subdomain
+    # cert rides the wildcard SAN. Mirrors every other service in this repo.
+
+# nginx serving under a megabyte of animated GIFs.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

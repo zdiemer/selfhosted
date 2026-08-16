@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "luke-birthday.fullname" . }}
+  labels:
+    {{- include "luke-birthday.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # No PVC and no per-pod state — the site is inside the image — so this rolls
+  # rather than recreates, and never drops below full capacity.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "luke-birthday.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "luke-birthday.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      # Explicit rather than the inherited 30s default, because the preStop
+      # sleep below eats into it: this has to cover the sleep plus nginx's own
+      # SIGQUIT drain, and a reader should not have to know the default to see
+      # that it does.
+      terminationGracePeriodSeconds: 30
+      # Spread the two replicas so a single node going away doesn't take the
+      # site with it.
+      #
+      # This was preferred rather than required, on the reasoning that a 10-node
+      # cluster will honour it anyway and a one-node emergency should still
+      # schedule. The first half is the problem: "will honour it anyway" is a
+      # prediction, not a guarantee, and a hint the scheduler declines leaves
+      # both replicas on one node with nothing reporting that the spread the
+      # replica count exists for is no longer in effect. Required, with the
+      # accompanying PDB, is what makes a drain provably safe.
+      #
+      # matchLabelKeys scopes the skew to one pod-template-hash so a rollout
+      # spreads the new ReplicaSet against itself rather than deadlocking
+      # against the outgoing pods.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "luke-birthday.selectorLabels" . | nindent 14 }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            # uid/gid of the nginx-unprivileged base image.
+            runAsUser: 101
+            runAsGroup: 101
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Removing a pod from a Service's Endpoints and sending it SIGTERM are
+          # concurrent, not ordered: Traefik can still be routing to this pod
+          # when nginx starts shutting down, and those requests become 502s.
+          # maxUnavailable: 0 does not help — it guarantees a replacement is
+          # Ready, not that this pod has stopped receiving traffic. Holding the
+          # container open for a few seconds lets the Endpoints update reach
+          # Traefik before nginx goes anywhere.
+          #
+          # The native sleep action rather than `exec: sh -c sleep`, which this
+          # image cannot run: its root filesystem is read-only and it is a
+          # distroless-style nginx-unprivileged build.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          ports:
+            - name: http
+              containerPort: 8080
+          # Both probes hit the static /healthz. Unlike kelsey-green there is no
+          # sidecar that has to produce content first: if nginx has bound the
+          # port, the site is there, because the site IS the image. The failure
+          # mode a probe CANNOT catch here — an image missing the stylesheet or
+          # a GIF — is caught at build time instead (see the Dockerfile assert).
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          volumeMounts:
+            # readOnlyRootFilesystem is on. nginx writes its pid to /tmp and
+            # keeps client_body/proxy/fastcgi temp paths under /var/cache/nginx;
+            # without both of these it exits at startup. Same pair as
+            # web/kelsey-green, which is the proof this works on this base image.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: nginx-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

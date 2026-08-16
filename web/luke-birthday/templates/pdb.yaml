@@ -1,0 +1,21 @@
+{{/*
+Bounds voluntary disruption (drains, not crashes) so the two replicas can never
+be evicted together.
+
+Gated on replicaCount > 1 deliberately: minAvailable: 1 against a single replica
+is unsatisfiable by evicting it, so the drain blocks indefinitely rather than
+failing. Scaling down has to take the PDB with it.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "luke-birthday.fullname" . }}
+  labels:
+    {{- include "luke-birthday.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "luke-birthday.selectorLabels" . | nindent 6 }}
+{{- end }}

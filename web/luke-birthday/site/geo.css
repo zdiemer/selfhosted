@@ -1,0 +1,200 @@
+/* ~*~ LUKE'S BIRTHDAY PAGE ~*~ stylesheet. It's 1998 in here. */
+
+body {
+  background: #05010f url("img/stars.png") repeat;
+  color: #ffffff;
+  font-family: "Comic Sans MS", "Chalkboard SE", Verdana, sans-serif;
+  font-size: 15px;
+  margin: 0;
+  padding: 0 0 40px 0;
+  cursor: crosshair;
+}
+
+a { color: #66ddff; }
+a:visited { color: #cc99ff; }
+a:hover { color: #ffff00; background: #330066; }
+
+h1, h2 { font-family: "Impact", "Haettenschweiler", Arial Black, sans-serif; letter-spacing: 1px; }
+
+.wordart {
+  font-size: 46px;
+  margin: 14px 10px 6px 10px;
+  color: #ffe000;
+  text-transform: uppercase;
+  text-shadow:
+     2px  2px 0 #ff0066, 4px 4px 0 #aa0044,
+    -1px -1px 0 #ffffff, 6px 6px 12px rgba(0,0,0,.9);
+  animation: hue 6s linear infinite;
+}
+@keyframes hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+
+h2 {
+  font-size: 24px; color: #ffffff; background: #000080;
+  border: 3px outset #6666ff; padding: 6px 10px; margin: 24px 0 12px 0;
+  text-align: center;
+}
+
+.banner {
+  background: #000080; border: 4px ridge #ffcc00;
+  color: #ffff66; font-weight: bold; font-size: 16px;
+}
+
+.bigred { font-size: 22px; color: #ff3355; font-weight: bold; margin: 6px; }
+
+.blink { animation: blinker 0.9s steps(2, start) infinite; }
+@keyframes blinker { to { visibility: hidden; } }
+
+.spin { animation: spin 3s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.rainbowtext {
+  background: linear-gradient(90deg,#ff0000,#ff9900,#ffee00,#33ff33,#33ccff,#cc66ff,#ff0000);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: slide 3s linear infinite;
+}
+@keyframes slide { to { background-position: 300% 0; } }
+
+table.layout { background: rgba(0,0,32,.72); border: 3px ridge #8888ff; }
+
+/* ---- left nav ---- */
+td.nav {
+  background: #1a0033; border: 3px inset #9966ff; text-align: center;
+}
+.navtitle { color: #ffe000; font-weight: bold; margin: 6px 0 4px 0; font-size: 13px; }
+td.nav a {
+  display: block; text-align: left; padding: 3px 4px; margin: 2px 0;
+  background: #330066; border: 1px solid #6633aa; font-size: 13px; text-decoration: none;
+}
+td.nav a:hover { background: #ffcc00; color: #000080; }
+td.nav hr { border: 0; border-top: 2px groove #9966ff; margin: 10px 0; }
+
+td.content { background: rgba(8,0,24,.80); border: 3px inset #6666cc; text-align: left; }
+
+.lead { font-size: 17px; }
+
+/* ---- counters ---- */
+.counter {
+  display: inline-block; background: #000; color: #33ff66;
+  font-family: "Courier New", monospace; font-size: 22px; font-weight: bold;
+  letter-spacing: 4px; padding: 4px 8px; border: 3px inset #888;
+}
+.lcd {
+  background: #001100; color: #33ff66; font-family: "Courier New", monospace;
+  font-size: 13px; padding: 4px; border: 2px inset #444; word-break: break-all;
+}
+
+.tiny { font-size: 11px; color: #bbbbdd; }
+
+/* ---- frames around images ---- */
+.frame { border: 5px ridge #ffcc00; background: #000; max-width: 100%; height: auto; }
+.caption { font-size: 12px; color: #ffee88; margin: 4px 0 10px 0; text-align: center; }
+
+.alert {
+  border: 3px dashed #ff3355; background: #330011; color: #ffaacc;
+  padding: 8px; margin: 12px 0; font-weight: bold; text-align: center;
+}
+
+/* ---- stats table ---- */
+table.stats { background: #6666aa; }
+table.stats th { background: #000080; color: #ffe000; letter-spacing: 3px; }
+table.stats td { background: #101030; }
+table.stats td.k { background: #202050; color: #ffcc66; font-weight: bold; white-space: nowrap; width: 130px; }
+
+.ticker {
+  background: #000; border: 2px inset #666; color: #33ff66;
+  font-family: "Courier New", monospace; margin: 10px 0; padding: 3px;
+}
+
+/* ---- terminal ---- */
+.terminal {
+  background: #000; border: 3px inset #555; color: #33ff66;
+  font-family: "Courier New", monospace; font-size: 13px; padding: 10px; margin: 10px 0;
+}
+.green { color: #33ff66; }
+
+/* ---- risk of rain 2 ---- */
+.ror2box { background: #0b1016; border: 3px ridge #ff8800; padding: 12px; }
+.ror2head { color: #ff8800; font-weight: bold; text-align: center; letter-spacing: 2px; font-size: 18px; }
+.bar { background: #000; border: 2px inset #556; height: 22px; margin: 10px 0; }
+.barfill {
+  height: 100%; width: 0%;
+  background: repeating-linear-gradient(45deg,#ff8800 0 12px,#ffcc44 12px 24px);
+  animation: barmove 1s linear infinite;
+}
+@keyframes barmove { to { background-position: 34px 0; } }
+.ror2row { color: #99bbdd; font-family: "Courier New", monospace; font-size: 14px; }
+.itemlog { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.item {
+  width: 54px; height: 54px; border: 3px solid #fff; color: #000;
+  font-weight: bold; font-size: 12px; display: flex; align-items: flex-end;
+  justify-content: flex-end; padding: 2px; box-sizing: border-box; cursor: help;
+}
+.item:hover { transform: scale(1.15); }
+.item.white  { background: #dddddd; border-color: #ffffff; }
+.item.green  { background: #33cc55; border-color: #99ffaa; }
+.item.red    { background: #cc3333; border-color: #ff8888; color: #fff; }
+.item.boss   { background: #ffe000; border-color: #fff7aa; }
+.item.lunar  { background: #66ccff; border-color: #ccf0ff; }
+.ror2quote { color: #ffcc88; font-style: italic; text-align: center; margin: 10px 0; min-height: 22px; }
+
+ol.top10 { font-size: 16px; line-height: 1.7; }
+ol.top10 li { margin-bottom: 4px; }
+
+/* ---- guestbook ---- */
+.gbnote { background: #202050; border: 2px dotted #ffcc00; padding: 8px; margin-bottom: 10px; }
+.gbform { background: #101030; border: 3px outset #6666cc; padding: 8px; display: inline-block; }
+.gbform input, .gbform textarea {
+  background: #ffffcc; color: #000080; border: 2px inset #999;
+  font-family: "Comic Sans MS", Verdana, sans-serif; font-size: 14px;
+}
+.bigbtn {
+  background: #ffcc00; color: #000080; border: 3px outset #ffee88;
+  font-weight: bold; font-size: 16px; padding: 4px 14px; cursor: pointer;
+  font-family: "Comic Sans MS", Verdana, sans-serif;
+}
+.bigbtn:active { border-style: inset; }
+.smallbtn, .midibtn {
+  background: #c0c0c0; color: #000; border: 2px outset #fff;
+  font-size: 12px; padding: 3px 8px; cursor: pointer;
+}
+.midibtn { font-weight: bold; }
+.gbentries { margin-top: 14px; }
+.gbentry {
+  background: #12002a; border: 2px ridge #9966ff; padding: 8px; margin: 8px 0;
+}
+.gbentry .who { color: #ffe000; font-weight: bold; }
+.gbentry .when { color: #99aacc; font-size: 11px; float: right; }
+.gbentry .body { margin-top: 4px; white-space: pre-wrap; word-wrap: break-word; }
+.gbentry.mine { border-color: #33ff66; }
+
+ul.links { font-size: 16px; line-height: 1.8; }
+
+.webring {
+  background: #000080; border: 3px ridge #ffcc00; padding: 10px; margin: 16px auto;
+  text-align: center; max-width: 460px;
+}
+.awards { margin: 16px 0; text-align: center; }
+.awards img { margin: 4px; image-rendering: pixelated; }
+
+.footer { color: #ffee88; padding: 16px; font-size: 14px; }
+
+/* ---- cursor sparkles + falling snow ---- */
+#sparkles, #snow { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+.sparkle { position: absolute; font-size: 16px; pointer-events: none; animation: fade 900ms linear forwards; }
+@keyframes fade { to { opacity: 0; transform: translateY(28px) scale(.3) rotate(90deg); } }
+.flake { position: absolute; top: -30px; pointer-events: none; opacity: .85; }
+
+.statusbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10000;
+  background: #c0c0c0; color: #000; border-top: 2px outset #fff;
+  font-family: Verdana, sans-serif; font-size: 11px; padding: 3px 8px;
+}
+
+@media (max-width: 760px) {
+  .wordart { font-size: 28px; }
+  table.layout, table.layout tr, table.layout td { display: block; width: auto !important; }
+  td.nav { margin-bottom: 10px; }
+  table.stats td.k { width: auto; }
+}

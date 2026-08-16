@@ -1,0 +1,53 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "luke-birthday.fullname" . }}
+  labels:
+    {{- include "luke-birthday.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    # A birthday page: static HTML baked into the image. No backend, no state,
+    # nothing to authenticate to — and the whole point is that his friends and
+    # family can open the link without an account.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "luke-birthday.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- /*
+      Extra hosts served over the shared Cloudflare tunnel: TLS is terminated at
+      Cloudflare's edge, so these are deliberately absent from the ACME cert list
+      below. Traefik routes them by Host header; the tunnel dials in with No TLS
+      Verify. A list, so the site can be published across any number of external
+      domains. See infra/cloudflared.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "luke-birthday.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}
