@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the paperless-ngx image tag in values.yaml (image.tag).
 # renovate: image=ghcr.io/paperless-ngx/paperless-ngx
-appVersion: "2.14.7"
+appVersion: "2.20.15"
 home: https://docs.paperless-ngx.com
 sources:
   - https://github.com/paperless-ngx/paperless-ngx
