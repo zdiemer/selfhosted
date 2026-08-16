@@ -34,6 +34,17 @@ def bold(d, xy, txt, font, fill, weight=2, anchor=None):
             d.text((x + dx, y + dy), txt, font=font, fill=fill, anchor=anchor)
 
 
+def heart(d, cx, cy, size, fill):
+    """Draw a heart. Pillow's bundled Aileron has no U+2665 — a literal ♥ in a
+    text() call renders as a tofu box, which is a different kind of retro than
+    the one we want. Two lobes and a triangle, same as everyone drew them."""
+    r = size / 3.4
+    d.ellipse([cx - size / 2, cy - r, cx - size / 2 + 2 * r, cy + r], fill=fill)
+    d.ellipse([cx + size / 2 - 2 * r, cy - r, cx + size / 2, cy + r], fill=fill)
+    d.polygon([(cx - size / 2 + 1, cy + r / 3), (cx + size / 2 - 1, cy + r / 3),
+               (cx, cy + size * 0.62)], fill=fill)
+
+
 def shadowed(d, xy, txt, font, fill, shadow, depth=6, anchor=None):
     """1998 WordArt: a hard drop shadow stepped down-right, no blur."""
     x, y = xy
@@ -74,8 +85,10 @@ rainbow_rule(34)
 rainbow_rule(H - 42)
 
 # ---- Luke, framed -----------------------------------------------------------
-photo = Image.open("site/img/luke-square.jpg").convert("RGB")
-photo = ImageOps.fit(photo, (300, 300), Image.LANCZOS, centering=(0.5, 0.35))
+# The couple, not the solo portrait: the engagement is the other half of the
+# news and a group chat should see Lynsey too. Luke is in frame either way.
+photo = Image.open("site/img/couple-square.jpg").convert("RGB")
+photo = ImageOps.fit(photo, (300, 300), Image.LANCZOS, centering=(0.5, 0.45))
 frame = Image.new("RGB", (320, 320), "#ffcc00")
 ImageDraw.Draw(frame).rectangle([6, 6, 313, 313], outline="#ff0066", width=3)
 frame.paste(photo, (10, 10))
@@ -99,15 +112,23 @@ shadowed(d, (TX, 178), "BIRTHDAY LUKE", F(78), "#ffe000", "#aa0044")
 d.rectangle([TX, 286, TX - 4 + 700, 336], fill="#000080", outline="#6666ff", width=3)
 bold(d, (TX + 20, 296), "*** IT IS HIS BIRTHDAY. TODAY. ***", F(26), "#ffff66")
 
+# Four lines now, so the leading tightens rather than the block growing into
+# the terminal box at y=476.
 lines = [
     ">  30 years of gaining elevation on purpose",
-    "> Denver, CO  *  aerospace  *  hiking  *  skiing",
-    "> currently charging the teleporter",
+    ">  Denver, CO  *  aerospace  *  hiking  *  skiing",
+    ">  currently charging the teleporter",
+    None,  # drawn separately, in heart pink
 ]
-y = 358
+y = 352
 for line in lines:
-    d.text((TX, y), line, font=F(25), fill="#66ddff")
-    y += 36
+    if line is None:
+        heart(d, TX + 12, y + 13, 22, "#ff3377")
+        bold(d, (TX + 34, y), "ENGAGED TO LYNSEY", F(25), "#ff6699", weight=1)
+        heart(d, TX + 300, y + 13, 22, "#ff3377")
+    else:
+        d.text((TX, y), line, font=F(25), fill="#66ddff")
+    y += 32
 
 # ---- the little green terminal box, bottom right ----------------------------
 bx0, by0, bx1, by1 = TX, 476, TX + 700, 552

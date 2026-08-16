@@ -45,7 +45,7 @@
   });
 
   /* ---------------- cursor sparkle trail ---------------- */
-  var glyphs = ['✦', '✧', '✨', '★', '❄', '🚀'];
+  var glyphs = ['✦', '✧', '✨', '★', '❄', '🚀', '♥'];
   var box = $('sparkles');
   var last = 0;
   document.addEventListener('mousemove', function (e) {
@@ -64,7 +64,8 @@
 
   /* ---------------- falling snow (it's Colorado) ---------------- */
   var snow = $('snow');
-  var flakes = ['❄', '❅', '❆', '•'];
+  // One in six is a pink heart, since the engagement outranks the snow.
+  var flakes = ['❄', '❅', '❆', '•', '❄', '♥'];
   function drop() {
     var f = document.createElement('div');
     f.className = 'flake';
@@ -73,7 +74,8 @@
     var dur = 6000 + Math.random() * 7000;
     f.style.left = Math.random() * 100 + 'vw';
     f.style.fontSize = size + 'px';
-    f.style.color = Math.random() < 0.15 ? '#ffe000' : '#dff2ff';
+    f.style.color = f.textContent === '♥' ? '#ff6699'
+                  : (Math.random() < 0.15 ? '#ffe000' : '#dff2ff');
     snow.appendChild(f);
     f.animate([
       { transform: 'translateY(0) rotate(0deg)' },
@@ -156,7 +158,8 @@
     { who: 'The Mountains', where: 'Colorado', when: 'Aug 16, 2026', body: 'we are still here. you know where to find us. bring the good poles this time.' },
     { who: 'Providence', where: 'Petrichor V', when: 'Aug 16, 2026', body: 'happy birthday. the loop must continue.' },
     { who: 'I-70 Westbound', where: 'mile marker 241', when: 'Aug 16, 2026', body: 'moving freely at 7:15am. just kidding. happy birthday though.' },
-    { who: 'A Rocket', where: 'low earth orbit', when: 'Aug 16, 2026', body: 'thanks for the ride up. 10/10 would be assembled by luke again.' }
+    { who: 'A Rocket', where: 'low earth orbit', when: 'Aug 16, 2026', body: 'thanks for the ride up. 10/10 would be assembled by luke again.' },
+    { who: 'The Engagement Ring', where: "Lynsey's hand", when: 'Aug 16, 2026', body: 'doing great up here, thanks for asking. happy birthday luke. congratulations to you both. ♥' }
   ];
 
   function esc(s) {

@@ -139,6 +139,25 @@ table.stats td.k { background: #202050; color: #ffcc66; font-weight: bold; white
 .item.lunar  { background: #66ccff; border-color: #ccf0ff; }
 .ror2quote { color: #ffcc88; font-style: italic; text-align: center; margin: 10px 0; min-height: 22px; }
 
+/* ---- the engagement section ---- */
+.lovebar {
+  background: #4a0022; border: 3px ridge #ff77bb; color: #ffccdd;
+  font-weight: bold; padding: 5px; margin: 10px 0;
+}
+.heartbeat { color: #ff6699; animation: thump 1.2s ease-in-out infinite; display: inline-block; }
+@keyframes thump { 0%,100% { transform: scale(1); } 15% { transform: scale(1.25); } 30% { transform: scale(1); } 45% { transform: scale(1.18); } }
+.heartframe { border-color: #ff77bb; animation: loveglow 2.4s ease-in-out infinite; }
+@keyframes loveglow {
+  0%,100% { box-shadow: 0 0 8px #ff3388; }
+  50%     { box-shadow: 0 0 26px #ff88cc; }
+}
+.hearts { font-size: 26px; color: #ff6699; letter-spacing: 6px; animation: thump 1.6s ease-in-out infinite; }
+.loveframe {
+  background: #33001a; border: 3px double #ff77bb; padding: 10px; margin-top: 12px;
+  text-align: center; font-size: 18px;
+}
+.lovehead { color: #ffaacc; font-weight: bold; letter-spacing: 2px; margin-bottom: 6px; }
+
 ol.top10 { font-size: 16px; line-height: 1.7; }
 ol.top10 li { margin-bottom: 4px; }
 
