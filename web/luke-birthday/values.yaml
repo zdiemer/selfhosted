@@ -9,7 +9,7 @@ image:
   # Built + pushed to GHCR by build.sh; the package must be PUBLIC so every node
   # can pull it anonymously (multi-node cluster, no in-cluster registry).
   repository: ghcr.io/zdiemer/luke-birthday
-  tag: "1.3.0"
+  tag: "1.4.0"
   # IfNotPresent — so NEVER reuse a tag. Rebuilding over an existing tag will not
   # re-pull and the cluster will keep serving the old bytes.
   pullPolicy: IfNotPresent

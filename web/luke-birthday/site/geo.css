@@ -193,6 +193,20 @@ ol.top10 li { margin-bottom: 4px; }
 .gbentry .body { margin-top: 4px; white-space: pre-wrap; word-wrap: break-word; }
 .gbentry.mine { border-color: #33ff66; }
 
+/* ---- dancing babies ---- */
+.baby { vertical-align: middle; }
+/* Mirrored, so a row of them doesn't read as one baby copy-pasted. */
+.flip { transform: scaleX(-1); }
+.babyzone {
+  background: #0d0022; border: 4px ridge #9966ff; padding: 10px;
+  margin: 18px 0; text-align: center;
+}
+.babyzonehead {
+  color: #ffe000; font-weight: bold; letter-spacing: 3px; margin-bottom: 6px;
+  animation: hue 4s linear infinite;
+}
+.babyzone img { margin: 0 6px; }
+
 ul.links { font-size: 16px; line-height: 1.8; }
 
 .webring {
