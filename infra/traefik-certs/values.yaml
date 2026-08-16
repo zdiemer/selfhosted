@@ -88,7 +88,7 @@ images:
   # a busybox shell, which is what lets the job branch between first issuance
   # and renewal without a wrapper image of our own.
   # renovate: datasource=docker depName=goacme/lego
-  lego: goacme/lego:v4.29.0
+  lego: goacme/lego:v4.35.2
   # Reads and writes the two Secrets. Alpine-based, so it brings the shell and
   # tar the state handling needs. Same image infra/duckdns uses.
   # renovate: datasource=docker depName=alpine/kubectl
