@@ -13,9 +13,13 @@ type: Opaque
 stringData:
   {{- if .Values.messaging.signal.enabled }}
   SIGNAL_NUMBER: {{ required "messaging.signal.number is required (E.164, the bot's dedicated number) — set it in values.local.yaml" .Values.messaging.signal.number | quote }}
-  SIGNAL_ALLOWED_SENDERS: {{ required "messaging.signal.allowedSenders is required — the allowlist is the gateway's only auth, and empty means nobody can use it" (join "," .Values.messaging.signal.allowedSenders) | quote }}
+  SIGNAL_ALLOWED_SENDERS: {{ required "messaging.signal.allowedSenders is required — ACIs (UUIDs) only — a phone number is ignored, and an empty list means nobody can use the gateway" (join "," .Values.messaging.signal.allowedSenders) | quote }}
   # Group IDs, not senders: every member of a listed room may address the bot.
   SIGNAL_ALLOWED_GROUPS: {{ join "," .Values.messaging.signal.allowedGroups | quote }}
+  {{- end }}
+  {{- with .Values.messaging.unlock.totpSecret }}
+  # TOTP seed for the session unlock. Absent = the gate is inert (see values).
+  GW_TOTP_SECRET: {{ . | quote }}
   {{- end }}
   {{- if .Values.messaging.whatsapp.enabled }}
   WA_ALLOWED_SENDERS: {{ required "messaging.whatsapp.allowedSenders is required — digits-only numbers, e.g. 15551234567" (join "," .Values.messaging.whatsapp.allowedSenders) | quote }}

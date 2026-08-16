@@ -316,10 +316,13 @@ you (WhatsApp)  ──WA servers──────▶ Baileys (in-process) ─�
 ```
 
 Everything is outbound (Baileys websocket, signal-cli to Signal's servers):
-no new ingress, no netpol change, nothing new behind or around Authelia. The
-**sender allowlist is the only auth** — anyone on it holds a shell on the
-cluster, so it is your numbers only, set in values.local.yaml (vault item
-`dev-claude-workspace`).
+no new ingress, no netpol change, nothing new behind or around Authelia. Auth is
+two things and both matter: the **sender allowlist** (ACIs and session JIDs
+only — a phone number cannot admit anyone) says whose account may drive this
+shell, and the **TOTP session unlock** says whether that account's owner is
+holding the phone right now. Anyone past both holds a shell on the cluster, so
+it is your identifiers only, set in values.local.yaml (vault item
+`dev-claude-workspace`). See "Who the gateway believes you are".
 
 The gateway app lives in-repo at `gateway/` and is baked into the image at
 `/opt/messaging-gateway` (small, single-consumer — same documented exception
@@ -537,6 +540,59 @@ different thing from a 1:1 run:
 
 Auto mode is never available in a group, regardless of `!auto`.
 
+### Who the gateway believes you are
+
+Two questions, answered separately, because the allowlist can only answer the
+first one:
+
+**1. Is this the owner's account?** The allowlist — and only identifiers that
+carry cryptographic weight are matched against it (`gateway/src/identity.ts`):
+
+- **Signal: the ACI (UUID), never the number.** The ACI is what the
+  sealed-sender certificate is issued for and what the session is established
+  with. A phone number is recyclable by the carrier, moveable by SIM swap, and
+  re-registerable on Signal by whoever holds it next. Matching admits on *any*
+  identifier, so listing both made the number the real gate — in front of a
+  cluster-admin shell. `sourceNumber` is still used for addressing replies and
+  logs; it just cannot let anyone in.
+- **WhatsApp: the JID the session is with** (`remoteJid` in a DM, `participant`
+  in a group). The `senderPn` / `remoteJidAlt` / `participantAlt` siblings are
+  *not* matched, though they used to be: those are WhatsApp's claim about which
+  other identity belongs to the same person, not something the sender proves. A
+  mis-mapped LID→number pair would otherwise admit an arbitrary account. If a
+  client migrates to LIDs the gateway logs `sender not allowlisted (ids: …)` —
+  list the id it prints.
+
+**2. Is the owner actually holding the phone?** The TOTP session unlock
+(`messaging.unlock`), which a stolen phone, a linked device, or a recycled
+number all fail. Off unless `messaging.unlock.totpSecret` is set — an
+unprovisioned deploy behaves exactly as before rather than locking you out.
+
+- **1:1 chats only.** A group has no filesystem, no shell and no `!` commands,
+  and the *room* is its credential; there is no one phone to type a code on.
+- **A chat locks** after `idleHours` of silence (default 12, the window slides
+  on every message), at `maxHours` since the unlock regardless (24), and on
+  **every pod restart** — the state is in memory deliberately.
+- **Unlocking is one message:** the six digits, nothing else. The reply says
+  `🔓 unlocked`, which doubles as the alert for an unlock that wasn't you —
+  answer it with `!lock`.
+- **`!bash` and `!auto` need a code from the last `freshSeconds`** (300)
+  regardless of the window. A session open since this morning is permission to
+  talk; handing over a shell with no model in the loop is a separate question.
+  `!auto off` is exempt — turning a grant off is never worth gating. Send the
+  code into an already-open chat to re-stamp freshness.
+- **Codes are single-use** (a replayed code is refused inside its own window)
+  and wrong ones cost a `lockoutMinutes` cooldown after `maxAttempts`.
+- Why gate reads at all: the read-only baseline is `Read`/`Grep` over `~/code`
+  in a pod that can reach 1Password. That is enough to exfiltrate every secret
+  in the fleet, so the gate is on the session, not on writes.
+
+The seed is generated locally (`openssl rand -base32 20 | tr -d '='`), stored
+in `values.local.yaml`, and enrolled by hand:
+`otpauth://totp/claude-gateway?secret=<SECRET>&issuer=selfhosted`. Any
+authenticator computes codes offline from the seed and the clock — nothing is
+sent anywhere, which is the point on a surface reached over airline wifi.
+
 ### Permission relay contract
 
 Without auto mode, claude runs with a read-only `--allowedTools` baseline
@@ -583,14 +639,13 @@ tracks `claude-code@latest` at build time):
   `fetchLatestBaileysVersion()` at connect, because the version baked into the
   library goes stale between releases and is refused the same way. Bump the pin
   deliberately; never restore the caret.
-- **Signal identifies senders by ACI (UUID), not phone number.** Phone-number
-  privacy has been the default since 2024, so `sourceNumber` is absent for most
-  senders and the allowlist matches on whatever identifiers the envelope
-  carries. Put both the E.164 number and the UUID in `allowedSenders`. Find the
-  UUID in the daemon log: `kubectl -n claude logs deploy/claude-workspace -c
+- **`SIGNAL_ALLOWED_SENDERS` takes ACIs (UUIDs) ONLY.** A phone number in that
+  list is ignored, and the gateway says so at startup (`ignoring N non-ACI
+  allowlist entries`); an allowlist with no ACI in it drops every message. Find
+  the UUID in the daemon log: `kubectl -n claude logs deploy/claude-workspace -c
   signal-cli` prints `Envelope from: "Name" <uuid>`. The ACI is stable — it
   survives number changes, re-links, and reinstalls; only deleting the account
-  and re-registering mints a new one.
+  and re-registering mints a new one. See "Who the gateway believes you are".
 - **Baileys ban risk**: unofficial WhatsApp client; Meta bans
   automation-smelling numbers. Dedicated number, low volume, default-off. A
   ban costs the number, not the account you actually use.

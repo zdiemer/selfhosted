@@ -242,10 +242,10 @@ async function connect(): Promise<void> {
         const rk = m.key as unknown as Record<string, string | undefined>;
         const rbare = (j?: string): string =>
           (j ?? "").replace(/:.*$/, "").replace(/@.*$/, "");
+        // Session identity only — the *Pn / *Alt aliases are excluded, see the
+        // note on `ids` below.
         const rids = (
-          jid.endsWith("@g.us")
-            ? [rk.participant, rk.participantPn, rk.participantAlt]
-            : [rk.remoteJid, rk.senderPn, rk.remoteJidAlt]
+          jid.endsWith("@g.us") ? [rk.participant] : [rk.remoteJid]
         )
           .map(rbare)
           .filter(Boolean);
@@ -289,18 +289,24 @@ async function connect(): Promise<void> {
       }
 
       // WhatsApp is migrating phone JIDs (<number>@s.whatsapp.net) to LIDs
-      // (<id>@lid), and which one arrives depends on the sender's client.
-      // Newer Baileys carries the phone form alongside the LID in the *Pn /
-      // *Alt key fields, so match on every identifier present — the same
-      // number-or-ACI problem the Signal side has.
+      // (<id>@lid), and which one arrives depends on the sender's client. Only
+      // the JID the encrypted session is actually with — remoteJid in a DM,
+      // participant in a group — authenticates here.
+      //
+      // The *Pn / *Alt siblings are excluded deliberately, and they used to be
+      // matched. They are WhatsApp's *claim* about which other identity belongs
+      // to the same person, not something the sender proves: trusting them
+      // means a mis-mapped (or maliciously mapped) LID→number pair admits an
+      // arbitrary account to a cluster-admin shell. Matching admits on ANY id,
+      // so the weakest one in the list is the real gate. See identity.ts.
+      //
+      // Consequence for config: WA_ALLOWED_SENDERS must list whichever form
+      // this sender's client actually sends. If a client moves to LIDs the
+      // skip log below prints the id that arrived — list that.
       const k = m.key as unknown as Record<string, string | undefined>;
       const bare = (j?: string): string =>
         (j ?? "").replace(/:.*$/, "").replace(/@.*$/, "");
-      const ids = (
-        group
-          ? [k.participant, k.participantPn, k.participantAlt]
-          : [k.remoteJid, k.senderPn, k.remoteJidAlt]
-      )
+      const ids = (group ? [k.participant] : [k.remoteJid])
         .map(bare)
         .filter(Boolean);
 

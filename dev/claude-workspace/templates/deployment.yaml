@@ -479,6 +479,18 @@ spec:
               value: {{ .Values.messaging.bash.maxOutputChars | quote }}
             - name: GW_USAGE_DAYS
               value: {{ .Values.messaging.usageDays | quote }}
+            # The TOTP seed itself rides in the messaging Secret (envFrom
+            # below), not here — these are only the window sizes.
+            - name: GW_UNLOCK_IDLE_HOURS
+              value: {{ .Values.messaging.unlock.idleHours | quote }}
+            - name: GW_UNLOCK_MAX_HOURS
+              value: {{ .Values.messaging.unlock.maxHours | quote }}
+            - name: GW_UNLOCK_FRESH_SECONDS
+              value: {{ .Values.messaging.unlock.freshSeconds | quote }}
+            - name: GW_UNLOCK_MAX_ATTEMPTS
+              value: {{ .Values.messaging.unlock.maxAttempts | quote }}
+            - name: GW_UNLOCK_LOCKOUT_MINUTES
+              value: {{ .Values.messaging.unlock.lockoutMinutes | quote }}
             - name: GW_ATTACHMENTS_ENABLED
               value: {{ .Values.messaging.attachments.enabled | quote }}
             - name: GW_ATTACHMENT_MAX_MB
@@ -539,8 +551,9 @@ spec:
               value: /var/run/op-credentials/op-password
             {{- end }}
           envFrom:
-            # SIGNAL_NUMBER / SIGNAL_ALLOWED_SENDERS / WA_ALLOWED_SENDERS —
-            # the sender allowlist is the gateway's ONLY auth.
+            # SIGNAL_NUMBER / SIGNAL_ALLOWED_SENDERS / WA_ALLOWED_SENDERS /
+            # GW_TOTP_SECRET — the allowlist says whose account may drive this
+            # shell, the TOTP seed says whether they are holding the phone.
             - secretRef:
                 name: {{ include "claude-workspace.fullname" . }}-messaging
           volumeMounts:
