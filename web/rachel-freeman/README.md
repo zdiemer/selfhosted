@@ -41,15 +41,31 @@ take a painting off sale. Originals are forced to stock 1 and sell exactly once.
 
 ## Deploying
 
+Ordinary code change — the path Rachel's workspace uses too:
+
 ```bash
-./build.sh     # only when the app source changed
-./upgrade.sh   # chart + values.local.yaml → the cluster
+git push                 # main → GitHub Actions builds ghcr.io/…:sha-<short>
+./deploy.sh sha-1a2b3c4  # roll onto it
 ```
 
-`build.sh` builds on the in-cluster buildkitd and pushes to GHCR. **Do not build
-in the claude-workspace pod's shell** — `next build` wants ~4Gi and that cgroup
-is shared with the messaging gateway; doing it there OOM-killed the gateway twice
-on 2026-08-15.
+`deploy.sh` is `helm upgrade --reuse-values --set image.tag=…`. It carries the
+previous release's secret values forward untouched, so it needs **no 1Password
+access at all** — which is what lets the delegated workspace
+(`dev/claude-workspace`, `PROFILE=rachel`) ship a change without holding a vault
+credential. It refuses a tag that isn't in the registry, and refuses to run at
+all if there is no existing release to reuse values from.
+
+Secret changed, chart structure changed, or first install:
+
+```bash
+./upgrade.sh   # chart + values.local.yaml → the cluster; needs an op session
+```
+
+`build.sh` still builds on the in-cluster buildkitd, but it is break-glass now —
+use it when Actions is down or to build an uncommitted tree. **Never build in a
+claude-workspace pod's shell**: `next build` wants ~4Gi and that cgroup is shared
+with the messaging gateway; doing it there OOM-killed the gateway twice on
+2026-08-15. On a GitHub runner an OOM is a red check instead.
 
 Bump `image.tag` in `values.yaml` (and `appVersion` in `Chart.yaml`) for every
 rebuild. `pullPolicy: IfNotPresent` means a re-push under the *same* tag is
@@ -102,8 +118,14 @@ is live on the tunnel.
 
 ## Backups
 
-The `web` namespace already had a k8up schedule (Saturdays 01:00), so no schedule
-change was needed. What was added is a **PreBackupPod** in `infra/k8up`
+This release lives in its own namespace `rachel`, not `web`, with its own k8up
+schedule (Saturdays 01:15 — offset from `web` so the two postgres dumps don't
+overlap). The namespace split is a security boundary, not tidiness: the
+delegated workspace that deploys this chart holds a namespace-scoped helm Role,
+and helm's Secret list cannot be restricted by label, so whoever can deploy here
+can read every Secret in the namespace. Keep this namespace to this release.
+
+The restore path is a **PreBackupPod** in `infra/k8up`
 (`rachel-freeman-postgres-dump`) — a `pg_dump -F c` taken over the service, which
 is the restore path. See the long note at the bottom of
 `infra/k8up/templates/prebackuppods.yaml` for why the dump and not the volume
@@ -122,7 +144,7 @@ into the standalone bundle and the container needs no CLI.
 After changing a collection:
 
 ```bash
-kubectl -n web port-forward svc/rachel-freeman-postgres 55432:5432 &
+kubectl -n rachel port-forward svc/rachel-freeman-postgres 55432:5432 &
 DATABASE_URL=postgres://payload:<pw>@localhost:55432/rachelfreeman \
   npm run payload -- migrate:create <name>
 ```

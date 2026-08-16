@@ -133,6 +133,11 @@ export function listSessions(
  * be worse than no deadline at all.
  */
 export function autoActive(chat: ChatState): boolean {
+  // The instance-level switch is checked here rather than only in the router,
+  // because state.json outlives the config: a chat that ran `!auto on` before
+  // the flag was turned off would otherwise keep bypassing permissions until
+  // someone thought to run `!auto off`.
+  if (!config.autoEnabled) return false;
   return Boolean(chat.auto) && !autoExpired(chat);
 }
 

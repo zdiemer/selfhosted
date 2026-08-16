@@ -34,9 +34,10 @@ spec:
       # disk on exit — the home PVC is written continuously — so this is
       # about the request path, not durability.
       terminationGracePeriodSeconds: 45
-      {{- if .Values.rbac.clusterAdmin }}
-      # Cluster ops seat: kubectl/helm in the pod authenticate as this SA
-      # (cluster-admin — see rbac.yaml and the values warning).
+      {{- if or .Values.rbac.clusterAdmin .Values.rbac.namespaceDeploy }}
+      # Cluster ops seat: kubectl/helm in the pod authenticate as this SA —
+      # cluster-admin, or the namespace-scoped deploy Role. See rbac.yaml and
+      # the values warning.
       serviceAccountName: {{ include "claude-workspace.fullname" . }}
       automountServiceAccountToken: true
       {{- else }}
@@ -217,6 +218,13 @@ spec:
             # tailscaled) have no use for vault access and do not get it.
             - name: op-credentials
               mountPath: /var/run/op-credentials
+              readOnly: true
+            {{- end }}
+            {{- if .Values.managedSettings.enabled }}
+            # Highest-precedence Claude Code settings, on the read-only
+            # rootfs so the agent cannot rewrite its own constraints.
+            - name: managed-settings
+              mountPath: /etc/claude-code
               readOnly: true
             {{- end }}
           resources:
@@ -463,6 +471,17 @@ spec:
               value: {{ .Values.messaging.whatsapp.enabled | quote }}
             - name: GW_DEFAULT_CWD
               value: {{ .Values.messaging.defaultCwd | quote }}
+            - name: GW_CODE_ROOT
+              value: {{ .Values.messaging.codeRoot | quote }}
+            {{- with .Values.messaging.cwdRoots }}
+            # Empty means anywhere. Set, and `!cwd` refuses everything outside
+            # these; the gateway also refuses to start if defaultCwd is not
+            # under one of them.
+            - name: GW_CWD_ROOTS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: GW_AUTO_ENABLED
+              value: {{ .Values.messaging.auto.enabled | quote }}
             - name: GW_APPROVAL_TIMEOUT_SECONDS
               value: {{ .Values.messaging.approvalTimeoutSeconds | quote }}
             - name: GW_ALLOWED_TOOLS
@@ -551,6 +570,13 @@ spec:
             {{- if .Values.secrets.onePassword.enabled }}
             - name: op-credentials
               mountPath: /var/run/op-credentials
+              readOnly: true
+            {{- end }}
+            {{- if .Values.managedSettings.enabled }}
+            # The headless runs claude.ts spawns are children of this
+            # container, so they read these settings too.
+            - name: managed-settings
+              mountPath: /etc/claude-code
               readOnly: true
             {{- end }}
           resources:
@@ -649,6 +675,12 @@ spec:
           configMap:
             name: {{ include "claude-workspace.fullname" . }}-happy-notice
             defaultMode: 0555
+        {{- end }}
+        {{- if .Values.managedSettings.enabled }}
+        - name: managed-settings
+          configMap:
+            name: {{ include "claude-workspace.fullname" . }}-managed-settings
+            defaultMode: 0444
         {{- end }}
         {{- if .Values.secrets.onePassword.enabled }}
         - name: op-credentials

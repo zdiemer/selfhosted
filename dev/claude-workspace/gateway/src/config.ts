@@ -125,6 +125,20 @@ export const config = {
 
   defaultCwd: process.env.GW_DEFAULT_CWD ?? path.join(home, "code/selfhosted"),
   codeRoot: process.env.GW_CODE_ROOT ?? path.join(home, "code"),
+  // Directories `!cwd` is allowed to land in. Empty (the default) means
+  // anywhere, which is right for an instance whose PVC only ever holds one
+  // person's own repos. A scoped instance — one deployed for someone who should
+  // reach exactly one project — sets GW_CWD_ROOTS, and then `!cwd` refuses any
+  // path outside them. Compared as resolved paths, not string prefixes, so
+  // `../` cannot walk out and `/home/node/code/rachelfreeman-notes` does not
+  // match a root of `/home/node/code/rachelfreeman`.
+  cwdRoots: envList("GW_CWD_ROOTS").map((p) => path.resolve(p)),
+  // `!auto` hands the run --permission-mode bypassPermissions: no approval
+  // relay, no deny rules, nothing between the model and the pod. That is a
+  // reasonable trade for your own instance and not for a delegated one, so it
+  // is a switch rather than an assumption. Off means every mutation outside
+  // allowedTools round-trips to the phone.
+  autoEnabled: (process.env.GW_AUTO_ENABLED ?? "true") === "true",
   // Model and reasoning depth for every headless run; `!model` / `!effort`
   // override per chat. Medium effort is the balance point for a surface where
   // replies are read on a phone over a bad connection.
@@ -191,3 +205,25 @@ export const config = {
 };
 
 export const approvalSocketPath = path.join(config.runtimeDir, "approve.sock");
+
+// Is `target` inside one of config.cwdRoots? True for everything when no roots
+// are configured — the containment is opt-in, so an unscoped instance behaves
+// exactly as it did before this existed.
+//
+// Both sides are resolved first. A raw `startsWith` would accept
+// `/home/node/code/rachelfreeman-backup` against a root of
+// `/home/node/code/rachelfreeman`, and would accept any `..` the caller cared
+// to write; comparing resolved paths with a trailing separator does neither.
+// `roots` is a parameter with a default rather than a straight read of config
+// so the rule can be tested without a module-load dance to get GW_CWD_ROOTS in
+// place before config.ts is first imported.
+export function isWithinCwdRoots(
+  target: string,
+  roots: string[] = config.cwdRoots,
+): boolean {
+  if (roots.length === 0) return true;
+  const resolved = path.resolve(target);
+  return roots
+    .map((r) => path.resolve(r))
+    .some((root) => resolved === root || resolved.startsWith(root + path.sep));
+}

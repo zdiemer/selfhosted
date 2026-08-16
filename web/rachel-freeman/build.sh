@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Build the rachelfreeman image and push it to GHCR.
 #
+# ⚠️ This is break-glass now. The supported path is a push to main, which builds
+# on GitHub Actions (.github/workflows/build.yml in zdiemer/rachelfreeman) and
+# pushes ghcr.io/zdiemer/rachelfreeman:sha-<short>; roll onto it with deploy.sh.
+# That keeps the write:packages credential out of the cluster entirely — GitHub
+# cannot scope a classic PAT to one package — and is the only path available to
+# the delegated workspace, which has no registry credential at all.
+#
+# Use this when Actions is down, or to build an uncommitted tree.
+#
 # The source is a separate repo (~/code/rachelfreeman); this script builds from
 # there and tags with the version in values.yaml. Same shape as
 # web/apartment-watch/build.sh: ghcr.io rather than a side-load, because the

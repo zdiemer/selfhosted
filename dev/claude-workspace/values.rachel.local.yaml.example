@@ -1,0 +1,25 @@
+# Shape of the 1Password item behind values.rachel.local.tpl.yaml.
+# Create it with: secrets new dev/claude-workspace values.rachel.local
+#
+# Only the identities go here. Everything structural about the delegated
+# instance is in values.rachel.yaml, in git, where it can be reviewed.
+messaging:
+  signal:
+    # The number THIS instance answers on — a second Signal registration, not
+    # the main workspace's. Register it from the term container before
+    # messaging.enabled is ever true; the daemon crashloops without an account
+    # and holds the storage lock while it does.
+    number: "+1XXXXXXXXXX"
+    # Rachel, and nobody else. Both forms are needed: under phone-number
+    # privacy Signal withholds sourceNumber and the envelope carries only the
+    # ACI UUID, so a number-only allowlist silently drops everything she sends.
+    # Read the UUID out of the signal-cli logs on her first message.
+    allowedSenders:
+      - "+1XXXXXXXXXX"
+      - "00000000-0000-0000-0000-000000000000"
+    allowedGroups: []
+  whatsapp:
+    # Digits only — the JID user part, no + and no @s.whatsapp.net.
+    allowedSenders:
+      - "1XXXXXXXXXX"
+    allowedGroups: []

@@ -1,0 +1,25 @@
+{{- with .Values.managedSettings }}
+{{- if .enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "claude-workspace.fullname" $ }}-managed-settings
+  labels:
+    {{- include "claude-workspace.labels" $ | nindent 4 }}
+data:
+  # Claude Code reads /etc/claude-code/managed-settings.json at the highest
+  # precedence — above ~/.claude/settings.json and above any project settings.
+  #
+  # It has to live here rather than on the home PVC. A settings file on the PVC
+  # is writable by the very agent it constrains, and a delegated workspace has
+  # Write in its allowedTools; the pod runs with readOnlyRootFilesystem, so a
+  # configMap mount is the one place the agent cannot edit its own leash.
+  #
+  # This is defence in depth, not the boundary. Deny rules are advisory against
+  # a determined model, and Bash() patterns are prefix matches that a compound
+  # command walks straight past. The RBAC Role (rbac.yaml) and the absence of
+  # credentials on the volume are what actually enforce.
+  managed-settings.json: |
+    {{- .settings | toPrettyJson | nindent 4 }}
+{{- end }}
+{{- end }}

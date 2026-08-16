@@ -616,6 +616,62 @@ tracks `claude-code@latest` at build time):
 - Turn the whole surface off with `messaging.enabled: false` (drops both
   containers and the Secret; pairing state stays on the PVC).
 
+## Delegated instances
+
+A second release of this chart, handed to someone who should reach exactly one
+project. The worked example is `values.rachel.yaml` — Rachel, rachelfreeman.art,
+nothing else.
+
+```bash
+PROFILE=rachel RELEASE=rachel-workspace NAMESPACE=claude-rachel ./upgrade.sh
+```
+
+`PROFILE=<name>` layers `values.<name>.yaml` over `values.yaml` and resolves
+`values.<name>.local.yaml` from its own 1Password item rather than the main
+one. It refuses to run against `RELEASE=claude-workspace`, because deploying a
+delegated profile onto the main release would swap a cluster-admin workspace for
+a scoped one — or, reversed, hand the scoped instance this release's name and
+its cluster-admin binding.
+
+**What actually enforces the boundary**, in descending order:
+
+1. **Credentials that aren't there.** A delegated instance gets a fresh PVC: no
+   1Password files, no GHCR PAT, no `gh` auth, one repo-scoped deploy key. Most
+   of what this workspace can do, that one cannot, because the credential to do
+   it with does not exist.
+2. **RBAC.** `rbac.namespaceDeploy` renders a Role + RoleBinding scoped to one
+   namespace instead of the cluster-admin binding — and pointedly grants **no
+   verb in its own namespace**, so the instance cannot redeploy itself with a
+   wider grant. Setting `clusterAdmin` and `namespaceDeploy` together fails the
+   render. See `templates/rbac.yaml` for the verbs deliberately withheld
+   (`jobs`, `pods/exec`, `serviceaccounts`, `rbac.*`) and why each one matters.
+   Helm's Secret list can't be label-scoped, so the holder can read every Secret
+   in the target namespace: **only ever point this at a namespace containing
+   nothing but the release they own.**
+3. **`managedSettings`**, `messaging.cwdRoots`, `messaging.auto.enabled: false`,
+   `messaging.bash.enabled: false`, and a task-shaped `allowedTools`. Defence in
+   depth. Deny rules are advisory against a determined model and `Bash()`
+   patterns are prefix matches a compound command walks past — these stop
+   accidents, not attacks.
+
+`managedSettings` ships `/etc/claude-code/managed-settings.json` as a configMap
+mount. It has to be there rather than on the PVC: a settings file under `$HOME`
+is writable by the very agent it constrains, and a delegated instance has `Write`
+in `allowedTools`. `readOnlyRootFilesystem` is what makes the mount unforgeable.
+
+`cwdRoots` closes a real hole — `!cwd` used to accept any absolute path that
+existed, so a scoped instance could walk to `/etc` or another repo. Empty (the
+default, and what this release uses) preserves that old behaviour; set, `!cwd`
+refuses anything outside, and the gateway refuses to start if `defaultCwd` is not
+under one of the roots. `auto.enabled: false` is enforced in `state.ts`'s
+`autoActive`, not just the router, so a chat that ran `!auto on` before the
+switch flipped does not keep its bypass.
+
+Setup is the same as this release's — register a **second** Signal number from
+`term` before `messaging.enabled` is ever true, `kubectl exec` a one-time
+`claude` login, pair WhatsApp from the gateway's QR — plus the repo clones the
+instance is scoped to.
+
 ## Day-2 notes
 
 - **Upgrading claude/happy**: bump the pin in `Dockerfile`, `./build.sh`,

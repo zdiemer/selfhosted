@@ -8,7 +8,7 @@
 set -euo pipefail
 
 RELEASE="${RELEASE:-rachel-freeman}"
-NAMESPACE="${NAMESPACE:-web}"
+NAMESPACE="${NAMESPACE:-rachel}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 # The secrets are resolved from 1Password into memory for the life of this run

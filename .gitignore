@@ -27,6 +27,11 @@ secrets/
 # Local-only overlays (per-project secrets: tokens, passwords, identities).
 # The ** glob covers every subproject's values.local.yaml.
 **/values.local.yaml
+# Profile overlays: values.<profile>.local.yaml, for a chart deployed more than
+# once with different identities (dev/claude-workspace's delegated instances).
+# The .tpl.yaml and .yaml.example alongside them stay tracked — they hold
+# op:// references and a shape, not secrets.
+**/values.*.local.yaml
 
 # .claude/settings.local.json is this machine's permission grants and stays
 # local. settings.json is the opposite: the submodule deny rules belong to the
