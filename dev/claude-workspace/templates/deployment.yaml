@@ -465,6 +465,8 @@ spec:
               value: {{ .Values.messaging.defaultCwd | quote }}
             - name: GW_APPROVAL_TIMEOUT_SECONDS
               value: {{ .Values.messaging.approvalTimeoutSeconds | quote }}
+            - name: GW_CLAUDE_TIMEOUT_SECONDS
+              value: {{ .Values.messaging.claudeTimeoutSeconds | default 0 | quote }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}
             - name: GW_MODEL

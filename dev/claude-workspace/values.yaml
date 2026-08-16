@@ -291,9 +291,16 @@ messaging:
   # Minutes a permission prompt waits for a 1/2/3 reply before denying — in
   # seconds. Generous because the whole point is spotty connectivity.
   approvalTimeoutSeconds: 300
+  # Wall-clock ceiling on one claude run, in seconds. 0 = none, which is the
+  # default: the only runs a fixed cap reliably kills are the long ones that
+  # were working (a build, a migration, one parked on an approval), and the
+  # answer they had already earned goes with them. `!stop` ends a run on
+  # demand and a redeploy ends them all.
+  claudeTimeoutSeconds: 0
   # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
-  # else round-trips "Claude wants: … reply 1/2/3" — unless a chat has
-  # `!auto on`, which skips permissions entirely for that chat.
+  # else round-trips "Claude wants: … reply 1/2/3". `!auto on` allows those
+  # unprompted too — but a question or a plan still reaches the chat, because
+  # an auto-allowed question comes back unanswered and silently vanishes.
   allowedTools: >-
     Read Glob Grep LS WebFetch WebSearch TodoWrite
     Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)

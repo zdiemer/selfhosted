@@ -2,7 +2,7 @@ apiVersion: v2
 name: claude-workspace
 description: Always-on Claude Code workspace pod — ttyd/tmux web terminal + bakery web harness on a $HOME PVC, gated behind Authelia forward-auth, with the happy CLI for mobile remote control via the dev/happy-server relay.
 type: application
-version: 0.4.0
+version: 0.4.1
 # appVersion tracks the workspace image tag in values.yaml (image.tag).
 appVersion: "v21"
 sources:

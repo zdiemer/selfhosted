@@ -197,6 +197,59 @@ test("ordinary tools keep the 1/2/3 grammar and ignore chatter", async () => {
   });
 });
 
+test("auto mode allows tools unprompted but still asks a question", async () => {
+  const chat = "signal:+15551110009";
+  updateChat(chat, { auto: true, autoUntil: undefined, plan: false });
+
+  // The whole point of routing auto through the relay: no prompt for a tool…
+  const before = sent.length;
+  expect(await ask(chat, "Write", { file_path: "/tmp/y" })).toEqual({
+    behavior: "allow",
+    updatedInput: { file_path: "/tmp/y" },
+  });
+  expect(sent.length).toBe(before);
+
+  // …and a question still reaches the phone, with the answers field filled in.
+  // Bypassed, it would come back allowed-but-unanswered and vanish.
+  const verdict = ask(chat, "AskUserQuestion", QUESTION);
+  expect(await nextPrompt()).toContain("Which database?");
+  expect(answerPending(chat, "1")).toBe(true);
+  const v = (await verdict) as { updatedInput: any };
+  expect(v.updatedInput.answers).toEqual({ "Which database?": "Postgres" });
+
+  updateChat(chat, { auto: false });
+});
+
+test("an expired auto grant prompts again", async () => {
+  const chat = "signal:+15551110010";
+  updateChat(chat, { auto: true, autoUntil: Date.now() - 1000 });
+  const verdict = ask(chat, "Write", { file_path: "/tmp/z" });
+  expect(await nextPrompt()).toContain("Claude wants: Write(/tmp/z)");
+  answerPending(chat, "2");
+  await verdict;
+  updateChat(chat, { auto: false, autoUntil: undefined });
+});
+
+test("answering a question or a plan is acknowledged", async () => {
+  const chat = "signal:+15551110011";
+  const q = ask(chat, "AskUserQuestion", QUESTION);
+  await nextPrompt();
+  answerPending(chat, "2");
+  await q;
+  // Minutes can pass before claude says anything else; the reply must not look
+  // like it went nowhere.
+  expect(last()).toBe("✓ answered: SQLite");
+
+  updateChat(chat, { plan: true });
+  const p = ask(chat, "ExitPlanMode", { plan: "do it" });
+  await nextPrompt();
+  answerPending(chat, "drop the helm part");
+  await p;
+  expect(last()).toContain("still planning");
+  expect(last()).toContain("drop the helm part");
+  updateChat(chat, { plan: false });
+});
+
 test("a malformed question falls back to the plain prompt", async () => {
   const chat = "signal:+15551110008";
   const verdict = ask(chat, "AskUserQuestion", { questions: "nope" });

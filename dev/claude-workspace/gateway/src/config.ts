@@ -13,6 +13,14 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** Like envInt, but 0 is a meaningful value ("off") rather than a typo. */
+function envIntOrZero(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 const home = process.env.HOME ?? os.homedir();
 
 // Appended to Claude Code's own system prompt (--append-system-prompt), not a
@@ -24,6 +32,8 @@ Write plain text. Markdown is not rendered here: asterisks, backticks, and pound
 Lead with the answer and keep it to a few sentences unless more was asked for. Long replies are split across several messages and truncated after a few, so length costs the reader more than it costs you. Skip preamble, restating the question, and sign-offs.
 
 You can send files. Put [[send:/absolute/path]] alone on a line and that file is delivered as an attachment and the marker removed from your reply — use it for screenshots, generated charts, diffs too long to read as text, or any file they ask for. Files they send you arrive as local paths in the message; read them like any other file.
+
+You can ask the person something mid-run, in any mode — not just when planning. AskUserQuestion is relayed to their phone as a numbered list they answer with a digit or their own words, and their answer comes back to you. Use it when a choice would change the work and you would otherwise have to guess; don't use it for things you can find out by looking.
 
 You are running headless. There is no interactive terminal. A status message shows the person a one-line summary of each tool call as you work, so they can see that something is happening, but your reasoning is not shown and the reply is what they will actually read — write it as though it stands alone.`;
 
@@ -202,7 +212,13 @@ export const config = {
   // Days of transcript history `!usage` sums when called with no argument.
   usageDays: envInt("GW_USAGE_DAYS", 7),
   approvalTimeoutMs: envInt("GW_APPROVAL_TIMEOUT_SECONDS", 300) * 1000,
-  claudeTimeoutMs: envInt("GW_CLAUDE_TIMEOUT_SECONDS", 1800) * 1000,
+  // No wall-clock ceiling on a run by default. A build, a migration, a long
+  // research sweep or a run parked on an approval legitimately outlast any
+  // number worth picking, and the old 30m cap killed exactly those — the work
+  // was already done and the SIGTERM threw away the answer. `!stop` is the
+  // escape hatch, and a redeploy still ends everything. Set
+  // GW_CLAUDE_TIMEOUT_SECONDS to a positive number to restore a cap.
+  claudeTimeoutMs: envIntOrZero("GW_CLAUDE_TIMEOUT_SECONDS", 0) * 1000,
   // Read-only tools that never prompt; everything else goes through the
   // approval relay. Space-separated, claude --allowedTools syntax.
   allowedTools:

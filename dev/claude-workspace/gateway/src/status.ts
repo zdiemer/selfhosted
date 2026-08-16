@@ -148,6 +148,9 @@ export class Status {
    * finished. */
   private chain: Promise<unknown> = Promise.resolve();
   private done = false;
+  /** Bumped by restart(). An edit that was already on the wire when the status
+   * moved to a new message must not write its `next` ref back over it. */
+  private epoch = 0;
 
   constructor(
     private chatKey: string,
@@ -239,18 +242,58 @@ export class Status {
     this.editing = true;
     this.spent++;
     this.lastEditAt = this.now();
+    const epoch = this.epoch;
+    const ref = this.ref;
     this.chain = this.chain
-      .then(() => this.io.edit(this.chatKey, this.ref, text))
+      .then(() => this.io.edit(this.chatKey, ref, text))
       // Signal makes every revision its own message and only the newest can be
       // edited again, so the target has to move with it or the rest of the run
       // is written to a message the clients have stopped listening to.
       .then((res) => {
-        if (res.next !== undefined) this.ref = res.next;
+        if (epoch === this.epoch && res.next !== undefined) this.ref = res.next;
       })
       .finally(() => {
         this.editing = false;
       });
     return this.chain;
+  }
+
+  /**
+   * Hand the status over to a fresh message and keep counting.
+   *
+   * A run that stops to ask something — a plan to approve, a question, a
+   * permission prompt — spends the wait on screen, and by the time the reply
+   * lands the old message is stranded: its ten Signal revisions are gone, the
+   * prompt and the reply are the newest things in the thread, and the status is
+   * scrolled somewhere above them. So the answer starts a new one, with a new
+   * edit budget, below the reply where it can actually be seen. The elapsed
+   * clock and the tool count carry over — it is the same run.
+   */
+  async restart(): Promise<void> {
+    if (!this.active) return;
+    this.epoch++;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    const old = this.ref;
+    this.ref = undefined;
+    // Retire the old message rather than leave a "working…" that will never
+    // move again next to one that does.
+    this.chain = this.chain.then(() =>
+      this.io.edit(this.chatKey, old, "⏺ answered — continuing below"),
+    );
+    // Whatever it was doing, it was waiting on the reply; that is finished now.
+    this.action = "";
+    this.note = "";
+    const ref = await this.io.send(this.chatKey, INITIAL);
+    if (ref === undefined) return; // send failed; nothing left to edit
+    this.ref = ref;
+    this.lastText = INITIAL;
+    this.spent = 0;
+    this.lastEditAt = this.now();
+    this.timer = setInterval(() => void this.flush(), this.intervalMs);
+    this.timer.unref?.();
   }
 
   /** Collapse to one line. The run is over; what stays in the thread is a

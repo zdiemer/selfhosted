@@ -361,8 +361,9 @@ without re-pairing.
 `!new` / `!clear` fresh session · `!resume [id]` continue the newest session for
 the current cwd (this is the cross-surface handoff — start in tmux, `!resume`
 from the plane) · `!cwd <repo|path>` switch repo (bare names resolve under
-`~/code/`) · `!auto <30m|2h>` per-chat auto mode with an expiry (`--permission-mode
-bypassPermissions` — no prompts at all). Prefer the duration: bare `!auto on`
+`~/code/`) · `!auto <30m|2h>` per-chat auto mode with an expiry (tools run
+unprompted; questions and plans still ask — see the relay contract below).
+Prefer the duration: bare `!auto on`
 still works and is still open-ended, but what it grants is unprompted root in
 a cluster-admin pod, and a standing grant outlives the reason it was given.
 Expiry is checked at every use, not swept by a timer, and the lapse is
@@ -455,7 +456,18 @@ While a run is going, three things say so, in increasing order of detail:
   minute. WhatsApp keeps `messaging.progress.editSeconds` (3s first gap) and
   targets the original key throughout, which is what that surface expects.
   Groups get no status message — the room did not ask to watch, and a
-  group run only has `WebFetch`/`WebSearch` to show.
+  group run only has `WebFetch`/`WebSearch` to show. When you answer a question
+  or a plan, the status **hands over to a new message**: the old one collapses
+  to `⏺ answered — continuing below` and a fresh one starts under your reply
+  with a fresh ten-revision budget, carrying the same elapsed clock and tool
+  count. Otherwise the work your answer just bought happens against a status
+  that is both out of revisions and scrolled off the screen.
+
+A run has **no wall-clock timeout**. The old 30-minute cap killed exactly the
+runs that were working — a long build, a migration, a research sweep, or one
+parked on an approval — and threw away the answer they had already earned.
+`!stop` ends one on demand, a redeploy ends them all, and
+`messaging.claudeTimeoutSeconds` restores a ceiling if you want one.
 
 The run itself is driven off `claude -p --output-format stream-json`, which is
 also where the session id now comes from: it is written to the state file the
@@ -618,7 +630,22 @@ rendered them as truncated JSON with no way to answer:
   approving a plan means "go do it" and leaving plan mode on sends the next
   message straight back into planning. Anything else keeps planning, with what
   you typed handed to claude as the reason.
-- Neither offers `3 allow all`, and neither is eligible for it.
+- Neither offers `3 allow all`, and neither is eligible for it — and neither is
+  eligible for auto mode either. **Auto mode keeps the relay wired** rather than
+  running `--permission-mode bypassPermissions`: a bypassed run never calls the
+  prompt tool at all, so an AskUserQuestion came back allowed with no `answers`
+  field and claude was told the user didn't answer. A question asked outside
+  plan mode simply vanished. Under auto, `approvals.ts` allows ordinary tools
+  itself without a trip to the phone — the same grant, with the conversation
+  left in — while questions and plans still reach you. Read-only tools stay in
+  `--allowedTools` so they never make the socket round trip.
+- Answering is acknowledged. A question's answer is echoed back (`✓ answered:
+  SQLite`) and plan feedback as `✎ still planning — taking: …`, because
+  replanning is minutes of silence and an unacknowledged reply is
+  indistinguishable from a lost one. The reply also gets the 👀 an ordinary
+  message gets, and the run's status message hands over to a fresh one below
+  the reply (see the status message, above) — by then the old one has spent its
+  ten revisions sitting on the prompt, and it is scrolled out of sight anyway.
 
 Two claude-CLI dependencies to re-verify on every image bump (the image
 tracks `claude-code@latest` at build time):
@@ -626,7 +653,11 @@ tracks `claude-code@latest` at build time):
 - `--permission-prompt-tool` is accepted but **hidden from `--help`** as of
   2.1.224. If it's ever dropped, the fallback is a `PreToolUse` hook (via
   `--settings`) pointed at the same approvals socket.
-- `--permission-mode bypassPermissions` spelling.
+- `--permission-mode plan` spelling. `bypassPermissions` is no longer used —
+  auto mode goes through the relay so questions survive it.
+- `AskUserQuestion` still arriving on the permission socket. That is what makes
+  a question outside plan mode answerable at all; if it stops, the symptom is
+  claude guessing instead of asking, not an error.
 
 ### Messaging gotchas
 

@@ -4,6 +4,7 @@ import { attachmentPreamble, extractSendMarkers } from "./attachments.ts";
 import {
   answerPending,
   hasPending,
+  pendingKind,
   pendingPromptRef,
   reactionAnswer,
 } from "./approvals.ts";
@@ -150,8 +151,37 @@ export function handleReaction(
 
   const answer = reactionAnswer(emoji);
   if (!answer) return;
-  if (answerPending(chatKey, answer))
+  const kind = pendingKind(chatKey);
+  if (answerPending(chatKey, answer)) {
     console.log(`${chatKey}: prompt answered ${answer} by reaction ${emoji}`);
+    // Same handover as a typed answer — a 👍 on a plan is still minutes of work
+    // starting, and there is no inbound message here to react back to.
+    if (kind !== "tool") void activeStatus(chatKey)?.restart();
+  }
+}
+
+/**
+ * Feed a reply to the open prompt, and — if it took — say so.
+ *
+ * A prompt answer is the one kind of message that reaches claude without going
+ * through the queue, so it used to get none of the queue's feedback: no
+ * reaction on what you typed, and a status message already stranded above the
+ * prompt. On a plan, where the reply buys minutes of replanning, that reads as
+ * the gateway having dropped it. So the reply gets the same 👀 an ordinary
+ * message gets, and the run's status moves to a fresh message below it.
+ */
+function answerReceived(
+  chatKey: string,
+  body: string,
+  ref: MsgRef | undefined,
+): boolean {
+  const kind = pendingKind(chatKey);
+  if (!answerPending(chatKey, body)) return false;
+  react(chatKey, ref, config.reactions.working);
+  // Not for a plain 1/2/3 on a tool: that resumes instantly, and a second
+  // status message per approval would bury the thread on a busy run.
+  if (kind !== "tool") void activeStatus(chatKey)?.restart();
+  return true;
 }
 
 export function handleInbound(
@@ -222,7 +252,7 @@ export function handleInbound(
   }
 
   // Digit replies feed a pending permission prompt, never claude.
-  if (hasPending(chatKey) && answerPending(chatKey, body)) return;
+  if (hasPending(chatKey) && answerReceived(chatKey, body, meta.ref)) return;
 
   if (body.startsWith("!")) {
     // Owner-only, everywhere. Membership of an allowlisted group buys the

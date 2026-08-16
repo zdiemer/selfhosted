@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
-import { updateChat } from "./state.ts";
+import { autoActive, getChat, updateChat } from "./state.ts";
 import type { MsgRef } from "./transport.ts";
 
 // The approve-mcp stdio server (grandchild of this process, via claude) dials
@@ -85,6 +85,12 @@ export function pendingPromptRef(chatKey: string): MsgRef | undefined {
 
 export function hasPending(chatKey: string): boolean {
   return pending.has(chatKey);
+}
+
+/** Which grammar the open prompt takes, for a caller that wants to treat a
+ * conversational answer (question, plan) differently from a 1/2/3 on a tool. */
+export function pendingKind(chatKey: string): PromptKind | undefined {
+  return pending.get(chatKey)?.kind;
 }
 
 /** Route a chat reply to the waiting approval. Returns false if the reply
@@ -186,6 +192,10 @@ function answerQuestion(
     behavior: "allow",
     updatedInput: { ...(p.input as object), answers },
   });
+  // Say the answer back. Between a reply and whatever claude does with it there
+  // can be minutes of silence, and without this the last thing on screen is the
+  // question — indistinguishable from a reply that was never received.
+  prompt(chatKey, `✓ answered: ${truncate(answers[q.question] || reply, 120)}`);
   return true;
 }
 
@@ -222,6 +232,14 @@ function answerPlan(chatKey: string, p: PendingApproval, reply: string): boolean
     behavior: "deny",
     message: `user wants to keep planning${note}`,
   });
+  // Same reason as a question's ack: replanning is not quick, and an
+  // unacknowledged "2, but skip the tests" looks exactly like a lost message.
+  prompt(
+    chatKey,
+    reply === "2"
+      ? "✎ still planning — revising"
+      : `✎ still planning — taking: ${truncate(reply, 120)}`,
+  );
   return true;
 }
 
@@ -250,6 +268,16 @@ export function plainText(s: string): string {
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Does `!auto` cover this chat right now? Auto is a standing "don't ask
+ * before touching things", so an ordinary tool is allowed here without a trip
+ * to the phone — the same grant bypassPermissions used to give, minus its
+ * silent swallowing of AskUserQuestion. Plan mode outranks it, as everywhere
+ * else. */
+function autoAllows(chatKey: string): boolean {
+  const chat = getChat(chatKey);
+  return autoActive(chat) && !chat.plan;
 }
 
 /** Which reply grammar a tool gets. */
@@ -349,10 +377,14 @@ function handleRequest(
 
   const kind = promptKind(req.toolName);
 
-  // "3 = allow all" is meaningless for these two and actively harmful: a blind
-  // allow of AskUserQuestion returns no answers, so the tool reports that the
-  // user didn't answer — which is how a question can silently vanish.
-  if (kind === "tool" && autoApproved.get(req.chatKey)?.has(req.toolName)) {
+  // "3 = allow all" and auto mode are both meaningless for these two and
+  // actively harmful: a blind allow of AskUserQuestion returns no answers, so
+  // the tool reports that the user didn't answer — which is how a question can
+  // silently vanish. Questions and plans are conversation; they always ask.
+  if (
+    kind === "tool" &&
+    (autoAllows(req.chatKey) || autoApproved.get(req.chatKey)?.has(req.toolName))
+  ) {
     finish({ behavior: "allow", updatedInput: req.input });
     return;
   }

@@ -200,6 +200,45 @@ test("finish collapses to a one-line receipt and stops updating", async () => {
   expect(h.edits.length).toBe(settled);
 });
 
+test("answering a prompt hands the status to a fresh message", async () => {
+  // The run stops on a plan, the prompt and the reply land under the status,
+  // and the ten revisions of the old message are spent waiting. Continuing to
+  // edit it is progress nobody sees.
+  const h = harness();
+  let clock = 0;
+  const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 3_600_000));
+  await status.begin();
+  for (let i = 0; i < 12; i++) {
+    status.onEvent(toolEvent("Read", { file_path: `f${i}.ts` }));
+    await new Promise((r) => setTimeout(r, INTERVAL));
+  }
+  expect(h.edits.length).toBe(9); // budget spent
+
+  await status.restart();
+  expect(h.edits[9]).toBe("⏺ answered — continuing below");
+  expect(h.sends).toEqual(["⏺ working…", "⏺ working…"]);
+
+  // A new message means a new budget, and the tool count carries over — it is
+  // still the same run.
+  status.onEvent(toolEvent("Bash", { command: "helm upgrade" }));
+  await new Promise((r) => setTimeout(r, INTERVAL * 2));
+  const resumed = h.edits[h.edits.length - 1];
+  expect(resumed).toContain("Bash: helm upgrade");
+  expect(resumed).toContain("13 tools");
+
+  await status.finish(true);
+  expect(h.edits[h.edits.length - 1]).toStartWith("✓ done · 13 tools");
+});
+
+test("restart on a status that never started is a no-op", async () => {
+  const h = harness();
+  const status = new Status("stdin:test", { ...h.io, supported: () => false }, INTERVAL);
+  await status.begin();
+  await status.restart();
+  expect(h.sends).toEqual([]);
+  expect(h.edits).toEqual([]);
+});
+
 test("a failed run says so", async () => {
   const h = harness();
   await h.status.begin();

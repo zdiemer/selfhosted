@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
-import { autoActive, type ChatState, getChat, updateChat } from "./state.ts";
+import { type ChatState, getChat, updateChat } from "./state.ts";
 
 export interface RunResult {
   text: string;
@@ -126,9 +126,17 @@ export async function runClaude(
       "--allowedTools",
       config.groups.allowedTools,
     );
-  } else if (autoActive(chat) && !chat.plan) {
-    args.push("--permission-mode", "bypassPermissions");
   } else {
+    // The approval relay is wired in every 1:1 run, auto mode included.
+    //
+    // Auto used to be `--permission-mode bypassPermissions`, which never calls
+    // the prompt tool at all — and that silently took AskUserQuestion with it.
+    // A bypassed question is "allowed" with no `answers` field, so claude is
+    // told the user didn't answer and carries on guessing, which is how a
+    // question asked outside plan mode used to vanish. Keeping the relay wired
+    // and letting approvals.ts allow ordinary tools unprompted (see
+    // autoAllows there) is the same grant with the conversation left in.
+    //
     // --strict-mcp-config keeps the headless run from loading the workspace's
     // interactive MCP servers; only the approval relay is wired in.
     args.push(
@@ -138,6 +146,8 @@ export async function runClaude(
       mcpConfigPath(chatKey),
       "--strict-mcp-config",
       "--allowedTools",
+      // Still worth passing under auto: a read-only tool answered here never
+      // makes the socket round trip at all.
       config.allowedTools,
     );
     // Plan mode outranks auto (the router keeps them from being set together,
@@ -210,13 +220,18 @@ export async function runClaude(
         }
       };
 
-      const timer = setTimeout(() => {
-        child.kill("SIGTERM");
-        err += `\n(timed out after ${config.claudeTimeoutMs / 60000}m)`;
-      }, config.claudeTimeoutMs);
+      // Off unless configured (config.claudeTimeoutMs). A run has no idea how
+      // long it should take, and the only thing a wall clock reliably kills is
+      // the long job that was working.
+      const timer = config.claudeTimeoutMs
+        ? setTimeout(() => {
+            child.kill("SIGTERM");
+            err += `\n(timed out after ${config.claudeTimeoutMs / 60000}m)`;
+          }, config.claudeTimeoutMs)
+        : null;
 
       child.on("close", (code) => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         running.delete(chatKey);
         if (buf.trim()) handleLine(buf);
         // No result event means the run died before finishing — killed by
