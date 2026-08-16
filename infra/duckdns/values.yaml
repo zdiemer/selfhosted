@@ -78,7 +78,7 @@ updater:
     # alpine/kubectl is Alpine-based, so busybox provides `sh` and `wget` — the
     # DuckDNS call uses wget here, not curl, for that reason.
     # renovate: datasource=docker depName=alpine/kubectl
-    image: alpine/kubectl:1.36.2
+    image: alpine/kubectl:1.36.3
     # ORDER MATTERS BEYOND READINESS. The A record points every duckdns host at
     # this node's :443, so a candidate must serve Traefik cleanly on its
     # tailscale interface — something the node-Ready check can't see. Two traps:
