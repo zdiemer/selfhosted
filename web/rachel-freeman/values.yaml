@@ -23,7 +23,7 @@
 
 image:
   repository: ghcr.io/zdiemer/rachelfreeman
-  tag: "0.18.0"
+  tag: "0.19.1"
   pullPolicy: IfNotPresent
 
 # The GHCR package is PRIVATE here, unlike the rest of this repo — see the note
@@ -68,6 +68,22 @@ app:
   # REQUIRED — set in values.local.yaml. The signing secret of the webhook
   # endpoint created in Stripe pointing at <serverURL>/stripe/webhook.
   stripeWebhookSecret: ""
+
+  # PayPal. Optional, like Stripe: leave empty and the Buy panel just shows the
+  # Stripe button. Set both and PayPal *and Venmo* buttons appear beneath it.
+  #
+  # Venmo is the entire reason this exists — it is owned by PayPal and cannot be
+  # accepted through Stripe at any price. Cards still route through Stripe when
+  # Stripe is configured, because Stripe is cheaper per card sale.
+  #
+  # From developer.paypal.com -> Apps & Credentials. Note that the Sandbox and
+  # Live tabs issue DIFFERENT credentials; paypalEnv must match which pair is
+  # set here or every checkout fails authentication.
+  paypalClientId: ""
+  paypalClientSecret: ""
+  # "sandbox" or "live". Anything that is not exactly "live" is treated as
+  # sandbox, so a typo cannot accidentally take real money.
+  paypalEnv: "sandbox"
 
   resources:
     requests:
