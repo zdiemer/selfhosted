@@ -1,0 +1,15 @@
+# Copy to values.local.yaml and fill in. values.local.yaml is gitignored and
+# lives in 1Password at op://homelab/media-bitmagnet.
+#
+# The Postgres password is internal to this chart — nothing outside the cluster
+# ever connects to that database — so any long random string works:
+#   openssl rand -hex 24
+#
+# tmdbApiKey is optional. bitmagnet ships a working default; set your own only
+# if TMDB starts rate-limiting the classifier.
+
+postgres:
+  password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+bitmagnet:
+  tmdbApiKey: ""

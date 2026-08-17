@@ -35,6 +35,8 @@ TEMPLATE_SKIP=(
   # tracked values alone has failed since, and this list is where that belongs.
   infra/traefik
   media/arr
+  # postgres.password is `required` (op://homelab/media-bitmagnet).
+  media/bitmagnet
   web/apartment-watch
   web/kelsey-green
   # payloadSecret and postgres.password are `required`, so a render from tracked

@@ -8,3 +8,10 @@
 pia:
   username: "p1234567"
   password: "xxxxxxxxxxxx"
+
+# Sonarr's and Radarr's API keys (Settings → General → API Key in each app).
+# The decluttarr watchdog runs in its own pod and calls their queue APIs, so it
+# needs them handed to it; nothing else in this chart does.
+decluttarr:
+  sonarrApiKey: "0123456789abcdef0123456789abcdef"
+  radarrApiKey: "0123456789abcdef0123456789abcdef"

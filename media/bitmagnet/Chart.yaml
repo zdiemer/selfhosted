@@ -1,0 +1,13 @@
+apiVersion: v2
+name: bitmagnet
+description: A self-hosted BitTorrent DHT crawler and Torznab indexer — builds its own searchable index from the public DHT and serves it to Prowlarr, with no tracker site, account, or Cloudflare in the path.
+type: application
+version: 0.1.0
+# appVersion tracks the bitmagnet image tag in values.yaml (image.tag).
+# renovate: image=ghcr.io/bitmagnet-io/bitmagnet
+appVersion: "v0.10.1"
+home: https://bitmagnet.io
+sources:
+  - https://github.com/bitmagnet-io/bitmagnet
+maintainers:
+  - name: zachd

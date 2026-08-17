@@ -1,0 +1,92 @@
+{{- if .Values.decluttarr.enabled }}
+{{/*
+decluttarr — the queue watchdog. See values.yaml for why it exists and why the
+job list is as short as it is.
+
+The whole configuration is one config.yaml, rendered here into a Secret rather
+than a ConfigMap because it embeds the Sonarr and Radarr API keys. Mounted at
+/app/config/config.yaml, which is the path the image reads.
+
+It reaches qBittorrent unauthenticated: qBittorrent bypasses auth for the pod
+CIDR (Options → Web UI → "bypass authentication for clients in whitelisted IP
+subnets", 10.42.0.0/16). That whitelist lives in qBittorrent's config PVC, not
+in this chart — same as every other qBittorrent preference. Without it,
+decluttarr logs 403s from the client and every torrent looks protected.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "arr.fullname" . }}-decluttarr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: decluttarr
+type: Opaque
+stringData:
+  config.yaml: |
+    general:
+      log_level: {{ .Values.decluttarr.logLevel }}
+      test_run: {{ .Values.decluttarr.testRun }}
+      timer: {{ .Values.decluttarr.timerMinutes }}
+    job_defaults:
+      max_strikes: {{ .Values.decluttarr.strikes }}
+    jobs:
+      {{- range .Values.decluttarr.jobs }}
+      {{ . }}:
+      {{- end }}
+    instances:
+      sonarr:
+        - base_url: "http://{{ include "arr.fullname" . }}-sonarr:{{ .Values.apps.sonarr.port }}"
+          api_key: "{{ required "decluttarr.sonarrApiKey is required — Sonarr → Settings → General → API Key. See values.local.yaml.example" .Values.decluttarr.sonarrApiKey }}"
+      radarr:
+        - base_url: "http://{{ include "arr.fullname" . }}-radarr:{{ .Values.apps.radarr.port }}"
+          api_key: "{{ required "decluttarr.radarrApiKey is required — Radarr → Settings → General → API Key. See values.local.yaml.example" .Values.decluttarr.radarrApiKey }}"
+    download_clients:
+      qbittorrent:
+        - base_url: "http://{{ include "arr.fullname" . }}-qbittorrent:{{ .Values.qbittorrent.port }}"
+          name: "qBittorrent"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arr.fullname" . }}-decluttarr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: decluttarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" . "app" "decluttarr") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart on any config change — the strike counters are in memory, so
+        # a restart also resets them, which is the intended behaviour after a
+        # threshold or job-list edit.
+        checksum/config: {{ .Values.decluttarr | toYaml | sha256sum }}
+      labels:
+        {{- include "arr.appSelectorLabels" (dict "root" . "app" "decluttarr") | nindent 8 }}
+    spec:
+      containers:
+        - name: decluttarr
+          image: "{{ .Values.decluttarr.image }}:{{ .Values.decluttarr.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: {{ .Values.timezone }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/config.yaml
+              subPath: config.yaml
+              readOnly: true
+          # No probes. It is a sleep loop with no listening socket, and its
+          # failure mode is a crash — which the restart policy already handles.
+          resources:
+            {{- toYaml .Values.resources.decluttarr | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "arr.fullname" . }}-decluttarr
+{{- end }}

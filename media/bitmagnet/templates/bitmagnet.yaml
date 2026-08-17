@@ -1,0 +1,113 @@
+{{/*
+The crawler itself. One pod running all three workers; state lives entirely in
+Postgres, so this container is disposable and has no volume of its own.
+
+Egress: bitmagnet talks UDP to tens of thousands of DHT nodes and HTTPS to
+TMDB. It deliberately does NOT go through infra/egress-proxy (a forward proxy
+cannot carry DHT's UDP at all) and it deliberately does NOT go through the PIA
+pod (that tunnel exists for qBittorrent's transfers and has one forwarded
+port; putting a DHT crawler on it would fight qBittorrent for the same
+connection table for no benefit — crawling is metadata, not payload).
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bitmagnet.fullname" . }}
+  labels:
+    {{- include "bitmagnet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bitmagnet
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bitmagnet.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: bitmagnet
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/postgres-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "bitmagnet.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bitmagnet
+        ingress.enabled: "true"
+    spec:
+      containers:
+        - name: bitmagnet
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - worker
+            - run
+            {{- range .Values.bitmagnet.workers }}
+            - --keys={{ . }}
+            {{- end }}
+          env:
+            - name: TZ
+              value: {{ .Values.bitmagnet.timezone | quote }}
+            - name: POSTGRES_HOST
+              value: {{ include "bitmagnet.fullname" . }}-postgres
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_NAME
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bitmagnet.fullname" . }}-postgres
+                  key: POSTGRES_PASSWORD
+            - name: HTTP_SERVER_LOCAL_ADDRESS
+              value: ":{{ .Values.bitmagnet.port }}"
+            - name: DHT_CRAWLER_LOCAL_ADDRESS
+              value: ":{{ .Values.bitmagnet.dhtPort }}"
+            {{- with .Values.bitmagnet.tmdbApiKey }}
+            - name: TMDB_API_KEY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $k, $v := .Values.bitmagnet.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.bitmagnet.port }}
+            - name: dht
+              containerPort: {{ .Values.bitmagnet.dhtPort }}
+              protocol: UDP
+          # /status is bitmagnet's own health endpoint and answers before the
+          # crawl has found anything, which is what we want: an empty index is
+          # a normal first hour, not an unhealthy pod.
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.bitmagnet | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bitmagnet.fullname" . }}
+  labels:
+    {{- include "bitmagnet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bitmagnet
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.bitmagnet.port }}
+      targetPort: http
+  selector:
+    {{- include "bitmagnet.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: bitmagnet

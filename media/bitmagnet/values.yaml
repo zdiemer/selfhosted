@@ -1,0 +1,93 @@
+image:
+  repository: ghcr.io/bitmagnet-io/bitmagnet
+  tag: "v0.10.1"
+  pullPolicy: IfNotPresent
+
+bitmagnet:
+  # Web UI + Torznab endpoint.
+  port: 3333
+  # The DHT crawler's own UDP socket. Outbound queries work regardless; inbound
+  # traffic only reaches it if the router forwards this port to a node (see
+  # README — the crawl works without it, just slower).
+  dhtPort: 3334
+  host: bitmagnet.zachd.duckdns.org
+  timezone: America/Los_Angeles
+
+  # Which of bitmagnet's workers this process runs. All three in one pod: the
+  # HTTP server (UI + Torznab), the queue server (classification workers), and
+  # the DHT crawler itself. Splitting them buys nothing at this scale — they
+  # coordinate through Postgres, not through each other.
+  workers:
+    - http_server
+    - queue_server
+    - dht_crawler
+
+  # TMDB lookups turn raw torrent names into identified movies/episodes, which
+  # is what makes the Torznab results usable by Radarr/Sonarr instead of a wall
+  # of release strings. bitmagnet ships a default key and works without one;
+  # set your own in values.local.yaml if you start getting rate limited.
+  tmdbApiKey: ""
+
+  # Extra environment passed straight to the container. See
+  # https://bitmagnet.io/setup/configuration.html
+  extraEnv: {}
+
+postgres:
+  image:
+    repository: postgres
+    tag: "16.14-alpine"
+    pullPolicy: IfNotPresent
+  database: bitmagnet
+  user: bitmagnet
+  # values.local.yaml only (op://homelab/media-bitmagnet).
+  password: ""
+  service:
+    port: 5432
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    # The crawler writes constantly and the index grows into the millions of
+    # rows; this is the pod that actually needs memory here, not bitmagnet.
+    limits:
+      memory: 2Gi
+
+persistence:
+  postgres:
+    # The whole index lives here and grows roughly a few GB per month of
+    # crawling. Start at 50Gi; truenas-iscsi volumes can be expanded.
+    size: 50Gi
+    # Block storage, not NFS — Postgres needs real fsync semantics.
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+    # Deliberately excluded from k8up's opt-out backup. This volume is a cache
+    # of the public DHT: nothing in it is authored here, it is large, and a
+    # restore would be slower and staler than simply crawling again. The only
+    # loss on a rebuild is crawl history, which nothing depends on.
+    backup: false
+
+resources:
+  bitmagnet:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# Admin UI behind Authelia forward-auth, same pattern as media/arr. Bitmagnet
+# has NO authentication of its own — it is one unauthenticated web app with a
+# delete-everything button, so unlike the arr apps this forward-auth is the
+# only control in front of it. Do not disable it while the ingress is on.
+auth:
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+ingress:
+  enabled: true
+  className: traefik
+  tls:
+    enabled: true

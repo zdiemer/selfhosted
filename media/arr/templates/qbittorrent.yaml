@@ -87,6 +87,19 @@ spec:
               value: {{ .Values.gluetun.dnsAddress | quote }}
             - name: HTTP_CONTROL_SERVER_ADDRESS
               value: ":{{ .Values.gluetun.controlPort }}"
+            {{- if .Values.gluetun.httpProxy.enabled }}
+            # Lets Prowlarr send single requests out through PIA for the
+            # indexers that block the house IP. See values.yaml.
+            - name: HTTPPROXY
+              value: "on"
+            - name: HTTPPROXY_LISTENING_ADDRESS
+              value: ":{{ .Values.gluetun.httpProxy.port }}"
+            {{- end }}
+          {{- if .Values.gluetun.httpProxy.enabled }}
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.gluetun.httpProxy.port }}
+          {{- end }}
           # gluetun's control server, asked for the tunnel's actual state.
           # /v1/openvpn/status returns 200 {"status":"running"} only while the
           # tunnel is up, so a persistent failure means the killswitch has
@@ -167,6 +180,11 @@ spec:
     - name: http
       port: {{ .Values.qbittorrent.port }}
       targetPort: http
+    {{- if .Values.gluetun.httpProxy.enabled }}
+    - name: proxy
+      port: {{ .Values.gluetun.httpProxy.port }}
+      targetPort: proxy
+    {{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

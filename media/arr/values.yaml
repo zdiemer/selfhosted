@@ -61,6 +61,45 @@ flaresolverr:
   # start dying once more than one solve is in flight.
   shmSize: 256Mi
 
+# The watchdog. Polls Sonarr's and Radarr's queues and removes downloads that
+# are never going to finish, blocklisting the release so the *arr searches for a
+# working one instead of silently losing the episode.
+#
+# This exists because of the 2026-08-17 deadlock (see README): 24 dead torrents
+# — 18 of them stuck fetching metadata for 70+ hours — held qBittorrent's
+# active-torrent cap and the entire download queue stopped. Removing them by
+# hand took an investigation; this makes it a background chore.
+decluttarr:
+  enabled: true
+  image: ghcr.io/manimatter/decluttarr
+  tag: "v2.1.0"
+  logLevel: INFO
+  # Removal is a strike system: a torrent must look dead on `strikes` CONSECUTIVE
+  # checks, `timerMinutes` apart, before it is removed. 60 × 24 = a torrent has
+  # to be dead for a full day, which is the threshold the manual sweep used —
+  # it caught 24 genuinely dead torrents and left every live one alone,
+  # including one sitting at 97%.
+  timerMinutes: 60
+  strikes: 24
+  # Start in dry-run to watch what it WOULD remove; flip to false to arm it.
+  testRun: false
+  # Which jobs run. Deliberately a short list:
+  #   remove_metadata_missing  the metaDL case that caused the deadlock
+  #   remove_stalled           stalled with no peers
+  #   remove_failed_downloads  the client itself reported failure
+  # Not enabled: remove_slow (kills slow-but-live grabs on a thin swarm),
+  # remove_orphans (would delete anything in qBittorrent the *arrs don't track,
+  # which is every manual add), remove_unmonitored, and the search_* jobs
+  # (those start searches rather than clean up, which is not what this is for).
+  jobs:
+    - remove_metadata_missing
+    - remove_stalled
+    - remove_failed_downloads
+  # API keys live in values.local.yaml (op://homelab/media-arr) — they are the
+  # same keys the apps show under Settings → General.
+  sonarrApiKey: ""
+  radarrApiKey: ""
+
 qbittorrent:
   image: lscr.io/linuxserver/qbittorrent
   tag: "5.2.3"
@@ -89,8 +128,22 @@ gluetun:
   # reaching the web UI, kubelet probes). k3s defaults: pods 10.42/16,
   # services 10.43/16.
   outboundSubnets: 10.42.0.0/16,10.43.0.0/16,192.168.4.0/24
-  # Let cluster peers reach the qBittorrent web UI through gluetun's firewall.
-  inputPorts: "8080"
+  # Let cluster peers reach the qBittorrent web UI (8080) and the HTTP proxy
+  # below (8888) through gluetun's firewall.
+  inputPorts: "8080,8888"
+  # gluetun's built-in HTTP proxy, so things OUTSIDE this pod can borrow the
+  # PIA exit for one request at a time without joining the netns. Prowlarr is
+  # the only user: a handful of public indexers block the house address at the
+  # IP level (ACG.RIP refuses the TCP connection outright from here and answers
+  # 200 from the tunnel), and Prowlarr can tag exactly those indexers onto a
+  # proxy while everything else keeps egressing normally.
+  #
+  # Deliberately narrow: it listens only on the pod IP, is admitted by
+  # FIREWALL_INPUT_PORTS above, and is reachable only from inside the cluster
+  # (ClusterIP, no ingress). Nothing authenticates to it, so keep it that way.
+  httpProxy:
+    enabled: true
+    port: 8888
   # gluetun's DNS-over-TLS forwarder, deliberately off. With it on, gluetun
   # listens on 127.0.0.1:53 and rewrites the pod's SHARED resolv.conf (kubelet
   # bind-mounts one file into every container) to point at itself. curl in the
@@ -158,6 +211,13 @@ resources:
       memory: 512Mi
     limits:
       memory: 4Gi
+  # A Python poll loop that sleeps most of the hour.
+  decluttarr:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   gluetun:
     requests:
       cpu: 50m

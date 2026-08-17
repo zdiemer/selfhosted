@@ -28,6 +28,29 @@ queries) egresses normally and could be onboarded to the proxy later.
 PIA credentials: `values.local.yaml` from `op://homelab/media-arr` — the
 standard `op inject` contract.
 
+## Borrowing the PIA exit for one indexer
+
+gluetun also runs an HTTP proxy (`arr-qbittorrent.media.svc:8888`, admitted by
+`FIREWALL_INPUT_PORTS`), so things outside this pod can send a single request
+out through PIA without joining the netns. Prowlarr is the only user.
+
+The case that made it necessary: **ACG.RIP refuses the TCP connection outright**
+from the house address — port 443 gives `connection refused`, port 80 answers
+with a fake `Microsoft-IIS/5.1.31.3` banner and redirects to the https that just
+refused. From inside the tunnel the same URL is a plain 200. That is an IP-level
+block, so no amount of FlareSolverr helps; only a different exit does.
+
+Wiring in Prowlarr: Settings → Proxies → **HTTP**, host
+`arr-qbittorrent.media.svc.cluster.local`, port 8888, no credentials, tagged
+`pia`. Then tag the individual indexers that need it — the tag is the only thing
+that routes an indexer through a proxy, so everything untagged keeps egressing
+normally, which is what you want. Only ACG.RIP is tagged today.
+
+It is not a general fix for Cloudflare-blocked indexers: a PIA exit is a
+datacenter range, and Cloudflare treats those *worse* than the house IP. Sites
+that FlareSolverr can currently solve get harder to reach through the proxy, not
+easier. Reach for it only for IP-level blocks like the one above.
+
 ## Storage
 
 Every file-touching container mounts the same NFS export at `/media`
@@ -113,8 +136,36 @@ Options → BitTorrent → Torrent Queueing:
 |---|---|---|
 | Maximum active downloads | 5 | 3 was the default and it queues a season pack behind two movies. 10 works too, it just splits the same line 10 ways and every item finishes late instead of some finishing early. |
 | Maximum active uploads | 10 | Seeders shouldn't starve each other once the count grows. |
-| Maximum active torrents | 30 | **This is the one that bites.** Seeding torrents count against it, and nothing here ever stops seeding, so a total of 5 means that after five completed grabs the sixth download never starts — it sits queued forever while five permanent seeders hold every slot. Raise it well past the download limit, or set −1. |
-| Do not count slow torrents | on | Idle seeders stop consuming active slots at all, which is the real fix for the row above. |
+| Maximum active torrents | −1 | **This is the one that bites.** Seeding torrents count against it, and nothing here ever stops seeding, so a total of 5 means that after five completed grabs the sixth download never starts — it sits queued forever while five permanent seeders hold every slot. It was 30, and 30 was still not enough — see below. |
+| Do not count slow torrents | on | Idle seeders stop consuming active slots, which is *most* of the fix for the row above. Not all of it: the exemption is measured on download rate, so it does not cover the case below. |
+
+### Why 30 was still not enough (2026-08-17)
+
+The queue deadlocked with 431 torrents and a global download rate of zero: 162
+downloads queued, nothing running. Exactly 30 torrents were non-queued, i.e. the
+cap was binding, and 24 of those were dead — 18 stuck in `metaDL` (never even
+retrieved a metadata blob) for 70+ hours with zero seeds, 6 stalled at zero
+seeds and idle for one to six days.
+
+"Do not count slow torrents" did not rescue it, because that exemption keys off
+download *rate*, and a `metaDL` torrent has no rate to measure. qBittorrent
+therefore never demotes it, and eighteen torrents that will never transfer a
+byte held the active-torrent cap permanently.
+
+Fixed by setting the cap to −1 and removing the 24 through **Sonarr's** queue
+(`removeFromClient=true&blocklist=true`) rather than qBittorrent's — that marks
+each release failed and sends Sonarr looking for a working one, where deleting
+in qBittorrent alone would have silently dropped the episode. Downloads resumed
+immediately.
+
+The lesson for next time: a stuck queue here is worth checking by state, not by
+count. `metaDL` older than a day is dead by definition.
+
+Also in the config PVC, under Options → Web UI: **bypass authentication for
+clients in whitelisted IP subnets**, set to `10.42.0.0/16` (the k3s pod CIDR).
+decluttarr runs in its own pod and needs to read qBittorrent's torrent list;
+without this it gets 403s and reports every torrent as protected. The localhost
+bypass above stays on — that one is for gluetun's port-forward push.
 
 **Seeding stops at ratio 1.0** — Options → BitTorrent → Share Limits, "When
 ratio reaches 1.0" with action **Pause torrent**. Give back what you took,
@@ -163,6 +214,48 @@ kubectl -n media exec deploy/arr-sonarr -- sh -c \
    curl -s -X POST -H "X-Api-Key: $k" -H "Content-Type: application/json" \
      -d "{\"name\":\"CheckHealth\"}" http://localhost:8989/api/v3/command'
 ```
+
+## decluttarr — the queue watchdog
+
+The deadlock above took a manual investigation to find and 24 API calls to
+clear. [decluttarr](https://github.com/ManiMatter/decluttarr) makes it a
+background chore: every hour it reads Sonarr's and Radarr's queues and strikes
+anything that looks dead. At 24 consecutive strikes it removes the download
+**through the *arr, with blocklisting on** — which is the part that matters. A
+blocklisted release is marked failed and the *arr immediately searches for a
+different one; deleting the same torrent in qBittorrent alone would just lose
+the episode quietly.
+
+Three jobs are enabled, and the list is deliberately short:
+
+| Job | Catches |
+|---|---|
+| `remove_metadata_missing` | The `metaDL` case that caused the deadlock — a torrent that never even retrieved its metadata. |
+| `remove_stalled` | Sonarr/Radarr's own "The download is stalled with no connections". |
+| `remove_failed_downloads` | The client reported an outright failure. |
+
+Not enabled: `remove_slow` (kills slow-but-live grabs on a thin swarm),
+`remove_orphans` (would delete anything in qBittorrent the *arrs don't track,
+i.e. every manual add), `remove_unmonitored`, and the `search_*` jobs, which
+start searches rather than clean up.
+
+**24 strikes an hour apart is a 24-hour threshold**, matching the manual sweep
+that found 24 dead torrents without touching a live one. Strikes are consecutive
+and reset the moment a download makes progress, so a torrent that wakes up at
+hour 20 starts over. They are also in-memory: restarting the pod resets every
+counter, which is why the Deployment restarts on any config change.
+
+Both jobs used to need judgement calls that turned out to be safe to automate:
+they key off the *arr's own queue status rather than qBittorrent's, so the 150+
+torrents sitting in `queuedDL` — waiting on a free slot, not failing — are never
+flagged.
+
+`test_run: true` in values.yaml makes it log what it *would* remove without
+touching anything. Worth flipping to true for a cycle after changing thresholds.
+
+It needs the Sonarr and Radarr API keys (values.local.yaml,
+`op://homelab/media-arr`) because it calls their APIs from its own pod, and it
+needs unauthenticated access to qBittorrent — see the whitelist row below.
 
 ## If gluetun crash-loops with a tun EPERM
 
