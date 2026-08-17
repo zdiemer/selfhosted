@@ -1,0 +1,159 @@
+# Delegated workspace: Rachel, rachelfreeman.art, and nothing else.
+#
+#   PROFILE=rachel RELEASE=rachel-workspace NAMESPACE=claude-rachel ./upgrade.sh
+#
+# Layered over values.yaml, with values.rachel.local.yaml (her number, her
+# Signal account) resolved from 1Password on top. Same chart, same image as the
+# main workspace — the difference is entirely in what this instance can reach.
+#
+# The boundary is three things, in descending order of how much they actually
+# enforce:
+#
+#   1. Credentials that are not there. Her home PVC is a fresh volume: no
+#      1Password files, no GHCR PAT, no gh auth, no SSH key except a deploy key
+#      for one repo. Most of what the main workspace can do, this one cannot do
+#      because the credential does not exist to do it with.
+#   2. RBAC. A namespace-scoped Role over `rachel` only — and pointedly no verb
+#      at all in claude-rachel, so this instance cannot redeploy itself with a
+#      wider grant. See templates/rbac.yaml for what is withheld and why.
+#   3. Tool allowlists and managed settings. Defence in depth. Deny rules are
+#      advisory against a determined model and Bash() patterns are prefix
+#      matches; treat these as the thing that stops accidents, not attacks.
+#
+# Everything the main workspace uses for its own convenience is off: no web
+# terminal on the internet, no Tailscale, no bakery, no Happy daemon.
+
+bakery:
+  enabled: false
+happy:
+  daemon:
+    enabled: false
+tailscale:
+  enabled: false
+ingress:
+  # No ttyd exposed at all. Reach this pod with `kubectl exec` for the one-time
+  # setup; there is no ongoing reason for a browser to touch it, and an ingress
+  # would need its own Authelia config to not be a hole.
+  enabled: false
+
+secrets:
+  onePassword:
+    # No vault access, by removing the need for it. deploy.sh rolls the image
+    # tag with `helm --reuse-values`, which carries the previous release's
+    # secret values forward untouched — so nothing here ever resolves an
+    # op:// reference and no 1Password credential is mounted. Rotating Stripe
+    # or Payload keys stays a job for the main workspace.
+    enabled: false
+
+rbac:
+  clusterAdmin: false
+  namespaceDeploy:
+    - namespace: rachel
+      release: rachel-freeman
+
+managedSettings:
+  enabled: true
+  settings:
+    permissions:
+      # Read is in allowedTools and so never prompts — which makes the deny
+      # list the only thing bounding what it can open. Everything with a
+      # credential or another tenant's config in it goes here.
+      deny:
+        - "Read(//home/node/.claude/**)"
+        - "Read(//home/node/.ssh/**)"
+        - "Read(//home/node/.docker/**)"
+        - "Read(//home/node/.config/**)"
+        - "Read(//var/run/secrets/**)"
+        - "Read(//etc/claude-code/**)"
+        # Her selfhosted checkout is there so deploy.sh can run, not to be
+        # edited. The one exception is carved out in allow, below.
+        - "Edit(//home/node/code/selfhosted/**)"
+        - "Write(//home/node/code/selfhosted/**)"
+        - "Edit(//home/node/.claude/**)"
+        - "Write(//home/node/.claude/**)"
+        # Deploying is `helm upgrade`; none of these are ever part of it.
+        - "Bash(kubectl delete:*)"
+        - "Bash(helm uninstall:*)"
+        - "Bash(helm rollback:*)"
+        - "Bash(kubectl -n claude:*)"
+        - "Bash(kubectl -n claude-rachel:*)"
+        - "Bash(kubectl -n web:*)"
+      allow:
+        # The tag bump that deploy.sh then rolls onto. Narrower than the
+        # directory deny above it, so it wins on specificity.
+        - "Edit(//home/node/code/selfhosted/web/rachel-freeman/values.yaml)"
+        - "Edit(//home/node/code/selfhosted/web/rachel-freeman/Chart.yaml)"
+      additionalDirectories: []
+
+messaging:
+  enabled: true
+  defaultCwd: /home/node/code/rachelfreeman
+  codeRoot: /home/node/code
+  # `!cwd` refuses everything outside these, and the gateway refuses to start
+  # if defaultCwd is not under one of them.
+  cwdRoots:
+    - /home/node/code/rachelfreeman
+    - /home/node/code/selfhosted/web/rachel-freeman
+  auto:
+    # No bypassPermissions on a delegated instance. The compensation is the
+    # wider allowedTools below: her ordinary workflow runs without prompting,
+    # and anything outside it still round-trips to her phone.
+    enabled: false
+  bash:
+    # `!bash` is owner-only, but she is the owner of her own instance — so the
+    # owner check buys nothing here and the switch is the only control. The
+    # model remains the only path to a shell, and it is bounded by allowedTools.
+    enabled: false
+  groups:
+    # 1:1 only. A group would make the room the credential.
+    enabled: false
+  # Her actual job, spelled out. Wider than the main workspace's read-only
+  # default because she has no `!auto` to fall back on and a prompt on every
+  # single edit is unusable on a phone. Anything not listed still prompts.
+  allowedTools: >-
+    Read Glob Grep LS WebFetch WebSearch TodoWrite Edit Write
+    Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)
+    Bash(git add:*) Bash(git commit:*) Bash(git push:*)
+    Bash(npm run lint:*) Bash(npm run test:*)
+    Bash(/home/node/code/selfhosted/web/rachel-freeman/deploy.sh:*)
+    Bash(kubectl -n rachel get:*) Bash(kubectl -n rachel logs:*)
+  systemPrompt: >-
+    You help Rachel run rachelfreeman.art, an art store. She is not a
+    programmer: never show her a stack trace, a diff, or a shell command unless
+    she asks. Say what you changed in plain language and what she will see on
+    the site.
+
+    Most of what she asks for is content — artwork, prices, descriptions,
+    photos — and content lives in the Payload CMS at rachelfreeman.art/admin,
+    not in the code. Say so and point her there rather than editing the repo.
+
+    Code changes are for layout, wording in the templates, and behaviour. When
+    you make one: edit, commit, push. Pushing to main builds the image on
+    GitHub; when that is green, bump image.tag in
+    ~/code/selfhosted/web/rachel-freeman/values.yaml to the new sha- tag and run
+    ~/code/selfhosted/web/rachel-freeman/deploy.sh. Tell her when it is live.
+
+    Prices are in the database and never in Stripe. Never touch payment or
+    checkout code without saying plainly what could break.
+  # Signal, and WhatsApp via Baileys in the same process. Both allowlists live
+  # in values.rachel.local.yaml — the chart `required`s a non-empty sender list,
+  # so an open bot cannot render.
+  signal:
+    enabled: true
+  whatsapp:
+    enabled: true
+
+resources:
+  # No bakery, no happy daemon, one person, one repo.
+  term:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  messagingGateway:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 2Gi}
+
+persistence:
+  # One repo plus a selfhosted checkout. The main workspace's volume is sized
+  # for every repo in the fleet plus build caches.
+  home:
+    size: 10Gi

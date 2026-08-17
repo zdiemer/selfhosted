@@ -13,20 +13,50 @@ RELEASE="${RELEASE:-claude-workspace}"
 NAMESPACE="${NAMESPACE:-claude}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
+
+# A second, delegated instance of this chart — same image, different scope.
+# PROFILE=rachel layers values.rachel.yaml over values.yaml and resolves
+# values.rachel.local.yaml (her phone numbers and Signal account) from its own
+# 1Password item instead of the main one. Unset, everything below behaves
+# exactly as it did before profiles existed.
+#
+#   PROFILE=rachel RELEASE=rachel-workspace NAMESPACE=claude-rachel ./upgrade.sh
+PROFILE="${PROFILE:-}"
+SECRET_STEM="values.local"
+if [[ -n "$PROFILE" ]]; then
+  PROFILE_VALUES="${HERE}/values.${PROFILE}.yaml"
+  [[ -f "$PROFILE_VALUES" ]] || { echo "no such profile: ${PROFILE_VALUES}" >&2; exit 1; }
+  SECRET_STEM="values.${PROFILE}.local"
+  # Guard against the mistake that matters here: deploying the delegated
+  # profile onto the main release, which would replace a cluster-admin
+  # workspace with a scoped one (or, reversed, hand the scoped instance the
+  # main release's name and its cluster-admin binding).
+  [[ "$RELEASE" == "claude-workspace" ]] && {
+    echo "refusing: PROFILE=${PROFILE} with RELEASE=claude-workspace." >&2
+    echo "          Set RELEASE and NAMESPACE for the delegated instance." >&2
+    exit 1
+  }
+fi
 # The secrets are resolved from 1Password into memory for the life of this run
 # and never written to a disk. Each helm call spells out its own `-f <(sv_fd)`
 # rather than carrying it in VALUE_ARGS: that fd is a pipe, readable once, so a
 # shared one would hand the second reader an empty values file. See
 # scripts/lib/secret-values.sh.
 . "${HERE}/../../scripts/lib/secret-values.sh"
-sv_load "$HERE" || exit 1
+sv_load "$HERE" "$SECRET_STEM" || exit 1
 
 VALUE_ARGS=(-f "$VALUES")
+[[ -n "$PROFILE" ]] && VALUE_ARGS+=(-f "$PROFILE_VALUES")
 
 K="kubectl -n ${NAMESPACE}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
+
+# A delegated instance (PROFILE=…) lands in its own namespace, which will not
+# exist on the first install. Created on demand, same as infra/traefik. Harmless
+# for the main release, whose namespace has existed since the cluster did.
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 # Refuse to roll onto a tag that isn't in the registry (ported from
 # infra/sms-relay). strategy: Recreate tears the pod down *before* the
@@ -140,7 +170,7 @@ echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
 # it needs. The pod still goes down; it just doesn't take the release record
 # with it.
 trap '' TERM
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd "$SECRET_STEM") --cleanup-on-fail
 trap - TERM
 
 echo "==> Waiting for ${RELEASE} rollout"

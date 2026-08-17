@@ -23,7 +23,7 @@
 
 image:
   repository: ghcr.io/zdiemer/rachelfreeman
-  tag: "0.19.1"
+  tag: "0.20.0"
   pullPolicy: IfNotPresent
 
 # The GHCR package is PRIVATE here, unlike the rest of this repo — see the note
@@ -84,6 +84,21 @@ app:
   # "sandbox" or "live". Anything that is not exactly "live" is treated as
   # sandbox, so a typo cannot accidentally take real money.
   paypalEnv: "sandbox"
+
+  # Email. Optional, like the payment keys: with no API key the shop sells and
+  # sends nothing, and card buyers still get Stripe's own receipt.
+  #
+  # The key is a Resend API key (resend.com); the from-address domain has to be
+  # verified there first, which means adding the DNS records Resend hands you to
+  # rachelfreeman.art. Sending from an unverified domain is rejected outright.
+  #
+  # resendApiKey goes in values.local.yaml — it is the one secret of the three.
+  resendApiKey: ""
+  # One string, name and address together, because that is the shape Resend and
+  # every mail client want.
+  emailFrom: "Rachel Freeman Art <orders@rachelfreeman.art>"
+  # Where "you sold something" lands. Empty means only the buyer is emailed.
+  orderNotifyEmail: "rachelefreem@gmail.com"
 
   resources:
     requests:

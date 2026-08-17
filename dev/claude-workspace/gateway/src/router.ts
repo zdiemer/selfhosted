@@ -23,7 +23,7 @@ import {
   recordGroupMessage,
   takeGroupContext,
 } from "./chat.ts";
-import { config } from "./config.ts";
+import { config, isWithinCwdRoots } from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import {
   autoActive,
@@ -506,15 +506,30 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
     }
     case "!cwd": {
       if (!arg) return sendTo(chatKey, `cwd: ${chat.cwd}`);
-      const target = arg.startsWith("/")
-        ? arg
-        : path.join(config.codeRoot, arg);
+      const target = path.resolve(
+        arg.startsWith("/") ? arg : path.join(config.codeRoot, arg),
+      );
+      // Containment before existence: a scoped instance should say the same
+      // thing about /etc/shadow whether or not it is there.
+      if (!isWithinCwdRoots(target))
+        return sendTo(
+          chatKey,
+          `⚠ ${target} is outside this instance's allowed directories ` +
+            `(${config.cwdRoots.join(", ")})`,
+        );
       if (!fs.existsSync(target))
         return sendTo(chatKey, `⚠ no such directory: ${target}`);
       updateChat(chatKey, { cwd: target, sessionId: undefined });
       return sendTo(chatKey, `✓ cwd ${target} (session cleared)`);
     }
     case "!auto": {
+      // Disabled instances refuse even `!auto off`, so the reply never implies
+      // the mode exists here and is merely currently unset.
+      if (!config.autoEnabled)
+        return sendTo(
+          chatKey,
+          "⚠ auto mode is disabled on this instance — mutations always prompt",
+        );
       if (arg === "off") {
         updateChat(chatKey, { auto: false, autoUntil: undefined });
         return sendTo(chatKey, "✓ auto mode off — mutations will prompt");

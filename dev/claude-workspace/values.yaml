@@ -12,12 +12,23 @@ image:
   # is now the Happy app against the self-hosted relay (dev/happy-server).
   # v2: adds kubectl/helm/buildctl/tailscale for cluster ops (see README
   # "Cluster powers").
-  # v21: identity hardening. Only cryptographic identifiers authenticate — a
-  #      Signal ACI, or the WhatsApp JID the session is with; phone numbers and
-  #      the server's LID↔number alias fields no longer admit anyone. Adds the
-  #      TOTP session unlock (messaging.unlock), with `!bash`/`!auto` needing a
-  #      code from the last few minutes. ⚠️ REQUIRES `SIGNAL_ALLOWED_SENDERS`
-  #      to contain the ACI: a number-only allowlist locks you out.
+  # v21: two changesets landed under this one tag — see the note in
+  #      dev/claude-workspace/README.md. Identity hardening: only cryptographic
+  #      identifiers authenticate — a Signal ACI, or the WhatsApp JID the
+  #      session is with; phone numbers and the server's LID↔number alias
+  #      fields no longer admit anyone. Adds the TOTP session unlock
+  #      (messaging.unlock), with `!bash`/`!auto` needing a code from the last
+  #      few minutes. ⚠️ REQUIRES `SIGNAL_ALLOWED_SENDERS` to contain the ACI:
+  #      a number-only allowlist locks you out.
+  #      And: the gateway can be scoped, so a second release of this chart can
+  #      be handed to someone else (values.rachel.yaml, README "Delegated
+  #      instances"). Two holes closed: `!cwd` accepted ANY absolute path that
+  #      existed — GW_CWD_ROOTS now bounds it, compared as resolved paths so
+  #      `../` cannot walk out and a `-backup` sibling does not match — and
+  #      `!auto`, which hands the run bypassPermissions, is switchable via
+  #      GW_AUTO_ENABLED, enforced in state.ts's autoActive rather than only
+  #      the router so a chat that had auto on before the flip loses it.
+  #      Both default to the old behaviour; that release is unaffected.
   # v20: the status message's edits actually land. Each one now targets the
   #      revision the last one produced — Signal ignores an edit aimed at a
   #      superseded revision, which is why v19's ticker still showed stale
@@ -107,6 +118,16 @@ security:
   # dir, flip this off in values.local.yaml.
   readOnlyRootFilesystem: true
 
+managedSettings:
+  # Ships /etc/claude-code/managed-settings.json — the highest-precedence
+  # Claude Code settings file — as a read-only configMap mount in the `term`
+  # and `messaging-gateway` containers. Off for an unscoped workspace, where it
+  # would only get in your way; on for a delegated one, where the point is that
+  # the file cannot be edited by the agent it constrains.
+  enabled: false
+  # Rendered verbatim as JSON. See values.rachel.yaml for a worked example.
+  settings: {}
+
 rbac:
   # ⚠️ Binds the workspace's ServiceAccount to cluster-admin (same tradeoff as
   # infra/headlamp): the pod can deploy/delete anything in the cluster,
@@ -114,6 +135,20 @@ rbac:
   # gate in front of that power — keep auth.forwardAuth.enabled on. Flip this
   # off to return the pod to zero API access (no SA token mounted at all).
   clusterAdmin: true
+
+  # The delegated alternative, for a workspace handed to someone who should be
+  # able to deploy exactly one app: a Role + RoleBinding in each listed
+  # namespace, and no cluster-scoped grant at all. Mutually exclusive with
+  # clusterAdmin — setting both fails the render rather than quietly letting
+  # the wider grant win.
+  #
+  # Helm's Secret list cannot be restricted by label, so the holder can read
+  # every Secret in the listed namespace. Only list a namespace that contains
+  # nothing but the release they own. See templates/rbac.yaml for the full set
+  # of verbs deliberately withheld.
+  namespaceDeploy: []
+  # - namespace: rachel
+  #   release: rachel-freeman   # documentary; annotates the Role
 
 tailscale:
   # Runs a tailscaled container (userspace networking, no TUN, no root) so the
@@ -288,6 +323,21 @@ messaging:
   enabled: false
   # Where a fresh chat runs claude. `!cwd <repo>` switches per chat.
   defaultCwd: /home/node/code/selfhosted
+  # What a bare `!cwd <name>` resolves against — `!cwd gamedex` means
+  # <codeRoot>/gamedex. Absolute paths bypass it.
+  codeRoot: /home/node/code
+  # Directories `!cwd` may land in. Empty means anywhere, which is right for a
+  # workspace whose PVC only holds your own repos. A workspace delegated to
+  # someone else sets this to their project (and defaultCwd must be under it,
+  # or the gateway refuses to start).
+  cwdRoots: []
+  auto:
+    # `!auto <duration>` runs claude with --permission-mode bypassPermissions:
+    # no approval prompts, no deny rules, nothing between the model and the
+    # pod. Right for your own instance, wrong for a delegated one. Off makes
+    # allowedTools the ceiling and everything else prompt — and it is enforced
+    # at the point of use, so a chat that already had auto on loses it.
+    enabled: true
   # How long a prompt waits for a reply before denying, in seconds. Generous
   # because the whole point is spotty connectivity — and because most of these
   # are now claude asking a question or proposing a plan, which is worth the

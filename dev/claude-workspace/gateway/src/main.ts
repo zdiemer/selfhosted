@@ -2,12 +2,23 @@
 // claude-workspace $HOME. See the chart README, "Messaging surface".
 import fs from "node:fs";
 import { startApprovalServer } from "./approvals.ts";
-import { config } from "./config.ts";
+import { config, isWithinCwdRoots } from "./config.ts";
 import { pruneInbox } from "./attachments.ts";
 import { announceRestart, installShutdownHandler } from "./restart.ts";
 import { markReady, registerTransport, sendTo } from "./transport.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
+
+// A defaultCwd outside the allowed roots would put every new chat somewhere
+// `!cwd` refuses to go — a misconfiguration that would otherwise only surface
+// as the model quietly working in the wrong tree. Fail at boot instead.
+if (!isWithinCwdRoots(config.defaultCwd)) {
+  console.error(
+    `config: GW_DEFAULT_CWD ${config.defaultCwd} is outside GW_CWD_ROOTS ` +
+      `(${config.cwdRoots.join(", ")})`,
+  );
+  process.exit(1);
+}
 
 fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
 fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });

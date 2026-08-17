@@ -41,15 +41,31 @@ take a painting off sale. Originals are forced to stock 1 and sell exactly once.
 
 ## Deploying
 
+Ordinary code change — the path Rachel's workspace uses too:
+
 ```bash
-./build.sh     # only when the app source changed
-./upgrade.sh   # chart + values.local.yaml → the cluster
+git push                 # main → GitHub Actions builds ghcr.io/…:sha-<short>
+./deploy.sh sha-1a2b3c4  # roll onto it
 ```
 
-`build.sh` builds on the in-cluster buildkitd and pushes to GHCR. **Do not build
-in the claude-workspace pod's shell** — `next build` wants ~4Gi and that cgroup
-is shared with the messaging gateway; doing it there OOM-killed the gateway twice
-on 2026-08-15.
+`deploy.sh` is `helm upgrade --reuse-values --set image.tag=…`. It carries the
+previous release's secret values forward untouched, so it needs **no 1Password
+access at all** — which is what lets the delegated workspace
+(`dev/claude-workspace`, `PROFILE=rachel`) ship a change without holding a vault
+credential. It refuses a tag that isn't in the registry, and refuses to run at
+all if there is no existing release to reuse values from.
+
+Secret changed, chart structure changed, or first install:
+
+```bash
+./upgrade.sh   # chart + values.local.yaml → the cluster; needs an op session
+```
+
+`build.sh` still builds on the in-cluster buildkitd, but it is break-glass now —
+use it when Actions is down or to build an uncommitted tree. **Never build in a
+claude-workspace pod's shell**: `next build` wants ~4Gi and that cgroup is shared
+with the messaging gateway; doing it there OOM-killed the gateway twice on
+2026-08-15. On a GitHub runner an OOM is a red check instead.
 
 Bump `image.tag` in `values.yaml` (and `appVersion` in `Chart.yaml`) for every
 rebuild. `pullPolicy: IfNotPresent` means a re-push under the *same* tag is
@@ -75,6 +91,7 @@ From 1Password, as everywhere else (`op://homelab/web-rachel-freeman`):
 | `imageCredentials.pat` | yes | pulls the private GHCR image |
 | `app.stripeSecretKey` | **no** | Stripe API key (test key until go-live) |
 | `app.stripeWebhookSecret` | **no** | signing secret of the webhook endpoint |
+| `app.resendApiKey` | **no** | sends the order emails; domain must be verified in Resend |
 
 The Stripe pair is deliberately optional. Without it the gallery, the admin
 panel and uploads all work and the Buy button answers *"payments are not set up
@@ -86,24 +103,47 @@ because the webhook is the only thing that marks a sale.
 secrets edit web/rachel-freeman     # to add the Stripe keys later
 ```
 
+## Order emails
+
+The webhook that records a sale also sends two messages: a confirmation to the
+buyer and a *Sold: <title>* notification to `app.orderNotifyEmail`, with the
+buyer in Reply-To so answering it answers them. Both go through Resend, and both
+are sent from `recordSale`, so PayPal sales get them on the same terms as Stripe.
+
+Every send failure is swallowed and logged. By the time these run the money has
+moved and the order row exists; letting a mail outage fail the webhook would
+have the provider retry it, and then the duplicate guard is the only thing
+between Rachel and a second order row. An unsent email is recoverable from
+`/admin`; a lost sale is not.
+
+Without `app.resendApiKey` nothing is sent and nothing breaks — Stripe's own
+receipt still reaches card buyers.
+
 ## Still to do
 
-1. **Stripe.** The only thing standing between this and taking money. Create the
-   account, add the two secrets above, and point a webhook endpoint at
-   `https://rachelfreeman.art/stripe/webhook` subscribed to
-   `checkout.session.completed`.
-2. **`www.rachelfreeman.art`** does not resolve — only the apex has a public
+1. **`www.rachelfreeman.art`** does not resolve — only the apex has a public
    hostname on the tunnel. Add one in the Cloudflare dashboard and append the
    name to `ingress.cloudflareHosts`, or leave it if the apex is the only name
    anyone is given.
 
-Done: the admin account exists (so create-first-user is closed), and the domain
-is live on the tunnel.
+2. **Resend.** No account yet, so `app.resendApiKey` is empty and the order
+   emails above are dormant. Sign up, verify `rachelfreeman.art` with the DNS
+   records Resend gives you, then `secrets edit web/rachel-freeman`.
+
+Done: the admin account exists (so create-first-user is closed), the domain is
+live on the tunnel, and Stripe is live — account verified, webhook endpoint
+confirmed, a full test-mode purchase driven end to end on 2026-08-17.
 
 ## Backups
 
-The `web` namespace already had a k8up schedule (Saturdays 01:00), so no schedule
-change was needed. What was added is a **PreBackupPod** in `infra/k8up`
+This release lives in its own namespace `rachel`, not `web`, with its own k8up
+schedule (Saturdays 01:15 — offset from `web` so the two postgres dumps don't
+overlap). The namespace split is a security boundary, not tidiness: the
+delegated workspace that deploys this chart holds a namespace-scoped helm Role,
+and helm's Secret list cannot be restricted by label, so whoever can deploy here
+can read every Secret in the namespace. Keep this namespace to this release.
+
+The restore path is a **PreBackupPod** in `infra/k8up`
 (`rachel-freeman-postgres-dump`) — a `pg_dump -F c` taken over the service, which
 is the restore path. See the long note at the bottom of
 `infra/k8up/templates/prebackuppods.yaml` for why the dump and not the volume
@@ -122,7 +162,7 @@ into the standalone bundle and the container needs no CLI.
 After changing a collection:
 
 ```bash
-kubectl -n web port-forward svc/rachel-freeman-postgres 55432:5432 &
+kubectl -n rachel port-forward svc/rachel-freeman-postgres 55432:5432 &
 DATABASE_URL=postgres://payload:<pw>@localhost:55432/rachelfreeman \
   npm run payload -- migrate:create <name>
 ```

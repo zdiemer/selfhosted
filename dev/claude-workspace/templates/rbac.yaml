@@ -1,4 +1,17 @@
+{{- $scoped := .Values.rbac.namespaceDeploy }}
+{{- if and .Values.rbac.clusterAdmin $scoped }}
+{{- fail "rbac.clusterAdmin and rbac.namespaceDeploy are mutually exclusive: cluster-admin already includes every namespace, so a scoped Role alongside it is a false reassurance." }}
+{{- end }}
+{{- if or .Values.rbac.clusterAdmin $scoped }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+{{- end }}
 {{- if .Values.rbac.clusterAdmin }}
+---
 {{/*
 ⚠️ cluster-admin, on purpose (same tradeoff as infra/headlamp): the workspace
 deploys every chart in this repo — including cluster-scoped objects like
@@ -10,13 +23,6 @@ helm requires holding those permissions anyway.
 The pod fronts a web terminal, so Authelia forward-auth on the ingress is the
 only thing between the internet and this binding. Keep it on.
 */}}
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ include "claude-workspace.fullname" . }}
-  labels:
-    {{- include "claude-workspace.labels" . | nindent 4 }}
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -31,4 +37,92 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "claude-workspace.fullname" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- range $scoped }}
+---
+{{/*
+A delegated workspace: enough to `helm upgrade` one app in one namespace, and
+nothing else. Rendered into {{ .namespace }}, which is a different namespace
+from the one this release lives in — that asymmetry is the point, see below.
+
+Helm's secrets storage driver LISTs Secrets in the release namespace with a
+label selector, and RBAC cannot restrict list by label; `list` on secrets
+returns their contents. So whoever holds this Role can read every Secret in
+{{ .namespace }}. There is no way to narrow that, which means the namespace IS
+the blast radius: put nothing else in it.
+
+Deliberately absent, and each for a reason:
+  - rbac.authorization.k8s.io  — cannot grant itself anything further.
+  - serviceaccounts            — cannot mint a token for a better-privileged SA.
+  - batch/jobs, cronjobs       — creating a Job is running arbitrary code under
+                                 an arbitrary SA with arbitrary Secret mounts.
+                                 The classic namespace escalation.
+  - pods/exec, pods/portforward — a shell in the app pod and a psql prompt on
+                                 its database. Deploying needs neither.
+  - daemonsets, statefulsets   — not in the target chart; nothing to deploy.
+  - any verb in {{ $.Release.Namespace }} — this workspace cannot upgrade,
+    edit or read its OWN release. That is what keeps the holder from widening
+    this Role by redeploying themselves, and it is the property the whole
+    arrangement rests on.
+
+Nothing cluster-scoped is needed: priorityClassName and storageClassName are
+references (referencing a cluster-scoped object by name takes no RBAC), and
+API discovery is already granted to system:authenticated by the built-in
+system:discovery binding.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "claude-workspace.fullname" $ }}-deploy
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "claude-workspace.labels" $ | nindent 4 }}
+  {{- with .release }}
+  annotations:
+    # Documentary only — helm's Secret list cannot be name-scoped — but it
+    # records the intent and shows up in `kubectl describe role`.
+    claude-workspace.zachd/release: {{ . | quote }}
+  {{- end }}
+rules:
+  # What helm needs to render the target chart and store its release record.
+  - apiGroups: [""]
+    resources: [secrets, services, persistentvolumeclaims, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Read-only: rollout status, and "why is it not coming up". No exec.
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  # So `kubectl -n {{ .namespace }} ...` and helm's namespace probe don't fail
+  # in a way that reads as a broken cluster rather than a missing grant.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "claude-workspace.fullname" $ }}-deploy
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "claude-workspace.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "claude-workspace.fullname" $ }}-deploy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "claude-workspace.fullname" $ }}
+    namespace: {{ $.Release.Namespace }}
 {{- end }}

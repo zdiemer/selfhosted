@@ -8,7 +8,7 @@
 set -euo pipefail
 
 RELEASE="${RELEASE:-rachel-freeman}"
-NAMESPACE="${NAMESPACE:-web}"
+NAMESPACE="${NAMESPACE:-rachel}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 # The secrets are resolved from 1Password into memory for the life of this run
@@ -25,6 +25,13 @@ K="kubectl -n ${NAMESPACE}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
+
+# This release owns its namespace rather than sharing `web` (see README,
+# "Backups"): the delegated workspace deploys it with a namespace-scoped helm
+# Role, and helm's Secret list cannot be restricted by label — so anything else
+# living here would be readable by that Role. Created on demand, same as
+# infra/traefik/upgrade.sh, so a rebuild from an empty cluster works.
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 if ! sv_has; then
   echo "no secrets resolved from 1Password — copy values.local.yaml.example and fill it in"

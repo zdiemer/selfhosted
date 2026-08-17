@@ -147,6 +147,14 @@ schedules:
   - name: web
     namespace: web
     schedule: "0 1 * * 6"
+  # rachel-freeman has its own namespace rather than living in `web`: the
+  # delegated workspace that deploys it holds a namespace-scoped helm Role, and
+  # helm's Secret list cannot be restricted by label — so whoever can deploy
+  # there can read every Secret in the namespace. Namespace = blast radius.
+  # Offset from `web` so the two postgres dumps don't overlap.
+  - name: rachel
+    namespace: rachel
+    schedule: "15 1 * * 6"
   - name: infra
     namespace: infra
     schedule: "30 1 * * 6"
