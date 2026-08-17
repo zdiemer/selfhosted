@@ -215,6 +215,59 @@ kubectl -n media exec deploy/arr-sonarr -- sh -c \
      -d "{\"name\":\"CheckHealth\"}" http://localhost:8989/api/v3/command'
 ```
 
+## Grab fewer dead torrents in the first place
+
+decluttarr below cleans up after a bad grab. These settings reduce how often one
+happens, and all of them are free and account-free. Like the queueing settings
+above they live in app config PVCs, not in this chart.
+
+**Minimum seeders: 3** (was 1). Prowlarr → Settings → App Profiles → Standard →
+Minimum Seeders, which `fullSync` pushes into every Sonarr and Radarr indexer.
+One seeder is one stale scrape line away from zero, and that is precisely the
+population that produced 24 dead torrents. Three is a floor, not a preference —
+raise it if the queue still fills with stalls, lower it if genuinely rare things
+stop being grabbed.
+
+Prowlarr's sync is lazy: changing the profile updated some indexers and not
+others, and Radarr's twenty-one not at all. `PUT …/api/v3/indexer/{id}?forceSave=true`
+against each one settles it; the profile value is what future syncs write anyway,
+so the two agree.
+
+**Auto-updating tracker list.** qBittorrent → Options → BitTorrent →
+"automatically add these trackers from URL", pointed at
+[ngosang/trackerslist](https://github.com/ngosang/trackerslist)'s `trackers_best`
+(20 trackers, refreshed by qBittorrent itself). Every grab here is from a public
+indexer, where the announce list in the .torrent is often short or half-dead;
+adding known-live public trackers finds peers that DHT alone misses. **Do not
+leave this on if a private tracker is ever added** — announcing a private
+torrent to public trackers is the classic way to lose that account.
+
+Also on: *announce to all trackers*, *announce to all tiers*, *merge trackers*
+(new .torrents for a torrent already present contribute their trackers instead
+of being discarded).
+
+The list only applies to *new* torrents. Existing ones take it via
+`POST /api/v2/torrents/addTrackers` per hash — 175 in-flight downloads were
+backfilled that way on 2026-08-17, and the global rate went from ~76 KB/s to
+~1.2 MB/s within the hour.
+
+**Connection limits raised** — global 500 → 1000, per-torrent 100 → 200, half
+open 30 → 50. The defaults are sized for a home router that melts under NAT
+churn; this pod is a Linux node behind a VPN with a forwarded port.
+
+**Inbound port is genuinely working.** Worth confirming rather than assuming,
+because it silently halves peer reach when it breaks:
+
+```bash
+kubectl -n media exec deploy/arr-qbittorrent -c gluetun -- \
+  wget -qO- http://127.0.0.1:8000/v1/openvpn/portforwarded
+kubectl -n media exec deploy/arr-qbittorrent -c qbittorrent -- \
+  curl -s http://localhost:8080/api/v2/app/preferences | jq .listen_port
+```
+
+Those two numbers must match. If they drift, the port-forward push (or the
+localhost auth bypass it depends on) has stopped working.
+
 ## decluttarr — the queue watchdog
 
 The deadlock above took a manual investigation to find and 24 API calls to
