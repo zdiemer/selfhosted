@@ -91,6 +91,7 @@ From 1Password, as everywhere else (`op://homelab/web-rachel-freeman`):
 | `imageCredentials.pat` | yes | pulls the private GHCR image |
 | `app.stripeSecretKey` | **no** | Stripe API key (test key until go-live) |
 | `app.stripeWebhookSecret` | **no** | signing secret of the webhook endpoint |
+| `app.resendApiKey` | **no** | sends the order emails; domain must be verified in Resend |
 
 The Stripe pair is deliberately optional. Without it the gallery, the admin
 panel and uploads all work and the Buy button answers *"payments are not set up
@@ -102,19 +103,36 @@ because the webhook is the only thing that marks a sale.
 secrets edit web/rachel-freeman     # to add the Stripe keys later
 ```
 
+## Order emails
+
+The webhook that records a sale also sends two messages: a confirmation to the
+buyer and a *Sold: <title>* notification to `app.orderNotifyEmail`, with the
+buyer in Reply-To so answering it answers them. Both go through Resend, and both
+are sent from `recordSale`, so PayPal sales get them on the same terms as Stripe.
+
+Every send failure is swallowed and logged. By the time these run the money has
+moved and the order row exists; letting a mail outage fail the webhook would
+have the provider retry it, and then the duplicate guard is the only thing
+between Rachel and a second order row. An unsent email is recoverable from
+`/admin`; a lost sale is not.
+
+Without `app.resendApiKey` nothing is sent and nothing breaks — Stripe's own
+receipt still reaches card buyers.
+
 ## Still to do
 
-1. **Stripe.** The only thing standing between this and taking money. Create the
-   account, add the two secrets above, and point a webhook endpoint at
-   `https://rachelfreeman.art/stripe/webhook` subscribed to
-   `checkout.session.completed`.
-2. **`www.rachelfreeman.art`** does not resolve — only the apex has a public
+1. **`www.rachelfreeman.art`** does not resolve — only the apex has a public
    hostname on the tunnel. Add one in the Cloudflare dashboard and append the
    name to `ingress.cloudflareHosts`, or leave it if the apex is the only name
    anyone is given.
 
-Done: the admin account exists (so create-first-user is closed), and the domain
-is live on the tunnel.
+2. **Resend.** No account yet, so `app.resendApiKey` is empty and the order
+   emails above are dormant. Sign up, verify `rachelfreeman.art` with the DNS
+   records Resend gives you, then `secrets edit web/rachel-freeman`.
+
+Done: the admin account exists (so create-first-user is closed), the domain is
+live on the tunnel, and Stripe is live — account verified, webhook endpoint
+confirmed, a full test-mode purchase driven end to end on 2026-08-17.
 
 ## Backups
 
