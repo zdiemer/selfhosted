@@ -1,0 +1,106 @@
+{{- if .Values.recyclarr.enabled }}
+{{/*
+recyclarr — TRaSH Guides as code. It clones the guides and writes their custom
+formats, format scores and quality definitions into Sonarr and Radarr, so
+release selection is decided by "is this a good release" rather than by
+resolution alone.
+
+A CronJob, not a Deployment: the guides change on the order of days, and the
+sync is a few seconds of API calls. Nothing here holds state — the config is a
+Secret (it embeds both API keys), and recyclarr's git clone of the guides is a
+scratch emptyDir it rebuilds each run.
+
+What it does NOT do: reassign existing series or movies to the profiles it
+creates. New quality profiles show up in each app; pointing a series at one
+stays a deliberate act in the UI.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "arr.fullname" . }}-recyclarr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: recyclarr
+type: Opaque
+stringData:
+  recyclarr.yml: |
+    sonarr:
+      sonarr:
+        base_url: http://{{ include "arr.fullname" . }}-sonarr:{{ .Values.apps.sonarr.port }}
+        api_key: {{ required "recyclarr needs decluttarr.sonarrApiKey (same key). See values.local.yaml.example" .Values.decluttarr.sonarrApiKey }}
+        delete_old_custom_formats: true
+        quality_definition:
+          type: series
+        quality_profiles:
+          {{- range .Values.recyclarr.sonarrProfiles }}
+          - trash_id: {{ . }}
+          {{- end }}
+    radarr:
+      radarr:
+        base_url: http://{{ include "arr.fullname" . }}-radarr:{{ .Values.apps.radarr.port }}
+        api_key: {{ required "recyclarr needs decluttarr.radarrApiKey (same key). See values.local.yaml.example" .Values.decluttarr.radarrApiKey }}
+        delete_old_custom_formats: true
+        quality_definition:
+          type: movie
+        quality_profiles:
+          {{- range .Values.recyclarr.radarrProfiles }}
+          - trash_id: {{ . }}
+          {{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "arr.fullname" . }}-recyclarr
+  labels:
+    {{- include "arr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: recyclarr
+spec:
+  schedule: {{ .Values.recyclarr.schedule | quote }}
+  timeZone: {{ .Values.timezone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "arr.appSelectorLabels" (dict "root" . "app" "recyclarr") | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: recyclarr
+              image: "{{ .Values.recyclarr.image }}:{{ .Values.recyclarr.tag }}"
+              imagePullPolicy: IfNotPresent
+              args: ["sync"]
+              env:
+                - name: TZ
+                  value: {{ .Values.timezone }}
+                # RECYCLARR_APP_DATA in v7 and earlier; v8 splits config from
+                # ephemeral data and refuses to start on the old name.
+                - name: RECYCLARR_CONFIG_DIR
+                  value: /config
+              volumeMounts:
+                # Scratch: recyclarr clones the TRaSH guides under here on every
+                # run. Nothing worth persisting, and a fresh clone is the point.
+                - name: appdata
+                  mountPath: /config
+                # Nested inside the emptyDir above, which is legal and is how
+                # the read-only config survives recyclarr owning the directory.
+                # v8 reads every *.yml under {config}/configs. A file left at
+                # /config/recyclarr.yml is still picked up AND still parsed, so
+                # a stale one there silently overrides this.
+                - name: config
+                  mountPath: /config/configs/recyclarr.yml
+                  subPath: recyclarr.yml
+                  readOnly: true
+              resources:
+                {{- toYaml .Values.resources.recyclarr | nindent 16 }}
+          volumes:
+            - name: appdata
+              emptyDir: {}
+            - name: config
+              secret:
+                secretName: {{ include "arr.fullname" . }}-recyclarr
+{{- end }}

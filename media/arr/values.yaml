@@ -100,6 +100,44 @@ decluttarr:
   sonarrApiKey: ""
   radarrApiKey: ""
 
+# TRaSH Guides as code. Before this, both apps had ZERO custom formats: every
+# grab was decided by resolution alone, with no notion of a good release versus
+# an upscale, a fake, or a bad group. recyclarr writes the guides' custom
+# formats, scores and quality definitions into Sonarr and Radarr on a schedule.
+#
+# Configured with guide-backed quality profiles (`trash_id`), NOT with
+# `include: template:`. The official config-templates repo publishes only root
+# templates now — `recyclarr config list templates -i` reports "0 Sonarr and 0
+# Radarr includes" — so every `include` in a v7-era config fails to resolve. A
+# profile's trash_id pulls its qualities, custom formats, scores and language
+# in one line, which is both shorter and immune to that rename churn.
+#
+# The IDs are the `trash_id` at the top of each profile JSON in the guides:
+#   docs/json/{sonarr,radarr}/quality-profiles/<name>.json
+recyclarr:
+  enabled: true
+  image: ghcr.io/recyclarr/recyclarr
+  # 8.x, not 7.x: v7 expects the templates repo's old includes.json layout,
+  # which upstream replaced with templates.json — every v7 run dies on
+  # "Recyclarr templates.json does not exist: .../includes.json".
+  tag: "8.7.1"
+  # Weekly, Monday 04:00. The guides move on the order of days; more often than
+  # this is just API churn.
+  schedule: "0 4 * * 1"
+  sonarrProfiles:
+    # WEB-1080p — the everyday TV profile.
+    - 72dae194fc92bf828f32cde7744e51a1
+    # [Anime] Remux-1080p — anime scoring is its own world (dual audio, sub
+    # groups, absolute numbering), so it gets its own profile rather than
+    # polluting the TV one. Remux means big files; nothing uses this profile
+    # until a series is deliberately pointed at it.
+    - 20e0fc959f1f1704bed501f23bdae76f
+  radarrProfiles:
+    # HD Bluray + WEB
+    - d1d67249d3890e49bc12e275d989a7e9
+    # [Anime] Remux-1080p — same caveat as above.
+    - 722b624f9af1e492284c4bc842153a38
+
 qbittorrent:
   image: lscr.io/linuxserver/qbittorrent
   tag: "5.2.3"
@@ -211,6 +249,13 @@ resources:
       memory: 512Mi
     limits:
       memory: 4Gi
+  # Runs weekly for a few seconds; clones the guides into an emptyDir.
+  recyclarr:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
   # A Python poll loop that sleeps most of the hour.
   decluttarr:
     requests:
