@@ -295,9 +295,20 @@ is_mirror() {
 # made `secrets check` call all 30 charts UNRESOLVABLE from inside the tree, and
 # exit 0 having checked only the four external clones from anywhere else. Both
 # answers were wrong, and the second one was wrong quietly.
+#
+# .dev/worktree/ is pruned for the same reason .git is: it holds git worktrees of
+# THIS repo (gitignored, scratch), so every chart there is a second copy of one
+# already discovered — and a copy pinned to whatever branch that worktree sits
+# on. That is how `check` started failing on 2026-08-17: two worktrees on
+# branches older than 68d37ca still carried web/apartment-watch's templates, and
+# EXCLUDE_FILES only matches the repo-root path, not
+# `.dev/worktree/<name>/web/apartment-watch/...`. So discovery went looking for
+# two vault items deprecated four days earlier and called the tree broken.
+# Nothing under a worktree is deployable; the branch's own checkout is what gets
+# checked when it merges.
 repo_scan() {
   [[ $HAVE_REPO -eq 1 ]] || return 0
-  (cd "$ROOT" && find "$@" -not -path './.git/*' | sort)
+  (cd "$ROOT" && find "$@" -not -path './.git/*' -not -path './.dev/worktree/*' | sort)
 }
 
 # Every managed secret file that currently exists, repo-relative. Mirrors are
