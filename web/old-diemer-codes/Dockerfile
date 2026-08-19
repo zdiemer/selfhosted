@@ -143,7 +143,7 @@ RUN set -eux; \
 # -------------------------------------------------------------- runtime stage
 # Same base as web/kelsey-green: uid 101, binds 8080, no root anywhere, and
 # already proven on this cluster under readOnlyRootFilesystem.
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 # Replaces the stock default.conf. The base image's /docker-entrypoint.d scripts
 # test writability before touching this file, so a read-only rootfs is fine.
