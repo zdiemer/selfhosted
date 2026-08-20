@@ -1,9 +1,10 @@
 # cluster-status — tailnet cluster dashboard
 
-Live at **<https://status.zachd.duckdns.org>** — tailnet only. Node
-CPU/RAM/disk with a pods-vs-k3s-vs-system breakdown, per-node pod tables, a
-problem-pods roll-up, Deployment/StatefulSet/DaemonSet health, top consumers, and
-events.
+Live at **<https://status.zachd.duckdns.org>** — tailnet only. It opens on a
+**catalog** of every service in the house as a grid of icon tiles, each linking
+to the address you would actually type. Below that: node CPU/RAM/disk with a
+pods-vs-k3s-vs-system breakdown, per-node pod tables, a problem-pods roll-up,
+Deployment/StatefulSet/DaemonSet health, top consumers, and events.
 
 Since it stopped being public it also carries the things that were a bad idea to
 publish and are the reason anyone opens it: **node identity** (internal and
@@ -36,12 +37,108 @@ thing — which is exactly when a status dashboard earns its keep.
 
 ```
   collector sidecar ──reads k8s API──▶ /data/status.json  (emptyDir)
-   (the only thing                            │
-    talking to k8s)          nginx ───serves──┤  index.html + status.json
-                                              │
-                                    Ingress ──┴──▶ status.zachd.duckdns.org
-                                                   (tailnet only — no tunnel)
+   (the only thing         ──fetches──▶ /data/icons/*     (favicons, ClusterIP)
+    talking out)                                │
+                           nginx ───serves──────┤  index.html + status.json
+                                                │  + /icons/
+                                      Ingress ──┴──▶ status.zachd.duckdns.org
+                                                     (tailnet only — no tunnel)
 ```
+
+## The service catalog
+
+The tile grid at the top, and the reason to open this page when nothing is
+wrong: 45 services, grouped, each one a link.
+
+**The link is the public name whenever a service has one.** Most things here
+answer on two hostnames — `romm.zachd.duckdns.org` and `romm.diemer.codes` — and
+only the second works from anywhere. Linking the tailnet name would hand you a
+dead link exactly when you are away from home, which is when a launcher is worth
+having. So the ordering is: an explicit `url`, then a `publicUrl`, then any
+Ingress host that is not `*.duckdns.org` (i.e. reached over the Cloudflare
+tunnel, or a VPS relay in front of one), then the DuckDNS host, then nothing.
+Between two public hosts the shorter wins, because the short one is the apex
+(`talaria.deals`) and the long one is a subdomain of it.
+
+Everything about the address is derived from the **same routing table the
+routing panel draws** — `parse_ingresses`' output is `build_catalog`'s input — so
+a tile and its row downpage can never disagree about where a service answers.
+
+`publicUrl` covers the one shape Ingresses cannot see: a hostname published
+straight off a tunnel connector to a Service, with no Ingress rule of its own.
+`kelsey.green` is the only one on this cluster, it has its own zone and its own
+connector, and without that line its tile would link the tailnet name for a site
+that is on the internet.
+
+### Why it is a list in values.yaml
+
+Three things cannot be derived, and they are the three that make the grid worth
+having: a **name** (Kubernetes knows it as `arr-qbittorrent`; nobody calls it
+that), a **grouping** (which of these is a media thing is a fact about the
+household), and **the services with no Ingress at all** — a Minecraft server and
+three Discord bots are services by any definition a person would use, and a
+catalog derived from Ingresses would omit all four and call itself complete.
+
+It does not go stale, because the list is not the only input: **any Ingress host
+no entry claims still gets a tile**, under an `Unlisted` heading, named after its
+Service. Deploy a new chart with an Ingress and it appears here unprompted,
+looking unloved — which is the nudge to come and name it. `upgrade.sh` prints
+those by name on every deploy.
+
+Health per tile comes from what the page already collects, in this order: a
+failed endpoint probe (see below) beats a healthy replica count, because that is
+the entire reason probes exist; then Deployment/StatefulSet/DaemonSet readiness;
+then, for the services that own no Pod between ticks — the DuckDNS updater,
+Renovate — their CronJob's last run. A tile that can see none of those says
+`unknown` rather than green.
+
+### Favicons
+
+Each tile carries the service's own favicon, fetched by the collector **from the
+ClusterIP, not the public host**. That is not an optimisation. Most of these
+hosts sit behind Authelia forward-auth at the ingress, so a request for
+`/favicon.ico` on the public name is answered by the login portal with a redirect
+and an HTML body — the grid would look worst for the services that are best
+protected. Going straight to the Service bypasses Traefik and gets the real file.
+
+It also keeps the **browser** out of it. A grid that loaded 30 favicons from 30
+hosts would have every open tab probing every service in the house on a loop, and
+would leak the estate to anything watching DNS. One collector fetching once a day
+is the same picture for a rounding error of the traffic.
+
+Two details worth keeping:
+
+- **`<link rel="icon">` is preferred over `/favicon.ico`**, which is backwards
+  from the usual order and deliberate: `/favicon.ico` is where the *legacy*
+  asset lives. `old.diemer.codes` serves a 152KB multi-resolution `.ico` there
+  and a 400-byte `.svg` in its markup.
+- **Relative hrefs resolve against the *final* URL**, after redirects. Jellyfin
+  redirects `/` to `/web/index.html` and its icon hrefs are relative to that;
+  joining against the requested URL 404s for every service that serves its UI
+  from a subpath.
+
+The type comes from sniffing the bytes, never from `Content-Type` — plenty of
+these serve an `.ico` as `text/plain`.
+
+Fetches are bounded to `catalog.icons.perCycle` per scrape, in the same place
+the endpoint probes run: thirty of them at four seconds each would blow through
+`collector.intervalSeconds` on the one cycle where the cluster is having a bad
+day. A cold grid fills over a couple of minutes.
+
+**When there is no icon**, the tile draws a monogram on a colour hashed from the
+service name — stable per service, distinguishable at a glance, and never a
+broken-image icon on a status page. That is the honest outcome for five of them:
+`claude-workspace`, `rachel-workspace` and `happy-server` carry NetworkPolicies
+that refuse connections from anything but their own ingress (correct, and not
+being relaxed for a favicon), `keepass-keeweb` does not answer plain HTTP on its
+Service port, and `keepass-webdav` answers `401` to everything. Drop a file in
+[`brand/service-icons/`](brand/service-icons/) to override any of it — a seeded
+slug is never fetched.
+
+The monogram is also the **fallback at render time**: the two replicas fetch
+icons into their own emptyDir independently, so for a few minutes after a
+rollout one can serve a `status.json` naming a file the other has not written
+yet. An `img` that fails to load is replaced with the monogram it would have had.
 
 ## Why a sidecar, not a CronJob
 
@@ -52,8 +149,11 @@ collector has to be a long-lived process.
 
 ## Payload size, and gzip
 
-`status.json` is ~155KB — most of it per-pod rows whose key names repeat 250
-times, so it compresses about 8×. It is served `no-store` and re-fetched by every
+`status.json` is ~165KB — most of it per-pod rows whose key names repeat 250
+times, so it compresses about 8×. (The catalog is ~11KB of that: 45 tiles whose
+key names repeat 45 times, which is the same shape and compresses the same way.
+Favicons are **not** in it — they are separate files under `/icons/`, cached for
+an hour, so the thing every tab re-fetches every 15s stays text.) It is served `no-store` and re-fetched by every
 open tab every 15s, which is what makes that ratio worth having.
 
 **nginx's stock config ships `gzip` commented out**, so this went over the wire
@@ -175,6 +275,7 @@ written. `values.yaml` has the switches, all **on** by default:
 | `publish.storage` | PVC name, class, capacity, fill | Capacities are dull; claim names are app and sometimes person names, and a fill percentage says which service is about to break without anyone touching it. |
 | `publish.jobs` | CronJob schedules, failed Jobs | A schedule is a timetable of when this cluster is busy and when the backups run — information about the house rather than about Kubernetes. |
 | `publish.serviceCheckUrls` | the target of each uptime probe | Withheld unconditionally while the page was public. See "Service checks" above. |
+| `publish.catalog` | the tile grid: one address per service, plus its state | Its own flag rather than riding on `publish.ingresses`, because it is a genuinely smaller disclosure drawn from the same data — one address per service instead of every host, path, backend and auth posture — and it is the panel with the most reason to stay on. `catalog.enabled: false` removes it entirely; the two AND. |
 
 Redaction happens **at collection**, not in the page or the ingress — a field
 that's off is never written to `status.json` at all, so it can't leak through a
@@ -307,6 +408,12 @@ it from every phone, which is most of this page's traffic.
 og tags, masthead, `<div id="root">`), `app.css`, `app.js`, and the nginx config.
 No build step, no framework.
 
+The card that used to be called **Services** — six HTTP probes — is now
+**Endpoint checks** (`endpointChecks()` in `app.js`). Two cards called Services,
+one listing six probes and one listing forty-five services, is a page that
+argues with itself about what a service is; the probes are the narrower thing,
+so they took the narrower name.
+
 **This used to say that past ~1000 lines the page "wants a real repo and a
 build", and that was reconsidered rather than ignored.** The problem that line
 described was navigability, and splitting files fixes navigability; a build does
@@ -353,6 +460,16 @@ This is mostly read on a phone, and three things there are load-bearing:
   document sideways with it. This page rendered 593px wide on a 390px phone for
   as long as it had existed. Anything new that holds an unbreakable string wants
   the same treatment, or it will do it again.
+
+The catalog grid follows the same rules by a different route. It is `auto-fill`
+with a `minmax` track rather than a column count, so one rule gives three across
+on a phone and eight on a laptop; it has no `data-l` labels because it is not a
+table; and its second line shows the **registrable domain** rather than the full
+host — `zachd.duckdns.org`, `diemer.codes` — because `jellyfin.zachd.duckdns.org`
+truncates to `jellyfin.zachd.duc…` on a 110px tile, which spends the line
+repeating the tile's own name and then hides the only part anyone wanted. Long
+groups fold on the same rule as the workload lists, and never when something
+inside them is wrong.
 
 Every new table follows all three. Specifically: `.opt` is on the pod **Image**
 and **QoS** columns, the routing **Path** and **Backend**, the storage **Class**

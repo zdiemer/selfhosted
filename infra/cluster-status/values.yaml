@@ -6,9 +6,10 @@
 # same logic runs as a plain stdlib-only script emitting JSON.
 #
 #   collector sidecar ──reads k8s API──▶ /data/status.json (emptyDir)
+#                           ──fetches──▶ /data/icons/*    (catalog favicons)
 #                                              │
 #                             nginx ───serves──┘  index.html + status.json
-#                                              │
+#                                              │  + /icons/
 #                                    Ingress ──┴──▶ status.zachd.duckdns.org
 #                                                   (tailnet only — see the
 #                                                    ingress block below)
@@ -19,7 +20,7 @@
 # sample and every rate would be null forever. The collector has to be a
 # long-lived process.
 #
-# WHY NOT SERVE FROM AN API: nginx only ever serves two files off local disk, so
+# WHY NOT SERVE FROM AN API: nginx only ever serves static files off local disk, so
 # a page view never reaches the Kubernetes API. An always-on API querying k8s per
 # request would hand every viewer a way to hammer the API server and every
 # kubelet's /stats/summary, unauthenticated. The collector is the only thing that
@@ -164,6 +165,7 @@ publish:
   storage: true
   jobs: true
   serviceCheckUrls: true
+  catalog: true
 
 # HTTP endpoints the collector probes each cycle, for services whose failure is
 # invisible in pod status — a Running pod whose upstream is unreachable still
@@ -239,6 +241,341 @@ serviceChecks:
 #   Traefik /ping   — worth having, but the k3s Traefik Service publishes only
 #                     80 and 443; port 9000 is not on it. A check aimed at a
 #                     closed port burns its entire timeout every single cycle.
+
+# The tile grid at the top of the page: every service in the house, each one
+# linking to the address you would actually type.
+#
+# WHY THIS IS A LIST AND NOT DERIVED. Almost everything on this page is read
+# from the cluster, and the catalog reads most of itself the same way — health,
+# hostnames, TLS and auth posture all come from objects the collector already
+# fetches. Three things cannot be derived, and they are exactly the three that
+# make the grid worth having:
+#
+#   A NAME. Kubernetes knows this Service as `arr-qbittorrent`. Nobody calls it
+#   that. A grid of Service names is a `kubectl get svc` with rounded corners.
+#
+#   A GROUPING. "Which of these is a media thing" is a fact about the household,
+#   not about the cluster, and no label on the object carries it.
+#
+#   THE SERVICES WITH NO INGRESS. A Minecraft server and three Discord bots are
+#   services by any definition a person would use, and none of them has an
+#   Ingress, a hostname or a browser UI. A catalog derived from Ingresses would
+#   omit them and call itself complete.
+#
+# It does not go stale, because it is not the only input: any Ingress host that
+# no entry below claims still gets a tile, under an "Unlisted" heading, named
+# after its Service. Deploy a new chart with an Ingress and it appears on the
+# page unprompted — looking unloved, which is the nudge to come and name it.
+#
+# FIELDS. `name` and `category` are the two that only a person can supply.
+# `namespace` + `service` are the join key: they match the Service that Ingress
+# rules point at, they name the Deployment/StatefulSet/DaemonSet whose readiness
+# becomes the tile's state, and they are the slug the icon is filed under.
+#
+#   workload   — when the workload is not named after the Service. BlueMap is a
+#                sidecar of the Minecraft pod; qBittorrent's Service and
+#                Deployment agree, CrowdSec's do not.
+#   cronjob    — for services that own no Pod between ticks. The DuckDNS updater
+#                and Renovate are healthy or not according to their last run,
+#                and a replica count would say "unknown" about both forever.
+#   check      — the name of a serviceChecks entry above. A failed probe beats a
+#                healthy replica count, which is the whole reason probes exist.
+#   hosts      — narrows an entry to some of its Service's hostnames. One
+#                Service can front two unrelated front doors: claude-workspace
+#                answers as both the terminal and the bakery, and merging them
+#                into one tile loses whichever you were looking for.
+#   publicUrl  — a hostname published straight off a tunnel connector to a
+#                Service, with no Ingress rule of its own. kelsey.green is the
+#                only one on this cluster, and it is invisible to `kubectl get
+#                ingress` — so without this line the tile would link the tailnet
+#                name for a site that is on the internet.
+#   address    — a non-browser address, shown as text rather than a link.
+#   note       — one short line under the name, for the caveat a tile needs.
+#   slug       — overrides the icon filename. Two entries sharing a Service want
+#                two icons.
+#   iconPort   — where to look for a favicon when the port cannot be read off an
+#                Ingress: either there is no Ingress at all, or its backend NAMES
+#                the port rather than numbering it, and resolving a port name
+#                needs the Service object this collector's role cannot read.
+#                `iconUrl` replaces the whole base URL.
+#
+# ORDERING. Tiles sort alphabetically inside a category; the categories
+# themselves are in the order listed here, with anything unlisted last.
+catalog:
+  enabled: true
+
+  categories:
+    - Media
+    - Games
+    - Home
+    - Sites
+    - Dev
+    - Bots
+    - Infrastructure
+
+  # Favicons, fetched by the collector from each service's ClusterIP.
+  #
+  # THE FETCH GOES TO THE CLUSTER IP, NOT THE PUBLIC HOST, and that is not an
+  # optimisation — it is the only thing that works. Most of these hosts sit
+  # behind Authelia forward-auth at the ingress, so a request for /favicon.ico
+  # on the public name is answered by the login portal with a redirect and an
+  # HTML body: the browser renders a broken image, and the grid looks worst for
+  # the services that are best protected. Going straight to the Service bypasses
+  # Traefik and gets the real file.
+  #
+  # It also keeps the BROWSER out of it. A tile grid that loaded 30 favicons
+  # from 30 hosts would have every open tab probing every service in the house
+  # on a loop. One collector fetching once a day is the same picture for a
+  # rounding error of the traffic — and it is why these are served from this
+  # origin, cached, rather than hotlinked.
+  icons:
+    enabled: true
+    # Fetched inside the scrape loop, so this is bounded for the same reason the
+    # endpoint probes have tight timeouts: thirty fetches at four seconds each
+    # would blow through collector.intervalSeconds on the one cycle where the
+    # cluster is having a bad day. Two per cycle fills a cold grid in a couple
+    # of minutes and can never delay a scrape by more than two timeouts.
+    perCycle: 2
+    ttlHours: 24
+    timeoutSeconds: 4
+    # A favicon that does not fit in 256KB is not a favicon. The cap also bounds
+    # what a compromised or confused upstream can write into the pod's emptyDir.
+    maxBytes: 262144
+
+  services:
+    # ------------------------------------------------------------------ Media
+    - name: Jellyfin
+      category: Media
+      namespace: media
+      service: jellyfin
+      check: Jellyfin
+    - name: Jellyseerr
+      category: Media
+      namespace: media
+      service: jellyseerr
+    - name: Prowlarr
+      category: Media
+      namespace: media
+      service: arr-prowlarr
+    - name: Radarr
+      category: Media
+      namespace: media
+      service: arr-radarr
+    - name: Sonarr
+      category: Media
+      namespace: media
+      service: arr-sonarr
+    - name: qBittorrent
+      category: Media
+      namespace: media
+      service: arr-qbittorrent
+      note: inside gluetun
+    - name: bitmagnet
+      category: Media
+      namespace: media
+      service: bitmagnet
+
+    # ------------------------------------------------------------------ Games
+    - name: Minecraft
+      category: Games
+      namespace: minecraft
+      service: mc-minecraft
+      # A LoadBalancer on 25565, not an Ingress — there is no URL to link and
+      # the address is the point. This is the entry the "browser-reachable
+      # only" version of this page would have dropped.
+      address: mc.zachd.duckdns.org:25565
+    - name: BlueMap
+      category: Games
+      namespace: minecraft
+      service: mc-minecraft-bluemap
+      # A sidecar of the Minecraft pod, so its health is that Deployment's.
+      workload: mc-minecraft
+      check: BlueMap
+    - name: RomM
+      category: Games
+      namespace: games
+      service: romm
+    - name: Gamedex
+      category: Games
+      namespace: games
+      service: gamedex
+    - name: Smite-le
+      category: Games
+      namespace: discord
+      service: smitele-bot-web
+
+    # ------------------------------------------------------------------- Home
+    - name: money
+      category: Home
+      namespace: finance
+      service: money
+    - name: Paperless-ngx
+      category: Home
+      namespace: docs
+      service: paperless
+      check: Paperless
+    - name: Stirling PDF
+      category: Home
+      namespace: docs
+      service: stirling
+    - name: KeeWeb
+      category: Home
+      namespace: auth
+      service: keepass-keeweb
+    - name: KeePass WebDAV
+      category: Home
+      namespace: auth
+      service: keepass-webdav
+      note: vault sync, not a UI
+    - name: ntfy
+      category: Home
+      namespace: infra
+      service: ntfy
+    - name: SMS relay
+      category: Home
+      namespace: infra
+      service: sms-relay
+      check: SMS relay
+
+    # ------------------------------------------------------------------ Sites
+    - name: talaria
+      category: Sites
+      namespace: talaria
+      service: talaria-nginx
+    - name: rachelfreeman.art
+      category: Sites
+      namespace: rachel
+      service: rachel-freeman
+    - name: kelsey.green
+      category: Sites
+      namespace: web
+      service: kelsey-green
+      # Its own zone and its own tunnel connector, pointed straight at the
+      # Service — so this host appears in no Ingress rule anywhere. See
+      # `publicUrl` in the field notes above.
+      publicUrl: kelsey.green
+    - name: diemer.codes
+      category: Sites
+      namespace: web
+      service: diemer-codes
+      note: tailnet until launch
+    - name: old.diemer.codes
+      category: Sites
+      namespace: web
+      service: old-diemer-codes
+    - name: Luke's birthday
+      category: Sites
+      namespace: web
+      service: luke-birthday
+    - name: whatnow.gg
+      category: Sites
+      namespace: whatnow
+      service: whatnowgg
+      # Its Ingress NAMES the backend port (`whatnowgg:http`) rather than
+      # numbering it, and resolving a port name needs the Service object — which
+      # this collector's role deliberately cannot read. The only entry on the
+      # cluster shaped this way; the collector logs `icon_no_port` for any
+      # other that turns up.
+      iconPort: 8080
+
+    # -------------------------------------------------------------------- Dev
+    - name: Claude workspace
+      category: Dev
+      namespace: claude
+      service: claude-workspace
+      hosts: [claude.zachd.duckdns.org]
+    - name: Bakery
+      category: Dev
+      namespace: claude
+      service: claude-workspace
+      hosts: [bakery.zachd.duckdns.org]
+      # Same Service, same pod, different front door — so it needs its own icon
+      # slug or the two tiles would share one mark.
+      slug: bakery
+    - name: Happy
+      category: Dev
+      namespace: happy
+      service: happy-server
+    - name: Rachel workspace
+      category: Dev
+      namespace: claude-rachel
+      service: rachel-workspace
+      note: no ingress
+
+    # ------------------------------------------------------------------- Bots
+    - name: Smite-le bot
+      category: Bots
+      namespace: discord
+      service: smitele-bot
+    - name: Vocard
+      category: Bots
+      namespace: discord
+      service: vocard-bot
+    - name: Claude bridge
+      category: Bots
+      namespace: minecraft
+      service: claude-bridge
+
+    # --------------------------------------------------------- Infrastructure
+    - name: Authelia
+      category: Infrastructure
+      namespace: auth
+      service: authelia
+      check: Authelia
+    - name: Traefik
+      category: Infrastructure
+      namespace: kube-system
+      service: traefik
+    - name: CrowdSec
+      category: Infrastructure
+      namespace: crowdsec
+      service: crowdsec-service
+      workload: crowdsec-lapi
+      check: CrowdSec LAPI
+    - name: Cloudflare tunnel
+      category: Infrastructure
+      namespace: infra
+      service: cloudflared
+    - name: DuckDNS
+      category: Infrastructure
+      namespace: infra
+      service: duckdns
+      cronjob: duckdns-updater
+    - name: Cluster status
+      category: Infrastructure
+      namespace: infra
+      service: cluster-status
+      note: this page
+    - name: Headlamp
+      category: Infrastructure
+      namespace: headlamp
+      service: headlamp
+      # Deliberately unpublished — reachable by port-forward or NodePort only,
+      # so there is no Ingress to take an icon port from.
+      note: port-forward only
+      iconPort: 80
+    - name: BuildKit
+      category: Infrastructure
+      namespace: buildkit
+      service: buildkitd
+      workload: buildkit
+    - name: Egress proxy
+      category: Infrastructure
+      namespace: infra
+      service: egress-proxy
+    - name: Grafana Alloy
+      category: Infrastructure
+      namespace: alloy
+      service: alloy
+    - name: k8up
+      category: Infrastructure
+      namespace: k8up
+      service: k8up
+    - name: Renovate
+      category: Infrastructure
+      namespace: renovate
+      service: renovate
+      cronjob: renovate
 
 ingress:
   enabled: true

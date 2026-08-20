@@ -85,6 +85,30 @@ print("    routing:      %d ingress route(s), %d reachable from the internet" % 
     len(d.get("ingresses") or []),
     sum(1 for i in (d.get("ingresses") or []) if i.get("exposure") == "public")))
 print("    storage:      %d PVC(s)" % len(d.get("storage") or []))
+cat = d.get("catalog") or []
+if cat:
+    links = [c for c in cat if c.get("url")]
+    pub = [c for c in links if c.get("exposure") == "public"]
+    miss = [c for c in cat if not c.get("icon")]
+    print("    catalog:      %d service(s), %d linked (%d public / %d tailnet)" % (
+        len(cat), len(links), len(pub), len(links) - len(pub)))
+    # A tile is only as good as its address. An entry that matched no Ingress
+    # and carries no publicUrl silently renders as a dead tile, and the cheapest
+    # place to notice is here rather than on a phone in a car park.
+    orphan = [c for c in cat if not c.get("url") and not c.get("address")]
+    if orphan:
+        print("    no address:   %s" % ", ".join(c["name"] for c in orphan))
+    unlisted = [c for c in cat if c.get("category") == "Unlisted"]
+    if unlisted:
+        print("    UNLISTED:     %s" % ", ".join(c["name"] for c in unlisted))
+        print("                  ^ an Ingress no catalog entry claims - name it")
+    if miss:
+        # Expected to be non-zero right after a rollout and to fall to the
+        # handful that genuinely have no reachable favicon: the icon lane fills
+        # a cold grid a few slugs per scrape, on purpose.
+        import os
+        print("    no icon yet:  %d of %d (fetching %s per cycle)" % (
+            len(miss), len(cat), os.environ.get("ICONS_PER_CYCLE", "?")))
 print("    namespaces:   %d" % len((d.get("totals") or {}).get("namespaces") or []))
 print("    node fields:  %s" % ", ".join(sorted(n.keys())))
 # The one that is worth seeing spelled out rather than inferred from a flag.
@@ -93,6 +117,13 @@ if urls:
     print("    probe URLs:   PUBLISHED - %s" % ", ".join(s["url"] for s in urls))
 print("")
 '
+
+# The catalog links out to services on their PUBLIC names by design, so this
+# script's disclosure report covers it above: how many tiles carry a public URL
+# is how much of the estate this page names in one screen. It is a smaller
+# disclosure than the routing table it is drawn from — one address per service
+# rather than every host, path and backend — which is why publish.catalog is a
+# separate flag rather than riding on publish.ingresses.
 
 # Say who can actually read it, derived from the live Ingress hosts rather than
 # asserted. A host that is not *.duckdns is on the tunnel, i.e. public.

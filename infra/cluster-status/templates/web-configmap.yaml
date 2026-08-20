@@ -66,6 +66,27 @@ data:
         add_header Cache-Control "public, max-age=86400" always;
       }
 
+      # Service favicons, written into the shared emptyDir by the collector's
+      # icon lane. Same volume as status.json, a directory rather than a file —
+      # so a service added to the catalog needs no change here.
+      #
+      # ^~ so this cannot be overtaken by the brand regex above if that list
+      # ever grows a pattern; the two directories are different volumes and
+      # crossing them would 404 every tile at once.
+      #
+      # An hour, not a day. These are refetched on catalog.icons.ttlHours and
+      # carry no content hash, so the cache lifetime is how long a service that
+      # rebrands keeps the old mark — and unlike the brand assets, nobody
+      # deploys anything when it changes.
+      #
+      # 404 is a normal answer here and not worth a log line per tile: a slug
+      # with no icon yet is exactly what the page's monogram fallback is for.
+      location ^~ /icons/ {
+        alias /data/icons/;
+        access_log off;
+        add_header Cache-Control "public, max-age=3600" always;
+      }
+
       # Its own block only because of the content type. nginx's mime.types has
       # no .webmanifest, so this came back application/octet-stream, and Chrome
       # then declines to install the app while the manifest itself fetches
@@ -330,6 +351,96 @@ data:
       @media (min-width: 640px) { .g4 { grid-template-columns: repeat(4, 1fr); } }
       @media (min-width: 1024px) { .g3 { grid-template-columns: repeat(3, 1fr); } .g2 { grid-template-columns: repeat(2, 1fr); } }
 
+      /* ----------------------------------------------------------------- tiles
+         The catalog grid. A launcher, not a table: the question it answers is
+         "where do I click", and 45 rows of hostname answered that badly.
+
+         auto-fill with a minmax track rather than a column count, so the same
+         rule gives three across on a phone and eight on a laptop without a
+         breakpoint for each. The floor drops on the narrowest screens because
+         a 9.5rem minimum leaves two tiles and a wide gutter on a 360px phone. */
+      .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .5rem; }
+      /* Tighter on a phone, where this card is three across and fifteen rows
+         deep before anything else on the page starts. Trimming the padding and
+         the mark is ~15% of that height for nothing a reader would miss. */
+      @media (max-width: 520px) {
+        .tiles { grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: .375rem; }
+        .tile { padding: .625rem .375rem .5rem; gap: .3125rem; }
+        .tile-i, .tile-m { width: 30px; height: 30px; }
+        .tile-m { font-size: 13px; }
+      }
+      .tile {
+        position: relative; display: flex; flex-direction: column; align-items: center;
+        gap: .375rem; text-align: center; min-width: 0; padding: .75rem .5rem .625rem;
+        border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+        color: inherit; text-decoration: none; box-shadow: var(--raise);
+      }
+      a.tile:hover { background: var(--muted-bg); border-color: var(--muted); }
+      a.tile:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+      /* Nothing to click — a Discord bot, or a service published nowhere. It is
+         still a service and still belongs on a page that claims to list them
+         all, so it is dimmed rather than dropped. */
+      .tile.off { box-shadow: none; background: transparent; }
+      .tile.off .tile-n { color: var(--muted); }
+      .tile-i, .tile-m { width: 34px; height: 34px; border-radius: 8px; flex: none; display: block; }
+      /* contain, not cover: these are logos at wildly different aspect ratios
+         and cropping one to fill a square eats the mark. */
+      .tile-i { object-fit: contain; }
+      /* IN DARK MODE THE MARK GETS A LIGHT PLATE, and it is not decoration.
+         A favicon is drawn for a browser tab, which is light on most people's
+         machines, so a good many of them are BLACK ON TRANSPARENT — Prowlarr,
+         Radarr, Sonarr, ntfy and talaria all are. On a #101012 card those tiles
+         rendered as empty squares: the grid looked broken for five services
+         that were perfectly healthy.
+         The plate restores the background the artwork was drawn against. It
+         costs nothing for the marks that carry their own opaque background
+         (Gamedex, Smite-le, old.diemer.codes) and nothing for the mid-tone
+         colour marks, and there is no equivalent risk in the other direction:
+         a white-on-transparent favicon would be invisible in a light browser
+         tab, so essentially nobody ships one.
+         Light mode needs no rule — the card is already white. */
+      @media (prefers-color-scheme: dark) {
+        .tile-i { background: #fafafa; padding: 2px; }
+      }
+      /* The fallback when a service has no favicon, or has one this collector
+         cannot reach — the two workspace pods carry NetworkPolicies that refuse
+         it, correctly. A monogram on a colour derived from the name is stable
+         per service and distinguishable at a glance, which is the whole job. */
+      .tile-m {
+        display: flex; align-items: center; justify-content: center;
+        font-size: 14px; font-weight: 700; letter-spacing: -.02em; color: #fff;
+      }
+      .tile-n { font-size: 12px; font-weight: 600; line-height: 1.3; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* The address, truncated from the RIGHT: the leftmost label is the name
+         that identifies the service and the tail is the domain it shares with
+         thirty others. `jellyfin.zachd.du…` is legible; `…d.duckdns.org` is not. */
+      .tile-h { font-size: 10px; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+      /* Public hosts read at full contrast, tailnet ones muted. It is the one
+         distinction this grid exists to make — "can I open this from the bus" —
+         and it costs a colour rather than a badge on every tile. */
+      .tile-h.pub { color: var(--fg); opacity: .75; }
+      /* A tile with no link may wrap that line instead of truncating it. On a
+         linked tile the text is a shorthand and the href holds the truth, so
+         losing the tail costs nothing; on an unlinked one the line IS the
+         answer, and `mc.zachd.duckdn…` drops the port — the only part of a
+         Minecraft address a client needs. */
+      .tile.off .tile-h { white-space: normal; overflow-wrap: anywhere; }
+      .tile-s { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 999px; }
+      /* Green at low opacity: present enough to confirm on inspection, quiet
+         enough that a red one is the only thing you see from across the room. */
+      .tile-s.ok { background: var(--ok); opacity: .35; }
+      .tile-s.warn { background: var(--warn); }
+      .tile-s.down { background: var(--destructive); }
+      .tile-s.unknown { background: var(--muted); }
+      .cat {
+        display: flex; align-items: baseline; gap: .5rem; margin: .875rem 0 .5rem;
+        font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+      }
+      .cat:first-child { margin-top: .25rem; }
+      details.cat-f { margin-top: .25rem; }
+      details.cat-f > summary.cat { margin: .875rem 0 .25rem; }
+      details.cat-f[open] > summary.cat { margin-bottom: .5rem; }
+
       .stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
       /* No word-break here. It used to be break-word, which split "122.6 GB"
          across two lines on a phone and knocked the tile below it out of
@@ -445,6 +556,11 @@ data:
       // Matches the collector's scrape interval: polling faster than it collects
       // just re-fetches the same file.
       var POLL_MS = {{ mul .Values.collector.intervalSeconds 1000 }};
+      // The order the catalog's category headings appear in. Page ordering, not
+      // data, so it rides in the script rather than in status.json — which is
+      // re-fetched every {{ .Values.collector.intervalSeconds }}s and has no business carrying a list that
+      // changes on a deploy.
+      var CATEGORIES = {{ .Values.catalog.categories | toJson }};
       var expanded = {};
       // Warnings by default. The collector now sends Normal events too, but
       // making the page noisier out of the box would undo the reason the
@@ -1202,9 +1318,144 @@ data:
           }).join('') + '</div></div>';
       }
 
-      function services(list) {
+      // Stable per name, so a service keeps the same colour across deploys and
+      // between the two replicas. Any hash would do; this one is short and the
+      // page already has no dependencies.
+      function tileHue(s) {
+        var h = 0;
+        for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+        return h % 360;
+      }
+
+      function monogram(name) {
+        // Two letters where the name has two parts, one where it doesn't.
+        // Splitting on dots as well as spaces is what makes the site tiles
+        // legible: 'old.diemer.codes' becomes OD rather than O.
+        var parts = String(name).split(/[^A-Za-z0-9]+/).filter(Boolean);
+        var s = parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] || '?').slice(0, 2);
+        return s.toUpperCase();
+      }
+
+      function catalog(list, categories) {
+        // The launcher. Every service in the house, each one linking to the
+        // address you would actually type — which is the PUBLIC name when a
+        // service has one, because the tailnet name is a dead link from
+        // anywhere else and this page is mostly read on a phone.
+        //
+        // The collector decides that address; nothing here re-derives it. See
+        // build_catalog in extras.py.
+        if (!list || !list.length) return '';
+        var bad = list.filter(function (s) { return s.state === 'down'; });
+        var warn = list.filter(function (s) { return s.state === 'warn'; });
+        var order = {};
+        (categories || []).forEach(function (c, i) { order[c] = i; });
+        var groups = [];
+        var seen = {};
+        list.forEach(function (s) {
+          var c = s.category || 'Other';
+          if (!seen[c]) { seen[c] = []; groups.push(c); }
+          seen[c].push(s);
+        });
+        // The configured order first; anything the list doesn't name goes after
+        // it, alphabetically — which is where 'Unlisted' lands without being
+        // special-cased for it.
+        groups.sort(function (a, b) {
+          var ai = a in order ? order[a] : 500, bi = b in order ? order[b] : 500;
+          return ai - bi || (a < b ? -1 : a > b ? 1 : 0);
+        });
+
+        // What the second line of a tile says. NOT the full hostname, which is
+        // the obvious choice and the wrong one: `jellyfin.zachd.duckdns.org`
+        // does not fit a 110px tile and truncates to `jellyfin.zachd.duc…`,
+        // which spends the whole line repeating the tile's own name and then
+        // hides the only part a reader wanted — the domain, i.e. whether this
+        // opens from anywhere or only from the tailnet.
+        //
+        // So it shows the registrable domain — the part somebody registered and
+        // pays for — which is exactly the public/tailnet distinction and always
+        // fits: `diemer.codes`, `talaria.deals`, `kelsey.green`,
+        // `zachd.duckdns.org`. Repetitive down a column, and true at every
+        // width; the full host is a hover away in the title and one click away
+        // in the href.
+        //
+        // duckdns.org needs the extra label because it is a dynamic-DNS
+        // provider: `duckdns.org` is theirs and `zachd.duckdns.org` is ours, so
+        // trimming to two labels would name the wrong party AND collapse every
+        // tailnet tile onto a string that says nothing about this cluster. It
+        // is the same rule a public-suffix list encodes, hardcoded for the one
+        // suffix in play here rather than shipping the list.
+        var DEEP_SUFFIXES = ['duckdns.org'];
+        function shortHost(host) {
+          var keep = 2;
+          DEEP_SUFFIXES.forEach(function (suf) {
+            if (host === suf || host.slice(-(suf.length + 1)) === '.' + suf) keep = 3;
+          });
+          var parts = host.split('.');
+          return parts.length <= keep ? host : parts.slice(parts.length - keep).join('.');
+        }
+
+        function tile(s) {
+          var href = s.url || '';
+          // An address is shown whole, port and all: it is not a link, so the
+          // line IS the answer rather than a label for one.
+          var addr = s.url ? shortHost(s.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '').split(':')[0])
+                           : (s.address || s.note || 'no browser UI');
+          var pub = s.exposure === 'public';
+          var hint = [s.namespace + '/' + s.service, s.detail || '',
+                      s.hosts && s.hosts.length > 1 ? 'also ' + s.hosts.slice(1).join(', ') : '',
+                      s.auth === 'authed' ? 'behind Authelia' : '',
+                      href ? (pub ? 'public' : 'tailnet only') : ''
+                     ].filter(Boolean).join(' · ');
+          var mark = s.icon
+            ? '<img class="tile-i" src="' + esc(s.icon) + '" alt="" loading="lazy" data-mono="' + esc(monogram(s.name)) + '">'
+            : '<span class="tile-m" style="background:hsl(' + tileHue(s.slug || s.name) + ' 42% 42%)">' +
+              esc(monogram(s.name)) + '</span>';
+          var body = mark +
+            '<span class="tile-n">' + esc(s.name) + '</span>' +
+            '<span class="tile-h' + (pub ? ' pub' : '') + '">' + esc(addr) + '</span>' +
+            '<i class="tile-s ' + esc(s.state || 'unknown') + '"></i>';
+          // target=_blank on every one of these: this is a dashboard you come
+          // back to, and replacing it with Sonarr costs you the page you were
+          // reading. rel is not optional with it.
+          return href
+            ? '<a class="tile" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" title="' + esc(hint) + '">' + body + '</a>'
+            : '<div class="tile off" title="' + esc(hint) + '">' + body + '</div>';
+        }
+
+        var body = groups.map(function (c) {
+          var rows = seen[c];
+          var trouble = rows.filter(function (s) { return s.state === 'down' || s.state === 'warn'; }).length;
+          var head = '<span>' + esc(c) + '</span><span class="count">' + rows.length + '</span>' +
+            (trouble ? tag(trouble + ' to look at', 'var(--warn)') : '');
+          var grid = '<div class="tiles">' + rows.map(tile).join('') + '</div>';
+          // Same rule the workload lists follow: a long group folds, and never
+          // when something inside it is wrong. Infrastructure is thirteen tiles
+          // nobody opens this page for, and on a phone it is most of the first
+          // screen; a group with a red dot in it is not allowed to hide.
+          if (rows.length <= 8 || trouble) return '<div class="cat">' + head + '</div>' + grid;
+          var key = 'cat:' + c;
+          return '<details class="cat-f" data-fold="' + esc(key) + '"' + (folds[key] ? ' open' : '') + '>' +
+            '<summary class="cat">' + head + '</summary>' + grid + '</details>';
+        }).join('');
+
+        var head = '<span class="card-t"' + (bad.length ? ' style="color:var(--destructive)"' : '') +
+          '>Services <span class="count">' + list.length + '</span></span>' +
+          (bad.length ? tag(bad.length + ' down', 'var(--destructive)')
+            : warn.length ? tag(warn.length + ' degraded', 'var(--warn)')
+            : '<span class="sub">all up</span>');
+        return '<div class="card"><div class="card-h">' + head + '</div>' +
+          '<div class="card-c">' + body + '</div></div>';
+      }
+
+      function endpointChecks(list) {
         // Endpoint health for things whose failure is invisible in pod status:
         // a Running pod whose upstream is unreachable still looks green above.
+        //
+        // NAMED 'Endpoint checks' RATHER THAN 'Services', which is what this
+        // card said before the catalog existed. Two cards called Services, one
+        // listing six probes and one listing forty-five services, is a page
+        // that argues with itself about what a service is. The probes are the
+        // narrower thing, so they took the narrower name.
         //
         // The Target column renders only when the collector wrote a url, so
         // publish.serviceCheckUrls can be flipped off without touching this.
@@ -1212,7 +1463,7 @@ data:
         var showUrl = list.some(function (s) { return !!s.url; });
         var down = list.filter(function (s) { return !s.ok; }).length;
         return '<div class="card"><div class="card-h"><span class="card-t"' +
-          (down ? ' style="color:var(--destructive)"' : '') + '>Services ' +
+          (down ? ' style="color:var(--destructive)"' : '') + '>Endpoint checks ' +
           '<span class="count">' + list.length + '</span></span>' +
           (down ? '<span class="pill" style="color:var(--destructive);background:color-mix(in srgb,var(--destructive) 15%,transparent)">' +
                   down + ' down</span>' : '<span class="sub">all up</span>') + '</div>' +
@@ -1279,7 +1530,13 @@ data:
       function render(d) {
         var h = '';
         if (d.totals) h += summary(d.totals);
-        h += services(d.services);
+        // The launcher, directly under the summary. It is what this page is
+        // opened FOR most of the time — "is Jellyfin up, and what was the
+        // address" — and every tile carries its own state, so putting it above
+        // the problem cards does not bury anything: a service in trouble has a
+        // red dot in the grid and a row in the card below it.
+        h += catalog(d.catalog, CATEGORIES);
+        h += endpointChecks(d.services);
         // Surfaced high, right under the summary: if anything is wrong it should
         // be the first thing you see, not buried below the node list.
         h += problemPods(d.problemPods);
@@ -1324,6 +1581,21 @@ data:
         // by keyboard, by find-in-page, and by the browser restoring it — and
         // only 'toggle' hears all of those. Recording state without re-rendering
         // is the point; the DOM already did the work.
+        // An icon that will not load becomes the monogram it would have had.
+        // This is not hypothetical: the two replicas fetch icons independently
+        // into their own emptyDir, so for a few minutes after a rollout one of
+        // them can serve a status.json naming a file the OTHER replica has not
+        // written yet — and which replica answers is per request. A broken
+        // image icon on a status page reads as a broken service.
+        Array.prototype.forEach.call(document.querySelectorAll('img.tile-i'), function (img) {
+          img.addEventListener('error', function () {
+            var m = document.createElement('span');
+            m.className = 'tile-m';
+            m.style.background = 'hsl(' + tileHue(img.getAttribute('src') || '') + ' 42% 42%)';
+            m.textContent = img.getAttribute('data-mono') || '?';
+            if (img.parentNode) img.parentNode.replaceChild(m, img);
+          });
+        });
         Array.prototype.forEach.call(document.querySelectorAll('[data-fold]'), function (el) {
           el.addEventListener('toggle', function () {
             folds[el.getAttribute('data-fold')] = el.open;

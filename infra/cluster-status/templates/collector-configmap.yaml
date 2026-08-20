@@ -23,6 +23,7 @@ data:
 
     import json
     import os
+    import re
     import ssl
     import sys
     import time
@@ -50,8 +51,15 @@ data:
     PUBLISH_STORAGE = os.environ.get("PUBLISH_STORAGE", "true") == "true"
     PUBLISH_JOBS = os.environ.get("PUBLISH_JOBS", "true") == "true"
     PUBLISH_SERVICE_CHECK_URLS = os.environ.get("PUBLISH_SERVICE_CHECK_URLS", "true") == "true"
+    PUBLISH_CATALOG = os.environ.get("PUBLISH_CATALOG", "true") == "true"
     OWN_NAMESPACE = os.environ.get("OWN_NAMESPACE", "infra")
     SERVICE_CHECKS = json.loads(os.environ.get("SERVICE_CHECKS", "[]"))
+    CATALOG = json.loads(os.environ.get("CATALOG", "[]"))
+    ICONS_ENABLED = os.environ.get("ICONS_ENABLED", "true") == "true"
+    ICONS_PER_CYCLE = int(os.environ.get("ICONS_PER_CYCLE", "2"))
+    ICON_TTL = float(os.environ.get("ICON_TTL_HOURS", "24")) * 3600
+    ICON_TIMEOUT = float(os.environ.get("ICON_TIMEOUT_SECONDS", "4"))
+    ICON_MAX_BYTES = int(os.environ.get("ICON_MAX_BYTES", "262144"))
     TOP_N = 5
 
 
@@ -754,6 +762,252 @@ data:
         return out
 
 
+
+    # ------------------------------------------------------------------- icons
+    # Every tile in the catalog wants the service's own favicon, and the only
+    # place that is reliably available is the service itself.
+    #
+    # THE FETCH GOES TO THE CLUSTER IP, NOT THE PUBLIC HOST, and that is not an
+    # optimisation — it is the only thing that works. Most of these hosts sit
+    # behind Authelia forward-auth at the Traefik ingress, so a request for
+    # /favicon.ico on the public name is answered by the login portal with a
+    # redirect and an HTML body. The browser would render a broken image and the
+    # page would look wrong for exactly the services that are best protected.
+    # Going straight to the Service bypasses the ingress and gets the real file.
+    #
+    # It also means the BROWSER never fetches these. A tile grid that loaded 30
+    # favicons from 30 hosts would make every open tab probe every service in
+    # the house on a loop, and would leak which services exist to anything
+    # watching DNS. One collector fetching once a day is the same picture for a
+    # rounding error of the traffic.
+    ICON_DIR = "/data/icons"
+    ICON_SEED_DIR = "/app/icons"
+    ICON_EXTS = ("svg", "png", "ico", "gif", "jpg", "webp")
+    _ICON_SIGS = (
+        (b"\x89PNG\r\n\x1a\n", "png"),
+        (b"\x00\x00\x01\x00", "ico"),
+        (b"GIF8", "gif"),
+        (b"\xff\xd8\xff", "jpg"),
+        (b"RIFF", "webp"),
+    )
+    # Sniffed from the bytes, never from Content-Type. Half of these services
+    # serve an .ico as text/plain or a .png as application/octet-stream, and a
+    # tile is only wrong once for the reader to stop trusting the grid.
+    def icon_kind(body):
+        for sig, ext in _ICON_SIGS:
+            if body.startswith(sig):
+                return ext
+        head = body[:400].lstrip().lower()
+        if head.startswith(b"<svg") or (head.startswith(b"<?xml")
+                                        and b"<svg" in body[:2000].lower()):
+            return "svg"
+        return ""
+
+
+    _ICON_LINK = re.compile(rb"<link\b[^>]*>", re.I)
+    _ICON_ATTR = re.compile(rb'([a-zA-Z-]+)\s*=\s*["\']([^"\']*)["\']')
+
+
+    def icon_candidates(html):
+        # The <link rel="icon"> set, best first. Preferred over /favicon.ico
+        # because that path is where the LEGACY asset lives: old-diemer-codes
+        # serves a 152KB multi-resolution .ico there and a 400-byte .svg in its
+        # markup, and this page ships whichever it is handed to every phone.
+        #
+        # SVG first (one file, every size), then the raster closest to 180px —
+        # big enough for a retina tile, small enough not to be a wallpaper.
+        out = []
+        for tag in _ICON_LINK.findall(html[:200000]):
+            attrs = {k.decode().lower(): v.decode("utf-8", "replace")
+                     for k, v in _ICON_ATTR.findall(tag)}
+            rel = (attrs.get("rel") or "").lower()
+            href = attrs.get("href") or ""
+            if "icon" not in rel or not href:
+                continue
+            svg = href.lower().split("?")[0].endswith(".svg") or \
+                attrs.get("type", "").lower() == "image/svg+xml"
+            m = re.match(r"(\d+)x(\d+)", attrs.get("sizes", "") or "")
+            px = int(m.group(1)) if m else (180 if "apple-touch" in rel else 32)
+            out.append((0 if svg else 1, abs(px - 180), href))
+        out.sort()
+        return [href for _, _, href in out]
+
+
+    def icon_get(url, timeout, max_bytes):
+        req = urllib.request.Request(url, headers={"User-Agent": "cluster-status"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(max_bytes + 1), r.geturl()
+
+
+    def fetch_icon(base, timeout, max_bytes):
+        # Returns (extension, bytes) or (None, None). Never raises: an icon is
+        # decoration, and nothing here may cost a scrape.
+        candidates = []
+        final = base.rstrip("/") + "/"
+        try:
+            status, body, final = icon_get(base, timeout, max_bytes)
+            if status == 200:
+                candidates = icon_candidates(body)
+        except Exception:
+            pass
+        # /favicon.ico last, as the fallback it has been since 1999 — see
+        # icon_candidates for why it is not the first choice.
+        candidates.append("/favicon.ico")
+        for href in candidates[:4]:
+            try:
+                # Resolved against the FINAL url, not the one we asked for.
+                # Jellyfin redirects / to /web/index.html and its icon hrefs are
+                # relative to that; joining against the original produced a 404
+                # for every service that serves its UI from a subpath.
+                status, body, _ = icon_get(urllib.parse.urljoin(final, href),
+                                           timeout, max_bytes)
+            except Exception:
+                continue
+            if status != 200 or len(body) > max_bytes:
+                continue
+            ext = icon_kind(body)
+            if ext:
+                return ext, body
+        return None, None
+
+
+    def write_icon(slug, ext, body):
+        # One file per slug. The old extension is removed rather than left
+        # behind: a service that switches from .ico to .svg would otherwise
+        # leave a stale file that nothing serves and nothing cleans up.
+        os.makedirs(ICON_DIR, exist_ok=True)
+        path = f"{ICON_DIR}/{slug}.{ext}"
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.replace(tmp, path)
+        for other in ICON_EXTS:
+            if other != ext:
+                try:
+                    os.remove(f"{ICON_DIR}/{slug}.{other}")
+                except OSError:
+                    pass
+        return f"/icons/{slug}.{ext}"
+
+
+    def seed_icons():
+        # Icons committed to the chart, copied in once at startup. Two jobs.
+        #
+        # They are the ANSWER for services this collector cannot reach: the
+        # claude-workspace and happy-server pods carry NetworkPolicies that
+        # refuse connections from anything but their own ingress, which is
+        # correct and is not going to be relaxed for a favicon. A file in
+        # brand/service-icons/ is how those tiles get a mark.
+        #
+        # And they are an OVERRIDE for services that serve a bad one — see
+        # icon_candidates. A seeded slug is never fetched over the network.
+        seeded = {}
+        if not os.path.isdir(ICON_SEED_DIR):
+            return seeded
+        os.makedirs(ICON_DIR, exist_ok=True)
+        for name in sorted(os.listdir(ICON_SEED_DIR)):
+            slug, _, ext = name.rpartition(".")
+            if not slug or ext not in ICON_EXTS:
+                continue
+            try:
+                with open(f"{ICON_SEED_DIR}/{name}", "rb") as f:
+                    body = f.read()
+                seeded[slug] = write_icon(slug, ext, body)
+            except OSError as e:
+                log("icon_seed_failed", slug=slug, error=e)
+        return seeded
+
+
+    # Slugs whose port could not be worked out, so the warning below is printed
+    # once rather than on every scrape for the life of the pod.
+    _ICON_NO_PORT = set()
+
+
+    def icon_targets(entries, rows):
+        # slug -> the in-cluster base URL to ask for an icon.
+        #
+        # The port comes from the SAME Ingress backend the tile links to, so
+        # this can only ever reach a Service some catalog entry already points
+        # at, on the port that already serves that service's UI. Nothing here
+        # invents a host or scans a range. An entry with neither an Ingress nor
+        # an explicit iconUrl gets no target at all and falls through to the
+        # page's monogram — a Discord bot has no favicon to find.
+        #
+        # AN INGRESS MAY NAME ITS BACKEND PORT RATHER THAN NUMBER IT
+        # (`whatnowgg:http`), and resolving a name needs the Service object,
+        # which this ServiceAccount deliberately cannot read — `services` is not
+        # in its role and widening RBAC for a favicon would be a poor trade.
+        # `iconPort` on the entry is the answer, and the log line below is how
+        # you find out you need one instead of wondering why one tile is a
+        # monogram.
+        ports = {}
+        for r in rows:
+            svc, _, port = (r.get("backend") or "").partition(":")
+            if svc and port.isdigit():
+                ports.setdefault((r.get("namespace", ""), svc), port)
+        out = {}
+        for e in entries or []:
+            slug = e.get("slug") or e.get("service") or ""
+            if not slug or slug in out:
+                continue
+            if e.get("iconUrl"):
+                out[slug] = e["iconUrl"]
+                continue
+            ns, svc = e.get("namespace", ""), e.get("service", "")
+            port = e.get("iconPort") or ports.get((ns, svc))
+            if ns and svc and port:
+                out[slug] = f"http://{svc}.{ns}.svc.cluster.local:{port}"
+            elif slug not in _ICON_NO_PORT and any(
+                    r.get("namespace") == ns and (r.get("backend") or "").startswith(svc + ":")
+                    for r in rows):
+                _ICON_NO_PORT.add(slug)
+                log("icon_no_port", slug=slug,
+                    hint="ingress names its backend port; set iconPort on the catalog entry")
+        return out
+
+
+    # Read off disk at import, not on a tick: these are files in the pod.
+    _ICON_SEEDED = seed_icons()
+
+    # slug -> served path, for everything this process has resolved. Survives a
+    # failed refetch on purpose: a service that is down should keep its icon,
+    # because the tile still has to be recognisable while it is red.
+    _ICONS = {}
+    _ICON_TRIED = {}
+
+
+    def refresh_icons(targets, seeded):
+        # `targets` is slug -> base URL, built from the catalog's own Service
+        # names and ingress ports, so this can only ever reach a Service some
+        # entry already points at.
+        #
+        # BOUNDED PER CYCLE, deliberately. These are in-cluster HTTP calls in
+        # the middle of the scrape loop — the same place the endpoint probes
+        # live — and thirty of them at four seconds each would blow through the
+        # interval on the one cycle where the cluster is having a bad day.
+        # ICONS_PER_CYCLE at a time means a cold start fills the grid over a few
+        # minutes and never delays a scrape by more than two timeouts.
+        if not ICONS_ENABLED:
+            return _ICONS
+        now = time.monotonic()
+        due = [(slug, url) for slug, url in sorted(targets.items())
+               if slug not in seeded
+               and now - _ICON_TRIED.get(slug, -1e9) > ICON_TTL]
+        for slug, url in due[:ICONS_PER_CYCLE]:
+            _ICON_TRIED[slug] = now
+            try:
+                ext, body = fetch_icon(url, ICON_TIMEOUT, ICON_MAX_BYTES)
+            except Exception as e:
+                log("icon_fetch_error", slug=slug, error=e)
+                continue
+            if not ext:
+                log("icon_missing", slug=slug, url=url)
+                continue
+            _ICONS[slug] = write_icon(slug, ext, body)
+            log("icon_stored", slug=slug, ext=ext, bytes=len(body))
+        return _ICONS
+
+
     def check_service(check):
         # Probe one HTTP endpoint and report whether it answered as expected.
         #
@@ -845,23 +1099,36 @@ data:
 
         # The deploy-cadence lane. Each of these is cached by slow_api_get and
         # re-fetched on SLOW_INTERVAL, not every cycle.
-        ingresses = []
-        if PUBLISH_INGRESSES:
+        # The routing table feeds two panels now: the routing card, and the
+        # catalog's answer to "which address does this tile link to". They have
+        # separate publish flags because they are different disclosures — the
+        # routing table is every host, path, backend and auth posture; a tile
+        # carries the one address you would type — so the FETCH is gated on
+        # either flag and each panel is filled from its own.
+        routing = []
+        if PUBLISH_INGRESSES or PUBLISH_CATALOG:
             try:
                 items, _age = slow_api_get("/apis/networking.k8s.io/v1/ingresses")
-                ingresses = extras.parse_ingresses(items.get("items", []))
+                routing = extras.parse_ingresses(items.get("items", []))
             except Exception as e:
                 log("k8s_ingresses_api_error", error=e)
+        ingresses = routing if PUBLISH_INGRESSES else []
 
-        cron_jobs = []
+        # Same split as the routing table above: the catalog needs CronJob rows
+        # to say whether a CronJob-shaped service (the DuckDNS updater,
+        # Renovate) ran successfully, which is a smaller thing to publish than
+        # the whole schedule table.
+        crons = []
         job_failures = []
         job_owner = {}
-        if PUBLISH_JOBS:
+        if PUBLISH_JOBS or PUBLISH_CATALOG:
             try:
                 items, _age = slow_api_get("/apis/batch/v1/cronjobs")
-                cron_jobs = extras.parse_cronjobs(items.get("items", []))
+                crons = extras.parse_cronjobs(items.get("items", []))
             except Exception as e:
                 log("k8s_cronjobs_api_error", error=e)
+        cron_jobs = crons if PUBLISH_JOBS else []
+        if PUBLISH_JOBS:
             try:
                 items, _age = slow_api_get("/apis/batch/v1/jobs")
                 job_failures, job_owner = extras.parse_jobs(items.get("items", []))
@@ -935,6 +1202,26 @@ data:
             except Exception as e:
                 log("k8s_storage_api_error", error=e)
 
+        # The tile grid. Built last because it reads from nearly everything
+        # above it — the routing table for addresses, the three workload lists
+        # and the CronJob rows for health, the endpoint probes for the services
+        # that have one — and adds no API call of its own.
+        catalog = []
+        if PUBLISH_CATALOG:
+            try:
+                fetched = refresh_icons(icon_targets(CATALOG, routing), _ICON_SEEDED)
+                # Seeded icons lose to nothing: refresh_icons never fetches a
+                # slug that was seeded, so this merge cannot overwrite one.
+                icons = dict(fetched)
+                icons.update(_ICON_SEEDED)
+                catalog = extras.build_catalog(
+                    CATALOG, routing,
+                    deployments + statefulsets + daemonsets,
+                    crons, services, icons)
+            except Exception as e:
+                # A broken catalog entry must not cost the rest of the page.
+                log("catalog_error", error=e)
+
         # Pod-status counts walk the full pod list, not the union of per-node
         # lists, so unscheduled Pending/Failed pods are still counted.
         totals.set_pod_status(all_pods)
@@ -948,6 +1235,7 @@ data:
             "daemonSets": daemonsets,
             "recentEvents": events,
             "services": services,
+            "catalog": catalog,
             "nodeUpdates": node_updates,
             "ingresses": ingresses,
             "storage": storage,
@@ -1303,6 +1591,191 @@ data:
                                  r.get("exposure") != "public",
                                  r.get("host", ""), r.get("path", "")))
         return rows[:limit]
+
+
+
+    # --------------------------------------------------------------------- catalog
+    # The tile grid at the top of the page: every service in the house, each one
+    # linking to the address you would actually type.
+    #
+    # Two rules decide that address, and they are the whole point of this
+    # section. FIRST, a service is only linked if it answers in a BROWSER — a
+    # Discord bot and a Minecraft server are services and neither has a URL, so
+    # they get a tile with an address you cannot click rather than being left
+    # off a page that claims to list everything. SECOND, when a service answers
+    # on more than one name, the PUBLIC one wins: the Cloudflare tunnel (or the
+    # VPS relay, when one is in front of a host) reaches it from anywhere,
+    # DuckDNS only reaches it from the tailnet. Linking the tailnet name for
+    # something that is on the internet hands you a dead link exactly when you
+    # are away from home and need it, which is the failure this ordering exists
+    # to prevent.
+    #
+    # Everything here is derived from the SAME routing table the routing panel
+    # draws — parse_ingresses' output is the input — so a tile and its row can
+    # never disagree about which hosts a service answers on.
+    def _catalog_host_rank(row):
+        # Public first, then the shortest name, then alphabetical. Length is the
+        # tiebreak between two public hosts because the short one is the apex
+        # (talaria.deals) and the long one is a subdomain of it; the apex is what
+        # a person would type. Alphabetical is only there to make the choice
+        # deterministic when the first two tie, so a tile does not swap its link
+        # between scrapes.
+        host = row.get("host", "")
+        return (row.get("exposure") != "public", len(host), host)
+
+
+    def _catalog_state(workloads, check, cron):
+        # Three sources, in the order they can be trusted.
+        #
+        # A failed endpoint probe OUTRANKS a healthy workload, because that is
+        # the entire reason probes exist: a Running pod whose upstream is gone
+        # still reports Available. Workload readiness is the next best thing and
+        # covers everything without a probe. A service with neither — a bare Pod,
+        # or an entry naming a workload that no longer exists — says "unknown"
+        # rather than green, because a tile that cannot see its service must not
+        # claim it is fine.
+        if check is not None and not check.get("ok"):
+            detail = check.get("reason") or f"HTTP {check.get('status', '?')}"
+            return "down", detail
+        # A CronJob's health is its last run, not a replica count. Several real
+        # services here are shaped that way — the DuckDNS updater and Renovate
+        # own no Pod between ticks — and without this they would sit on
+        # "unknown" forever while working perfectly.
+        if cron is not None:
+            if cron.get("suspended"):
+                return "warn", "suspended"
+            if cron.get("lastRunFailed"):
+                return "down", "last run failed"
+            return "ok", cron.get("schedule") or "scheduled"
+        if not workloads:
+            return ("unknown", "no workload matched")
+        desired = sum(w.get("desired", 0) for w in workloads)
+        ready = sum(w.get("ready", 0) for w in workloads)
+        failing = [w for w in workloads if w.get("condition") == "Failure"]
+        if desired and ready == 0:
+            return "down", (failing[0].get("condition") if failing else "0 ready")
+        if failing:
+            return "warn", "Failure"
+        if ready < desired:
+            return "warn", f"{ready}/{desired} ready"
+        if not desired:
+            return "warn", "scaled to zero"
+        return "ok", f"{ready}/{desired} ready"
+
+
+    def build_catalog(entries, rows, workloads, cron_jobs, checks, icons):
+        # entries  — the curated `catalog.services` list from values.yaml
+        # rows     — parse_ingresses() output, the live routing table
+        # workloads— Deployment + StatefulSet + DaemonSet rows, already parsed
+        # checks   — check_service() results, keyed by name
+        # icons    — slug -> served path, whatever the icon lane has fetched
+        #
+        # Anything in `rows` that no entry claims still gets a tile, in an
+        # "Unlisted" category. That is the safety net that keeps this list from
+        # quietly going stale: a new chart with an Ingress shows up on the page
+        # the moment it is deployed, named after its Service, and stays there
+        # looking unloved until someone gives it a name and a category.
+        by_backend = {}
+        for r in rows:
+            svc = (r.get("backend") or "").split(":")[0]
+            by_backend.setdefault((r.get("namespace", ""), svc), []).append(r)
+
+        wl = {}
+        for w in workloads:
+            wl.setdefault((w.get("namespace", ""), w.get("name", "")), []).append(w)
+
+        by_check = {c.get("name"): c for c in (checks or [])}
+        by_cron = {(c.get("namespace", ""), c.get("name", "")): c
+                   for c in (cron_jobs or [])}
+
+        claimed = set()
+        out = []
+
+        def tile(name, category, namespace, service, matched, entry):
+            entry = entry or {}
+            slug = entry.get("slug") or service or name.lower().replace(" ", "-")
+            hosts = sorted(matched, key=_catalog_host_rank)
+            # An explicit publicUrl covers the one shape the routing table
+            # cannot see: a hostname published straight off a tunnel connector
+            # to a Service, with no Ingress rule of its own. kelsey.green is
+            # that shape — it answers on the internet and appears nowhere in
+            # `kubectl get ingress`, so deriving the link purely from Ingresses
+            # would silently link the tailnet name for a public site.
+            url = entry.get("url") or ""
+            public_url = entry.get("publicUrl") or ""
+            if not url and public_url:
+                url = public_url if "://" in public_url else "https://" + public_url
+            primary = hosts[0] if hosts else None
+            if not url and primary:
+                url = "https://" + primary.get("host", "")
+
+            names = [h.get("host", "") for h in hosts]
+            if public_url:
+                bare = public_url.split("://")[-1].rstrip("/")
+                if bare not in names:
+                    names.insert(0, bare)
+
+            targets = wl.get((namespace, entry.get("workload") or service), [])
+            cron = by_cron.get((namespace, entry.get("cronjob"))) if entry.get("cronjob") else None
+            state, detail = _catalog_state(targets, by_check.get(entry.get("check")), cron)
+
+            # `exposure` describes the LINK, not the service: it is what the
+            # reader is about to click. A tile whose public host came from
+            # publicUrl is public even though no Ingress says so.
+            if entry.get("url") or public_url:
+                exposure = "public"
+            elif primary:
+                exposure = primary.get("exposure", "")
+            else:
+                exposure = ""
+
+            return prune({
+                "name": name,
+                "category": category,
+                "namespace": namespace,
+                "service": service,
+                "url": url,
+                "hosts": names,
+                "exposure": exposure,
+                "auth": (primary or {}).get("auth", ""),
+                "address": entry.get("address", ""),
+                "note": entry.get("note", ""),
+                "icon": icons.get(slug, ""),
+                "slug": slug,
+                "state": state,
+                "detail": detail,
+            })
+
+        for e in entries or []:
+            ns = e.get("namespace", "")
+            svc = e.get("service", "")
+            matched = by_backend.get((ns, svc), [])
+            # `hosts` narrows an entry to some of its Service's names. One
+            # Service can front two unrelated front doors — claude-workspace
+            # answers as both the terminal and the bakery — and merging those
+            # into one tile would lose the one you were looking for.
+            want = e.get("hosts")
+            if want:
+                matched = [r for r in matched if r.get("host") in want]
+            for r in matched:
+                claimed.add((ns, svc, r.get("host"), r.get("path")))
+            out.append(tile(e.get("name") or svc, e.get("category") or "Other",
+                            ns, svc, matched, e))
+
+        leftover = {}
+        for key, rs in by_backend.items():
+            for r in rs:
+                if (key[0], key[1], r.get("host"), r.get("path")) in claimed:
+                    continue
+                leftover.setdefault(key, []).append(r)
+        for (ns, svc), rs in sorted(leftover.items()):
+            out.append(tile(svc, "Unlisted", ns, svc, rs, None))
+
+        # Sort inside the page's own category order, not alphabetically across
+        # it — the grid is grouped by category, so the only ordering that
+        # matters here is the one within a group.
+        out.sort(key=lambda t: (t.get("category", ""), t.get("name", "").lower()))
+        return out
 
 
     # --------------------------------------------------------------------- storage

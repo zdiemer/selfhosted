@@ -18,6 +18,7 @@ spec:
         checksum/collector: {{ include (print $.Template.BasePath "/collector-configmap.yaml") . | sha256sum }}
         checksum/web: {{ include (print $.Template.BasePath "/web-configmap.yaml") . | sha256sum }}
         checksum/brand: {{ include (print $.Template.BasePath "/brand-configmap.yaml") . | sha256sum }}
+        checksum/service-icons: {{ include (print $.Template.BasePath "/service-icons-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "cluster-status.selectorLabels" . | nindent 8 }}
         {{- if .Values.ingress.enabled }}
@@ -75,6 +76,15 @@ spec:
         - name: brand
           configMap:
             name: {{ include "cluster-status.fullname" . }}-brand
+        # Seeded catalog icons, mounted into the COLLECTOR rather than into
+        # nginx. Everything the page serves out of /icons comes from the shared
+        # emptyDir, so a seeded file has to be copied there at startup like a
+        # fetched one — see seed_icons(). Mounting this into the web container
+        # as a second root would mean two places a tile's icon could come from
+        # and two cache policies over them.
+        - name: service-icons
+          configMap:
+            name: {{ include "cluster-status.fullname" . }}-service-icons
         # nginx creates its *_temp_path dirs at startup, so an empty volume here
         # is fine — but it needs somewhere writable, and the root fs is not.
         - name: nginx-cache
@@ -126,15 +136,43 @@ spec:
               value: {{ .Values.publish.jobs | quote }}
             - name: PUBLISH_SERVICE_CHECK_URLS
               value: {{ .Values.publish.serviceCheckUrls | quote }}
+            # Off if either switch is off: `catalog.enabled` is "do we build the
+            # tile grid at all" and `publish.catalog` is the redaction flag that
+            # sits with its nine siblings. Two names for one thing would be
+            # worse than either, so they AND.
+            - name: PUBLISH_CATALOG
+              value: {{ and .Values.catalog.enabled .Values.publish.catalog | quote }}
+            - name: ICONS_ENABLED
+              value: {{ .Values.catalog.icons.enabled | quote }}
+            - name: ICONS_PER_CYCLE
+              value: {{ .Values.catalog.icons.perCycle | quote }}
+            - name: ICON_TTL_HOURS
+              value: {{ .Values.catalog.icons.ttlHours | quote }}
+            - name: ICON_TIMEOUT_SECONDS
+              value: {{ .Values.catalog.icons.timeoutSeconds | quote }}
+            - name: ICON_MAX_BYTES
+              value: {{ .Values.catalog.icons.maxBytes | quote }}
             - name: OWN_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: SERVICE_CHECKS
               value: {{ .Values.serviceChecks | toJson | quote }}
+            # The curated service list. An env var rather than a third
+            # ConfigMap: it is values, not code, and it rolls the pods on edit
+            # through the pod spec itself — no checksum annotation needed for
+            # it, unlike the two script mounts.
+            - name: CATALOG
+              value: {{ .Values.catalog.services | toJson | quote }}
           volumeMounts:
             - name: data
               mountPath: /data
             - name: collector
               mountPath: /app
+              readOnly: true
+            # Read once at startup and copied into /data/icons. Under /app
+            # rather than a path of its own because collect.py already treats
+            # /app as "the files this process was shipped with".
+            - name: service-icons
+              mountPath: /app/icons
               readOnly: true
           resources:
             {{- toYaml .Values.collector.resources | nindent 12 }}

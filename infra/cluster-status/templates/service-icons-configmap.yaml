@@ -1,0 +1,35 @@
+{{/*
+  Seeded catalog icons: the marks for services the collector's icon lane cannot
+  fetch, and the overrides for services that serve a bad one. See
+  brand/service-icons/README.md for which is which and why.
+
+  The collector copies these into /data/icons at startup and never fetches a
+  slug that appears here, so a file in that directory is the last word on what
+  a tile shows.
+
+  Rendered even when the directory holds nothing but its README — an empty
+  ConfigMap is a valid one, and the alternative is a conditional volume in the
+  Deployment whose two branches would drift. seed_icons() ignores any file whose
+  extension is not an image, which is what keeps the README out of the grid.
+
+  binaryData rather than data, for the same reason brand-configmap.yaml uses it:
+  most of these are PNGs, and .Files.Get + b64enc is the only route into a
+  ConfigMap that survives a byte which isn't valid UTF-8. SVGs go through it too
+  rather than being special-cased into `data` — one code path, and the collector
+  writes bytes either way.
+
+  A wildcard Glob here where brand-configmap.yaml uses an explicit list, and the
+  difference is deliberate: that ConfigMap holds the page's own identity and
+  publishes to the internet-facing preview card, this one holds a growing set
+  whose whole point is that adding a service means adding a file.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cluster-status.fullname" . }}-service-icons
+  labels:
+    {{- include "cluster-status.labels" . | nindent 4 }}
+binaryData:
+  {{- range $path, $bytes := .Files.Glob "brand/service-icons/*.{png,svg,ico,gif,jpg,webp}" }}
+  {{ base $path }}: {{ $.Files.Get $path | b64enc }}
+  {{- end }}
