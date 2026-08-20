@@ -10,13 +10,13 @@ bottom.
 
 It lives in this repo because the cutover changes things in this repo
 (`democratic-csi` targets, the sms-relay gateway URL, a new LAN NodePort) and
-because the constraints that shaped it — svclb answering on all eight node IPs,
+because the constraints that shaped it — svclb answering on all seven node IPs,
 DuckDNS in `tailnet` mode, iSCSI throughput — are cluster facts, not networking
 trivia.
 
 ## Why
 
-Every device in the house is on one flat `192.168.4.0/22`: eight k3s nodes, the
+Every device in the house is on one flat `192.168.4.0/22`: seven k3s nodes, the
 NAS, the personal laptops and phones, the TVs, and the Android handset that
 `infra/sms-relay` drives. Nothing is stopping a compromised pod that escapes to
 its node from reaching a personal machine, and nothing is stopping the handset
@@ -29,7 +29,7 @@ Two things are deliberately *not* goals:
   direct IP from both the cluster and personal devices, without Tailscale in
   the path, because NFS and iSCSI throughput is the point of it.
 - **Isolating nodes from each other.** Flannel VXLAN and etcd want one L2
-  segment with low latency. All eight nodes stay together.
+  segment with low latency. All seven nodes stay together.
 
 ## Current state, as measured
 
@@ -37,7 +37,7 @@ Two things are deliberately *not* goals:
 |---|---|
 | LAN | `192.168.4.0/22`, gateway `192.168.4.1` |
 | IPv6 | GUA `2001:5a8:4a45:6100::/64` (Sonic) + ULA `fd35:ace4:a929:1::/64`, router at `::1` on both |
-| Nodes | `.26 .28 .29 .30 .31 .32 .37 .39` — all wired, single NIC, all negotiating 1000BASE-T |
+| Nodes | `.26 .28 .30 .31 .32 .37 .39` — all wired, single NIC, all negotiating 1000BASE-T |
 | NAS | `192.168.4.36` (TrueNAS SCALE) — NFS, iSCSI, SMB |
 | Handset | `192.168.4.24`, wifi |
 | Router | eero Max 7 |
@@ -74,7 +74,7 @@ So this needs hardware, and the unmanaged switch has to go with it.
 | Part | Choice | Note |
 |---|---|---|
 | Gateway | UniFi Cloud Gateway Ultra (~$129) or Max (~$199) | VLANs, inter-VLAN firewall rules, per-VLAN IPv6 from a delegated prefix. RB5009 (~$219) or OPNsense on a 2-NIC mini-PC are equivalent-capability alternatives. |
-| Switch | 802.1q managed, ~14+ ports | Eight nodes, the NAS trunk, the handset, the eero uplinks. UniFi Standard 16 (~$179), or a pair of TL-SG108E at ~$25 each. |
+| Switch | 802.1q managed, ~14+ ports | Seven nodes, the NAS trunk, the handset, the eero uplinks. UniFi Standard 16 (~$179), or a pair of TL-SG108E at ~$25 each. |
 | Wifi | Keep the eeros, in bridge mode | Uplink port tagged to VLAN 20. All wifi becomes trusted. Loses eero's guest network and app features. |
 | Handset | USB-C → Ethernet (~$15) | See below — this is the piece that makes VLAN-capable APs unnecessary. |
 
@@ -85,12 +85,12 @@ gateway to the WAN plan, not to the eero Max 7's 10G ports.
 
 Three segments. The cluster keeps the subnet it already has — **renumber
 people, not nodes**. Personal devices are DHCP and do not care where they live;
-the cluster has eight node addresses, NFS exports pinned by IP, svclb bound to
+the cluster has seven node addresses, NFS exports pinned by IP, svclb bound to
 every node address, and etcd.
 
 | VLAN | Subnet | Members |
 |---|---|---|
-| 1 (existing, untagged) | `192.168.4.0/22` | eight k3s nodes + NAS |
+| 1 (existing, untagged) | `192.168.4.0/22` | seven k3s nodes + NAS |
 | 20 trusted | `192.168.20.0/24` | laptops, desktop, phones, TVs, bridged eeros |
 | 30 untrusted | `192.168.30.0/24` | the SMS relay handset |
 
@@ -167,7 +167,7 @@ No NAS access. That is the whole blast radius.
 Parking it with the cluster would save those two rules, and it is the reasonable
 scope cut if inter-VLAN routing turns out to be friction. But L2 adjacency is
 not a rule you can narrow: it would put an unpatched consumer Android next to
-all eight nodes and `192.168.4.36` — NFS exports, the iSCSI portal, SMB, the
+all seven nodes and `192.168.4.36` — NFS exports, the iSCSI portal, SMB, the
 kubelets, etcd on the three control planes, and Headlamp on `:30100`, which
 answers on every node IP and whose token `infra/headlamp/README.md` describes
 as a full cluster credential. If this cut is ever taken, turn that NodePort off.
@@ -199,7 +199,7 @@ service, with the Android gateway app pointed at
   `Host` header, so the Ingress path cannot be reused as-is;
 - no Tailscale, no DuckDNS, no DNS at all.
 
-Pin it to one stable node IP — svclb answers on all eight, and the app holds a
+Pin it to one stable node IP — svclb answers on all seven, and the app holds a
 single URL.
 
 ## Firewall matrix
@@ -222,7 +222,7 @@ wide-open bypass, and every host here holds a routable GUA.
 
 ## The tailnet bypass
 
-All eight nodes, the NAS, and the personal machines are one flat tailnet with
+All seven nodes, the NAS, and the personal machines are one flat tailnet with
 `/32` routes and no ACL restrictions. **A compromised pod that escapes to a node
 reaches the laptops over `100.x` regardless of any VLAN boundary.**
 

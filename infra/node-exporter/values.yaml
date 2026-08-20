@@ -1,4 +1,4 @@
-# node-exporter — host-level metrics for all 8 nodes.
+# node-exporter — host-level metrics for all 7 nodes.
 #
 # VALUES-ONLY. There is no chart here; this file is passed to the upstream
 # prometheus-community/prometheus-node-exporter chart, the same arrangement as
@@ -36,15 +36,15 @@
 # THIS IS THE SERIES BUDGET, and it is the most important block in the file.
 #
 # Grafana Cloud's free tier caps active series at 10k, and node-exporter's
-# defaults produce roughly 600-800 series per node. Times eight nodes that is
-# 5-6k — most of the budget, spent on one exporter, for metrics nobody reads.
+# defaults produce roughly 600-800 series per node. Times seven nodes that is
+# 4-6k — most of the budget, spent on one exporter, for metrics nobody reads.
 #
 # --collector.disable-defaults flips the model from "everything unless
 # excluded" to "nothing unless asked for", which is the only version that stays
 # correct as the exporter adds collectors upstream.
 #
 # MEASURED, not estimated: the ten collectors below export ~570 series per node,
-# of which Alloy's keep-list ships ~180 — about 1.4k across the eight nodes.
+# of which Alloy's keep-list ships ~180 — about 1.3k across the seven nodes.
 # node_cpu_seconds_total is over half of that on its own (cores x 8 modes, so
 # 96 series on a 12-core box) and it stays, because iowait and steal are the
 # two numbers that explain a slow node when the CPU average looks fine.

@@ -39,7 +39,7 @@ spec:
       # preStop sleep below plus nginx's own SIGQUIT drain.
       terminationGracePeriodSeconds: 30
       # Hard spread rather than the preferred podAntiAffinity this used to
-      # carry: with 8 nodes and 2 replicas nothing makes spreading them
+      # carry: with 7 nodes and 2 replicas nothing makes spreading them
       # unsatisfiable, so a hint only bought the chance to silently not apply
       # and leave both replicas on one node. matchLabelKeys scopes the skew to
       # one pod-template-hash so a rollout spreads the incoming ReplicaSet

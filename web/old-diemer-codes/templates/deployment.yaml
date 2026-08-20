@@ -36,7 +36,7 @@ spec:
       # Spread the two replicas so a single node going away doesn't take the
       # site with it.
       #
-      # This was preferred rather than required, on the reasoning that an 8-node
+      # This was preferred rather than required, on the reasoning that a 7-node
       # cluster will honour it anyway and a one-node emergency should still
       # schedule. The first half is the problem: "will honour it anyway" is a
       # prediction, not a guarantee, and a hint the scheduler declines leaves

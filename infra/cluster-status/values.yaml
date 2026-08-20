@@ -39,7 +39,7 @@ collector:
   image: python:3.12.13-alpine
   # Seconds between scrapes. Also the page's poll interval. Each scrape is
   # 1 nodes + 1 pods + 3 workload lists + 1 events + 1 configmap, plus one
-  # /stats/summary per node — so ~15 calls per cycle on an 8-node cluster, per
+  # /stats/summary per node — so ~14 calls per cycle on a 7-node cluster, per
   # replica. (This said ~14 for a long time; it predated the statefulsets,
   # daemonsets and versions-report calls.)
   intervalSeconds: 15

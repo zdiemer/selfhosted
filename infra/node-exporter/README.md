@@ -59,7 +59,7 @@ because one unready pod out of ten is easy to miss.
 ## The series budget is the design
 
 Grafana Cloud's free tier caps **active series at 10k** for the whole stack.
-Default node-exporter is ~600–800 series per node; eight nodes would be 5–6k,
+Default node-exporter is ~600–800 series per node; seven nodes would be 4–6k,
 most of the budget, on one exporter.
 
 `--collector.disable-defaults` flips the model to opt-in, which is the version

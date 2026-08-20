@@ -130,15 +130,12 @@ for i in "${!TARGET_NAMES[@]}"; do
             exit 1
         fi
     else
-        case "$hostname" in
-            zachd-ubuntu-laptop-5)
-                echo "[WARN] $hostname is a Chromebook with the original" \
-                    "firmware intact. After POST you must manually select the" \
-                    "alternate bootloader (e.g. CTRL+L on the chainload screen)" \
-                    "or it will not boot back into Linux. The script will hang" \
-                    "in 'wait_for_node_online' until you do."
-                ;;
-        esac
+        # There used to be a warning here for the two Google Chromebooks
+        # (laptop-4 and laptop-5), which kept their stock firmware and needed a
+        # manual CTRL+L on the chainload screen after every POST or they would
+        # not boot back into Linux. Both were decommissioned on 2026-08-20, so
+        # every remaining node reboots unattended. Restore it if a machine that
+        # cannot boot on its own ever joins again.
         echo "Rebooting $hostname..."
         run_on_node_sudo "$hostname" "reboot" || true
         sleep 10

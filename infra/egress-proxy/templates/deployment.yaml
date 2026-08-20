@@ -51,7 +51,7 @@ spec:
       # two-replica charts at least had a soft podAntiAffinity; this one — the
       # egress choke point — had nothing.
       #
-      # DoNotSchedule rather than ScheduleAnyway: with 8 nodes and 2 replicas
+      # DoNotSchedule rather than ScheduleAnyway: with 7 nodes and 2 replicas
       # there is no plausible state where "spread these two" is unsatisfiable,
       # so a soft preference here only buys the chance to silently not apply.
       #

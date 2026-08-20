@@ -9,9 +9,9 @@
 # Every other target in values.yaml is a pod, so the locality filter there
 # ("only scrape pods on my node") makes each target the responsibility of
 # exactly one Alloy. Probe targets are not pods — they are static URLs — so
-# there is nothing to be local to. All eight DaemonSet pods would probe all
-# fourteen hostnames every interval: eight times the outbound traffic through
-# Cloudflare, and eight copies of every series racing each other into
+# there is nothing to be local to. All seven DaemonSet pods would probe all
+# fourteen hostnames every interval: seven times the outbound traffic through
+# Cloudflare, and seven copies of every series racing each other into
 # remote_write.
 #
 # A one-replica Deployment is the whole fix. It also reschedules when its node

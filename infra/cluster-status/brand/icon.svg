@@ -7,7 +7,7 @@
     page's own series colours (green pods, blue k3s).
 
     Two shapes on a tile, deliberately. Anything with more parts — a rack, a
-    ring of eight nodes — is a smudge at 16px, and a favicon that only works at
+    ring of seven nodes — is a smudge at 16px, and a favicon that only works at
     180px is a favicon that only works where it doesn't matter.
 
     White-on-dark-tile rather than currentColor, so this is the same object in

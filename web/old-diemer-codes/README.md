@@ -149,7 +149,7 @@ First time:
 git submodule update --init web/old-diemer-codes/site
 docker login ghcr.io -u zdiemer          # PAT with write:packages
 ./build.sh
-# First push only: set the GHCR package visibility to Public, or all 8 nodes
+# First push only: set the GHCR package visibility to Public, or all 7 nodes
 # get ImagePullBackOff with a 401.
 ./upgrade.sh
 ```

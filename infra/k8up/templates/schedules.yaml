@@ -35,8 +35,8 @@ spec:
         cpu: 50m
         memory: 128Mi
       limits:
-        # restic packs and encrypts in memory. Two of the eight nodes have under
-        # 4GiB, so this is a ceiling that keeps a backup from evicting the very
+        # restic packs and encrypts in memory. One of the seven nodes still has
+        # under 4GiB, so this is a ceiling that keeps a backup from evicting the very
         # workload it is backing up.
         memory: 1Gi
 {{- end }}

@@ -159,7 +159,7 @@ for driver in iscsi nfs; do
 
   echo "==> Waiting for ${RELEASE} rollout"
   kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}-controller" --timeout=300s
-  # The DaemonSet rolls one pod at a time across eight nodes, several of them slow
+  # The DaemonSet rolls one pod at a time across seven nodes, several of them slow
   # laptops pulling a fresh image. 300s times out around the eighth node and
   # leaves the second release uninstalled, which is worse than waiting.
   kubectl -n "$NAMESPACE" rollout status "daemonset/${RELEASE}-node" --timeout=900s
