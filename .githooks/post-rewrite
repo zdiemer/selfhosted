@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Rebase is the one history-moving operation the other hooks never see:
+# post-checkout fires at rebase START (checking out the upstream, whose pins
+# may be older) and nothing fires at the finish, so the worktrees are left on
+# whatever the mid-rebase refresh checked out. That is exactly how 2026-08-19
+# ended with submodule HEADs on the recorded pins but worktree files from the
+# older ones. This hook is the missing "after": put the worktrees back once
+# the rewritten history is final.
+# $1 is "rebase" or "amend"; amend cannot move a gitlink that was not staged,
+# but running the refresh is cheap when nothing drifted, so no filter.
+exec "$(git rev-parse --show-toplevel)/scripts/submodules-refresh.sh" --quiet

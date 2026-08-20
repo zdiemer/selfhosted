@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Refuse a commit that records a submodule pin this repo must never record.
+#
+# The pins mean "what shipped" (see scripts/sync-submodules.sh). Two ways a
+# commit can quietly break that meaning:
+#
+#   backwards  a stale checkout gets `git add`-ed and the pin re-records an
+#              older commit, un-recording a deploy. Happened to web/whatnowgg
+#              2026-08-13→14 via a broad `git add -A` in a clone that had
+#              pulled a pin move it never checked out.
+#   unpushed   a commit made inside a submodule worktree (against the whole
+#              workflow — work lives in ~/Code/<repo>) gets pinned here while
+#              existing nowhere on GitHub, so every other clone's
+#              `git submodule update` fails on an unreachable sha.
+#
+# Both checks look only at staged gitlink (mode 160000) changes, so ordinary
+# commits pay one `git diff --cached --raw` and nothing else.
+# `git commit --no-verify` skips this, for when you know and mean it.
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+fail=0
+while IFS=$'\t' read -r meta path; do
+  # meta: ":<oldmode> <newmode> <oldsha> <newsha> <status>"
+  read -r _old_mode new_mode old_sha new_sha _status <<<"${meta#:}"
+  [[ "$new_mode" == "160000" ]] || continue
+  [[ "$old_sha" =~ ^0+$ ]] && continue           # newly added submodule
+  [[ -e "$path/.git" ]] || continue              # not initialised here — cannot judge
+
+  if ! git -C "$path" cat-file -e "$new_sha" 2>/dev/null; then
+    echo "pre-commit: ${path}: pin target ${new_sha:0:7} is not a commit this clone knows" >&2
+    echo "            fetch it first, or it may only exist in some other worktree" >&2
+    fail=1; continue
+  fi
+
+  if git -C "$path" merge-base --is-ancestor "$new_sha" "$old_sha" 2>/dev/null; then
+    echo "pre-commit: ${path}: pin would travel backwards (${old_sha:0:7} -> ${new_sha:0:7})" >&2
+    echo "            this un-records a deploy; a stale checkout was probably git add-ed." >&2
+    echo "            fix: scripts/submodules-refresh.sh, then re-stage what you meant." >&2
+    fail=1; continue
+  fi
+
+  if [[ -z "$(git -C "$path" branch -r --contains "$new_sha" 2>/dev/null)" && \
+        -z "$(git -C "$path" tag --contains "$new_sha" 2>/dev/null)" ]]; then
+    echo "pre-commit: ${path}: pin target ${new_sha:0:7} is not reachable from any remote branch or tag" >&2
+    echo "            push it from ~/Code/$(basename "$path") first — other clones cannot fetch it." >&2
+    fail=1; continue
+  fi
+done < <(git diff --cached --raw --no-renames)
+
+if [[ $fail -eq 1 ]]; then
+  echo "pre-commit: refusing the commit — git commit --no-verify overrides" >&2
+  exit 1
+fi
+exit 0

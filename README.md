@@ -25,7 +25,12 @@ touched.
 Some projects live in their own repo and are tracked here as submodules, so this
 repo stays the full index of what runs on the cluster. Clone with
 `git clone --recurse-submodules`; an existing clone catches up with
-`git submodule update --init`.
+`git submodule update --init`. Then enable the tracked hooks, once per clone —
+`git config core.hooksPath .githooks` — they keep the submodule worktrees on
+the recorded pins after every pull, checkout and rebase
+(`scripts/submodules-refresh.sh`) and refuse commits that would move a pin
+backwards or to a commit GitHub has never seen (`.githooks/pre-commit`). The
+pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
 
 ## Projects
 
