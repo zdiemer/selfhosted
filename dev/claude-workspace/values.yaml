@@ -82,7 +82,11 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
-  tag: "v21"
+  # v22: gateway fix — replies whose turn ends on a tool call (scheduled
+  #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
+  #      banner because the CLI result event carries result: "". The gateway
+  #      now falls back to the last non-empty assistant text in the stream.
+  tag: "v22"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
