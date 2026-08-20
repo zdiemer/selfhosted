@@ -40,6 +40,21 @@ spec:
       # from the globalDefault — it must not be the thing evicted to make room
       # for one of the apps that depends on it.
       priorityClassName: platform-core
+      {{- with .Values.nodeSelector }}
+      # DELIBERATE EXCEPTION to the no-node-binding rule, and the rule's own
+      # reasoning is why. local-path already pins this pod: the PV it
+      # provisions carries a node affinity, so "rely on StorageClass + PVCs"
+      # does not buy portability here — it only means the SCHEDULER picks
+      # which node Authelia is married to, once, invisibly, at first
+      # provision. On 2026-08-20 that pick was a 4GB Chromebook worker
+      # (since decommissioned); the node wedged, and
+      # because the whole point of the local-path survival tier is that
+      # Authelia comes up when the NAS does not, a single laptop took SSO
+      # down with no way to reschedule. Naming the node makes the marriage
+      # explicit and puts it on a machine chosen for it.
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: authelia
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

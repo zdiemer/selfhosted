@@ -32,7 +32,7 @@ controller:
   #
   # Everything below filters targets to the local node, so this DaemonSet must
   # actually reach every node or the filter turns into a silent blind spot.
-  # Before this toleration the DaemonSet ran on 8 of 9 nodes: `zachd-ubuntu`
+  # Before this toleration the DaemonSet ran on 7 of 8 nodes: `zachd-ubuntu`
   # carries the control-plane NoSchedule taint, and it is not empty — a CoreDNS
   # replica, both CSI node plugins, and anything else that tolerates the taint
   # live there.
@@ -750,7 +750,7 @@ alloy:
         targets = discovery.kubernetes.nodes.targets
 
         // Same locality rule as the pods, for the same reason: without it each
-        // of the nine Alloys scrapes all nine kubelets.
+        // of the eight Alloys scrapes all eight kubelets.
         rule {
           source_labels = ["__meta_kubernetes_node_name"]
           regex         = sys.env("K8S_NODE_NAME")

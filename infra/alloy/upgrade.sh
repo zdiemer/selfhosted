@@ -12,7 +12,7 @@
 #   alloy-probe  values-probe.yaml  Deployment, 1 replica — blackbox probes
 #
 # The split is not cosmetic: probe targets are static URLs with no node to be
-# local to, so on a DaemonSet all nine pods would probe all sixteen hostnames.
+# local to, so on a DaemonSet all eight pods would probe all sixteen hostnames.
 # See values-probe.yaml.
 #
 # Nothing here touches ingress. Alloy only reads.
@@ -208,7 +208,7 @@ if kubectl -n "$NAMESPACE" get deployment "$PROBE_RELEASE" >/dev/null 2>&1; then
   kubectl -n "$NAMESPACE" rollout restart deployment/"$PROBE_RELEASE" >/dev/null
 fi
 
-# Nine nodes rolled one at a time, each waiting on a readiness probe: the old
+# Eight nodes rolled one at a time, each waiting on a readiness probe: the old
 # 300s was tight enough that a healthy deploy timed out one node short and
 # skipped every check below it.
 kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=900s
@@ -241,7 +241,7 @@ fi
 #
 # ⚠️  THIS MUST SUM ACROSS EVERY POD, not sample one.
 #
-# It used to read `.items[0]` and that was fine when all nine pods shipped all
+# It used to read `.items[0]` and that was fine when all eight pods shipped all
 # the same logs. With the locality filter it is wrong: a pod ships only what is
 # scheduled beside it, so an Alloy on a node running no Traefik, no Authelia, no
 # cloudflared, no egress-proxy and a quiet CrowdSec agent legitimately reports

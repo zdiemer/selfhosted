@@ -35,7 +35,7 @@ democratic-csi:
       logLevel: info
 
   node:
-    # DaemonSet — this lands on all 9 nodes, including the 3.7GiB laptops, so
+    # DaemonSet — this lands on all 8 nodes, including the 3.7GiB laptops, so
     # the footprint matters more here than anywhere else in this chart.
     nodeSelector: {}
 
@@ -44,7 +44,7 @@ democratic-csi:
     # that class can ever mount there, and the pod that needs one sits in
     # ContainerCreating with no obvious cause.
     #
-    # Without this the DaemonSet desires 8 of 9 nodes — zachd-ubuntu carries
+    # Without this the DaemonSet desires 7 of 8 nodes — zachd-ubuntu carries
     # node-role.kubernetes.io/control-plane:NoSchedule. That node is not
     # hypothetical: minecraft/claude-bridge is pinned to it with a matching
     # toleration, so its PVC would have migrated onto a class that cannot mount

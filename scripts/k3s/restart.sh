@@ -131,7 +131,7 @@ for i in "${!TARGET_NAMES[@]}"; do
         fi
     else
         case "$hostname" in
-            zachd-ubuntu-laptop-4|zachd-ubuntu-laptop-5)
+            zachd-ubuntu-laptop-5)
                 echo "[WARN] $hostname is a Chromebook with the original" \
                     "firmware intact. After POST you must manually select the" \
                     "alternate bootloader (e.g. CTRL+L on the chainload screen)" \

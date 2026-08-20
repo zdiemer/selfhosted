@@ -27,7 +27,7 @@ ExecStart=%h/Code/selfhosted/scripts/k3s/versions-report.sh
 
 Nice=10
 IOSchedulingClass=idle
-# 9 nodes × (apt-get update + simulate) over tailscale ssh; generous.
+# 8 nodes × (apt-get update + simulate) over tailscale ssh; generous.
 TimeoutStartSec=20min
 
 # Needs: tailscale ssh (network), kubectl (~/.kube), gh (~/.config/gh).

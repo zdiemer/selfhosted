@@ -36,6 +36,14 @@ persistence:
   storageClass: ""
   accessMode: ReadWriteOnce
 
+# Which node the local-path volume above lives on. Empty = let the scheduler
+# choose, which is how SSO ended up on a 4GB Chromebook. See the comment in
+# templates/deployment.yaml. Changing this does NOT move existing data: the
+# old PV keeps its own node affinity, so a move means draining the SQLite off
+# by hand (it is a single ~320KB file) and letting a fresh PVC provision here.
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu-2
+
 # Session store. Without this, sessions live in the Authelia process, so every
 # restart — an upgrade, a node drain, an eviction — logs every user out of every
 # gated service on top of the ~15s of 401s while the pod is gone. Redis makes

@@ -32,7 +32,7 @@
 # switch on for a measurement window, not a permanent pipeline.
 #
 # The CoreDNS `log` plugin writes one line per query. This cluster runs ~150
-# pods across 9 nodes, and left on it would plausibly cost several GB/month in
+# pods across 8 nodes, and left on it would plausibly cost several GB/month in
 # Loki — against a 50 GB/month free tier that infra/alloy's allowlist is
 # carefully built to stay inside, and which already carries the ingress logs.
 # Turn it on, run scripts/egress-audit.sh for a day or two, read the inventory,

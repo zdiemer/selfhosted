@@ -28,7 +28,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum(kube_node_status_condition{cluster=\"home-k3s\", condition=\"Ready\", status=\"true\"}) < 9",
+          "expr": "sum(kube_node_status_condition{cluster=\"home-k3s\", condition=\"Ready\", status=\"true\"}) < 8",
           "instant": true,
           "range": false,
           "editorMode": "code",

@@ -110,7 +110,7 @@ the systemd timers already text on failure.
 
 | Rule | Fires when |
 |---|---|
-| Node not Ready | fewer than 9 nodes Ready for 10m |
+| Node not Ready | fewer than 8 nodes Ready for 10m |
 | Node root filesystem above 85% | the most common way this cluster falls over |
 | Volume above 85% full | `local-path` volumes cannot be expanded — that one needs a migration, not a resize |
 | CronJob overdue | a schedule stopped advancing (see below) |
