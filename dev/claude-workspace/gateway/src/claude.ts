@@ -41,6 +41,28 @@ export interface StreamEvent {
 const running = new Map<string, ReturnType<typeof spawn>>();
 let activeCount = 0;
 
+/** Text blocks of an assistant event, joined. Empty for tool-only events. */
+export function assistantText(ev: StreamEvent): string {
+  if (ev.type !== "assistant") return "";
+  return (ev.message?.content ?? [])
+    .filter((b) => b.type === "text" && b.text)
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+}
+
+/** The result event's text is empty when the turn ended on a tool call
+ * (a scheduled wake-up, a background handoff) — the words the model wrote
+ * before that call are in an earlier assistant event, not in `result`. A
+ * banner with no body is what the phone gets otherwise. */
+export function pickResultText(
+  result: string | undefined,
+  lastAssistant: string,
+): string {
+  if (result?.trim()) return result;
+  return lastAssistant || "(no result text)";
+}
+
 export function isRunning(chatKey: string): boolean {
   return running.has(chatKey);
 }
@@ -173,6 +195,7 @@ export async function runClaude(
       let err = "";
       let result: RunResult | null = null;
       let sessionId: string | undefined;
+      let lastAssistant = "";
 
       // NDJSON: the same line-split loop the signal-cli socket uses, because a
       // chunk boundary lands mid-line often enough to matter.
@@ -205,9 +228,11 @@ export async function runClaude(
           sessionId = ev.session_id;
           updateChat(chatKey, { sessionId });
         }
+        const spoke = assistantText(ev);
+        if (spoke) lastAssistant = spoke;
         if (ev.type === "result") {
           result = {
-            text: ev.result ?? "(no result text)",
+            text: pickResultText(ev.result, lastAssistant),
             sessionId: ev.session_id ?? sessionId,
             isError: Boolean(ev.is_error),
           };
