@@ -155,6 +155,19 @@ config:
             - "192.168.4.0/24"
             - "100.64.0.0/10"
             - "127.0.0.1/32"
+      # Talaria's frontend posts to this RPC on every page load to promote a
+      # refresh-token cookie; signed-out visitors get a 401 BY DESIGN, and a
+      # frontend retry loop (2026-08-20: the broken browse page) turns that
+      # into a 401 stream that http-generic-401-bf reads as brute force —
+      # it banned Zach's own home IP. Refresh tokens are high-entropy, so
+      # exempting this one path from counting toward scenarios costs nothing.
+      talaria-token-refresh.yaml: |
+        name: home-k3s/talaria-token-refresh
+        description: "Talaria token-refresh 401s are benign, not brute force"
+        whitelist:
+          reason: "signed-out sessions 401 on the token-refresh RPC by design"
+          expression:
+            - evt.Meta.http_path == '/api/users/UpdateRefreshTokenHandler'
 
 agent:
   # Which pod logs the DaemonSet tails from /var/log/containers on each node.
