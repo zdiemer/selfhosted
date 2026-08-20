@@ -42,7 +42,7 @@ spec:
       # This was a preferred podAntiAffinity, which is a hint the scheduler is
       # free to ignore — and "currently spread" then depends on scheduling
       # order rather than on anything enforcing it. DoNotSchedule makes it a
-      # constraint: with 10 nodes and 2 replicas there is no plausible state
+      # constraint: with 9 nodes and 2 replicas there is no plausible state
       # where spreading them is unsatisfiable, so the soft form bought nothing
       # except the chance to silently not apply.
       #

@@ -152,7 +152,7 @@ cluster-singletons like kube-state-metrics, which need no leader election
 because whichever Alloy shares their node picks them up.
 
 > ⚠️ **This is only correct because `controller.tolerations` puts a pod on every
-> node.** Before that toleration the DaemonSet ran on 9 of 10 — `zachd-ubuntu`
+> node.** Before that toleration the DaemonSet ran on 8 of 9 — `zachd-ubuntu`
 > carries the control-plane `NoSchedule` taint and is *not* empty (a CoreDNS
 > replica, both CSI node plugins). With locality filtering, a node without an
 > Alloy is a silent blind spot rather than a gap someone else covers. `upgrade.sh`
@@ -185,7 +185,7 @@ Each of the nine scrape jobs carries its own keep-list. Measured contributions:
 
 | Job | Series | Note |
 |---|---|---|
-| node-exporter | ~1,800 | ~180 of ~570 exported, ×10 nodes |
+| node-exporter | ~1,600 | ~180 of ~570 exported, ×9 nodes |
 | kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded` phases dropped here |
 | Traefik | ~800 | `*_bucket` dropped |
 | CoreDNS, kubelet, cloudflared, k8up, Alloy, CrowdSec | ~700 | |

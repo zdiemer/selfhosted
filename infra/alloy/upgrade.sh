@@ -208,9 +208,9 @@ if kubectl -n "$NAMESPACE" get deployment "$PROBE_RELEASE" >/dev/null 2>&1; then
   kubectl -n "$NAMESPACE" rollout restart deployment/"$PROBE_RELEASE" >/dev/null
 fi
 
-# Ten nodes rolled one at a time, each waiting on a readiness probe: the old
-# 300s was tight enough that a healthy deploy timed out at 9/10 and skipped
-# every check below it.
+# Nine nodes rolled one at a time, each waiting on a readiness probe: the old
+# 300s was tight enough that a healthy deploy timed out one node short and
+# skipped every check below it.
 kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}" --timeout=900s
 kubectl -n "$NAMESPACE" rollout status deployment/"${PROBE_RELEASE}" --timeout=300s
 

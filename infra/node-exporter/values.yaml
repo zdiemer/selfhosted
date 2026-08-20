@@ -44,7 +44,7 @@
 # correct as the exporter adds collectors upstream.
 #
 # MEASURED, not estimated: the ten collectors below export ~570 series per node,
-# of which Alloy's keep-list ships ~180 — about 1.8k across the ten nodes.
+# of which Alloy's keep-list ships ~180 — about 1.6k across the nine nodes.
 # node_cpu_seconds_total is over half of that on its own (cores x 8 modes, so
 # 96 series on a 12-core box) and it stays, because iowait and steal are the
 # two numbers that explain a slow node when the CPU average looks fine.

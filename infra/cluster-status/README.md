@@ -226,7 +226,7 @@ those fields absent and only a per-interface list populated — so the read retu
 `None`, and **talaria's network column has always been blank**. Here the collector
 falls back to the busiest physical interface, skipping the overlay and tunnel
 devices (`flannel*`, `cni*`, `veth*`, `tailscale*`, …) whose traffic is already
-counted on the uplink. Rates now populate on all 10 nodes.
+counted on the uplink. Rates now populate on all 9 nodes.
 
 If talaria's page ever needs it, that fix is `iface_counters()` in the collector.
 

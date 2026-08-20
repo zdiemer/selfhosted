@@ -201,7 +201,7 @@ Two things to check rather than assume once applied:
 | `dev/claude-workspace` Tailscale | Needs raw UDP to NAT-random peer ports. |
 | `infra/buildkit` | Bursty multi-GB registry pulls would dominate the exit's bandwidth for no reputation benefit. |
 | `discord/vocard` | YouTube blocks datacenter ASNs harder than residential ones — proxying makes playback worse. |
-| `infra/alloy` | DaemonSet telemetry from all 10 nodes; volume without benefit. |
+| `infra/alloy` | DaemonSet telemetry from all 9 nodes; volume without benefit. |
 
 ## Talaria (a different repo)
 

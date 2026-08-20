@@ -162,7 +162,7 @@ STATUS_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role
     page's own series colours (green pods, blue k3s).
 
     Two shapes on a tile, deliberately. Anything with more parts — a rack, a
-    ring of ten nodes — is a smudge at 16px, and a favicon that only works at
+    ring of nine nodes — is a smudge at 16px, and a favicon that only works at
     180px is a favicon that only works where it doesn't matter.
 
     White-on-dark-tile rather than currentColor, so this is the same object in
@@ -212,7 +212,7 @@ def status_card(path: str) -> None:
     line(draw, px, 72, 248, "Is everything up?", brand.display(px(76)), hex_rgb(STATUS_FG))
 
     sub = brand.body(px(25))
-    line(draw, px, 72, 304, "Live health for the ten-node k3s cluster at home — nodes, pods,",
+    line(draw, px, 72, 304, "Live health for the nine-node k3s cluster at home — nodes, pods,",
          sub, hex_rgb(STATUS_MUTED))
     line(draw, px, 72, 340, "storage and every service on top, refreshed every 30 seconds.",
          sub, hex_rgb(STATUS_MUTED))
