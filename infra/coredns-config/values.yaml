@@ -131,6 +131,57 @@ collector:
       memory: 192Mi
 
 # ---------------------------------------------------------------------------
+# Internal answers for the DuckDNS names
+# ---------------------------------------------------------------------------
+# WHY. `infra/duckdns` runs in `tailnet` mode, so `*.zachd.duckdns.org` now
+# resolves to a cluster node's 100.x Tailscale address. Pods resolve these
+# names through the same public DNS as everything else, and a pod cannot use a
+# tailnet address: it works by luck when the pod happens to sit on a different
+# node than the one DuckDNS currently points at, and fails with ECONNREFUSED
+# the moment it doesn't. The updater walks its candidate list on its own, so
+# which node that is changes without anyone touching anything.
+#
+# That is not hypothetical. On 2026-08-21 the updater moved the record to
+# zachd-ubuntu-1 while the claude-workspace pod was running on zachd-ubuntu-1,
+# and the Happy daemon (HAPPY_SERVER_URL=https://happy.zachd.duckdns.org) went
+# into a permanent reconnect loop against its own node's tailnet IP.
+#
+# WHAT THIS DOES. Answers the zone from inside the cluster with the Service
+# that actually serves it, so in-cluster traffic never leaves the cluster to
+# come back in. `answer auto` rewrites the response name back to what was
+# asked, so TLS still sees `happy.zachd.duckdns.org` and Traefik still routes
+# on it — the wildcard cert matches and nothing downstream can tell.
+#
+# Only in-cluster resolution changes. Phones, laptops and the VPS keep getting
+# the tailnet address from DuckDNS, which is the whole point of tailnet mode.
+#
+# THE CAVEAT WORTH KNOWING. A cluster-side probe of one of these names now
+# measures the internal path, not the tailnet edge — it can pass while the
+# outside world cannot reach the name at all. infra/cluster-status probes from
+# in-cluster, so read its green as "the Service is up", not "the edge is up".
+internalNames:
+  enabled: true
+
+  # The zone to answer internally. Rendered into a regex, so a dot is a dot.
+  zone: zachd.duckdns.org
+
+  # Where everything in the zone goes by default. Every name in it is an HTTP
+  # ingress host served by Traefik, and a Service DNS name is used rather than
+  # an IP so a re-created Service (new ClusterIP) needs no edit here.
+  service: traefik.kube-system.svc.cluster.local
+
+  # Names that are NOT Traefik, keyed by their first label. Sending one of
+  # these to Traefik would resolve the name and then refuse the port, which is
+  # a worse failure than the one this whole section exists to fix — it looks
+  # like the service is down.
+  #
+  # `mc` is the bare TCP LoadBalancer on :25565 (minecraft/mc-minecraft), and
+  # infra/cluster-status pings exactly that address. Anything else non-HTTP
+  # added to the zone later belongs here too.
+  exceptions:
+    mc: mc-minecraft.minecraft.svc.cluster.local
+
+# ---------------------------------------------------------------------------
 # The ConfigMap name is NOT configurable, on purpose.
 # ---------------------------------------------------------------------------
 # `coredns-custom` is hardcoded in the k3s CoreDNS Deployment's volume spec.

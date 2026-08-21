@@ -1,18 +1,58 @@
 # coredns-config
 
-Cluster DNS configuration overlay. Today it owns exactly one thing: a **gated DNS query log** that produces the cluster's egress inventory.
+Cluster DNS configuration overlay. It owns two things: **internal answers for the DuckDNS zone**, which is on permanently, and a **gated DNS query log** that produces the cluster's egress inventory, which is not.
 
 k3s installs and owns CoreDNS (a manifest Addon, not a HelmChart — `/var/lib/rancher/k3s/server/manifests/coredns.yaml`). This chart does not install anything and does not patch anything k3s owns. It writes a single ConfigMap into an extension point CoreDNS already reads:
 
 ```
 .:53 {
     ...
-    import /etc/coredns/custom/*.override    <- our file lands here
+    import /etc/coredns/custom/*.override    <- our files land here
     forward . /etc/resolv.conf
 }
 ```
 
 The CoreDNS Deployment already mounts `coredns-custom` at `/etc/coredns/custom` with `optional: true`, so the ConfigMap is picked up simply by existing.
+
+## Internal answers for `*.zachd.duckdns.org`
+
+`infra/duckdns` runs in `tailnet` mode: the zone resolves to a cluster node's
+100.x Tailscale address, which is exactly right for a phone or a laptop and
+useless inside the cluster. Pods resolve the name through the same public DNS
+as everything else and cannot route to a tailnet address — it appears to work
+while the pod sits on some *other* node, and fails with ECONNREFUSED as soon as
+it lands on the node DuckDNS currently points at. The updater walks its
+candidate list on its own, so that is a coin flip that re-flips by itself.
+
+It is not theoretical: on 2026-08-21 the record moved to `zachd-ubuntu-1` while
+the claude-workspace pod was running on `zachd-ubuntu-1`, and Happy's daemon
+(`HAPPY_SERVER_URL=https://happy.zachd.duckdns.org`) went into a permanent
+reconnect loop against its own node.
+
+So the zone is answered in-cluster with the Service that serves it:
+
+```
+rewrite stop {
+    name regex (.*)\.zachd\.duckdns\.org\.$ traefik.kube-system.svc.cluster.local
+    answer auto
+}
+```
+
+`answer auto` puts the queried name back into the response, so the client still
+sends `happy.zachd.duckdns.org` as SNI, the wildcard cert still matches, and
+Traefik still routes on the Host header. Nothing downstream can tell. Only
+in-cluster resolution changes — every device outside keeps getting the tailnet
+address, which is the point of tailnet mode.
+
+Names that are not Traefik get an exception entry, keyed by their first label
+(`internalNames.exceptions` in values.yaml). Today that is `mc`, the bare TCP
+LoadBalancer on :25565 — pointing it at Traefik would resolve the name and then
+refuse the port, which reads as "Minecraft is down". Anything non-HTTP added to
+the zone later belongs there too.
+
+**Caveat worth keeping in mind:** a probe run from inside the cluster now
+measures the internal path. `infra/cluster-status` probes from in-cluster, so
+its green means "the Service is up", not "the edge is reachable".
 
 ## Why
 

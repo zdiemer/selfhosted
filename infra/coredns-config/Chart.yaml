@@ -2,7 +2,7 @@ apiVersion: v2
 name: coredns-config
 description: Cluster DNS configuration overlay — currently the gated query log that produces the cluster's egress inventory
 type: application
-version: 1.0.0
+version: 1.1.0
 # We do not install CoreDNS: k3s does, from a manifest Addon at
 # /var/lib/rancher/k3s/server/manifests/coredns.yaml. This chart only owns the
 # `coredns-custom` ConfigMap that CoreDNS's own Corefile imports, so appVersion

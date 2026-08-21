@@ -1,4 +1,4 @@
-{{- if .Values.dnsLogging.enabled }}
+{{- if or .Values.dnsLogging.enabled .Values.internalNames.enabled }}
 {{/*
 The ONE object this chart owns.
 
@@ -13,10 +13,10 @@ from INSIDE the `.:53` server block, which is where a `log` directive has to
 go. Files matching `*.server` are imported at top level and would be read as a
 new server block instead — same content, and CoreDNS would fail to parse it.
 
-Rendered only when logging is on. Absence is the off state, so `helm upgrade`
-with dnsLogging.enabled=false removes the object; upgrade.sh notices that
-transition and restarts CoreDNS for it, because CoreDNS keeps logging until it
-does.
+Each feature renders its own `*.override` key, and the ConfigMap exists if any
+of them is on. Absence is the off state, so turning the last one off removes
+the object; upgrade.sh notices that transition and restarts CoreDNS for it,
+because CoreDNS keeps its parsed config until it is replaced.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -26,6 +26,7 @@ metadata:
   labels:
     {{- include "coredns-config.labels" . | nindent 4 }}
 data:
+{{- if .Values.dnsLogging.enabled }}
   egress-audit.override: |
     # Managed by the coredns-config Helm chart. See infra/coredns-config.
     #
@@ -36,4 +37,29 @@ data:
     log {{ if .Values.dnsLogging.zones }}{{ join " " .Values.dnsLogging.zones }}{{ else }}.{{ end }} {
         class {{ join " " .Values.dnsLogging.classes }}
     }
+{{- end }}
+{{- if .Values.internalNames.enabled }}
+{{- $zone := .Values.internalNames.zone | replace "." "\\." }}
+  internal-names.override: |
+    # Managed by the coredns-config Helm chart. See infra/coredns-config.
+    #
+    # infra/duckdns publishes a node's 100.x Tailscale address for this zone,
+    # which no pod can reach. Answer it internally with the Service that serves
+    # it instead. `answer auto` puts the queried name back in the response, so
+    # SNI, the wildcard cert and Traefik's host routing all still see the name
+    # the client asked for.
+    #
+    # Rule order matters: rewrite takes the first match and `stop` ends the
+    # chain, so the exceptions have to precede the catch-all.
+{{- range $label, $service := .Values.internalNames.exceptions }}
+    rewrite stop {
+        name regex ^{{ $label }}\.{{ $zone }}\.$ {{ $service }}
+        answer auto
+    }
+{{- end }}
+    rewrite stop {
+        name regex (.*)\.{{ $zone }}\.$ {{ .Values.internalNames.service }}
+        answer auto
+    }
+{{- end }}
 {{- end }}

@@ -121,6 +121,30 @@ spec:
         - port: 3005
           protocol: TCP
 
+    # Traefik. infra/coredns-config answers *.zachd.duckdns.org with the
+    # Traefik Service now (duckdns runs in tailnet mode, and a pod cannot reach
+    # a 100.x address), so every in-cluster call to one of those hostnames
+    # lands here rather than going out and hairpinning back in.
+    #
+    # The ClusterIP:443 shape is already covered by the 10.43.0.0/16 rule
+    # above, but that is not the shape this policy sees: kube-proxy has DNAT'd
+    # the packet to a Traefik POD on its container port by then, and 8443 is
+    # matched by nothing else. Same "both shapes" reasoning as the kube API
+    # pair — without this the connection is refused in about a millisecond,
+    # which reads like the far end is down.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8000
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+
     # Tailscale WireGuard + STUN. All-UDP because peer ports are
     # NAT-dependent and unpredictable; the fallback without this is DERP
     # relay over TCP 443 (allowed above), which works but is slower.

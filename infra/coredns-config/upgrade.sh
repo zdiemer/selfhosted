@@ -78,31 +78,48 @@ echo "    CoreDNS image: ${IMAGE}"
 # enough to catch the failure that actually threatens us — a directive this
 # CoreDNS version does not accept.
 RENDERED="$(helm template "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}")"
-OVERRIDE="$(printf '%s' "$RENDERED" | python3 -c '
-import sys
-out, grabbing = [], False
+
+# Every `*.override` key the chart renders, as `### <key>` followed by its body,
+# sorted by key. Each feature owns a key (dnsLogging, internalNames, whatever
+# comes next), so this reads them all rather than naming one: a key it did not
+# know about would otherwise be applied without ever being validated. The same
+# shape is read back off the live ConfigMap below, so the two are comparable.
+OVERRIDES="$(printf '%s' "$RENDERED" | python3 -c '
+import re, sys
+blocks, key, buf = [], None, []
 for line in sys.stdin.read().split("\n"):
-    if grabbing:
+    if key is not None:
         # The block ends at the first non-blank line that leaves the indent.
         if line.strip() and not line.startswith("    "):
-            break
-        out.append(line[4:])
-    elif line.strip().startswith("egress-audit.override: |"):
-        grabbing = True
-print("\n".join(out).strip("\n"))
+            blocks.append((key, "\n".join(buf).strip("\n")))
+            key, buf = None, []
+        else:
+            buf.append(line[4:])
+            continue
+    m = re.match(r"^  (\S+\.override): \|\s*$", line)
+    if m:
+        key, buf = m.group(1), []
+if key is not None:
+    blocks.append((key, "\n".join(buf).strip("\n")))
+for k, v in sorted(blocks):
+    print("### " + k)
+    print(v)
 ')"
 
-if [[ -z "${OVERRIDE//[[:space:]]/}" ]]; then
-  echo "==> dnsLogging is disabled — the ConfigMap will be removed"
+# The bodies without the key markers — this is the Corefile fragment itself.
+STANZAS="$(grep -v '^### ' <<<"$OVERRIDES" || true)"
+
+if [[ -z "${STANZAS//[[:space:]]/}" ]]; then
+  echo "==> Nothing is enabled — the ConfigMap will be removed"
   WANT=""
 else
-  echo "==> Validating the rendered stanza on ${IMAGE}"
-  WANT="$OVERRIDE"
+  echo "==> Validating the rendered stanzas on ${IMAGE}"
+  WANT="$OVERRIDES"
 
   $KS delete pod "$CANARY" --ignore-not-found >/dev/null 2>&1 || true
   CANARY_COREFILE=".:5353 {
     errors
-$(sed 's/^/    /' <<<"$OVERRIDE")
+$(sed 's/^/    /' <<<"$STANZAS")
     forward . 1.1.1.1
 }"
   $KS create configmap "$CANARY" --from-literal=Corefile="$CANARY_COREFILE" \
@@ -143,12 +160,12 @@ EOF
   done
 
   if [[ -z "$OK" ]]; then
-    echo "FAIL: CoreDNS would not start with this stanza. Nothing has been changed."
+    echo "FAIL: CoreDNS would not start with these stanzas. Nothing has been changed."
     $KS logs "$CANARY" 2>&1 | sed 's/^/      /' | head -20
     $KS delete configmap "$CANARY" --ignore-not-found >/dev/null 2>&1 || true
     exit 1
   fi
-  echo "    ok: CoreDNS parsed the stanza and started"
+  echo "    ok: CoreDNS parsed the stanzas and started"
   $KS delete configmap "$CANARY" --ignore-not-found >/dev/null 2>&1 || true
   cleanup
 fi
@@ -156,7 +173,16 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Apply, and restart only if the content actually moved
 # ---------------------------------------------------------------------------
-HAVE="$($KS get cm coredns-custom -o jsonpath='{.data.egress-audit\.override}' 2>/dev/null || true)"
+HAVE="$($KS get cm coredns-custom -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin).get("data") or {}
+except Exception:
+    data = {}
+for k in sorted(k for k in data if k.endswith(".override")):
+    print("### " + k)
+    print(data[k].strip("\n"))
+' || true)"
 BEFORE_HASH="$(printf '%s' "$HAVE" | md5sum | cut -d' ' -f1)"
 AFTER_HASH="$(printf '%s' "$WANT" | md5sum | cut -d' ' -f1)"
 
@@ -224,7 +250,13 @@ grep -q EXTERNAL_OK <<<"$RESOLVE_OUT" \
   && echo "    ok: external resolution" \
   || echo "    WARN: external name did not resolve — check the upstream forwarder"
 
-if [[ -n "$WANT" ]]; then
+if grep -q '^### internal-names\.override$' <<<"$WANT"; then
+  echo "==> The DuckDNS zone is answered internally now:"
+  $KS get cm coredns-custom -o jsonpath='{.data.internal-names\.override}' \
+    | grep -E '^\s+name regex' | sed 's/^/      /'
+fi
+
+if grep -q '^### egress-audit\.override$' <<<"$WANT"; then
   echo "==> Query logging is ON. Sample:"
   $KS logs deployment/coredns --tail=5 2>/dev/null | sed 's/^/      /'
   collector_status
