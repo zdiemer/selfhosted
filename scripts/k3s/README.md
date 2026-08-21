@@ -16,7 +16,7 @@ chart directory.
 |---|---|
 | [`drain-preflight.sh`](drain-preflight.sh) | Say what draining a node will cost, without draining it: what gaps, what cannot move at all, what a PDB will block, and which volumes face a slow iSCSI detach/attach handoff. `--node <name>`, `--all`. Exits 0 / 2 (something gaps) / 3 (something is stuck or blocked). Every drain path below calls it automatically — `DRAIN_PREFLIGHT=off` skips it, `=strict` refuses to drain on a 3 |
 | [`debug.sh`](debug.sh) | Diagnose node health — tailscale, k3s service, drive/memory health, CPU temp, pending reboots, failed units, resource usage, pods. `--node <name>`, `--all`, `--json` |
-| [`cleanup.sh`](cleanup.sh) | Reclaim disk on nodes. `--report` for a usage report (also flags orphaned local PVs), `--deep` to purge images, containerd snapshots and Docker state |
+| [`cleanup.sh`](cleanup.sh) | Reclaim disk on nodes. `--report` for a usage report (also flags orphaned local PVs), `--deep` to purge images, containerd snapshots and Docker state — sparing whatever running containers are standing on, see below. Every run ends by naming any pod whose image went missing |
 | [`restart.sh`](restart.sh) | Restart nodes. `--all` rolls agents first, draining/uncordoning each; `--service-only` restarts k3s rather than rebooting; `--force` skips the drain |
 | [`update.sh`](update.sh) | Rolling OS package updates, agents first. `--reboot` to auto-reboot when required. Warns when a reboot would change kernel, and refuses to do it unattended on a node that can't recover from a bad boot |
 | [`kernel.sh`](kernel.sh) | Kernel state per node and boot-failure recovery. `--report` for running vs installed kernels and which nodes are one reboot from changing; `--no-auto-kernel` to stop unattended-upgrades installing kernels; `--protect` for panic auto-reboot and a bounded recordfail wait; `--hold`/`--unhold` |
@@ -51,6 +51,37 @@ of minutes; that's normal.
 ./restart.sh --all --service-only  # bounce k3s everywhere, no reboots
 ./k3s-upgrade.sh --version v1.31.4+k3s1
 ```
+
+## Why `--deep` spares images
+
+`--deep` used to run `k3s crictl rmi --all` and then offer containerd every
+snapshot on the node. Both of those reach past unused images into the ones
+holding up **running containers**, and the failure that produces is silent.
+
+On 2026-08-20 a `--deep` run on `zachd-ubuntu-2` hollowed out all 19 pods on
+the node. Nothing crashed and nothing restarted: each process kept running on
+the inodes it already had open, every readiness probe stayed green, and
+`kubectl get pods` showed `Running` for another day. What broke was everything
+*new* — any exec, any subprocess, any binary looked up by path got ENOENT.
+`claude-workspace` sat 7/7 Ready while its Signal/WhatsApp gateway could not
+spawn the MCP server it relays approvals through (`MCP tool mcp__gw__approve
+… not found. Available MCP tools: none`) and Happy could not spawn `tmux` or
+`git`. The errors named the app, never the node.
+
+So the deep steps now ask the node what it is standing on first:
+
+- images referenced by any container (`crictl ps -a`), plus the pause image
+  that backs pod sandboxes and never shows up there, are kept;
+- snapshots are walked parent-first from every `Active` one — that chain is a
+  running container's rootfs and the image layers under it — and only what is
+  outside every chain is offered for removal. On a typical node that is ~6 of
+  ~200 snapshots, which is also the measure of how much the old loop was
+  relying on containerd to say no.
+
+Every run, deep or not, ends by checking that each running container's image
+still exists, and prints the `kubectl delete pod` lines for any that lost it.
+kubelet does not notice this state and will not restart the pod for you — a
+delete (which re-pulls) is the only fix.
 
 ## Kernels are not upgraded automatically
 

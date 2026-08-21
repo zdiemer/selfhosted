@@ -18,10 +18,12 @@ Clean up disk space on k3s cluster nodes.
 OPTIONS:
   --all            Run on all nodes
   --node <name>    Run on a specific node
-  --deep           Aggressive cleanup: remove all images, GC orphaned
-                   containerd snapshots, and nuke Docker state
-                   (buildkit cache + docker system prune --volumes).
-                   Pods will re-pull, Tilt builds will be slower.
+  --deep           Aggressive cleanup: remove every image and containerd
+                   snapshot that nothing on the node is standing on, and
+                   nuke Docker state (buildkit cache + docker system
+                   prune --volumes). Pods will re-pull, Tilt builds will
+                   be slower. What running containers use is spared --
+                   see "Why --deep spares images" in the README.
   --report         Print a disk-usage report for each target node and
                    exit. Makes no changes. Useful for pinpointing
                    which directory is consuming space.
@@ -217,8 +219,8 @@ for i in "${!TARGET_NAMES[@]}"; do
         echo "  - journalctl --vacuum-time=7d"
         echo "  - Clean k3s temp/ingest files"
         if [[ "$DEEP" == "true" ]]; then
-            echo "  - [DEEP] k3s crictl rmi --all"
-            echo "  - [DEEP] Remove unreferenced snapshots (via k3s ctr)"
+            echo "  - [DEEP] Remove images no container on the node uses"
+            echo "  - [DEEP] Remove snapshots not under a running container"
             echo "  - [DEEP] docker buildx prune -a -f (buildkit cache)"
             echo "  - [DEEP] docker system prune -a -f --volumes"
         fi
@@ -259,24 +261,87 @@ for i in "${!TARGET_NAMES[@]}"; do
         "rm -rf /var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content/ingest/* 2>/dev/null; rm -rf /tmp/k3s-* /tmp/k3d-* 2>/dev/null || true"
 
     if [[ "$DEEP" == "true" ]]; then
-        echo "--- [DEEP] Removing all container images ---"
-        run_on_node_sudo "$hostname" \
-            "k3s crictl rmi --all 2>/dev/null || true"
-
-        echo "--- [DEEP] Removing unreferenced snapshots ---"
+        echo "--- [DEEP] Removing images no container on this node uses ---"
+        # This was `crictl rmi --all`, which also deletes the images backing
+        # RUNNING containers. On 2026-08-20 that hollowed out every pod on
+        # zachd-ubuntu-2: each one kept running on inodes it already had open,
+        # so nothing crashed, nothing restarted and every readiness probe
+        # stayed green -- but any NEW exec got ENOENT. The claude-workspace
+        # pod sat 7/7 Running for a day while its Signal/WhatsApp gateway
+        # could not spawn its approval MCP server and Happy could not spawn
+        # tmux or git, with errors that pointed anywhere but here. So ask the
+        # node what its containers actually reference, and skip exactly those.
         # shellcheck disable=SC2016  # expansions run on the remote shell
         run_on_node_sudo "$hostname" '
+if ! command -v jq >/dev/null; then
+    echo "jq not found -- skipping, refusing to remove images blind"
+    exit 0
+fi
+IN_USE=$(k3s crictl ps -a -o json 2>/dev/null \
+    | jq -r ".containers[] | .imageRef, .image.image" | sort -u)
+# Pod sandboxes are not containers and never appear in `crictl ps`, so the
+# pause image has to be spared by name or the next pod scheduled here stalls
+# on a re-pull it should not have needed.
+PAUSE=$(k3s crictl images -o json 2>/dev/null \
+    | jq -r ".images[] | select((.repoTags // []) | join(\",\") | test(\"pause\")) | .id")
+IN_USE=$(printf "%s\n%s\n" "$IN_USE" "$PAUSE" | sort -u)
+REMOVED=0
+KEPT=0
+for img in $(k3s crictl images -q 2>/dev/null | sort -u); do
+    if printf "%s\n" "$IN_USE" | grep -qxF "$img"; then
+        KEPT=$((KEPT + 1))
+    elif k3s crictl rmi "$img" >/dev/null 2>&1; then
+        REMOVED=$((REMOVED + 1))
+    fi
+done
+echo "Removed $REMOVED images ($KEPT still in use)"
+'
+
+        echo "--- [DEEP] Removing snapshots nothing is standing on ---"
+        # Same hazard one layer down: an Active snapshot is the live rootfs of
+        # a running container, and the PARENT chain above it is the image
+        # layers underneath that container. The old loop offered containerd
+        # every snapshot on the node -- ~200 of them, of which six were
+        # actually free -- and trusted it to refuse the rest. It does not
+        # refuse all of them. Walk the chains first and only offer what no
+        # Active snapshot is standing on.
+        # shellcheck disable=SC2016  # expansions run on the remote shell
+        run_on_node_sudo "$hostname" '
+SNAPS=$(k3s ctr -n k8s.io snapshots ls 2>/dev/null)
+if [ -z "$SNAPS" ]; then
+    echo "(no snapshots)"
+    exit 0
+fi
+# Rows are KEY PARENT KIND, but a root snapshot has no parent and so prints
+# only two fields -- read KIND off the end, not off column three.
+CANDIDATES=$(printf "%s\n" "$SNAPS" | awk "
+NR == 1 { next }
+{
+    key = \$1
+    if (NF >= 3) { parent = \$2; kind = \$3 } else { parent = \"\"; kind = \$2 }
+    par[key] = parent
+    keys[++n] = key
+    if (kind == \"Active\") active[++a] = key
+}
+END {
+    for (i = 1; i <= a; i++) {
+        c = active[i]
+        while (c != \"\" && !(c in held)) { held[c] = 1; c = par[c] }
+    }
+    for (i = 1; i <= n; i++) if (!(keys[i] in held)) print keys[i]
+}
+")
+TOTAL=$(printf "%s\n" "$SNAPS" | awk "END {print NR - 1}")
 REMOVED=0
 SKIPPED=0
-SNAPS=$(k3s ctr -n k8s.io snapshots ls 2>/dev/null | awk "NR>1 {print \$1}")
-for snap in $SNAPS; do
+for snap in $CANDIDATES; do
     if k3s ctr -n k8s.io snapshots rm "$snap" 2>/dev/null; then
         REMOVED=$((REMOVED + 1))
     else
         SKIPPED=$((SKIPPED + 1))
     fi
 done
-echo "Removed $REMOVED unreferenced snapshots ($SKIPPED still in use)"
+echo "Removed $REMOVED snapshots ($SKIPPED refused, $((TOTAL - REMOVED - SKIPPED)) held by running containers)"
 '
 
         echo "--- [DEEP] Pruning Docker buildkit cache ---"
@@ -287,6 +352,35 @@ echo "Removed $REMOVED unreferenced snapshots ($SKIPPED still in use)"
         run_on_node_sudo "$hostname" \
             "docker system prune -a -f --volumes 2>/dev/null || true"
     fi
+
+    echo "--- Verifying running containers still have their images ---"
+    # The belt to the braces above, and the check that would have caught this
+    # a day earlier: a container whose image was deleted keeps running and
+    # stays Ready, so nothing short of an exec tells you its rootfs is gone.
+    # kubelet will not notice and will not restart it -- only a pod delete
+    # (which re-pulls) fixes it.
+    # shellcheck disable=SC2016  # expansions run on the remote shell
+    run_on_node_sudo "$hostname" '
+if ! command -v jq >/dev/null; then
+    echo "(jq not found -- skipped)"
+    exit 0
+fi
+PRESENT=$(k3s crictl images -q 2>/dev/null | sort -u)
+MISSING=$(k3s crictl ps -o json 2>/dev/null \
+    | jq -r ".containers[] | .imageRef + \" \" + .labels[\"io.kubernetes.pod.namespace\"] + \" \" + .labels[\"io.kubernetes.pod.name\"]" \
+    | while read -r ref ns pod; do
+        printf "%s\n" "$PRESENT" | grep -qxF "$ref" || echo "$ns $pod"
+      done | sort -u)
+if [ -n "$MISSING" ]; then
+    echo "[WARNING] these pods are running on an image that is gone."
+    echo "          They stay Ready and fail every new exec until deleted:"
+    printf "%s\n" "$MISSING" | while read -r ns pod; do
+        echo "            kubectl delete pod -n $ns $pod"
+    done
+else
+    echo "OK - every running container still has its image."
+fi
+'
 
     echo "--- Disk Usage (After) ---"
     print_disk_usage "$hostname" || true
