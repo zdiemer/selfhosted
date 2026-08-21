@@ -21,6 +21,20 @@ spec:
     {{- include "k8up-wrapper.backend" $ | nindent 4 }}
   backup:
     schedule: "{{ .schedule }}"
+    # Run as root. The k8up image defaults to uid 65532, which reads
+    # group-readable files and silently SKIPS anything mode 0600 — while still
+    # reporting the Backup Succeeded. Found 2026-08-21 adding the crowdsec
+    # schedule: the first run logged `"new files": 33, "errors": 30` and dropped
+    # local_api_credentials.yaml, online_api_credentials.yaml and every
+    # notification template, and the Backup object still said Succeeded. Re-run
+    # as root: 30 new files, 0 errors. This was never crowdsec-specific — the
+    # chart set no securityContext at all, so every namespace was doing it.
+    #
+    # Safe against the NFS repo: the export maps writes to root already (the
+    # repository is root-owned 0700 and always has been), so this changes who
+    # can READ the source volumes, not who can write the backup.
+    podSecurityContext:
+      runAsUser: 0
     volumes:
       {{- include "k8up-wrapper.repoVolume" $ | nindent 6 }}
     # Keep a couple of finished jobs per namespace so a failure is still visible
@@ -56,6 +70,10 @@ spec:
     {{- include "k8up-wrapper.backend" . | nindent 4 }}
   prune:
     schedule: "{{ .Values.maintenance.prune.schedule }}"
+    # Same uid as the backups — one identity for every operation on a shared
+    # repository, which is itself root-owned 0700 on the NAS.
+    podSecurityContext:
+      runAsUser: 0
     volumes:
       {{- include "k8up-wrapper.repoVolume" . | nindent 6 }}
     retention:
@@ -71,6 +89,10 @@ spec:
         memory: 2Gi
   check:
     schedule: "{{ .Values.maintenance.check.schedule }}"
+    # Same uid as the backups — one identity for every operation on a shared
+    # repository, which is itself root-owned 0700 on the NAS.
+    podSecurityContext:
+      runAsUser: 0
     volumes:
       {{- include "k8up-wrapper.repoVolume" . | nindent 6 }}
     resources:
