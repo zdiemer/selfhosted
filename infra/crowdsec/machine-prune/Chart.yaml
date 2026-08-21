@@ -1,0 +1,11 @@
+apiVersion: v2
+name: crowdsec-machine-prune
+description: Deletes CrowdSec machine registrations left behind by dead agent pods, so the wedge they cause can heal itself
+type: application
+version: 1.0.0
+# No image of our own: this is kubectl exec plus the cscli already in the LAPI
+# pod. appVersion tracks the kubectl image, which is the only thing that runs.
+# renovate: image=alpine/kubectl
+appVersion: "1.36.2"
+maintainers:
+  - name: zachd

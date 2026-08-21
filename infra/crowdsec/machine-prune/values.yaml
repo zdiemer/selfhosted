@@ -1,0 +1,88 @@
+# Deletes CrowdSec machine registrations whose agent pod is long gone.
+#
+# WHY THIS CHART EXISTS
+# The upstream agent DaemonSet registers with the LAPI using its POD NAME as the
+# machine name (`USERNAME` comes from a downward-API fieldRef on
+# metadata.name). Pod names are per-pod, not per-node, so every rollout,
+# eviction and node reboot burns a name and leaves the old registration behind
+# forever. On 2026-08-21 the LAPI held 27 machines for a 7-node cluster; 21 were
+# tombstones, and `cscli machines list` had become unreadable.
+#
+# That is the cosmetic half. The real problem is that a stale registration WEDGES
+# THE POD THAT OWNS IT. When an agent container dies but its pod is not replaced,
+# the init container re-runs and tries to register the same name again:
+#
+#   Error: cscli lapi register: api register http 403 Forbidden:
+#          API error: user 'crowdsec-agent-5q4sf': user already exist
+#
+# There is no retry path out of that — the name is taken by the pod's own dead
+# predecessor, so the init container CrashLoopBackOffs indefinitely and that
+# node silently stops parsing logs. Two agents were sitting in exactly that
+# state (zachd-ubuntu-1, zachd-ubuntu-laptop-6) and the only thing that fixed
+# them was pruning by hand.
+#
+# Pruning the tombstone frees the name, so the wedged init container's next
+# backoff retry succeeds. This job is therefore not just tidying: it is the
+# self-heal path for a failure mode that otherwise needs a human.
+#
+# THE PROPER FIX is TLS agent authentication, which does not use a registration
+# name at all. That is a larger change to how the whole crowdsec release is
+# configured; this job makes the current arrangement survivable in the meantime.
+
+lapi:
+  # The Deployment to exec `cscli` in, and the container inside it. `cscli
+  # machines` operates on the LAPI's own database, so it has to run there —
+  # the DB is a ReadWriteOnce PVC and a second pod opening that SQLite file
+  # concurrently is how you corrupt it, not how you read it.
+  #
+  # These track the crowdsec release name. Renaming that release without
+  # updating these does not silently prune nothing: `kubectl exec` exits
+  # non-zero on a missing deployment and the job fails, which is the intent.
+  deployment: crowdsec-lapi
+  container: crowdsec-lapi
+
+prune:
+  # Delete machines whose last heartbeat is older than this.
+  #
+  # Healthy agents heartbeat every few seconds — the whole fleet was inside 20s
+  # when this was written — so 24h is not a threshold that can be tripped by a
+  # busy node or a slow rollout. It only catches registrations whose pod no
+  # longer exists, plus a node that has genuinely been offline for a day. The
+  # latter is fine and in fact desirable: that node's agent re-registers on
+  # return, which is the same self-heal path described above.
+  duration: 24h
+
+schedule:
+  # Daily, at a minute nothing else in the repo uses (traefik-certs 04:17 Mon,
+  # renovate 05:30 Sat, versions-report 07:00 Sat).
+  #
+  # Weekly would keep the list tidy just as well, but tidiness is the lesser
+  # half of the job. A wedged agent only heals once its tombstone is pruned, so
+  # the schedule is really "how long may a node sit there not parsing logs" —
+  # about a day and a half at worst here, versus over a week on a weekly cron.
+  cron: "40 4 * * *"
+  # Two of these racing would both be issuing deletes against the same table.
+  # Nothing good comes of it and there is no reason to allow it.
+  concurrencyPolicy: Forbid
+  # One exec into a pod that is already running. If this has not finished in
+  # five minutes the LAPI is unwell and the job should say so rather than hang.
+  activeDeadlineSeconds: 300
+  # Unlike traefik-certs (backoffLimit: 0, because a retried ACME order burns
+  # rate limit) a retry here costs nothing and the usual failure is a transient
+  # API blip or a LAPI mid-rollout. Let it try again before reporting failure.
+  backoffLimit: 2
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+images:
+  # Only needs `kubectl exec`; cscli comes from the LAPI pod. Same image and pin
+  # as infra/traefik-certs so there is one renovate target for both.
+  # renovate: datasource=docker depName=alpine/kubectl
+  kubectl: alpine/kubectl:1.36.2
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi

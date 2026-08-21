@@ -1,0 +1,73 @@
+{{/*
+One container, one exec. The interesting decisions are all in values.yaml.
+
+The log deliberately prints the machine table before and after. mc-monitor was
+deleted from this repo for printing a line nobody read; the difference is that
+this job has an EFFECT, and the listing is what makes that effect auditable
+after the fact — "how long had that agent been wedged" is a question you can
+only answer from these logs.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "crowdsec-machine-prune.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crowdsec-machine-prune.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule.cron | quote }}
+  concurrencyPolicy: {{ .Values.schedule.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.schedule.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.schedule.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.schedule.activeDeadlineSeconds }}
+      backoffLimit: {{ .Values.schedule.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "crowdsec-machine-prune.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "crowdsec-machine-prune.fullname" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: prune
+              image: {{ .Values.images.kubectl }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # `set -e` is the point: kubectl exec exits non-zero if the
+                  # Deployment is gone or the container was renamed, and that
+                  # must fail the job. A prune that silently matches nothing
+                  # looks identical to a healthy one in every dashboard.
+                  echo "==> machines before"
+                  kubectl exec "deploy/$LAPI_DEPLOY" -c "$LAPI_CTR" -- \
+                    cscli machines list
+
+                  echo "==> pruning registrations idle longer than $DURATION"
+                  # Exits 0 and prints "No machines to prune." when there is
+                  # nothing to do, which is the steady state once this has been
+                  # running a while — verified against cscli v1.7.8 before
+                  # writing this, so a caught-up cluster does not page anyone.
+                  kubectl exec "deploy/$LAPI_DEPLOY" -c "$LAPI_CTR" -- \
+                    cscli machines prune --duration "$DURATION" --force
+
+                  echo "==> machines after"
+                  kubectl exec "deploy/$LAPI_DEPLOY" -c "$LAPI_CTR" -- \
+                    cscli machines list
+              env:
+                - name: LAPI_DEPLOY
+                  value: {{ .Values.lapi.deployment | quote }}
+                - name: LAPI_CTR
+                  value: {{ .Values.lapi.container | quote }}
+                - name: DURATION
+                  value: {{ .Values.prune.duration | quote }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}

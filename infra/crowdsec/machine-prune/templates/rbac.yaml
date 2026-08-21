@@ -1,0 +1,59 @@
+{{/*
+The narrowest RBAC that still permits `kubectl exec deploy/<lapi>`: read the
+Deployment to resolve it to a pod, list pods to pick one, and open an exec
+stream into it.
+
+pods/exec CANNOT be restricted by resourceName in any useful way here — the pod
+name carries the ReplicaSet hash and changes on every rollout, so pinning it
+would break the job on the next crowdsec upgrade. The containment is the
+namespace instead: this Role lives in the crowdsec namespace and nothing else
+runs there, so the worst this service account can reach is the CrowdSec LAPI it
+already exists to drive.
+
+Worth being clear-eyed that exec is a strong verb — it is a shell in another
+pod. It is used because `cscli machines` is a local-database operation: the
+decisions DB is a ReadWriteOnce PVC held by the LAPI pod, and a second process
+opening that SQLite file is a corruption risk, not an alternative.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "crowdsec-machine-prune.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crowdsec-machine-prune.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "crowdsec-machine-prune.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crowdsec-machine-prune.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ .Values.lapi.deployment | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "crowdsec-machine-prune.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crowdsec-machine-prune.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "crowdsec-machine-prune.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "crowdsec-machine-prune.fullname" . }}
+    namespace: {{ .Release.Namespace }}
