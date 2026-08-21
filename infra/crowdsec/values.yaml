@@ -172,7 +172,8 @@ config:
 agent:
   # Which pod logs the DaemonSet tails from /var/log/containers on each node.
   # Traefik is the cluster's single ingress choke point, so this one program is
-  # a complete record of external HTTP by construction.
+  # a complete record of external HTTP — but only across nodes the agent
+  # actually runs on. See the toleration below for why that is not automatic.
   acquisition:
     - namespace: kube-system
       podName: traefik-*
@@ -186,6 +187,26 @@ agent:
       memory: 100Mi
     limits:
       memory: 250Mi
+
+  # WHY A TOLERATION. "Traefik is the choke point" only holds if an agent runs
+  # everywhere Traefik does. Traefik is a 3-replica Deployment and one replica
+  # lands on zachd-ubuntu, which carries the stock
+  # node-role.kubernetes.io/control-plane:NoSchedule taint. With the chart's
+  # default empty tolerations the DaemonSet reported a contented 6/6 Ready
+  # across a 7-node fleet, and roughly a third of external HTTP was never
+  # parsed by anything — no gap visible in `cscli metrics`, because the agent
+  # that would have counted it was never scheduled. A DaemonSet that silently
+  # covers most of the cluster is worse than one that fails loudly.
+  #
+  # The other two control-plane nodes (zachd-ubuntu-laptop, -laptop-1) are
+  # untainted, so this toleration only changes zachd-ubuntu today. Keep it
+  # keyed to the taint rather than using a blanket `operator: Exists`: if a
+  # node is ever cordoned or tainted for a real reason, the agent should stay
+  # off it like everything else.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
 
 lapi:
   # Bouncer API keys + the decisions DB live here; losing them means
