@@ -7,6 +7,16 @@
 #
 # One sample = trigger `spark tps`, tail the async reply from server logs,
 # read container RSS via `kubectl top`. Flags TPS < 19.5 or mem >= 85%.
+#
+# HISTORY: this script also had a CronJob twin, `minecraft/monitor-cronjob.yaml`
+# (`mc-monitor`, every minute, alpine/k8s + the same sampler inlined into a
+# ConfigMap). Removed 2026-08-20. Nothing ever consumed its output — it printed
+# one line to pod stdout and no dashboard, alert or Alloy rule read it — while
+# the sampler's up-to-10s log-tail loop regularly blew past the job's 120s
+# activeDeadlineSeconds, so it produced a steady drip of Failed/DeadlineExceeded
+# pods and BackoffLimitExceeded events on the status dashboard. Run this by hand
+# when you actually want the numbers; if TPS ever needs to be a real timeseries,
+# it belongs in infra/alloy as a scrape, not in a shell script on a timer.
 set -euo pipefail
 
 NS="${NAMESPACE:-minecraft}"
