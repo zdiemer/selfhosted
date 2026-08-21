@@ -111,38 +111,59 @@ select_node() {
     done
 }
 
+# Every remote command is wrapped in `timeout`, because a node that is Ready to
+# kubernetes can still be unreachable over the tailnet, and `tailscale ssh` will
+# wait forever rather than fail.
+#
+# That is not hypothetical. On 2026-08-21 zachd-ubuntu-1's tailscaled advertised
+# its flannel.1 address (10.42.7.0/32 — the POD overlay) as a direct endpoint.
+# Peers on the same cluster have a flannel route to that subnet, so the path
+# looked reachable, got selected, and then blackholed. iscsi-prereq.sh hung on
+# that one node for 21 minutes; because infra/democratic-csi/upgrade.sh runs the
+# preflight with output redirected to /dev/null, the deploy simply sat there
+# with no indication of why. A whole storage deploy blocked indefinitely on one
+# unreachable node, silently.
+#
+# `tailscale ssh` does not accept -o, so ConnectTimeout/ServerAlive cannot be
+# passed through; timeout(1) around the whole call is the portable equivalent.
+# Exit 124 is timeout's, and is reported distinctly — "unreachable" and "the
+# command failed" are different problems and should not read the same.
+SSH_TIMEOUT="${SSH_TIMEOUT:-60}"
+
+_report_remote_failure() {
+    local rc="$1" hostname="$2"
+    if [[ "$rc" == "124" ]]; then
+        echo "[ERROR] $hostname did not respond within ${SSH_TIMEOUT}s (unreachable over the tailnet?)" >&2
+    else
+        echo "[ERROR] Failed to run command on $hostname" >&2
+    fi
+    return "$rc"
+}
+
 run_on_node() {
     local hostname="$1"
     local cmd="$2"
+    local rc=0
 
     if is_local_node "$hostname"; then
-        if ! bash -c "$cmd"; then
-            echo "[ERROR] Failed to run command on $hostname" >&2
-            return 1
-        fi
+        bash -c "$cmd" || rc=$?
     else
-        if ! $SSH_CMD "${SSH_USER}@$hostname" "$cmd"; then
-            echo "[ERROR] Failed to run command on $hostname" >&2
-            return 1
-        fi
+        timeout "$SSH_TIMEOUT" $SSH_CMD "${SSH_USER}@$hostname" "$cmd" || rc=$?
     fi
+    [[ "$rc" == "0" ]] || _report_remote_failure "$rc" "$hostname"
 }
 
 run_on_node_sudo() {
     local hostname="$1"
     local cmd="$2"
+    local rc=0
 
     if is_local_node "$hostname"; then
-        if ! sudo bash -c "$cmd"; then
-            echo "[ERROR] Failed to run command on $hostname" >&2
-            return 1
-        fi
+        sudo bash -c "$cmd" || rc=$?
     else
-        if ! $SSH_CMD "root@$hostname" "$cmd"; then
-            echo "[ERROR] Failed to run command on $hostname" >&2
-            return 1
-        fi
+        timeout "$SSH_TIMEOUT" $SSH_CMD "root@$hostname" "$cmd" || rc=$?
     fi
+    [[ "$rc" == "0" ]] || _report_remote_failure "$rc" "$hostname"
 }
 
 # Print real-disk usage for the node: every distinct block-backed
