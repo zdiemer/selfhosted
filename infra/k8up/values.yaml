@@ -172,6 +172,19 @@ schedules:
   - name: kube-system
     namespace: kube-system
     schedule: "30 1 * * 0"
+  # crowdsec was missing from this list entirely until 2026-08-21, found while
+  # planning the retirement of the node its volumes are pinned to. Both PVCs are
+  # local-path with Delete reclaim and node affinity on a single node, so
+  # draining that node for good would have taken the LAPI database with it, and
+  # there was nothing to restore from.
+  #
+  # Small — 100Mi config + 1Gi db. Easy to overlook because the bans themselves
+  # rebuild from live traffic; what does not come back is the alert history and
+  # the machine registrations. A LAPI that has forgotten its agents answers
+  # their re-registration with 403 until each stale name is pruned.
+  - name: crowdsec
+    namespace: crowdsec
+    schedule: "0 2 * * 0"
 
 # ------------------------------------------------------------------------------
 # Repository maintenance
