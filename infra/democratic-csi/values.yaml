@@ -34,6 +34,33 @@ democratic-csi:
     driver:
       logLevel: info
 
+      # PIN THE DRIVER IMAGE. Every other image this chart deploys — attacher,
+      # provisioner, resizer, snapshotter, registrar, csi-proxy, the busybox
+      # cleanup — ships pinned to a version by upstream. The two that actually
+      # implement the driver, and that sit under every PVC in the cluster, ship
+      # as `latest`. That was the only unpinned thing in the storage layer.
+      #
+      # WHY A DIGEST AND NOT A TAG. `latest` does not correspond to any released
+      # tag. Resolved 2026-08-21:
+      #
+      #   latest  sha256:944d0e65…   <- what all 16 driver containers were running
+      #   v1.9.5  sha256:fc3b7d7e…   <- newest release
+      #   v1.9.3  sha256:8ce65ce5…   <- what Chart.yaml's appVersion claims
+      #
+      # So the cluster was running an untagged floating build that matches no
+      # release, and appVersion was decorative. Pinning to v1.9.5 here would
+      # have been a silent version CHANGE dressed up as a hygiene fix; pinning
+      # to the digest already running is provably a no-op and stops the drift
+      # today. Moving to a real release is a separate, staged change that runs
+      # the verification gate in README.md first.
+      #
+      # The `@sha256` split across registry/tag is forced by the chart, which
+      # renders `image: "{{ registry }}:{{ tag }}"` with no digest support. The
+      # concatenation yields a valid canonical reference.
+      image:
+        registry: ghcr.io/democratic-csi/democratic-csi@sha256
+        tag: 944d0e65077efbd9c1fdf23997eec8fac4b4bfb7c3de400f63e33a0a849c5ced
+
   node:
     # DaemonSet — this lands on all 7 nodes, including the 3.7GiB laptop, so
     # the footprint matters more here than anywhere else in this chart.
@@ -54,6 +81,13 @@ democratic-csi:
 
     driver:
       logLevel: info
+
+      # Same pin as the controller above — same image, same reasoning. Both
+      # references must move together: a controller and a node plugin on
+      # different builds is a combination nobody upstream tests.
+      image:
+        registry: ghcr.io/democratic-csi/democratic-csi@sha256
+        tag: 944d0e65077efbd9c1fdf23997eec8fac4b4bfb7c3de400f63e33a0a849c5ced
 
   csiDriver:
     # Delegate fsGroup so a pod's securityContext.fsGroup is applied by the
