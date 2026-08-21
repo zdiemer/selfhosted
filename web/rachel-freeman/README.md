@@ -126,13 +126,31 @@ receipt still reaches card buyers.
    name to `ingress.cloudflareHosts`, or leave it if the apex is the only name
    anyone is given.
 
-2. **Resend.** No account yet, so `app.resendApiKey` is empty and the order
-   emails above are dormant. Sign up, verify `rachelfreeman.art` with the DNS
-   records Resend gives you, then `secrets edit web/rachel-freeman`.
+2. **Mail to `orders@` currently goes nowhere.** Sending is done, but enabling
+   Resend *inbound* replaced the apex MX with `inbound-smtp.us-east-1.amazonaws.com`,
+   which removed the Namecheap forwarding that used to deliver `orders@`. Resend
+   inbound is webhook-only — it has no forward-to-an-address rule — so anything a
+   buyer sends by hitting reply is accepted and then read by nobody.
+
+   The fix is Cloudflare Email Routing on the apex (the zone is already there):
+   it owns the MX, forwards `orders@` to Rachel, and needs no code and no second
+   API key. Turn Resend inbound off when you do it — one MX set per name, so the
+   two cannot both own the apex.
 
 Done: the admin account exists (so create-first-user is closed), the domain is
-live on the tunnel, and Stripe is live — account verified, webhook endpoint
-confirmed, a full test-mode purchase driven end to end on 2026-08-17.
+live on the tunnel, Stripe is live — account verified, webhook endpoint
+confirmed, a full test-mode purchase driven end to end on 2026-08-17 — and
+**order emails send** as of 2026-08-20: Resend account up, `rachelfreeman.art`
+verified on the `send.` subdomain (DKIM at `resend._domainkey`, SPF and MX on
+`send`, region us-east-1), a send-only API key in the vault as
+`app.resendApiKey`, and both messages delivered to a real inbox from the actual
+`sendOrderEmails` template.
+
+Two things about the sending setup worth keeping in mind. The API key is
+deliberately **send-only**, which is why it cannot be used for an inbound
+forwarder later — that needs a second, broader key. And the apex SPF still
+names Namecheap's forwarder; it is inert rather than wrong, because Resend
+sends from the `send.` subdomain and SPF is checked there.
 
 ## Backups
 
