@@ -1,0 +1,34 @@
+# Copy to values.local.yaml (gitignored) and fill in.
+#
+# Only auth.password is actually required — everything else here is optional.
+
+auth:
+  # The Guacamole portal login. This is the only credential that MUST be set:
+  # the chart refuses to template without it.
+  password: "generate-a-long-random-one"
+
+# Optional: pre-fill the Windows credentials so the connection tile drops you
+# straight onto the desktop. Leave these out and Guacamole shows Windows' own
+# login screen instead, which keeps the guest password out of the cluster
+# entirely — the better default for a machine only you use.
+#
+# NOTE: this REPLACES the whole connections list from values.yaml (helm merges
+# maps but overwrites lists), so copy the params block across too if you set it.
+# connections:
+#   - name: "Windows 11"
+#     protocol: rdp
+#     hostname: "win11-rdp.dev.svc.cluster.local"
+#     port: 3389
+#     username: "zach"
+#     password: "the-windows-password"
+#     domain: ""
+#     params:
+#       ignore-cert: "true"
+#       security: "any"
+#       resize-method: "display-update"
+#       disable-copy: "false"
+#       disable-paste: "false"
+#       enable-wallpaper: "true"
+#       enable-font-smoothing: "true"
+#       enable-full-window-drag: "true"
+#       enable-audio: "true"

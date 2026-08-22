@@ -20,6 +20,8 @@ LINT_SKIP=(
 # `required` secrets in values.local.yaml block a default render.
 TEMPLATE_SKIP=(
   auth/authelia
+  # auth.password is `required` (op://homelab/dev-guacamole).
+  dev/guacamole
   auth/keepass
   dev/happy-server
   discord/vocard

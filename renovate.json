@@ -13,6 +13,15 @@
     },
     {
       "customType": "regex",
+      "description": "github-release *_VERSION pins in upgrade.sh (KubeVirt/CDI ship operator YAML, not a helm chart)",
+      "managerFilePatterns": ["/(^|/)upgrade\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=(?<depName>\\S+)\\s*\\n[A-Z_]+_VERSION=\"\\$\\{[A-Z_]+:-(?<currentValue>[^}\"]+)\\}\""
+      ],
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
       "description": "ARG *_VERSION pins in Dockerfiles",
       "managerFilePatterns": ["/(^|/)Dockerfile$/"],
       "matchStrings": [
@@ -39,6 +48,11 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "KubeVirt and CDI move together — CDI is built against a KubeVirt release",
+      "matchPackageNames": ["kubevirt/kubevirt", "kubevirt/containerized-data-importer"],
+      "groupName": "kubevirt"
+    },
     {
       "description": "arr stack moves together",
       "matchFileNames": ["media/arr/**"],

@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "guacamole.fullname" . }}
+  labels:
+    {{- include "guacamole.labels" . | nindent 4 }}
+  annotations:
+    {{- /*
+      These two annotations plus ingressClassName are required by
+      infra/ingress-policy's ValidatingAdmissionPolicy — the API server rejects
+      the Ingress without them. router.tls also picks up the cluster default
+      wildcard certificate from infra/traefik's TLSStore, which is what serves
+      *.zachd.duckdns.org.
+    */}}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.auth.forwardAuth.enabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "guacamole.fullname" . }}-forwardauth@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "guacamole.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "guacamole.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

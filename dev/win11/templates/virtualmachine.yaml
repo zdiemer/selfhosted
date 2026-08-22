@@ -1,0 +1,209 @@
+{{- $name := include "win11.name" . -}}
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+spec:
+  runStrategy: {{ .Values.vm.runStrategy }}
+
+  {{- /*
+    The root disk, as a template rather than a standalone DataVolume: this one
+    SHOULD share the VM's lifecycle. A blank source means CDI provisions the
+    volume and hands it over empty for Windows Setup to partition.
+  */}}
+  dataVolumeTemplates:
+    - metadata:
+        name: {{ $name }}-root
+        annotations:
+          {{- include "win11.pvcAnnotations" . | nindent 10 }}
+      spec:
+        storage:
+          accessModes:
+            - {{ .Values.disks.root.accessMode }}
+          volumeMode: {{ .Values.disks.root.volumeMode }}
+          resources:
+            requests:
+              storage: {{ .Values.disks.root.size }}
+          storageClassName: {{ .Values.disks.root.storageClass }}
+        source:
+          blank: {}
+
+  template:
+    metadata:
+      labels:
+        {{- include "win11.labels" . | nindent 8 }}
+        {{- /*
+          KubeVirt adds vm.kubevirt.io/name itself and the RDP Service selects
+          on that. These are here so the pod is findable the same way every
+          other workload in this repo is.
+        */}}
+        kubevirt.io/vm: {{ $name }}
+    spec:
+      architecture: amd64
+      terminationGracePeriodSeconds: {{ .Values.vm.terminationGracePeriodSeconds }}
+      evictionStrategy: {{ .Values.vm.evictionStrategy }}
+
+      domain:
+        {{- /*
+          q35 — the modern PCIe chipset. Windows 11 will not install on the
+          default i440fx: it has no PCIe, and SecureBoot needs q35's SMM.
+        */}}
+        machine:
+          type: q35
+
+        cpu:
+          cores: {{ .Values.vm.cpu.cores }}
+          model: {{ .Values.vm.cpu.model }}
+          {{- with .Values.vm.cpu.features }}
+          features:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+        memory:
+          guest: {{ .Values.vm.memory }}
+
+        resources:
+          requests:
+            cpu: {{ .Values.vm.cpuRequest | quote }}
+
+        {{- /*
+          WINDOWS 11 HARD REQUIREMENTS — the installer refuses to proceed
+          without all three, with an unhelpful "This PC can't run Windows 11":
+            * UEFI firmware (not BIOS)          -> bootloader.efi
+            * SecureBoot                        -> efi.secureBoot + features.smm
+            * TPM 2.0                           -> devices.tpm
+        */}}
+        firmware:
+          bootloader:
+            efi:
+              secureBoot: true
+              {{- /*
+                Persist the EFI NVRAM. Without this the firmware's boot entries
+                and SecureBoot key state are rebuilt from scratch on every
+                boot; Windows tolerates it but the boot order does not stick.
+                Backed by vmStateStorageClass in dev/kubevirt.
+              */}}
+              persistent: true
+
+        features:
+          acpi: {}
+          apic: {}
+          {{- /* SMM is what makes secureBoot above legal. Not optional. */}}
+          smm: {}
+          {{- /*
+            Hyper-V enlightenments. Windows detects that it is a guest and
+            stops doing things that are expensive under virtualization — busy
+            spinlocks, its own timer emulation, redundant TLB flushes. The
+            difference on an idle Windows desktop is several percent of a core.
+          */}}
+          hyperv:
+            relaxed: {}
+            vapic: {}
+            vpindex: {}
+            runtime: {}
+            synic: {}
+            synictimer:
+              direct: {}
+            tlbflush: {}
+            ipi: {}
+            frequencies: {}
+            reenlightenment: {}
+            spinlocks:
+              spinlocks: 8191
+
+        clock:
+          utc: {}
+          timer:
+            {{- /*
+              hpet off and pit/rtc policies as upstream recommends for Windows:
+              a Windows guest with HPET present drifts and burns CPU polling it.
+            */}}
+            hpet:
+              present: false
+            pit:
+              tickPolicy: delay
+            rtc:
+              tickPolicy: catchup
+            hyperv: {}
+
+        devices:
+          {{- /*
+            Persistent vTPM. `persistent` is what makes it survive a reboot,
+            which is the difference between Windows keeping its keys and
+            re-provisioning them every boot. Requires vmStateStorageClass to be
+            set cluster-wide (dev/kubevirt) — admission fails without it.
+          */}}
+          tpm:
+            persistent: true
+
+          disks:
+            - name: rootdisk
+              bootOrder: 1
+              disk:
+                bus: virtio
+            {{- if and .Values.disks.installer.enabled .Values.disks.installer.attached }}
+            {{- /*
+              bootOrder 2, behind the empty root disk. UEFI tries the disk,
+              finds no bootloader, falls through to the CD — so the install
+              boots from the ISO, and every boot after Windows is written to
+              the disk goes straight to the disk with no "press any key" prompt.
+            */}}
+            - name: installer
+              bootOrder: 2
+              cdrom:
+                bus: sata
+            {{- end }}
+            {{- if .Values.disks.virtio.enabled }}
+            {{- /*
+              No bootOrder — this is never booted, only read. Windows Setup
+              cannot see a virtio root disk until you point "Load driver" at
+              this CD (viostor), and the installed guest has no NIC until you
+              install NetKVM from it.
+            */}}
+            - name: virtio-drivers
+              cdrom:
+                bus: sata
+            {{- end }}
+
+          interfaces:
+            - name: default
+              model: {{ .Values.vm.networkModel }}
+              {{- /*
+                masquerade puts the guest behind NAT on the pod's own IP, so
+                the VM gets a normal pod network identity and Services select
+                it like any other workload. The alternative (bridge) needs
+                Multus and a real L2 attachment.
+              */}}
+              masquerade: {}
+
+          {{- /*
+            An absolute-positioning USB tablet. Without it the browser console
+            uses a relative PS/2 mouse and the guest pointer drifts away from
+            yours — the single most common "the web console is unusable"
+            complaint. Cheap, and it makes noVNC behave.
+          */}}
+          inputs:
+            - name: tablet
+              type: tablet
+              bus: usb
+
+      networks:
+        - name: default
+          pod: {}
+
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: {{ $name }}-root
+        {{- if and .Values.disks.installer.enabled .Values.disks.installer.attached }}
+        - name: installer
+          dataVolume:
+            name: {{ $name }}-installer
+        {{- end }}
+        {{- if .Values.disks.virtio.enabled }}
+        - name: virtio-drivers
+          dataVolume:
+            name: {{ $name }}-virtio
+        {{- end }}

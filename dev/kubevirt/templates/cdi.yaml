@@ -1,0 +1,40 @@
+{{/*
+The CDI CR — Containerized Data Importer. This is the piece that makes a VM
+disk something you can declare: a DataVolume names a source (an HTTP URL, a
+registry image, a blank disk, or an upload) and CDI populates a PVC from it.
+
+CLUSTER-SCOPED, unlike the KubeVirt CR above, so it deliberately carries no
+namespace. cdi-operator runs in the `cdi` namespace that the pinned operator
+manifest creates.
+*/}}
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: CDI
+metadata:
+  name: cdi
+  labels:
+    {{- include "kubevirt.labels" . | nindent 4 }}
+  annotations:
+    {{- include "kubevirt.protect" . | nindent 4 }}
+spec:
+  imagePullPolicy: IfNotPresent
+
+  {{- /*
+    Both node selectors are `linux` only, matching upstream. Harmless here (the
+    whole cluster is linux/amd64) but it keeps the CR diffable against the
+    upstream cdi-cr.yaml when a version bump changes something.
+  */}}
+  infra:
+    nodeSelector:
+      kubernetes.io/os: linux
+  workload:
+    nodeSelector:
+      kubernetes.io/os: linux
+
+  config:
+    featureGates:
+      {{- toYaml .Values.cdi.featureGates | nindent 6 }}
+    {{- with .Values.cdi.scratchSpaceStorageClass }}
+    scratchSpaceStorageClass: {{ . | quote }}
+    {{- end }}
+    podResourceRequirements:
+      {{- toYaml .Values.cdi.podResources | nindent 6 }}

@@ -1,0 +1,145 @@
+# A Windows 11 desktop that happens to be a Kubernetes object.
+#
+# Nothing here is specific to what you use the VM for — it is a plain Windows
+# box with RDP open on the cluster network. dev/guacamole puts it in a browser.
+#
+# READ THIS FIRST — the install is not fully declarative, and can't be.
+# Microsoft does not publish a stable, unauthenticated Windows 11 ISO URL, so
+# the installer image is UPLOADED once by hand (`virtctl image-upload`, see
+# README) rather than fetched by CDI. Everything after that — the disk, the
+# firmware, the TPM, the VM itself — is declared here. The VM therefore ships
+# STOPPED (runStrategy: Halted) so it cannot boot into an empty disk before you
+# have put an ISO in front of it.
+
+vm:
+  # Defaults to the release name. This becomes the VMI name, the virt-launcher
+  # pod's vm.kubevirt.io/name label, and what you pass to `virtctl`.
+  name: ""
+
+  # Halted | Always | RerunOnFailure | Manual
+  #
+  # Ships Halted on purpose: a fresh VM with a blank disk and no installer
+  # attached boots to a UEFI shell and sits there. Start it by hand for the
+  # install (`virtctl start win11`), then set this to `Always` in
+  # values.local.yaml once Windows is on the disk and you want it to come back
+  # after a node failure.
+  runStrategy: Halted
+
+  cpu:
+    # Windows 11's floor is 2. Six is comfortable for a desktop and still
+    # leaves room on the smaller nodes.
+    cores: 6
+
+    # host-model | host-passthrough | a named QEMU model
+    #
+    # THIS IS THE LIVE-MIGRATION TRADE-OFF, and this cluster makes it sharper
+    # than most. host-passthrough exposes the physical CPU verbatim: fastest,
+    # and the only way to get nested virtualization into the guest — but the
+    # guest then cannot migrate to a host with a different CPU.
+    #
+    # This cluster is mixed Intel (i9-13900H, i7-8700B, i5-8500T) AND AMD
+    # (Ryzen 9 9955HX, Ryzen 3 2200G). NO CPU setting makes a guest migrate
+    # between an Intel and an AMD host — that is a QEMU/KVM constraint, not a
+    # KubeVirt one. host-model at least keeps migration working within a
+    # vendor, which is why it is the default.
+    model: host-model
+
+    # Extra CPU features to require. Nested virtualization (running Hyper-V,
+    # WSL2, or an Android emulator INSIDE this guest) needs the vendor's
+    # virtualization flag passed through, which host-model does not include by
+    # default. Both physical CPU families here already have nesting enabled at
+    # the host level.
+    #
+    # Uncomment the line matching where you want the VM to run — and note that
+    # requiring one pins the VM to that vendor's nodes as a side effect.
+    features: []
+    # features:
+    #   - { name: vmx, policy: require }   # Intel nodes
+    #   - { name: svm, policy: require }   # AMD nodes
+
+  # Virtual NIC model. virtio is fast but Windows has no driver for it until
+  # you load one from the virtio ISO, so a freshly-installed guest has no
+  # network until you do. Switch to e1000e if you would rather have networking
+  # work during setup and take the performance hit.
+  networkModel: virtio
+
+  # Guest RAM. KubeVirt adds its own overhead on top for virt-launcher, so the
+  # pod requests somewhat more than this. Windows 11's floor is 4Gi; 8 is a
+  # usable desktop.
+  memory: 8Gi
+
+  # CPU the virt-launcher POD requests from the scheduler. This is not the same
+  # number as cores above: without dedicatedCpuPlacement the guest's vCPUs are
+  # ordinary shares, so requesting one full core per vCPU would waste most of a
+  # node. This is the floor the VM is guaranteed, not its ceiling.
+  cpuRequest: 1
+
+  # How long Windows gets to shut down cleanly when the VM is stopped or its
+  # node is drained. The pod default (30s) is far too short — Windows will be
+  # mid-shutdown when the kubelet SIGKILLs it, and the next boot runs a repair.
+  terminationGracePeriodSeconds: 300
+
+  # LiveMigrate | External | None
+  #
+  # Inherited from the cluster default in dev/kubevirt, restated here because
+  # it only works if disks.root.accessMode below is ReadWriteMany. The two
+  # settings are one decision: a drain can only move this VM if its disk is
+  # reachable from both nodes at once.
+  evictionStrategy: LiveMigrate
+
+disks:
+  root:
+    size: 128Gi
+    # truenas-iscsi is a real zvol, so it can hand out a raw block device.
+    storageClass: truenas-iscsi
+    # Block, NOT Filesystem. A filesystem-mode PVC puts a qcow2/raw FILE on a
+    # filesystem and the guest's writes take two layers of indirection; Block
+    # hands the zvol straight to QEMU. It is also what makes RWX meaningful.
+    volumeMode: Block
+    # ReadWriteMany is what live migration requires — both the source and
+    # destination virt-launcher hold the disk open during the handover.
+    # Verified against this cluster: democratic-csi's iSCSI driver binds an
+    # RWX+Block claim on truenas-iscsi.
+    #
+    # Drop to ReadWriteOnce and the VM still runs perfectly — it just stops
+    # instead of moving when a node is drained.
+    accessMode: ReadWriteMany
+
+  # The Windows installer ISO. CDI creates an empty PVC in `upload` mode and
+  # waits; `virtctl image-upload` fills it. See README §Install.
+  installer:
+    enabled: true
+    size: 12Gi
+    storageClass: truenas-nfs
+    # Set to a URL to let CDI fetch it instead of uploading by hand. Works for
+    # any ISO with a stable direct link — Windows Server evaluation images, a
+    # Linux guest, your own mirror. Leave empty for the upload flow.
+    url: ""
+    # Detach after Windows is installed: an attached installer ISO means every
+    # boot offers "press any key to boot from CD". Flip to false in
+    # values.local.yaml once you're done, then restart the VM.
+    attached: true
+
+  # The virtio driver ISO. NOT OPTIONAL FOR A WINDOWS GUEST: Windows ships no
+  # virtio drivers, so without this the installer shows an empty disk list (it
+  # cannot see the virtio root disk) and the VM has no network. Load the
+  # storage driver from this ISO during setup — README §Install walks it.
+  virtio:
+    enabled: true
+    size: 1Gi
+    storageClass: truenas-nfs
+    # The upstream "stable" symlink. It moves when a new virtio-win is
+    # released, which is why it is deliberately NOT renovate-annotated — there
+    # is no version in the URL to bump. CDI imports it once; delete the
+    # DataVolume to re-pull a newer one.
+    url: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
+
+service:
+  # In-cluster RDP endpoint. ClusterIP is the right default: dev/guacamole
+  # reaches it from inside the cluster, and the VM is never exposed directly.
+  #
+  # Switch to LoadBalancer to get a LAN IP for a native RDP client (klipper-lb
+  # provides bare-metal LoadBalancers on this cluster). Note that does bypass
+  # Guacamole and anything in front of it.
+  type: ClusterIP
+  rdpPort: 3389

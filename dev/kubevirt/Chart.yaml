@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kubevirt
+description: In-cluster virtualization — KubeVirt + CDI, so a VM is an API object with a PVC for a disk
+type: application
+version: 1.0.0
+# Tracks the KubeVirt release that upgrade.sh applies. There is no `image.tag`
+# in values.yaml (the operator manifest carries every image it needs), so
+# scripts/check-appversion-drift.sh skips this chart — the real pin is
+# KUBEVIRT_VERSION in upgrade.sh, which renovate watches.
+appVersion: "v1.9.0"
+maintainers:
+  - name: zachd

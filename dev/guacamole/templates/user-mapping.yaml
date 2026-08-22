@@ -1,0 +1,52 @@
+{{- $pw := required "auth.password is required — set it in values.local.yaml (op://homelab/dev-guacamole)" .Values.auth.password -}}
+{{/*
+Guacamole's file authentication provider. This one Secret is the entire auth
+and connection database.
+
+A Secret rather than a ConfigMap: it holds the portal password and, if you fill
+them in, the guest credentials too.
+
+NOTE ON HOW THE IMAGE FINDS THIS. The 1.6.0 entrypoint builds a fresh
+GUACAMOLE_HOME in /tmp on every start and symlinks in the contents of whatever
+directory GUACAMOLE_HOME pointed at — so mounting this at /etc/guacamole and
+setting GUACAMOLE_HOME=/etc/guacamole is enough. There is no extension to
+install: file auth is part of guacamole-client itself.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "guacamole.fullname" . }}-user-mapping
+  labels:
+    {{- include "guacamole.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  user-mapping.xml: |
+    <user-mapping>
+      <authorize username="{{ .Values.auth.username }}" password="{{ $pw }}">
+      {{- range .Values.connections }}
+        <connection name="{{ .name }}">
+          <protocol>{{ .protocol }}</protocol>
+          <param name="hostname">{{ .hostname }}</param>
+          <param name="port">{{ .port }}</param>
+          {{- /*
+            Credentials are omitted entirely when blank rather than emitted as
+            empty strings — an empty <param name="username"/> is NOT the same
+            as no username to guacd. Empty tells it to authenticate as nobody
+            and the connection fails; absent tells it to let the guest prompt.
+          */}}
+          {{- with .username }}
+          <param name="username">{{ . }}</param>
+          {{- end }}
+          {{- with .password }}
+          <param name="password">{{ . }}</param>
+          {{- end }}
+          {{- with .domain }}
+          <param name="domain">{{ . }}</param>
+          {{- end }}
+          {{- range $k, $v := .params }}
+          <param name="{{ $k }}">{{ $v }}</param>
+          {{- end }}
+        </connection>
+      {{- end }}
+      </authorize>
+    </user-mapping>

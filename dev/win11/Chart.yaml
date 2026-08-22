@@ -1,0 +1,11 @@
+apiVersion: v2
+name: win11
+description: A general-purpose Windows 11 desktop as a Kubernetes object — UEFI + SecureBoot + vTPM, disks on the NAS
+type: application
+version: 1.0.0
+# No container image of its own — the guest is a disk, and KubeVirt supplies
+# virt-launcher. scripts/check-appversion-drift.sh skips charts with no
+# top-level image.tag, so this tracks the guest OS instead.
+appVersion: "windows-11"
+maintainers:
+  - name: zachd

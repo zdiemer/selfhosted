@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guacamole.fullname" . }}
+  labels:
+    {{- include "guacamole.labels" . | nindent 4 }}
+spec:
+  # One replica. Guacamole keeps session state in the servlet container, so a
+  # second pod would not share sessions — it would just be a coin flip over
+  # which one your WebSocket lands on. Deliberately no PodDisruptionBudget
+  # either: a minAvailable budget over a single replica blocks node drains
+  # forever (scripts/ci-lint-availability.sh enforces this).
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate. Two Tomcats briefly sharing the release is
+    # pointless when sessions are not shared anyway, and it avoids a second pod
+    # holding the same Secret during an upgrade.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "guacamole.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "guacamole.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the connection list or password changes — otherwise
+        # the running Tomcat keeps serving the old user-mapping.xml.
+        checksum/user-mapping: {{ include (print $.Template.BasePath "/user-mapping.yaml") . | sha256sum }}
+    spec:
+      # Longer than the preStop sleep below, or the kubelet SIGKILLs the
+      # container mid-hook and the hook accomplishes nothing.
+      terminationGracePeriodSeconds: 30
+      containers:
+        # --- the protocol daemon -------------------------------------------
+        - name: guacd
+          image: "{{ .Values.guacd.image.repository }}:{{ .Values.guacd.image.tag }}"
+          imagePullPolicy: {{ .Values.guacd.image.pullPolicy }}
+          ports:
+            - name: guacd
+              containerPort: 4822
+          # No readinessProbe on purpose: nothing routes to this container. It
+          # is reached over localhost by the sibling below, so a probe would
+          # only add a lint obligation (preStop) for no gain.
+          resources:
+            {{- toYaml .Values.guacd.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+        # --- the web app ----------------------------------------------------
+        - name: guacamole
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Same pod, so the daemon is on loopback.
+            - name: GUACD_HOSTNAME
+              value: "127.0.0.1"
+            - name: GUACD_PORT
+              value: "4822"
+            # The template directory the entrypoint copies/symlinks from. The
+            # Secret below is mounted here.
+            - name: GUACAMOLE_HOME
+              value: /etc/guacamole
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: user-mapping
+              mountPath: /etc/guacamole
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /guacamole/
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /guacamole/
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                # Endpoint removal races SIGTERM: without this, Traefik can
+                # still be routing to this pod while Tomcat is shutting down,
+                # and an in-flight desktop session dies with a blank page
+                # instead of a clean reconnect.
+                command: ["sleep", "5"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: user-mapping
+          secret:
+            secretName: {{ include "guacamole.fullname" . }}-user-mapping

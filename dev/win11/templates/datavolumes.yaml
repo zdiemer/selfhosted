@@ -1,0 +1,81 @@
+{{- $name := include "win11.name" . -}}
+{{- /*
+  Standalone DataVolumes for the two ISOs.
+
+  Deliberately NOT dataVolumeTemplates on the VM (the root disk is — see
+  virtualmachine.yaml). A dataVolumeTemplate is garbage-collected with its VM,
+  and these two need the opposite lifecycle:
+
+    * the installer is uploaded BEFORE the VM first starts, and re-uploading a
+      12Gi ISO because the VM was recreated is a bad afternoon;
+    * the virtio ISO is generic and can be shared by every Windows guest you
+      ever add.
+*/ -}}
+{{- if .Values.disks.installer.enabled }}
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: {{ $name }}-installer
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+  annotations:
+    {{- include "win11.pvcAnnotations" . | nindent 4 }}
+    {{- /*
+      Keep the ISO when the release is uninstalled. Helm would otherwise delete
+      the DataVolume, CDI would delete its PVC, and the reclaim policy would
+      delete the data — discarding a hand-uploaded installer image that takes
+      an hour to replace.
+    */}}
+    helm.sh/resource-policy: keep
+spec:
+  storage:
+    accessModes:
+      - ReadWriteMany
+    resources:
+      requests:
+        storage: {{ .Values.disks.installer.size }}
+    storageClassName: {{ .Values.disks.installer.storageClass }}
+    {{- /*
+      Filesystem, not Block. An ISO is imported as a file and only ever read
+      sequentially by the guest's virtual CD-ROM; there is nothing to gain from
+      a raw device, and RWX-Filesystem on NFS lets any node's virt-launcher
+      mount it.
+    */}}
+    volumeMode: Filesystem
+  source:
+    {{- if .Values.disks.installer.url }}
+    http:
+      url: {{ .Values.disks.installer.url | quote }}
+    {{- else }}
+    {{- /*
+      CDI provisions the PVC and parks an upload target on it, then waits.
+      `virtctl image-upload` streams the ISO in. Until that happens the
+      DataVolume sits in UploadReady and the VM cannot boot the installer.
+    */}}
+    upload: {}
+    {{- end }}
+---
+{{- end }}
+{{- if .Values.disks.virtio.enabled }}
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: {{ $name }}-virtio
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+  annotations:
+    {{- include "win11.pvcAnnotations" . | nindent 4 }}
+    helm.sh/resource-policy: keep
+spec:
+  storage:
+    accessModes:
+      - ReadWriteMany
+    resources:
+      requests:
+        storage: {{ .Values.disks.virtio.size }}
+    storageClassName: {{ .Values.disks.virtio.storageClass }}
+    volumeMode: Filesystem
+  source:
+    http:
+      url: {{ .Values.disks.virtio.url | quote }}
+{{- end }}

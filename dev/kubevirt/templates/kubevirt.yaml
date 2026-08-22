@@ -1,0 +1,64 @@
+{{/*
+The KubeVirt CR — virt-operator's desired state for the whole virtualization
+layer. Everything here is read at runtime: virt-handler picks up configuration
+changes without a restart, so editing this and re-running upgrade.sh is a safe,
+online operation. Deleting it is not (see values.yaml).
+*/}}
+apiVersion: kubevirt.io/v1
+kind: KubeVirt
+metadata:
+  name: kubevirt
+  namespace: {{ .Values.kubevirt.namespace }}
+  labels:
+    {{- include "kubevirt.labels" . | nindent 4 }}
+  annotations:
+    {{- include "kubevirt.protect" . | nindent 4 }}
+spec:
+  certificateRotateStrategy: {}
+  customizeComponents: {}
+  imagePullPolicy: IfNotPresent
+
+  {{- /*
+    Roll running VMs by live-migrating them when KubeVirt itself is upgraded,
+    rather than restarting the guests. Omitting workloadUpdateMethods entirely
+    (the upstream default) means a KubeVirt bump leaves existing VMs running on
+    the old virt-launcher until someone restarts them by hand.
+  */}}
+  {{- if .Values.kubevirt.workloadUpdate.enabled }}
+  workloadUpdateStrategy:
+    workloadUpdateMethods:
+      - LiveMigrate
+    batchEvictionSize: {{ .Values.kubevirt.workloadUpdate.batchSize }}
+    batchEvictionInterval: {{ .Values.kubevirt.workloadUpdate.batchInterval }}
+  {{- else }}
+  workloadUpdateStrategy: {}
+  {{- end }}
+
+  infra:
+    replicas: {{ .Values.kubevirt.infraReplicas }}
+
+  configuration:
+    developerConfiguration:
+      featureGates:
+        {{- toYaml .Values.kubevirt.featureGates | nindent 8 }}
+
+    {{- /*
+      Backing store for vTPM / EFI NVRAM state. Required before any VM can ask
+      for `tpm: {persistent: true}`, which Windows 11 needs. Must be RWX so the
+      state follows a migrating VM.
+    */}}
+    {{- with .Values.kubevirt.vmStateStorageClass }}
+    vmStateStorageClass: {{ . | quote }}
+    {{- end }}
+
+    {{- /*
+      Cluster-wide default. A VM without an eviction strategy blocks
+      `kubectl drain` indefinitely, which on this cluster means a routine node
+      reboot appears to hang.
+    */}}
+    {{- with .Values.kubevirt.evictionStrategy }}
+    evictionStrategy: {{ . }}
+    {{- end }}
+
+    migrations:
+      {{- toYaml .Values.kubevirt.migrations | nindent 6 }}

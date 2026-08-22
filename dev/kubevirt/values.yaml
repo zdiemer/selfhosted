@@ -1,0 +1,137 @@
+# KubeVirt + CDI — virtual machines as Kubernetes objects.
+#
+# WHAT THIS CHART OWNS, AND WHAT IT DOES NOT.
+# KubeVirt ships as a two-stage install: a plain operator manifest (namespace,
+# CRD, RBAC, virt-operator Deployment) and then a `KubeVirt` custom resource
+# that tells virt-operator what to actually deploy. Same shape for CDI. The
+# operator manifests are pinned and applied by upgrade.sh with kubectl; this
+# chart owns only the two CRs. That split is deliberate:
+#
+#   * the operator manifests are 850KB of generated upstream YAML. Vendoring
+#     them into templates/ would make every version bump an unreviewable diff,
+#     and would hand helm ownership of the CRDs — see the CRD warning below.
+#   * the CRs are the part with actual decisions in them, and they are small
+#     enough to read. Those belong in git.
+#
+# ⚠️  DELETING THE KubeVirt CR TEARS DOWN EVERY VM. virt-operator treats the CR
+# as the desired state of the whole install: remove it and it removes virt-api,
+# virt-controller, virt-handler, and every running VirtualMachineInstance with
+# them. `helm uninstall kubevirt` would do exactly that. protectCRs below
+# stamps helm.sh/resource-policy=keep on both CRs so an uninstall leaves the
+# virtualization layer running and merely stops managing it. Same reasoning as
+# infra/snapshot-controller's CRD pinning, one layer up.
+
+# Stamp helm.sh/resource-policy=keep on the KubeVirt and CDI CRs. See above.
+# Turning this off means `helm uninstall` destroys every VM on the cluster.
+protectCRs: true
+
+kubevirt:
+  # The KubeVirt CR is namespaced and MUST live in the same namespace as
+  # virt-operator, which the upstream manifest hardcodes to `kubevirt`.
+  # upgrade.sh refuses to run anywhere else.
+  namespace: kubevirt
+
+  # Feature gates. DELIBERATELY EMPTY, and verified against v1.9.0 rather than
+  # copied from a blog post — the gate list churns hard between releases and a
+  # stale one is either a no-op or a deprecation warning in every virt-handler
+  # log line. In v1.9.0 (pkg/virt-config/featuregate/):
+  #
+  #   * Beta gates are ON by default. `Snapshot` — the one that backs
+  #     VirtualMachineSnapshot, i.e. the whole backup story below — is Beta.
+  #   * GA gates are always on and cannot be disabled. `VMPersistentState`
+  #     (persistent vTPM, which Windows 11 requires), `LiveMigration` and
+  #     `ExpandDisks` are all GA here.
+  #   * `HotplugVolumes` is Deprecated as of v1.9.0 in favour of
+  #     `DeclarativeHotplugVolumes`. Listing it earns a warning and nothing else.
+  #
+  # So everything this cluster needs is already on. Add a gate here only for an
+  # Alpha feature you actually want.
+  featureGates: []
+
+  # Where the *backend state* of a VM lives — the vTPM contents and, when a VM
+  # asks for it, the EFI NVRAM. Windows 11 requires a TPM 2.0, and a vTPM whose
+  # state is thrown away on reboot means Windows re-provisions its keys every
+  # boot (and BitLocker never works).
+  #
+  # MUST be an RWX filesystem class: the state volume has to follow the VM to
+  # whichever node it migrates to. truenas-nfs is the cluster's RWX class.
+  # Leaving this empty makes `tpm.persistent: true` fail at admission.
+  vmStateStorageClass: truenas-nfs
+
+  # Cluster-wide default for what happens to a running VM when its node is
+  # drained. LiveMigrate moves it; the alternative is that `kubectl drain`
+  # either hard-stops the VM or blocks forever.
+  #
+  # THIS IS THE SETTING THAT MATTERS MOST ON THIS CLUSTER. Nodes here get
+  # rebooted, re-imaged and cordoned routinely — two are sitting
+  # NotReady/SchedulingDisabled right now with their batteries out. A VM is a
+  # pet: an unclean stop is a Windows chkdsk, not a rescheduled pod. Migration
+  # only works if the VM's disks are RWX (see dev/win11), so the two settings
+  # have to be read together.
+  evictionStrategy: LiveMigrate
+
+  migrations:
+    # Let QEMU throttle the guest's own vCPUs when a VM dirties memory faster
+    # than the link can ship it. Without this a busy VM can migrate forever and
+    # never converge. The cost is the guest running slowly for a few seconds at
+    # the end of the migration, which is strictly better than not converging.
+    allowAutoConverge: true
+    # Home LAN, and the disks are already on the NAS — only RAM crosses the
+    # wire. Keep the cluster-wide and per-node parallelism low so a mass drain
+    # doesn't saturate the network shifting several VMs at once.
+    parallelMigrationsPerCluster: 2
+    parallelOutboundMigrationsPerNode: 1
+    # Give up and roll back after this many seconds per GiB of guest RAM. The
+    # upstream default (800) is tuned for datacenter NICs; a 1GbE home LAN
+    # moving an 8Gi Windows guest wants a lot more slack before it calls a
+    # migration failed.
+    completionTimeoutPerGiB: 1800
+
+  # How virt-operator rolls VMs when KubeVirt itself is upgraded. LiveMigrate
+  # keeps guests running across a version bump; the fallback (Evict) restarts
+  # them. Batch of one so an upgrade trickles rather than migrating everything
+  # at once.
+  workloadUpdate:
+    enabled: true
+    batchSize: 1
+    batchInterval: 5m
+
+  # virt-api and virt-controller replica count. One is right here: both are
+  # stateless and leader-elected, so a second buys failover during a node
+  # reboot, not throughput — and a brief control-plane gap does not stop a
+  # single already-running VM.
+  #
+  # NOTE: this is scheduling-relevant but NOT a node binding. Nothing in this
+  # chart pins to a node; VM placement is decided by the scheduler against
+  # /dev/kvm, which every node in this cluster has.
+  infraReplicas: 1
+
+cdi:
+  # The CDI CR is CLUSTER-SCOPED (unlike the KubeVirt CR), so it carries no
+  # namespace. cdi-operator itself runs in the `cdi` namespace created by the
+  # operator manifest.
+  #
+  # CDI is what turns "a Windows ISO on a website, or on your laptop" into "a
+  # PVC the VM can boot". Without it you are dd-ing images into volumes by hand.
+  featureGates:
+    # Respect WaitForFirstConsumer on the target StorageClass rather than
+    # forcing an immediate bind. Both truenas classes are Immediate so this is
+    # inert today — it matters if a VM disk is ever put on local-path, whose
+    # binding mode is WaitForFirstConsumer.
+    - HonorWaitForFirstConsumer
+
+  # Scratch space is the temporary volume CDI uses while converting or
+  # decompressing an image. It needs to be at least as large as the image being
+  # imported, and it is short-lived. iSCSI keeps that traffic off the NFS
+  # export that the VM state volumes use.
+  scratchSpaceStorageClass: truenas-iscsi
+
+  # Ceiling for the import/upload pods. A Windows ISO import is IO-bound, not
+  # CPU-bound, so this is a guard against a runaway conversion rather than a
+  # real expectation.
+  podResources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi

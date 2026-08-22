@@ -1,0 +1,147 @@
+# Apache Guacamole — remote desktops in a browser tab.
+#
+# WHY THIS EXISTS. KubeVirt already gives you a console: `virtctl vnc` opens the
+# QEMU display, which works from firmware onward and is how you drive a Windows
+# installer. But it is a local client, it is VNC (no clipboard, no audio, one
+# fixed resolution), and it is not something you hand to a browser.
+#
+# Guacamole is clientless: guacd speaks RDP to the guest, the web app renders it
+# to HTML5 canvas over a WebSocket. You get a real Windows desktop at a URL,
+# with a shared clipboard and a resolution that follows the browser window.
+#
+# HOW THE TWO FIT TOGETHER — use both, for different jobs:
+#   * virtctl vnc / the KubeVirt console  — install-time, pre-boot, recovery,
+#     and anything where Windows itself is not up to answer RDP.
+#   * Guacamole                            — daily use, once Windows is running.
+#
+# ⚠️  RDP IS NOT UP UNTIL WINDOWS SAYS SO. A fresh guest has Remote Desktop
+# disabled by default; Guacamole will report "connection refused" until you turn
+# it on inside Windows. See README §Turn on RDP in the guest.
+
+image:
+  repository: docker.io/guacamole/guacamole
+  # renovate: datasource=docker depName=guacamole/guacamole
+  tag: "1.6.0"
+  pullPolicy: IfNotPresent
+
+guacd:
+  # The protocol daemon — this is the process that actually speaks RDP. Runs as
+  # a sidecar in the same pod rather than its own Deployment: the web app talks
+  # to it over a plain unauthenticated TCP socket, so keeping that hop inside
+  # the pod's own network namespace means it is never reachable from the
+  # cluster network and needs no NetworkPolicy of its own.
+  image:
+    repository: docker.io/guacamole/guacd
+    # renovate: datasource=docker depName=guacamole/guacd
+    tag: "1.6.0"
+    pullPolicy: IfNotPresent
+  resources:
+    # Scales with pixels pushed: idle is nearly free, a full-screen desktop
+    # doing video is the spike.
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 1Gi
+
+auth:
+  # Guacamole's own login, via the built-in file authentication provider
+  # (user-mapping.xml). No database — a Guacamole install normally wants
+  # Postgres or MySQL just to hold two rows, and for a handful of static
+  # connections that is a whole extra stateful service to back up and upgrade.
+  #
+  # The trade is that connections are declared in git rather than editable in
+  # the UI. For a fixed set of VMs that is an improvement.
+  username: "zach"
+  # REQUIRED — set in values.local.yaml (op://homelab/dev-guacamole).
+  # Templating fails without it, which is why this chart is in
+  # scripts/ci-lint-charts.sh TEMPLATE_SKIP.
+  password: ""
+
+  forwardAuth:
+    # Authelia in front, as a second gate. OFF by default because
+    # *.zachd.duckdns.org is already tailnet-only (infra/duckdns runs in
+    # `tailnet` mode, so the A record is a 100.x CGNAT address that does not
+    # route from the internet) and Guacamole has its own login on top of that.
+    # Two portals to cross for a LAN desktop is friction without a threat.
+    #
+    # Turn it on if this host is ever published through the Cloudflare tunnel.
+    enabled: false
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+# The desktops offered after login. Each becomes a connection tile.
+connections:
+  - name: "Windows 11"
+    protocol: rdp
+    # The RDP Service from dev/win11. Cross-namespace is fine — this is a
+    # normal ClusterIP DNS name.
+    hostname: "win11-rdp.dev.svc.cluster.local"
+    port: 3389
+
+    # Guest credentials. DELIBERATELY EMPTY BY DEFAULT: leave them blank and
+    # Guacamole shows Windows' own login screen in the browser, so the Windows
+    # password never has to be stored here at all. Fill them in
+    # values.local.yaml only if you want one-click sign-in.
+    username: ""
+    password: ""
+    domain: ""
+
+    # Extra RDP parameters. The defaults below are the ones that matter for a
+    # Windows guest reached through Guacamole; everything else upstream
+    # defaults sensibly.
+    params:
+      # Windows generates a self-signed RDP certificate. Without this, every
+      # connection fails certificate validation and Guacamole reports a bare
+      # "connection closed".
+      ignore-cert: "true"
+      # Negotiate whatever the guest offers. `nla` is stricter and better, but
+      # it requires the credentials up front — which defeats the empty-username
+      # default above, because NLA has nowhere to prompt.
+      security: "any"
+      # Resize the guest desktop to the browser window, live. The alternative
+      # (reconnect) drops the session on every resize.
+      resize-method: "display-update"
+      # Bidirectional clipboard — the single biggest reason to use RDP over the
+      # KubeVirt VNC console.
+      disable-copy: "false"
+      disable-paste: "false"
+      # Visual niceties that cost bandwidth on a WAN and nothing on a LAN.
+      enable-wallpaper: "true"
+      enable-font-smoothing: "true"
+      enable-full-window-drag: "true"
+      # Audio redirection.
+      enable-audio: "true"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  # Tailnet-only for free: infra/duckdns is in `tailnet` mode, so every
+  # *.zachd.duckdns.org name resolves to a cluster node's 100.x Tailscale
+  # address. That is CGNAT space — unroutable from the public internet — so
+  # this host answers only to devices on the tailnet, with no IP allowlist and
+  # no port forward involved. TLS is the wildcard from infra/traefik-certs,
+  # served as Traefik's default certificate.
+  host: windows.zachd.duckdns.org
+  # DELIBERATELY EMPTY. Adding a host here publishes this through the
+  # Cloudflare tunnel, i.e. onto the public internet. A remote desktop gateway
+  # is exactly the thing not to do that to — and if you ever do, turn
+  # auth.forwardAuth on in the same change.
+  cloudflareHosts: []
+  tls:
+    enabled: true
+
+resources:
+  # Tomcat + the Guacamole webapp. The JVM is the floor here; guacd (above) is
+  # what actually scales with use.
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi

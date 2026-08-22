@@ -1,0 +1,9 @@
+apiVersion: v2
+name: guacamole
+description: Apache Guacamole — the Windows VM (or anything else that speaks RDP/VNC/SSH) in a browser tab, no client installed
+type: application
+version: 1.0.0
+# Mirrors image.tag below — scripts/check-appversion-drift.sh enforces it.
+appVersion: "1.6.0"
+maintainers:
+  - name: zachd

@@ -1,0 +1,27 @@
+{{- $name := include "win11.name" . -}}
+{{/*
+RDP into the guest.
+
+The selector is vm.kubevirt.io/name, which KubeVirt stamps on the virt-launcher
+pod — NOT the chart's own labels, because the pod is created by virt-controller
+and only carries what KubeVirt puts there.
+
+Endpoints exist only while the VM is running. A stopped VM means an empty
+Endpoints object, and Guacamole reports "connection refused" rather than
+anything about the VM being off.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-rdp
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    vm.kubevirt.io/name: {{ $name }}
+  ports:
+    - name: rdp
+      port: {{ .Values.service.rdpPort }}
+      targetPort: 3389
+      protocol: TCP
