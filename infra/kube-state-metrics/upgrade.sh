@@ -15,7 +15,7 @@ NAMESPACE="${NAMESPACE:-infra}"
 # Pin the chart. KSM chart bumps have historically changed the DEFAULT
 # collector set, which is exactly the kind of change that costs money quietly.
 # renovate: datasource=helm depName=kube-state-metrics registryUrl=https://prometheus-community.github.io/helm-charts
-CHART_VERSION="${CHART_VERSION:-8.3.0}"
+CHART_VERSION="${CHART_VERSION:-8.4.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
