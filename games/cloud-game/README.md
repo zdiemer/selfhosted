@@ -1,0 +1,68 @@
+# cloud-game (CloudRetro) — retro multiplayer in the browser
+
+Runs [cloud-game](https://github.com/giongto35/cloud-game) on the cluster: a
+libretro emulator (NES, SNES, GB/GBA, N64, PS1, FBNeo arcade, DOSBox) executes
+server-side, the video is encoded to VP8 and streamed to the browser over
+WebRTC, and controller input comes back the same way. Several people opening
+the same room link each get a controller port — four-player Mario Kart 64
+with nothing installed on the client.
+
+ROMs come read-only from the same NAS share RomM uses.
+
+## Architecture
+
+```
+browser ──HTTPS/WSS──▶ Traefik (+Authelia) ──▶ coordinator :8000 ─┐
+browser ◀══UDP 8443 (WebRTC media+input)══▶ worker ◀──localhost──┘
+                                              │  └─ Xvfb :99 (shared X socket)
+                                              ├─ SMB (RO): Roms/<platform> → assets/games/<core>
+                                              └─ PVC: saves/ + assets/cores/
+```
+
+One pod, three containers (xvfb, coordinator, worker), `Recreate` strategy.
+
+## The UDP caveat
+
+Media never touches Traefik. After the websocket handshake the browser sends
+UDP straight to `webrtc.iceIpMap:8443`, which klipper-lb publishes on every
+node IP. That means:
+
+- It works on the LAN, and on the tailnet if `iceIpMap` is a node's tailnet
+  address (the tailnet must also pass UDP to it).
+- It does NOT work through the Cloudflare tunnel (HTTP only), so there is
+  deliberately no `cloudflareHosts`. Internet friends would need a port
+  forward or a TURN server — follow-up, not v1.
+
+## Deploy
+
+1. Create the vault item `games-cloud-game` with a `values.local.yaml` field
+   (see `values.local.yaml.example`; the RomM NAS user is fine).
+2. `./build.sh` — compiles the upstream Dockerfile at the pinned master commit
+   (`image.upstreamRef`) and pushes `ghcr.io/zdiemer/cloud-game:<tag>`. First build is slow (GStreamer from
+   source). Make the package public after the first push.
+3. `./upgrade.sh`.
+4. Open https://retro.zachd.duckdns.org, sign in to Authelia, pick a game.
+   Share the room URL for multiplayer.
+
+The worker fetches the libretro cores from the buildbot on first start into
+the data PVC, so the first game load takes a minute.
+
+## Library
+
+cloud-game wants one folder per core; the NAS is per platform, and most sets
+are one zip per game, which cloud-game can't open (only the mame core takes
+zips). So `library.platforms` in values.yaml has two modes: `unzip: false`
+subPath-mounts the NAS folder directly (PSX .chd), `unzip: true` has an init
+container extract the games matching `include` onto the data PVC on every
+start — idempotent, and games dropped from the list are pruned. Edit the
+list, `./upgrade.sh`, the pod restarts and the dropdown follows.
+
+Add a core by adding an entry — the key must be a core name cloud-game knows
+(`nes`, `snes`, `gba`, `n64`, `psx`, `mame`, `dos`).
+
+## Upgrading
+
+Pick a new upstream master commit, set `image.upstreamRef` to its full sha and
+`image.tag`/`appVersion` to `main-<short sha>`, `./build.sh`, `./upgrade.sh`.
+Renovate can't see this one: the image doesn't exist until we build it, and
+upstream hasn't tagged a release since 2023.

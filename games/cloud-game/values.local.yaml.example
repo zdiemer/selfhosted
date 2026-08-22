@@ -1,0 +1,6 @@
+# Stored at op://homelab/games-cloud-game/values.local.yaml (see the secrets
+# CLI). Same read-only NAS user RomM uses is fine.
+
+smb:
+  username: "roms-reader"
+  password: "CHANGE-ME"

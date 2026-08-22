@@ -1,0 +1,13 @@
+apiVersion: v2
+name: cloud-game
+description: CloudRetro — server-side libretro emulation streamed to the browser over WebRTC, ROMs from the SMB library
+type: application
+version: 0.1.0
+# appVersion tracks the upstream commit build.sh compiles (image.upstreamRef in
+# values.yaml, short form). There is no upstream release newer than 2023.
+appVersion: "main-3c003f8"
+home: https://cloudretro.io
+sources:
+  - https://github.com/giongto35/cloud-game
+maintainers:
+  - name: zachd

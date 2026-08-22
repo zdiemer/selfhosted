@@ -1,0 +1,185 @@
+{{- $home := include "cloud-game.home" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cloud-game.fullname" . }}
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: the save/cores PVC is RWO, and two workers advertising the same
+  # single ICE port would fight over it anyway.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cloud-game.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # The curated game list is baked into the stager script. Without this an
+        # `include` edit changes only a ConfigMap, no new pod is made, and the
+        # init container never re-runs — so the new game silently never appears.
+        checksum/stager: {{ include (print $.Template.BasePath "/library-stager.yaml") . | sha256sum }}
+      labels:
+        {{- include "cloud-game.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's
+        # own ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      # The Service is named after the release, so k8s would inject
+      # CLOUD_GAME_PORT=tcp://... style vars. Nothing wants them, and the app
+      # reads CLOUD_GAME_* as config — don't risk a collision.
+      enableServiceLinks: false
+      # Long enough for the worker to flush an autosave on SIGTERM.
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # Unzips the curated `unzip: true` games from the share onto the PVC.
+        # See templates/library-stager.yaml and library.platforms in values.
+        - name: stage-library
+          image: "{{ .Values.stagerImage }}"
+          command: ["sh", "/stager/stage.sh"]
+          env:
+            - name: NAS
+              value: /nas
+            - name: STAGE
+              value: /stage
+          volumeMounts:
+            - name: library
+              mountPath: /nas
+              readOnly: true
+            - name: data
+              mountPath: /stage
+              subPath: games
+            - name: stager
+              mountPath: /stager
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      containers:
+        # Upstream's compose runs the same layout: an Xvfb container and the
+        # app sharing /tmp/.X11-unix. Three containers, one pod, so the worker
+        # reaches the coordinator on localhost and the X socket on a shared
+        # emptyDir.
+        - name: xvfb
+          image: "{{ .Values.xvfb.image }}"
+          command: ["sh", "-c"]
+          args:
+            # A stale lock from an unclean exit stops Xvfb starting. Restart
+            # policy is the pod's, so clear it ourselves each time.
+            - >-
+              rm -f /tmp/.X{{ trimPrefix ":" .Values.xvfb.display }}-lock
+              /tmp/.X11-unix/X{{ trimPrefix ":" .Values.xvfb.display }} &&
+              exec Xvfb {{ .Values.xvfb.display }} -screen 0 {{ .Values.xvfb.screen }}
+          volumeMounts:
+            - name: x11
+              mountPath: /tmp/.X11-unix
+          resources:
+            {{- toYaml .Values.resources.xvfb | nindent 12 }}
+        - name: coordinator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          workingDir: {{ $home }}
+          command: ["./coordinator"]
+          env:
+            - name: CLOUD_GAME_COORDINATOR_DEBUG
+              value: {{ .Values.coordinator.debug | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.coordinator | nindent 12 }}
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          workingDir: {{ $home }}
+          command: ["bash", "-c"]
+          args:
+            # The worker aborts at startup (emulator.failFast) if it can't open
+            # the display, so wait for Xvfb's socket rather than racing it.
+            - >-
+              while [ ! -S /tmp/.X11-unix/X{{ trimPrefix ":" .Values.xvfb.display }} ]; do sleep 0.2; done;
+              exec ./worker
+          env:
+            - name: DISPLAY
+              value: {{ .Values.xvfb.display | quote }}
+            # llvmpipe advertises GL 3.x by default; mupen64plus-next wants more.
+            - name: MESA_GL_VERSION_OVERRIDE
+              value: "4.5"
+            - name: CLOUD_GAME_WORKER_DEBUG
+              value: {{ .Values.worker.debug | quote }}
+            - name: CLOUD_GAME_WORKER_NETWORK_COORDINATORADDRESS
+              value: "localhost:8000"
+            - name: CLOUD_GAME_EMULATOR_AUTOSAVESEC
+              value: {{ .Values.worker.autosaveSec | quote }}
+            - name: CLOUD_GAME_EMULATOR_STORAGE
+              value: {{ $home }}/saves
+            - name: CLOUD_GAME_ENCODER_VIDEO_CODEC
+              value: {{ .Values.worker.encoder.videoCodec | quote }}
+            - name: CLOUD_GAME_WEBRTC_SINGLEPORT
+              value: {{ .Values.webrtc.singlePort | quote }}
+            {{- if .Values.webrtc.iceIpMap }}
+            - name: CLOUD_GAME_WEBRTC_ICEIPMAP
+              value: {{ .Values.webrtc.iceIpMap | quote }}
+            {{- end }}
+          ports:
+            - name: worker
+              containerPort: 9000
+            - name: webrtc
+              containerPort: {{ .Values.webrtc.singlePort }}
+              protocol: UDP
+          volumeMounts:
+            - name: x11
+              mountPath: /tmp/.X11-unix
+            - name: data
+              mountPath: {{ $home }}/saves
+              subPath: saves
+            # Cores are fetched from the libretro buildbot on first start
+            # (cores.repo.sync). Persist them or every restart downloads again.
+            - name: data
+              mountPath: {{ $home }}/assets/cores
+              subPath: cores
+            {{- range $core, $p := .Values.library.platforms }}
+            {{- if $p.unzip }}
+            - name: data
+              mountPath: {{ $home }}/assets/games/{{ $core }}
+              subPath: games/{{ $core }}
+            {{- else }}
+            - name: library
+              mountPath: {{ $home }}/assets/games/{{ $core }}
+              subPath: {{ $p.source | quote }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}
+      volumes:
+        - name: x11
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "cloud-game.fullname" . }}-data
+        - name: library
+          persistentVolumeClaim:
+            claimName: {{ include "cloud-game.fullname" . }}-library
+        - name: stager
+          configMap:
+            name: {{ include "cloud-game.fullname" . }}-library-stager

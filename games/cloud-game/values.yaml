@@ -1,0 +1,178 @@
+image:
+  # Upstream publishes no container image, so build.sh compiles the upstream
+  # Dockerfile at `upstreamRef` (target `cloud-game`) and pushes it to GHCR as a
+  # public package. Pinned to a master COMMIT, not a release: the last tag
+  # (v3.1.1) is from 2023 and predates the GStreamer encoder, the vp8 default
+  # and the llvmpipe GL shim that this chart relies on. The image tag is
+  # "main-<short sha>" so a bump is visible in the pod spec.
+  repository: ghcr.io/zdiemer/cloud-game
+  tag: "main-3c003f8"
+  upstreamRef: "3c003f8d580e8b41d8651e37fd401e02475f8ea2"
+  pullPolicy: IfNotPresent
+
+# Headless X server for the OpenGL cores (N64 is one). llvmpipe renders on the
+# CPU; Xvfb only has to exist so mupen64plus can create a GL context.
+xvfb:
+  # renovate: datasource=docker depName=kcollins/xvfb
+  image: kcollins/xvfb:latest
+  display: ":99"
+  # The framebuffer is never looked at — the core renders offscreen — so small.
+  screen: "320x240x16"
+
+service:
+  type: ClusterIP
+  port: 8000         # coordinator: web UI + user websocket
+
+# WebRTC media. Browsers connect STRAIGHT to the worker over UDP, not through
+# Traefik — a websocket signals, then audio/video/input flow peer-to-peer. So
+# this port must be reachable from wherever the players are, which rules out
+# the Cloudflare tunnel (HTTP only) and is why there is no cloudflareHosts list.
+webrtc:
+  # Pin every ICE connection to one UDP port instead of a random range, so a
+  # single Service port covers it. Exposed with klipper-lb on every node IP,
+  # exactly like minecraft/ does for 25565.
+  singlePort: 8443
+  # The IP the worker advertises in its ICE candidate. Inside the pod it only
+  # knows its 10.42.x.x address, which no browser can reach — override with an
+  # address players CAN hit. LAN players: any node IP. Tailnet players: the
+  # tailnet address of a node. Leave empty to let STUN discover it (works only
+  # if the pod has a real public path, which it doesn't here).
+  iceIpMap: "192.168.4.26"
+  serviceType: LoadBalancer
+  externalTrafficPolicy: Cluster
+
+# Worker-side switches, all CLOUD_GAME_* env vars (see upstream pkg/config/config.yaml).
+worker:
+  debug: false
+  # Save states are written here. Autosave every N seconds; 0 disables.
+  autosaveSec: 60
+  encoder:
+    # vp8 is cheapest on CPU; vp9 looks better at the same bitrate for more cores.
+    videoCodec: vp8
+
+coordinator:
+  debug: false
+
+# SMB share with the ROM library, mounted read-only — the same NAS share and
+# user RomM uses (games/romm). Credentials live in values.local.yaml.
+smb:
+  host: "192.168.4.36"
+  share: "games"
+  vers: "3.0"
+  mountOptions:
+    - dir_mode=0555
+    - file_mode=0444
+    - noserverino
+
+# cloud-game's library is one folder per CORE, named after the core key (nes,
+# snes, n64, gba, psx, mame, dos). The NAS is laid out per PLATFORM under Roms/.
+#
+# Two ways to get a NAS folder under a core folder:
+#
+#   unzip: false — subPath-mount the NAS folder straight onto the core folder.
+#     Right for sets stored as bare files (PSX is .chd).
+#   unzip: true  — the NAS set is one .zip per game, and cloud-game does NOT
+#     open zips for anything but the mame core (its extractor only serves core
+#     downloads; a "Mario Kart 64.zip" is invisible to mupen). An init container
+#     unzips the games matching `include` from the share onto the data PVC on
+#     each start, skipping ones already there, and that PVC folder is mounted
+#     as the core folder. Nothing on the share is touched.
+#
+# Keep `include` curated: cloud-game lists every ROM it finds in one dropdown,
+# and the full N64 set alone is 447 games / 14 GB zipped. Globs are shell
+# patterns against the zip filename (No-Intro names). An empty list means
+# everything in the folder — you've been warned.
+library:
+  platforms:
+    n64:
+      source: "Roms/Nintendo 64"
+      unzip: true
+      include:
+        - "Mario Kart 64 (USA)*"
+        - "Super Smash Bros. (USA)*"
+        - "Mario Party 2 (USA)*"
+        - "GoldenEye 007 (USA)*"
+        - "Super Mario 64 (USA)*"
+        - "Diddy Kong Racing (USA)*"
+    snes:
+      source: "Roms/SNES"
+      unzip: true
+      include:
+        - "Super Mario Kart (USA)*"
+        - "Super Bomberman 2 (USA)*"
+        - "Street Fighter II Turbo (USA)*"
+        - "Super Mario World (USA)*"
+        - "Kirby Super Star (USA)*"
+    nes:
+      source: "Roms/NES"
+      unzip: true
+      include:
+        - "Super Mario Bros. 3 (USA)*"
+        - "Tetris (USA)*"
+        - "Contra (USA)*"
+        - "Bubble Bobble (USA)*"
+    gba:
+      source: "Roms/Game Boy Advance"
+      unzip: true
+      include:
+        - "Pokemon - Emerald Version (USA*"
+        - "Mario Kart - Super Circuit (USA)*"
+    psx:
+      source: "Roms/PSX"
+      unzip: false
+
+# Utility image for the unzip init container. Needs sh, find and unzip; the
+# cloud-game image has none of those.
+# renovate: datasource=docker depName=busybox
+stagerImage: busybox:1.37.0
+
+persistence:
+  data:
+    # Save states (emulator.storage), the auto-downloaded libretro cores, and
+    # the unzipped games. The curated lists above are a few hundred MB; raise
+    # this if you open an `include` up.
+    size: 20Gi
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+
+ingress:
+  enabled: true
+  className: traefik
+  host: retro.zachd.duckdns.org
+  tls:
+    enabled: true
+
+# cloud-game has NO login of its own: anyone who reaches the coordinator can
+# pick a ROM and play. So Authelia gates EVERY host — there is no publicOnly
+# split like romm, because there is no native client that needs one.
+auth:
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+resources:
+  coordinator:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  worker:
+    # One N64 session at 60fps with a software vp8 encode is ~2-3 cores. The
+    # 8/16-bit cores are nearly free. Requests reflect idle; the limit is what
+    # a full room gets.
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  xvfb:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi

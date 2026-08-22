@@ -27,6 +27,7 @@ TEMPLATE_SKIP=(
   discord/vocard
   docs/paperless-ngx
   games/romm
+  games/cloud-game
   infra/cloudflared
   infra/democratic-csi
   infra/duckdns

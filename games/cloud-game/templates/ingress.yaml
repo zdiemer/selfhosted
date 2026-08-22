@@ -1,0 +1,37 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cloud-game.fullname" . }}
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.auth.forwardAuth.enabled }}
+    # cloud-game has no login of its own: Authelia IS the login.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "cloud-game.fullname" . }}-forwardauth@kubernetescrd
+    {{- else }}
+    # UNAUTHENTICATED at the edge, DELIBERATELY (infra/ingress-policy rule 4).
+    # Only sane on a host nobody but the tailnet can resolve.
+    ingress.zachd/public-unauthenticated: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cloud-game.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}
