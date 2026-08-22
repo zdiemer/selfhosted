@@ -64,7 +64,7 @@ collector:
 
 web:
   # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
-  image: nginxinc/nginx-unprivileged:1.31.3-alpine
+  image: nginxinc/nginx-unprivileged:1.31.4-alpine
   # The unprivileged image listens high and runs as non-root out of the box,
   # which is what we want for anything serving HTTP, tailnet or not.
   port: 8080
