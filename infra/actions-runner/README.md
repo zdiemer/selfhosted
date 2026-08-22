@@ -31,17 +31,31 @@ its release and namespace.
 ## What a job gets
 
 `ghcr.io/actions/actions-runner` — Ubuntu with the runner, git, docker CLI,
-and not much else. `actions/setup-python`, `setup-node`, `setup-uv` download
-what they need on first use (no hosted toolcache here, so the first run of each
-is a little slower; later runs hit the runner image's cache only for as long as
-that pod lives, i.e. one job). A docker daemon is present via the dind sidecar
-so `docker build` and `docker/build-push-action` work unchanged.
+and not much else. **No node, no python**: `ubuntu-latest` has them preinstalled
+and workflows written against it lean on that silently (whatnowgg's
+`node --test` did). `actions/setup-python`, `setup-node`, `setup-uv` download
+what they need on first use, every job — a runner pod lives for exactly one.
 
-Worth doing next, per workflow: `docker/setup-buildx-action` with
-`driver: remote` and `endpoint: tcp://buildkitd.buildkit.svc.cluster.local:1234`
-so image builds use the in-cluster buildkitd and its persistent layer cache
-instead of a cold dind every job. Then `runners.dind` can go to false and the
-runner pod stops being privileged.
+**Image builds** go to the in-cluster buildkitd, not a daemon on the runner:
+
+```yaml
+- uses: docker/setup-buildx-action@v4
+  with:
+    driver: remote
+    endpoint: tcp://buildkitd.buildkit.svc.cluster.local:1234
+```
+
+then `docker buildx build` / `docker/build-push-action` as usual. `infra/buildkit`'s
+NetworkPolicy admits the `arc-*` namespaces for this. Persistent layer cache
+on buildkitd's PVC (drop any `cache-from/to: type=gha`), a memory-hungry build
+lands on buildkitd's 16Gi rather than the runner's limit, and the runner pod
+is not privileged. `runners.dind: true` is the fallback for a workflow that
+still runs plain `docker build`/`docker run` — a privileged dind sidecar with
+a cold cache every job.
+
+**Timing-sensitive tests** will be slower than on a hosted runner: these pods
+share nodes with everything else. talaria's "5000 categories in under 15ms"
+came in at 17.
 
 ## Failure modes
 

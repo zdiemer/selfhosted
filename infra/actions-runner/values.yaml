@@ -72,6 +72,14 @@ repos:
       maxRunners: 3
       # No container builds in its CI at all.
       dind: false
+      # Frontend Checks (vite build + tsc + vitest) was OOMKilled at 4Gi.
+      resources:
+        requests:
+          cpu: "1"
+          memory: 2Gi
+        limits:
+          cpu: "4"
+          memory: 8Gi
   - name: money
     overrides:
       # Builds with buildx against the in-cluster buildkitd (see README).
