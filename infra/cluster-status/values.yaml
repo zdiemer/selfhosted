@@ -403,6 +403,13 @@ catalog:
       category: Games
       namespace: discord
       service: smitele-bot-web
+    - name: Cloud Retro
+      category: Games
+      namespace: games
+      service: cloud-game
+      # Its index declares `<link rel="icon" href="data:,">` — deliberately no
+      # favicon — so the mark is seeded in brand/service-icons.
+      note: LAN/tailnet only (WebRTC)
 
     # ------------------------------------------------------------------- Home
     - name: money
@@ -501,6 +508,17 @@ catalog:
       namespace: claude-rachel
       service: rachel-workspace
       note: no ingress
+    - name: Windows 11
+      category: Dev
+      namespace: dev
+      service: guacamole
+      # The KubeVirt guest (dev/win11) is a VirtualMachine, not a workload this
+      # collector reads, so the tile's state is Guacamole's — the browser front
+      # door to it — which is also the thing a person clicks.
+      # Guacamole answers under /guacamole/, not /, so the ClusterIP root 404s
+      # and the icon has to be looked for one level down.
+      iconUrl: http://guacamole.dev.svc.cluster.local:8080/guacamole/
+      note: via Guacamole
 
     # ------------------------------------------------------------------- Bots
     - name: Smite-le bot
