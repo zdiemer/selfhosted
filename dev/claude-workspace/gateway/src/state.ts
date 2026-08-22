@@ -27,6 +27,10 @@ export interface ChatState {
    * the *next* process can see it: a true here after a boot means the pod went
    * down mid-run, which is what the restart notice reports. */
   inFlight?: boolean;
+  /** A ScheduleWakeup the model armed and the gateway now owes it (wakeup.ts).
+   * On the PVC for the same reason the session id is: a redeploy must postpone
+   * a wake-up, not erase it. */
+  wakeup?: { at: number; prompt: string };
   updatedAt: string;
 }
 

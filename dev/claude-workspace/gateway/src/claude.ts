@@ -9,6 +9,12 @@ export interface RunResult {
   text: string;
   sessionId?: string;
   isError: boolean;
+  /** What this turn's confirmed ScheduleWakeup call asked for, if it made one.
+   * The tool's own timer lives in the claude child and dies with it (verified:
+   * with stdin closed the CLI exits the moment the turn ends, wake-up armed or
+   * not), so the gateway re-arms the timer on its side of the process boundary
+   * (wakeup.ts). "stop" means the model ended its loop. */
+  wakeup?: { at: number; prompt: string } | "stop";
 }
 
 /** A background task the CLI is still carrying — a `run_in_background` Bash,
@@ -32,6 +38,11 @@ export interface StreamEvent {
       text?: string;
       name?: string;
       input?: Record<string, unknown>;
+      /** tool_use blocks: the id its tool_result answers to. */
+      id?: string;
+      /** tool_result blocks (type "user" events). */
+      tool_use_id?: string;
+      is_error?: boolean;
     }[];
   };
   result?: string;
@@ -56,6 +67,11 @@ export type AbandonReason = "timeout" | "turns";
 
 export interface RunHooks {
   onEvent?(ev: StreamEvent): void;
+  /** The child's own ScheduleWakeup timer just fired in-process (it was parked
+   * on background work when the moment came, so it was still alive to do it).
+   * The gateway's persisted copy of that wake-up is spent and must be
+   * discarded, or the same prompt fires a second time from the outside. */
+  onSelfWake?(): void;
   /**
    * One completed turn. Called for the answer to the message that started the
    * run AND for every later turn the CLI wakes itself into — a background task
@@ -92,6 +108,11 @@ interface LiveRun {
   waiting: boolean;
   /** Gives up on a wake that never comes. */
   idle: ReturnType<typeof setTimeout> | null;
+  /** Epoch ms of the ScheduleWakeup timer this child holds internally, if its
+   * stream confirmed one. While the child is alive, ITS timer is the real one
+   * — the gateway's copy (wakeup.ts) is a crash fallback, and defers to this
+   * (hasLiveWakeup) rather than fire the same prompt twice. */
+  wakeupAt: number | null;
 }
 
 const running = new Map<string, LiveRun>();
@@ -130,6 +151,79 @@ export function pickResultText(
   return lastAssistant || "(no result text)";
 }
 
+/**
+ * Watches one run's stream for ScheduleWakeup calls, so the gateway can take
+ * over the timer the exiting child process would otherwise drop.
+ *
+ * Only a CONFIRMED call counts — the tool_use must be answered by a
+ * tool_result without is_error, or a call the permission relay denied (groups
+ * deny everything but web tools) would arm a wake-up the model was refused.
+ * A later confirmed call replaces an earlier one and `stop: true` cancels,
+ * which is the harness's own contract for the tool.
+ *
+ * take() empties the tracker, so each turn reports only what IT armed: a
+ * wake turn that never mentions ScheduleWakeup must not re-arm the previous
+ * turn's (already spent) wake-up.
+ */
+export class WakeupTracker {
+  private calls = new Map<string, Record<string, unknown>>();
+  private state: RunResult["wakeup"];
+  /** The wake-up the CHILD currently holds a live timer for, across turns.
+   * Unlike `state` this is not consumed by take(): it describes the process,
+   * not the turn. */
+  pendingAt: number | null = null;
+
+  constructor(private now: () => number = Date.now) {}
+
+  onEvent(ev: StreamEvent): void {
+    for (const block of ev.message?.content ?? []) {
+      if (
+        ev.type === "assistant" &&
+        block.type === "tool_use" &&
+        block.name === "ScheduleWakeup" &&
+        block.id
+      ) {
+        this.calls.set(block.id, block.input ?? {});
+      } else if (
+        ev.type === "user" &&
+        block.type === "tool_result" &&
+        block.tool_use_id
+      ) {
+        const input = this.calls.get(block.tool_use_id);
+        if (!input || block.is_error) continue;
+        if (input.stop === true) {
+          this.state = "stop";
+          this.pendingAt = null;
+        } else if (
+          typeof input.delaySeconds === "number" &&
+          typeof input.prompt === "string" &&
+          input.prompt.trim()
+        ) {
+          // The delay counts from the call, not from turn end — a turn that
+          // works on for ten more minutes has spent the wait already. Clamped
+          // to the same [60s, 1h] the harness itself promises.
+          const delay = Math.min(Math.max(input.delaySeconds, 60), 3600);
+          this.state = { at: this.now() + delay * 1000, prompt: input.prompt };
+          this.pendingAt = this.state.at;
+        }
+      }
+    }
+  }
+
+  /** This turn's wake-up request, consumed. */
+  take(): RunResult["wakeup"] {
+    const state = this.state;
+    this.state = undefined;
+    return state;
+  }
+
+  /** The child's timer went off (self-wake observed); nothing pending now
+   * unless the wake turn arms again. */
+  fired(): void {
+    this.pendingAt = null;
+  }
+}
+
 /** How the parked state reads on a status receipt or in `!status`. */
 export function describeTasks(tasks: BackgroundTask[]): string {
   if (!tasks.length) return "";
@@ -146,6 +240,13 @@ export function isRunning(chatKey: string): boolean {
  * already delivered. The queue treats this as free rather than busy. */
 export function isWaiting(chatKey: string): boolean {
   return Boolean(running.get(chatKey)?.waiting);
+}
+
+/** A live child holds its own timer for this chat's pending wake-up. While
+ * true, the gateway's timer (wakeup.ts) must defer rather than fire — the
+ * child fires it in-process, with the loop's full context. */
+export function hasLiveWakeup(chatKey: string): boolean {
+  return running.get(chatKey)?.wakeupAt != null;
 }
 
 /** What a parked run is waiting on. Empty for anything else. */
@@ -329,6 +430,7 @@ export async function runClaude(
         turns: 0,
         waiting: false,
         idle: null,
+        wakeupAt: null,
       };
       running.set(chatKey, run);
 
@@ -336,6 +438,7 @@ export async function runClaude(
       let result: RunResult | null = null;
       let sessionId: string | undefined;
       let lastAssistant = "";
+      const wakeups = new WakeupTracker();
       // Turn replies go out one at a time and in order. Two of them racing on
       // the wire would put a wake-up's answer above the answer it follows.
       let deliveries: Promise<unknown> = Promise.resolve();
@@ -404,17 +507,29 @@ export async function runClaude(
           else if (ev.subtype === "init") {
             // A turn is starting. On a wake-up this is the moment the park
             // ends, and the notification that caused it is now spoken for.
+            //
+            // A turn that starts while parked with NO task notification
+            // pending and no handOff (that would have left the wait already)
+            // has exactly one other cause: the child's own ScheduleWakeup
+            // timer went off. The gateway's persisted copy is spent.
+            if (run.turns > 0 && run.waiting && !run.wakePending && run.wakeupAt !== null) {
+              wakeups.fired();
+              hooks.onSelfWake?.();
+            }
             run.wakePending = false;
             if (run.turns > 0) leaveWait(run);
           }
         }
         const spoke = assistantText(ev);
         if (spoke) lastAssistant = spoke;
+        wakeups.onEvent(ev);
+        run.wakeupAt = wakeups.pendingAt;
         if (ev.type === "result") {
           result = {
             text: pickResultText(ev.result, lastAssistant),
             sessionId: ev.session_id ?? sessionId,
             isError: Boolean(ev.is_error),
+            wakeup: wakeups.take(),
           };
           // The next turn writes its own words; carrying these over would let
           // a wake-up with no text repeat the previous turn's answer.

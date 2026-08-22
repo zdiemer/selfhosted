@@ -5,7 +5,13 @@ import { startApprovalServer } from "./approvals.ts";
 import { config, isWithinCwdRoots } from "./config.ts";
 import { pruneInbox } from "./attachments.ts";
 import { announceRestart, installShutdownHandler } from "./restart.ts";
-import { markReady, registerTransport, sendTo } from "./transport.ts";
+import {
+  markReady,
+  onTransportReady,
+  registerTransport,
+  sendTo,
+} from "./transport.ts";
+import { rearmWakeups } from "./wakeup.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
 
@@ -99,4 +105,7 @@ console.log(
 // Fires per surface as each one finishes connecting — sending before that is
 // sending into a socket that isn't open yet.
 announceRestart();
+// Wake-ups that were pending when the last process died re-arm per surface,
+// after its transport can actually deliver the reply. Overdue ones fire now.
+onTransportReady((prefix) => rearmWakeups(prefix));
 installShutdownHandler();

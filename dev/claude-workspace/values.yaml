@@ -98,7 +98,17 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
-  tag: "v23"
+  # v24: ScheduleWakeup wake-ups actually fire. The tool's timer lives in the
+  #      claude child: alive (parked on background work) it fires itself, but
+  #      a child with nothing else outstanding exits at end of turn and the
+  #      timer dies with it. The gateway now watches the stream for the
+  #      confirmed call, persists it in chat state (a redeploy postpones a
+  #      wake-up rather than erasing it), fires the prompt itself once the
+  #      child is gone, and defers to a still-parked child's own timer so the
+  #      prompt can't run twice. !stop cancels one; !status shows it.
+  #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
+  #      change's integration — do not roll back to :v23; use :v24.
+  tag: "v24"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

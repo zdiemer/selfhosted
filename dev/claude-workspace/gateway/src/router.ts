@@ -65,6 +65,12 @@ import {
   takeOverflow,
 } from "./transport.ts";
 import { usageReport } from "./usage.ts";
+import {
+  armWakeup,
+  cancelWakeup,
+  pendingWakeup,
+  setWakeupRunner,
+} from "./wakeup.ts";
 
 export { registerTransport, sendTo, type MsgRef, type Transport } from "./transport.ts";
 
@@ -88,9 +94,34 @@ interface Queued {
   /** Already told the sender it is waiting on the global concurrency cap, so
    * the 3s re-check doesn't re-send the same reaction every time round. */
   waiting?: boolean;
+  /** This entry is a scheduled wake-up firing, not something the person typed.
+   * The run gets told so, and there is no inbound message to react to. */
+  wakeup?: boolean;
 }
 const queues = new Map<string, Queued[]>();
 let droppedLog = 0;
+
+// A wake-up firing is a message from the schedule, not from the person. It
+// enters the same per-chat queue an inbound message does — so it hands off to
+// a parked run exactly like a typed message would, queues behind a busy one,
+// and its reply goes out with the usual banner.
+setWakeupRunner((chatKey, prompt) => {
+  const queue = queues.get(chatKey) ?? [];
+  if (queue.length >= config.queueDepth) {
+    void sendTo(chatKey, "⚠ queue full — scheduled wake-up dropped");
+    return;
+  }
+  queue.push({ body: prompt, wakeup: true });
+  queues.set(chatKey, queue);
+  if (queue.length === 1 && (!isRunning(chatKey) || isWaiting(chatKey)))
+    void drain(chatKey);
+});
+
+/** What a wake-up run is told about why it is running. */
+const WAKEUP_PREAMBLE =
+  "[Scheduled wake-up: this run was started by your own ScheduleWakeup call, " +
+  "not by a new message from the user. The prompt below is the one you " +
+  "scheduled.]";
 
 /** Reaction state machine on the sender's own message. Both networks replace a
  * previous reaction from the same account, so each call is the whole update. */
@@ -322,7 +353,13 @@ async function drain(chatKey: string): Promise<void> {
   // ending this one and killing the tasks with it.
   if (isWaiting(chatKey)) {
     const item = queue[0];
-    if (handOff(chatKey, item.body || NO_CAPTION, attachmentPreamble(item.files ?? []))) {
+    const handOffPreamble = [
+      item.wakeup ? WAKEUP_PREAMBLE : "",
+      attachmentPreamble(item.files ?? []),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    if (handOff(chatKey, item.body || NO_CAPTION, handOffPreamble)) {
       queue.shift();
       deliveryRefs.set(chatKey, item.ref);
       react(chatKey, item.ref, config.reactions.working);
@@ -342,7 +379,7 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const { body: message, ref, files } = queue.shift()!;
+  const { body: message, ref, files, wakeup } = queue.shift()!;
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -364,6 +401,7 @@ async function drain(chatKey: string): Promise<void> {
     // The attachment preamble goes in front of the group context, so the
     // files are the first thing the run reads about.
     const preamble = [
+      wakeup ? WAKEUP_PREAMBLE : "",
       attachmentPreamble(files ?? []),
       group ? takeGroupContext(chatKey) : "",
     ]
@@ -389,6 +427,12 @@ async function drain(chatKey: string): Promise<void> {
         status?.onEvent(ev);
       },
       onTurn: async (result, _turn, pending) => {
+        // The turn's own wake-up request, applied before its reply goes out so
+        // "next check at …" in the text is true by the time it is read. Only
+        // what THIS turn asked for (WakeupTracker.take) — arming is not
+        // re-affirmed turn to turn, so a spent wake-up can't come back.
+        if (result.wakeup === "stop") cancelWakeup(chatKey);
+        else if (result.wakeup) armWakeup(chatKey, result.wakeup);
         // Collapse the status before the answer lands, so the thread reads
         // status-receipt-then-answer rather than answer-then-a-stale-"working…".
         // The receipt says what is still outstanding, which is the difference
@@ -404,6 +448,12 @@ async function drain(chatKey: string): Promise<void> {
         // would otherwise wait out the whole run.
         if (isWaiting(chatKey) && queues.get(chatKey)?.length)
           void drain(chatKey);
+      },
+      onSelfWake: () => {
+        // The parked child's own ScheduleWakeup timer fired in-process. The
+        // gateway's persisted copy of that wake-up is spent — the wake turn's
+        // onTurn re-arms if the model schedules another.
+        cancelWakeup(chatKey);
       },
       onAbandon: (tasks, reason) => {
         // These die with the process, and nothing else in the thread would
@@ -705,13 +755,17 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       return sendTo(chatKey, await usageReport(window));
     }
     case "!stop": {
+      // Also the no-model lever on a wake-up loop: the polite way out is the
+      // model calling ScheduleWakeup with stop, but the impolite way must not
+      // require a model that is misbehaving to cooperate.
       const killed = [
         stop(chatKey) ? "claude" : "",
         stopBash(chatKey) ? "bash" : "",
+        cancelWakeup(chatKey) ? "scheduled wake-up" : "",
       ].filter(Boolean);
       return sendTo(
         chatKey,
-        killed.length ? `✓ sent SIGTERM to ${killed.join(" + ")}` : "nothing running",
+        killed.length ? `✓ stopped ${killed.join(" + ")}` : "nothing running",
       );
     }
     case "!use": {
@@ -752,9 +806,13 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
     }
     case "!status": {
       const q = queues.get(chatKey)?.length ?? 0;
+      const wake = pendingWakeup(chatKey);
       return sendTo(
         chatKey,
         [
+          ...(wake
+            ? [`wake-up: in ${formatDuration(wake.at - Date.now())} (!stop cancels)`]
+            : []),
           `cwd: ${chat.cwd}`,
           `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
