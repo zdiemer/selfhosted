@@ -450,18 +450,44 @@ While a run is going, three things say so, in increasing order of detail:
   returned — re-aiming at the original lands a revision or two and is then
   ignored. And a message is capped at ten revisions
   (`MessageConstraintsUtil.MAX_EDIT_COUNT`), which is a budget, not a rate
-  limit: nine progress edits with the tenth held back for the receipt, spaced
-  by a gap that starts at `messaging.progress.signalEditSeconds` (5s) and
-  doubles, so they cover about 45 minutes without wasting the lot on the first
-  minute. WhatsApp keeps `messaging.progress.editSeconds` (3s first gap) and
-  targets the original key throughout, which is what that surface expects.
-  Groups get no status message — the room did not ask to watch, and a
-  group run only has `WebFetch`/`WebSearch` to show. When you answer a question
-  or a plan, the status **hands over to a new message**: the old one collapses
-  to `⏺ answered — continuing below` and a fresh one starts under your reply
-  with a fresh ten-revision budget, carrying the same elapsed clock and tool
-  count. Otherwise the work your answer just bought happens against a status
-  that is both out of revisions and scrolled off the screen.
+  limit: nine progress edits with the tenth held back for the line the message
+  ends on. That budget used to be stretched over the whole run by doubling the
+  gap after every edit, which bought coverage by going stale — past the first
+  minute you were reading a tool call from four minutes ago beside a clock that
+  had stopped. So the gap is now a real **cadence**, steady at
+  `messaging.progress.signalEditSeconds` (5s; WhatsApp keeps
+  `messaging.progress.editSeconds`, 3s) for as long as one message lasts, and
+  when the ninth edit is spent the status **rolls onto a new message**: the old
+  one is retired to `⏺ continued below`, a fresh one starts with a fresh
+  ten-revision budget, and the elapsed clock and tool count carry over. Each
+  successive message runs at twice the cadence of the last, so
+  `messaging.progress.maxMessages` (6) covers roughly the first three-quarters
+  of an hour — a minute of step-by-step detail, coarsening as the run goes, in
+  six messages rather than eighty. WhatsApp targets the original key throughout,
+  which is what that surface expects. Groups get no status message — the room
+  did not ask to watch, and a group run only has `WebFetch`/`WebSearch` to show.
+  Answering a question or a plan rolls the status the same way, under your
+  reply and labelled `⏺ answered — continuing below`; otherwise the work your
+  answer just bought happens against a status that is both out of revisions and
+  scrolled off the screen.
+
+**Background work survives the answer.** A long job — a build, a migration, a
+test suite — can be started as a background task, and Claude Code wakes *itself*
+when one reports back. It can only do that while its process is still up, and
+`claude -p <prompt>` closes stdin, which the CLI reads as "that was the whole
+conversation": it tore the run down at end of turn and killed the task with it
+(`status: "killed"`). So the gateway feeds the prompt over `--input-format
+stream-json` instead and holds the run open. What a chat sees is a reply now
+(`Started the build`), a receipt saying what is still outstanding
+(`✓ done · 3 tools · 12s · ⏳ helm upgrade`), and a **second reply** when the
+work lands — where before it sat on "I'll report back" until someone sent
+another message to nudge it. `!status` says `parked on …` in the meantime, and a
+message sent while a run is parked is handed straight to it rather than queued
+behind the wait, so the chat stays answerable. `messaging.background.waitSeconds`
+(1800) bounds one park and `messaging.background.maxTurns` (10) bounds the chain
+of wake-ups; whatever is still outstanding when either runs out dies with the
+process, and the chat is told so rather than left waiting. Set `waitSeconds: 0`
+to go back to the first answer ending the run.
 
 A run has **no wall-clock timeout**. The old 30-minute cap killed exactly the
 runs that were working — a long build, a migration, a research sweep, or one

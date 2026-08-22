@@ -147,25 +147,48 @@ test("each edit targets the revision the last one produced", async () => {
   expect(h.targets).toEqual(h.targets.map((_, i) => i + 1));
 });
 
-test("progress edits stay inside the ten-revision budget, receipt included", async () => {
-  // Signal drops edits past MAX_EDIT_COUNT (10), so a long run must not spend
-  // the whole budget on the clock and have nothing left for the receipt.
+test("a spent edit budget rolls onto a new message instead of going quiet", async () => {
+  // Signal drops edits past MAX_EDIT_COUNT (10) silently, so a run longer than
+  // nine revisions used to simply stop reporting: a frozen "working…" with a
+  // stopped clock, which reads as hung. It continues on a new message now.
   const h = harness();
-  // A clock that leaps, so the doubling gap never holds a tick back — this
-  // measures the budget, not the pacing.
+  // A clock that leaps, so the cadence never holds a tick back — this measures
+  // the budget, not the pacing.
   let clock = 0;
   const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 3_600_000));
   await status.begin();
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 14; i++) {
     status.onEvent(toolEvent("Read", { file_path: `f${i}.ts` }));
     await new Promise((r) => setTimeout(r, INTERVAL));
   }
-  const beforeReceipt = h.edits.length;
-  await status.finish(true);
 
-  expect(beforeReceipt).toBe(9);
-  expect(h.edits.length).toBe(10);
-  expect(h.edits[9]).toStartWith("✓ done");
+  // Nine progress edits, then the tenth — the one RECEIPT_EDITS reserved —
+  // retires the message and points at the one taking over.
+  expect(h.edits.slice(0, 9).every((e) => e.startsWith("⏺ working…"))).toBe(true);
+  expect(h.edits[9]).toBe("⏺ continued below");
+  expect(h.sends).toEqual(["⏺ working…", "⏺ working…"]);
+  // Fresh budget, and the run's own counters carry over — it is still one run.
+  expect(h.edits[10]).toContain("tools");
+
+  await status.finish(true);
+  expect(h.edits[h.edits.length - 1]).toStartWith("✓ done · 14 tools");
+});
+
+test("edits inside one message keep a steady cadence", async () => {
+  // The gap used to double per EDIT (5s, 10s, 20s, 40s …), so a run was
+  // detailed for ten seconds and then showed a tool call from four minutes ago
+  // beside a clock that had stopped. Within a message the step is constant
+  // now; only each successive message slows down.
+  const h = harness();
+  await h.status.begin();
+  for (let i = 0; i < 12; i++) {
+    h.status.onEvent(toolEvent("Read", { file_path: `f${i}.ts` }));
+    await new Promise((r) => setTimeout(r, INTERVAL));
+  }
+  const progress = h.edits.filter((e) => e.startsWith("⏺ working…"));
+  // Doubling would have spent its fifth edit sixteen windows in and never
+  // reached its ninth; a steady cadence spends the whole budget inside twelve.
+  expect(progress.length).toBeGreaterThanOrEqual(8);
 });
 
 test("a tick that would render identical text is not sent", async () => {
@@ -202,20 +225,22 @@ test("finish collapses to a one-line receipt and stops updating", async () => {
 
 test("answering a prompt hands the status to a fresh message", async () => {
   // The run stops on a plan, the prompt and the reply land under the status,
-  // and the ten revisions of the old message are spent waiting. Continuing to
-  // edit it is progress nobody sees.
+  // and by the time the reply comes the old message is scrolled above them.
+  // Continuing to edit it is progress nobody sees — and unlike a spent budget
+  // this happens whether or not any revisions are left.
   const h = harness();
   let clock = 0;
   const status = new Status("stdin:test", h.io, INTERVAL, () => (clock += 3_600_000));
   await status.begin();
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 4; i++) {
     status.onEvent(toolEvent("Read", { file_path: `f${i}.ts` }));
     await new Promise((r) => setTimeout(r, INTERVAL));
   }
-  expect(h.edits.length).toBe(9); // budget spent
+  const spent = h.edits.length;
+  expect(spent).toBeLessThan(9); // budget NOT exhausted; the prompt is why
 
   await status.restart();
-  expect(h.edits[9]).toBe("⏺ answered — continuing below");
+  expect(h.edits[spent]).toBe("⏺ answered — continuing below");
   expect(h.sends).toEqual(["⏺ working…", "⏺ working…"]);
 
   // A new message means a new budget, and the tool count carries over — it is
@@ -224,10 +249,10 @@ test("answering a prompt hands the status to a fresh message", async () => {
   await new Promise((r) => setTimeout(r, INTERVAL * 2));
   const resumed = h.edits[h.edits.length - 1];
   expect(resumed).toContain("Bash: helm upgrade");
-  expect(resumed).toContain("13 tools");
+  expect(resumed).toContain("5 tools");
 
   await status.finish(true);
-  expect(h.edits[h.edits.length - 1]).toStartWith("✓ done · 13 tools");
+  expect(h.edits[h.edits.length - 1]).toStartWith("✓ done · 5 tools");
 });
 
 test("restart on a status that never started is a no-op", async () => {
@@ -237,6 +262,17 @@ test("restart on a status that never started is a no-op", async () => {
   await status.restart();
   expect(h.sends).toEqual([]);
   expect(h.edits).toEqual([]);
+});
+
+test("a turn that is not the last word says what it is still holding", async () => {
+  // A run parked on background work has answered but is not finished, and the
+  // receipt is the only place in the thread that shows the difference.
+  const h = harness();
+  await h.status.begin();
+  await h.status.finish(true, "⏳ helm upgrade");
+  expect(h.edits[h.edits.length - 1]).toMatch(
+    /^✓ done · 0 tools · \d+s · ⏳ helm upgrade$/,
+  );
 });
 
 test("a failed run says so", async () => {

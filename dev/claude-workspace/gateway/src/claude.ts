@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
@@ -9,6 +9,15 @@ export interface RunResult {
   text: string;
   sessionId?: string;
   isError: boolean;
+}
+
+/** A background task the CLI is still carrying — a `run_in_background` Bash,
+ * a backgrounded subagent. The gateway only needs enough to say what it is
+ * waiting on; the CLI owns everything else about them. */
+export interface BackgroundTask {
+  task_id?: string;
+  task_type?: string;
+  description?: string;
 }
 
 /** One NDJSON line from `--output-format stream-json`. Only the fields this
@@ -27,6 +36,10 @@ export interface StreamEvent {
   };
   result?: string;
   is_error?: boolean;
+  /** `system/background_tasks_changed` carries the WHOLE outstanding list each
+   * time, so this replaces what we knew rather than amending it. Empty means
+   * nothing is outstanding. */
+  tasks?: BackgroundTask[];
   /** Present on the `result` event. Drives the token/cost tail on the status
    * receipt, so a run's cost is visible without reaching for !usage. */
   total_cost_usd?: number;
@@ -38,8 +51,62 @@ export interface StreamEvent {
   };
 }
 
-const running = new Map<string, ReturnType<typeof spawn>>();
+/** Why the gateway stopped waiting on background work that never reported. */
+export type AbandonReason = "timeout" | "turns";
+
+export interface RunHooks {
+  onEvent?(ev: StreamEvent): void;
+  /**
+   * One completed turn. Called for the answer to the message that started the
+   * run AND for every later turn the CLI wakes itself into — a background task
+   * finishing, a message handed to the parked run. `pending` is the background
+   * work still outstanding at that moment, which is what makes this turn's
+   * reply "…and I'll report back" rather than the last word.
+   *
+   * Awaited, and chained: two turns' replies must not interleave on the wire.
+   */
+  onTurn?(result: RunResult, turn: number, pending: BackgroundTask[]): Promise<void>;
+  /** The wait ran out (or the turn budget did) with work still outstanding.
+   * Those tasks die with the process, so this is the only warning there is. */
+  onAbandon?(tasks: BackgroundTask[], reason: AbandonReason): void;
+}
+
+/**
+ * A claude process that is up. It outlives its first answer: the CLI kills its
+ * own background tasks on shutdown, so the only way a `run_in_background` Bash
+ * or a backgrounded subagent ever reports back is if this process is still
+ * here when it does.
+ */
+interface LiveRun {
+  child: ChildProcess;
+  /** Outstanding background work, as of the last `background_tasks_changed`. */
+  tasks: BackgroundTask[];
+  /** A `task_notification` landed and no turn has started to consume it yet.
+   * The CLI clears the task list just BEFORE it wakes itself, so the list
+   * alone would have us close stdin in the gap and lose the wake. */
+  wakePending: boolean;
+  turns: number;
+  /** Parked: the last turn is answered, stdin is still open, and we are
+   * waiting for the CLI to wake itself. Idle, not busy — which is why a new
+   * message can be handed straight to it (handOff). */
+  waiting: boolean;
+  /** Gives up on a wake that never comes. */
+  idle: ReturnType<typeof setTimeout> | null;
+}
+
+const running = new Map<string, LiveRun>();
 let activeCount = 0;
+
+/** `--input-format stream-json` speaks the same NDJSON as the output: one JSON
+ * user message per line. Writing rather than passing `-p <prompt>` is what
+ * keeps stdin open, and an open stdin is what keeps the process alive past its
+ * first answer. */
+function userMessage(text: string): string {
+  return (
+    JSON.stringify({ type: "user", message: { role: "user", content: text } }) +
+    "\n"
+  );
+}
 
 /** Text blocks of an assistant event, joined. Empty for tool-only events. */
 export function assistantText(ev: StreamEvent): string {
@@ -63,12 +130,32 @@ export function pickResultText(
   return lastAssistant || "(no result text)";
 }
 
+/** How the parked state reads on a status receipt or in `!status`. */
+export function describeTasks(tasks: BackgroundTask[]): string {
+  if (!tasks.length) return "";
+  if (tasks.length === 1)
+    return tasks[0].description?.trim() || tasks[0].task_type || "1 task";
+  return `${tasks.length} background tasks`;
+}
+
 export function isRunning(chatKey: string): boolean {
   return running.has(chatKey);
 }
 
+/** Parked on background work: the process is up but idle, with its last answer
+ * already delivered. The queue treats this as free rather than busy. */
+export function isWaiting(chatKey: string): boolean {
+  return Boolean(running.get(chatKey)?.waiting);
+}
+
+/** What a parked run is waiting on. Empty for anything else. */
+export function waitingOn(chatKey: string): BackgroundTask[] {
+  const run = running.get(chatKey);
+  return run?.waiting ? run.tasks : [];
+}
+
 export function stop(chatKey: string): boolean {
-  const child = running.get(chatKey);
+  const child = running.get(chatKey)?.child;
   if (!child) return false;
   child.kill("SIGTERM");
   return true;
@@ -81,6 +168,40 @@ export function runningChats(): string[] {
 
 export function atCapacity(): boolean {
   return activeCount >= config.maxConcurrentClaude;
+}
+
+/**
+ * Hand a message to a run that is parked on background work, instead of
+ * queueing it behind the park.
+ *
+ * Without this a chat that started a twenty-minute build would refuse to talk
+ * until the build reported — the process is up, so the queue calls it busy,
+ * when in fact it is sitting idle with an open stdin. The reply comes back
+ * through the same `onTurn` the parked run was already going to use.
+ *
+ * False if the run is not parked (gone, or mid-turn), in which case the caller
+ * should start a run of its own.
+ */
+export function handOff(
+  chatKey: string,
+  message: string,
+  contextPrefix = "",
+): boolean {
+  const run = running.get(chatKey);
+  if (!run?.waiting) return false;
+  const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
+  if (!run.child.stdin?.writable) return false;
+  leaveWait(run);
+  run.child.stdin.write(userMessage(prompt));
+  return true;
+}
+
+function leaveWait(run: LiveRun): void {
+  run.waiting = false;
+  if (run.idle) {
+    clearTimeout(run.idle);
+    run.idle = null;
+  }
 }
 
 // Each chat gets its own mcp config so approve-mcp knows which chat to ask.
@@ -108,17 +229,28 @@ export async function runClaude(
   chatKey: string,
   message: string,
   contextPrefix = "",
-  onEvent?: (ev: StreamEvent) => void,
+  hooks: RunHooks = {},
 ): Promise<RunResult> {
   const chat: ChatState = getChat(chatKey);
   const group = isGroupChat(chatKey);
   const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
-  // stream-json rather than json: the events are what drive the live status
-  // message, and the init event carries session_id early enough to persist it
-  // before the run can be interrupted. --verbose is required alongside it.
+  // stream-json both ways.
+  //
+  // Out, because the events are what drive the live status message, and the
+  // init event carries session_id early enough to persist it before the run
+  // can be interrupted. --verbose is required alongside it.
+  //
+  // In, because `-p <prompt>` closes stdin, and the CLI treats a closed stdin
+  // as "that was the whole conversation": it tears down at the end of the turn
+  // and KILLS any background task still running (they come back
+  // `status: "killed"`). Feeding the prompt over stdin instead leaves the
+  // process up, and the CLI then wakes itself when a task reports — a second
+  // `result` event on the same session, which is the reply this surface used
+  // to need a nudge from the phone to produce.
   const args = [
     "-p",
-    prompt,
+    "--input-format",
+    "stream-json",
     "--output-format",
     "stream-json",
     "--verbose",
@@ -188,14 +320,51 @@ export async function runClaude(
       const child = spawn("claude", args, {
         cwd: chat.cwd,
         env: { ...process.env, HOME: config.home },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
-      running.set(chatKey, child);
+      const run: LiveRun = {
+        child,
+        tasks: [],
+        wakePending: false,
+        turns: 0,
+        waiting: false,
+        idle: null,
+      };
+      running.set(chatKey, run);
 
       let err = "";
       let result: RunResult | null = null;
       let sessionId: string | undefined;
       let lastAssistant = "";
+      // Turn replies go out one at a time and in order. Two of them racing on
+      // the wire would put a wake-up's answer above the answer it follows.
+      let deliveries: Promise<unknown> = Promise.resolve();
+
+      // A claude that dies during startup makes the prompt write an EPIPE. It
+      // is reported through the close handler like any other failed run; an
+      // unhandled 'error' on the stream would take the whole gateway down.
+      child.stdin!.on("error", (e) => {
+        err += `stdin: ${(e as Error).message}\n`;
+      });
+      child.stdin!.write(userMessage(prompt));
+
+      /** Stop feeding the process, which is how it is asked to exit. */
+      const endInput = (): void => {
+        leaveWait(run);
+        if (child.stdin?.writable) child.stdin.end();
+      };
+
+      /** Park until the CLI wakes itself, or until we give up on it. */
+      const enterWait = (): void => {
+        run.waiting = true;
+        run.idle = setTimeout(() => {
+          const stranded = run.tasks;
+          endInput();
+          if (stranded.length) hooks.onAbandon?.(stranded, "timeout");
+        }, config.background.waitMs);
+        // A parked run must never be the reason the gateway won't exit.
+        run.idle.unref?.();
+      };
 
       // NDJSON: the same line-split loop the signal-cli socket uses, because a
       // chunk boundary lands mid-line often enough to matter.
@@ -228,6 +397,17 @@ export async function runClaude(
           sessionId = ev.session_id;
           updateChat(chatKey, { sessionId });
         }
+        if (ev.type === "system") {
+          // The whole outstanding list, every time — assign, don't merge.
+          if (ev.subtype === "background_tasks_changed") run.tasks = ev.tasks ?? [];
+          else if (ev.subtype === "task_notification") run.wakePending = true;
+          else if (ev.subtype === "init") {
+            // A turn is starting. On a wake-up this is the moment the park
+            // ends, and the notification that caused it is now spoken for.
+            run.wakePending = false;
+            if (run.turns > 0) leaveWait(run);
+          }
+        }
         const spoke = assistantText(ev);
         if (spoke) lastAssistant = spoke;
         if (ev.type === "result") {
@@ -236,9 +416,29 @@ export async function runClaude(
             sessionId: ev.session_id ?? sessionId,
             isError: Boolean(ev.is_error),
           };
+          // The next turn writes its own words; carrying these over would let
+          // a wake-up with no text repeat the previous turn's answer.
+          lastAssistant = "";
+          run.turns++;
+          const turn = run.turns;
+          const delivered = result;
+          const pending = run.tasks;
+          deliveries = deliveries.then(() =>
+            hooks.onTurn?.(delivered, turn, pending),
+          );
+
+          // Is there more coming? `tasks` is the CLI's own outstanding list;
+          // `wakePending` covers the gap where it has already cleared the list
+          // but not yet started the turn it cleared it for.
+          const more = pending.length > 0 || run.wakePending;
+          if (!more || !config.background.waitMs) endInput();
+          else if (turn >= config.background.maxTurns) {
+            endInput();
+            if (pending.length) hooks.onAbandon?.(pending, "turns");
+          } else enterWait();
         }
         try {
-          onEvent?.(ev);
+          hooks.onEvent?.(ev);
         } catch (e) {
           // A broken progress renderer must not take the run down with it.
           console.warn(`onEvent failed: ${(e as Error).message}`);
@@ -257,20 +457,22 @@ export async function runClaude(
 
       child.on("close", (code) => {
         if (timer) clearTimeout(timer);
+        leaveWait(run);
         running.delete(chatKey);
         if (buf.trim()) handleLine(buf);
         // No result event means the run died before finishing — killed by
         // !stop, the timeout, or a SIGTERM from a redeploy. Say what happened
         // rather than hand back an empty answer.
-        resolve(
-          result ?? {
-            text:
-              `claude exited ${code}` +
-              (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
-            sessionId,
-            isError: true,
-          },
-        );
+        const final: RunResult = result ?? {
+          text:
+            `claude exited ${code}` +
+            (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
+          sessionId,
+          isError: true,
+        };
+        // Not before the last turn's reply has actually gone out: the caller
+        // takes this as "the run is over" and starts draining the queue.
+        void deliveries.then(() => resolve(final));
       });
     });
   } finally {

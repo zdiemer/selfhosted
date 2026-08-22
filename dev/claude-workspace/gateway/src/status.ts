@@ -21,11 +21,15 @@ import {
 
 /** Text shown while nothing has happened yet. */
 const INITIAL = "⏺ working…";
+/** What a retired status message is left saying, by why it was retired. */
+const CONTINUED = "⏺ continued below";
+const ANSWERED = "⏺ answered — continuing below";
 
 /** How many edits one message is worth. Signal caps a message at ten revisions
  * (MessageConstraintsUtil.MAX_EDIT_COUNT in Signal-Android) and silently drops
  * the rest, so this is a hard budget, not a preference: the last one is
- * reserved for the receipt, leaving nine for progress. */
+ * reserved for the line the message ends on — a receipt, or a pointer at the
+ * message the status rolled onto — leaving nine for progress. */
 const MAX_EDITS = 10;
 const RECEIPT_EDITS = 1;
 
@@ -148,9 +152,16 @@ export class Status {
    * finished. */
   private chain: Promise<unknown> = Promise.resolve();
   private done = false;
-  /** Bumped by restart(). An edit that was already on the wire when the status
+  /** Bumped by a roll. An edit that was already on the wire when the status
    * moved to a new message must not write its `next` ref back over it. */
   private epoch = 0;
+  /** Status messages this run has used so far. Sets the cadence (see gap) and
+   * is what `progress.maxMessages` is spent against. */
+  private rolls = 0;
+  /** The move to a fresh message, while it is in flight. A receipt that lands
+   * mid-roll has to wait for it, or it writes itself onto the message the roll
+   * just retired. */
+  private rolling: Promise<void> | null = null;
 
   constructor(
     private chatKey: string,
@@ -213,14 +224,22 @@ export class Status {
     }
   }
 
-  /** How long to wait before spending the next progress edit. The budget is
-   * small and a run's length is unknown at the start, so the gap doubles each
-   * time: the first minute of a run is where the interesting steps are, and
-   * nine edits spaced 5s, 10s, 20s … cover roughly three quarters of an hour
-   * without a fixed cadence's choice between "detailed but blind after a
-   * minute" and "alive for an hour but useless early". */
+  /**
+   * How long to wait before spending the next progress edit.
+   *
+   * Steady inside one message. The gap used to double per EDIT, which spread
+   * nine revisions over three quarters of an hour — dense for the first ten
+   * seconds and then, for most of a long run, a message showing a tool call
+   * from four minutes ago beside a clock that had stopped.
+   *
+   * What doubles now is the cadence of each successive MESSAGE. Nine edits at
+   * the base interval cover the first minute step by step, and when that
+   * budget runs out the status rolls onto a fresh message at twice the step.
+   * An hour of run costs a handful of messages instead of eighty, and none of
+   * them is ever more than one cadence stale.
+   */
   private gap(): number {
-    return this.intervalMs * 2 ** this.spent;
+    return this.intervalMs * 2 ** this.rolls;
   }
 
   /** One redraw, at most one edit in flight. The rendered text is what gets
@@ -229,7 +248,14 @@ export class Status {
    * byte-identical text (sub-second intervals, a stopped clock) does not. */
   private flush(): Promise<unknown> {
     if (!this.active || this.editing) return this.chain;
-    if (this.spent >= MAX_EDITS - RECEIPT_EDITS) return this.chain;
+    if (this.spent >= MAX_EDITS - RECEIPT_EDITS) {
+      // Out of revisions on this message. Signal drops the rest silently, so
+      // the choice is a new message or no more progress at all — and going
+      // quiet halfway through is what made a long run look hung.
+      if (this.rolls < config.progress.maxMessages - 1)
+        void this.rollOnce(CONTINUED);
+      return this.chain;
+    }
     if (this.now() - this.lastEditAt < this.gap()) return this.chain;
     const text = renderStatus({
       action: this.action,
@@ -259,33 +285,33 @@ export class Status {
   }
 
   /**
-   * Hand the status over to a fresh message and keep counting.
+   * Move the status onto a fresh message and keep counting.
    *
-   * A run that stops to ask something — a plan to approve, a question, a
-   * permission prompt — spends the wait on screen, and by the time the reply
-   * lands the old message is stranded: its ten Signal revisions are gone, the
-   * prompt and the reply are the newest things in the thread, and the status is
-   * scrolled somewhere above them. So the answer starts a new one, with a new
-   * edit budget, below the reply where it can actually be seen. The elapsed
-   * clock and the tool count carry over — it is the same run.
+   * Two things ask for this. An answered prompt: a run that stops for a plan,
+   * a question or a permission ask spends the wait on screen, and by the time
+   * the reply lands the old message is stranded — its revisions gone, the
+   * prompt and the reply the newest things in the thread, the status scrolled
+   * somewhere above them. And a spent edit budget: nine revisions is all
+   * Signal allows one message, and a run longer than that has to continue
+   * somewhere.
+   *
+   * The elapsed clock, the tool count and the roll count all carry over — it
+   * is the same run, and the next message is paced accordingly.
    */
-  async restart(): Promise<void> {
-    if (!this.active) return;
+  private async roll(retire: string): Promise<void> {
     this.epoch++;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
     const old = this.ref;
+    // Not active while this is in flight, which is what keeps the ticker and a
+    // concurrent flush off the message being retired.
     this.ref = undefined;
+    this.rolls++;
     // Retire the old message rather than leave a "working…" that will never
-    // move again next to one that does.
-    this.chain = this.chain.then(() =>
-      this.io.edit(this.chatKey, old, "⏺ answered — continuing below"),
-    );
-    // Whatever it was doing, it was waiting on the reply; that is finished now.
-    this.action = "";
-    this.note = "";
+    // move again next to one that does. This is what RECEIPT_EDITS reserved.
+    this.chain = this.chain.then(() => this.io.edit(this.chatKey, old, retire));
     const ref = await this.io.send(this.chatKey, INITIAL);
     if (ref === undefined) return; // send failed; nothing left to edit
     this.ref = ref;
@@ -296,19 +322,47 @@ export class Status {
     this.timer.unref?.();
   }
 
-  /** Collapse to one line. The run is over; what stays in the thread is a
-   * receipt, not a stale half-finished action. */
-  async finish(ok: boolean): Promise<void> {
+  /** One roll at a time. The ticker keeps firing while a roll is on the wire,
+   * and a second one would strand the message the first had just sent. */
+  private rollOnce(retire: string): Promise<void> {
+    if (this.rolling) return this.rolling;
+    const p = this.roll(retire).finally(() => (this.rolling = null));
+    this.rolling = p;
+    return p;
+  }
+
+  /** The prompt was answered — hand the status to a message below the reply. */
+  async restart(): Promise<void> {
+    if (!this.active) return;
+    // Whatever it was doing, it was waiting on the reply; that is finished now.
+    this.action = "";
+    this.note = "";
+    await this.rollOnce(ANSWERED);
+  }
+
+  /** Collapse to one line. The turn is over; what stays in the thread is a
+   * receipt, not a stale half-finished action.
+   *
+   * `note` is appended when the turn is not the last word — a run parked on
+   * background work has answered, but is still holding, and the receipt is the
+   * only place that shows the difference between "finished" and "waiting on
+   * the build". */
+  async finish(ok: boolean, note = ""): Promise<void> {
     await this.replace(
       `${ok ? "✓" : "⚠"} ${ok ? "done" : "failed"}` +
         ` · ${this.tools} tool${this.tools === 1 ? "" : "s"}` +
         ` · ${formatElapsed(this.now() - this.started)}` +
-        formatSpend(this.tokens, this.costUsd),
+        formatSpend(this.tokens, this.costUsd) +
+        (note ? ` · ${note}` : ""),
     );
   }
 
   /** Overwrite with an arbitrary line and stop updating (SIGTERM path). */
   async replace(text: string): Promise<void> {
+    // A roll can be in flight — the budget ran out just as the turn ended. The
+    // receipt belongs on the message that roll is sending, not on the one it
+    // is retiring, and mid-roll there is no `ref` to write to at all.
+    if (this.rolling) await this.rolling;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

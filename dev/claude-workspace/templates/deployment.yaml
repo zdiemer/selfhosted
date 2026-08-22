@@ -486,6 +486,12 @@ spec:
               value: {{ .Values.messaging.approvalTimeoutSeconds | quote }}
             - name: GW_CLAUDE_TIMEOUT_SECONDS
               value: {{ .Values.messaging.claudeTimeoutSeconds | default 0 | quote }}
+            # How long a run may stay up after answering, waiting for a
+            # background task to report back. 0 disables the wait entirely.
+            - name: GW_BACKGROUND_WAIT_SECONDS
+              value: {{ .Values.messaging.background.waitSeconds | default 1800 | quote }}
+            - name: GW_BACKGROUND_MAX_TURNS
+              value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}
             - name: GW_MODEL
@@ -522,6 +528,8 @@ spec:
               value: {{ .Values.messaging.progress.editSeconds | quote }}
             - name: GW_PROGRESS_SIGNAL_EDIT_SECONDS
               value: {{ .Values.messaging.progress.signalEditSeconds | quote }}
+            - name: GW_PROGRESS_MAX_MESSAGES
+              value: {{ .Values.messaging.progress.maxMessages | default 6 | quote }}
             - name: GW_REACTIONS_ENABLED
               value: {{ .Values.messaging.reactions.enabled | quote }}
             - name: GW_REACT_QUEUED

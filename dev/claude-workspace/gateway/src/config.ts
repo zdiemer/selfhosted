@@ -35,6 +35,8 @@ You can send files. Put [[send:/absolute/path]] alone on a line and that file is
 
 You can ask the person something mid-run, in any mode — not just when planning. AskUserQuestion is relayed to their phone as a numbered list they answer with a digit or their own words, and their answer comes back to you. Use it when a choice would change the work and you would otherwise have to guess; don't use it for things you can find out by looking.
 
+Long jobs can run in the background. Start one (a build, a migration, a test suite) as a background task, say so in a short reply, and end your turn — you will be woken when it finishes and can send a second message with the result. That is the right shape here: a reply that lands now beats a phone held open for twenty minutes. Don't background something that takes seconds.
+
 You are running headless. There is no interactive terminal. A status message shows the person a one-line summary of each tool call as you work, so they can see that something is happening, but your reasoning is not shown and the reply is what they will actually read — write it as though it stands alone.`;
 
 const DEFAULT_GROUP_SYSTEM_PROMPT = `This is a group chat. Everyone in the room reads your replies, but only the person who tagged you is asking — answer them, and don't address the room at large. Earlier messages from other people are given to you as context.
@@ -107,6 +109,15 @@ export const config = {
     // often a still-running status redraws — five seconds reads as alive
     // without turning a long run into hundreds of revisions of one message.
     signalIntervalMs: envInt("GW_PROGRESS_SIGNAL_EDIT_SECONDS", 5) * 1000,
+    // Status messages one run may spend. Signal allows ten revisions of a
+    // message and no more, so a long run has to continue on a new one or stop
+    // reporting; this bounds how many times it may do that before it does
+    // stop. Each message runs at twice the cadence of the last (status.ts
+    // gap()), so six of them at the 5s default cover roughly the first
+    // three-quarters of an hour: a minute of second-by-second detail at the
+    // start, coarsening as the run goes, and six messages in the thread rather
+    // than eighty.
+    maxMessages: envInt("GW_PROGRESS_MAX_MESSAGES", 6),
   },
   // Reactions on the sender's own message: accepted → working → done/failed.
   // This is the one feature that shows up in a group whether the room asked
@@ -239,6 +250,28 @@ export const config = {
   // escape hatch, and a redeploy still ends everything. Set
   // GW_CLAUDE_TIMEOUT_SECONDS to a positive number to restore a cap.
   claudeTimeoutMs: envIntOrZero("GW_CLAUDE_TIMEOUT_SECONDS", 0) * 1000,
+  // Background work — a `run_in_background` Bash, a backgrounded subagent —
+  // outlives the turn that started it, and the CLI wakes ITSELF when one
+  // reports back. It can only do that while its process is still up, so the
+  // gateway holds the run open rather than closing stdin on the first answer.
+  background: {
+    // How long a run may sit parked waiting for a wake that may never come.
+    // Zero means don't park at all, which is exactly how this surface behaved
+    // before: the first answer ends the run and the task is killed with it.
+    // (Zero reads as "no wait" here, not "no limit" as it does for
+    // claudeTimeoutSeconds — a wait of nothing is nothing, a timeout of
+    // nothing is no timeout.)
+    //
+    // Half an hour is the same bet approvalTimeoutMs makes: long enough for
+    // the build or the migration that was the point of backgrounding it,
+    // short enough that a wedged task doesn't hold the chat all day.
+    waitMs: envIntOrZero("GW_BACKGROUND_WAIT_SECONDS", 1800) * 1000,
+    // Turns one message may grow into, wake-ups included. The wall clock
+    // above bounds one park; this bounds the chain, so a run that starts a
+    // fresh background task on every wake cannot spend the subscription in a
+    // loop nobody asked for.
+    maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
+  },
   // Read-only tools that never prompt; everything else goes through the
   // approval relay. Space-separated, claude --allowedTools syntax.
   allowedTools:

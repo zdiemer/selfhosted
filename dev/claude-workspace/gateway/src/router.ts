@@ -11,10 +11,16 @@ import {
 import { replyPrefix } from "./chunk.ts";
 import {
   atCapacity,
+  type BackgroundTask,
+  describeTasks,
+  handOff,
   isRunning,
+  isWaiting,
   latestSessionId,
+  type RunResult,
   runClaude,
   stop,
+  waitingOn,
 } from "./claude.ts";
 import {
   groupRateAllows,
@@ -94,8 +100,19 @@ function react(chatKey: string, ref: MsgRef | undefined, emoji: string): void {
 }
 
 /** The status message for the run currently draining this chat, so SIGTERM can
- * tell it why it is about to stop. */
+ * tell it why it is about to stop. A run that outlives its first answer gets a
+ * fresh Status per turn, so this is replaced as the run goes, not set once. */
 const statuses = new Map<string, Status>();
+
+/**
+ * The inbound message a run's NEXT reply answers, so the ✅ lands on it.
+ *
+ * A run no longer maps one-to-one onto a message: it can wake itself when
+ * background work finishes, and it can be handed a second message while it is
+ * parked. Only a turn that some message actually asked for reacts — a wake-up
+ * answers the build, not the phone, and there is nothing there to react to.
+ */
+const deliveryRefs = new Map<string, MsgRef | undefined>();
 
 export function activeStatus(chatKey: string): Status | undefined {
   return statuses.get(chatKey);
@@ -279,13 +296,42 @@ export function handleInbound(
   // starts. That distinction is the whole reason a reaction beats a read
   // receipt here — and the reason only the waiting case reacts from here, so a
   // message that starts immediately gets one reaction rather than two.
-  if (queue.length === 1 && !isRunning(chatKey)) void drain(chatKey);
+  //
+  // isWaiting is the second door: a run parked on background work IS running,
+  // but it is idle, and drain() can hand the message straight to it rather
+  // than sit on it until the build it is waiting for reports back.
+  if (queue.length === 1 && (!isRunning(chatKey) || isWaiting(chatKey)))
+    void drain(chatKey);
   else react(chatKey, meta.ref, config.reactions.queued);
 }
+
+/** What a message with nothing but attachments is handed to the model as. */
+const NO_CAPTION = "(the user sent this with no caption)";
 
 async function drain(chatKey: string): Promise<void> {
   const queue = queues.get(chatKey);
   if (!queue?.length) return;
+  // Re-entrancy guard. drain() used to be reachable only when nothing was
+  // running; it is now also called for a parked run, so a mid-turn call (the
+  // capacity re-check, a second message) has to bow out on its own.
+  if (isRunning(chatKey) && !isWaiting(chatKey)) return;
+
+  // A parked run is idle with an open stdin, so the cheapest thing to do with
+  // the next message is give it to the run that is already up — which also
+  // keeps its background work alive, where starting a fresh run would mean
+  // ending this one and killing the tasks with it.
+  if (isWaiting(chatKey)) {
+    const item = queue[0];
+    if (handOff(chatKey, item.body || NO_CAPTION, attachmentPreamble(item.files ?? []))) {
+      queue.shift();
+      deliveryRefs.set(chatKey, item.ref);
+      react(chatKey, item.ref, config.reactions.working);
+      // The parked run's onTurn below delivers this reply; there is no second
+      // run to start and nothing here to await.
+      return;
+    }
+  }
+
   if (atCapacity()) {
     // Re-check shortly; global cap bounds worst-case pod memory. Say so once —
     // this chat is next in line but another chat holds the slot.
@@ -296,7 +342,7 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const { body: message, ref, files } = queue[0];
+  const { body: message, ref, files } = queue.shift()!;
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -304,11 +350,12 @@ async function drain(chatKey: string): Promise<void> {
     await sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again");
   }
   react(chatKey, ref, config.reactions.working);
+  deliveryRefs.set(chatKey, ref);
   const group = isGroupChat(chatKey);
   // No status message in a group: the room did not ask to watch the bot's tool
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
   // is very little to watch.
-  const status = group ? undefined : createStatus(chatKey);
+  let status = group ? undefined : createStatus(chatKey);
   if (status) {
     statuses.set(chatKey, status);
     await status.begin();
@@ -322,62 +369,125 @@ async function drain(chatKey: string): Promise<void> {
     ]
       .filter(Boolean)
       .join("\n\n");
-    const result = await runClaude(
-      chatKey,
-      message || "(the user sent this with no caption)",
-      preamble,
-      status ? (ev) => status.onEvent(ev) : undefined,
-    );
-    // Collapse the status before the answer lands, so the thread reads
-    // status-receipt-then-answer rather than answer-then-a-stale-"working…".
-    await status?.finish(!result.isError);
+    await runClaude(chatKey, message || NO_CAPTION, preamble, {
+      onEvent: (ev) => {
+        // A new turn on a run that already answered once — the CLI woke itself
+        // for a finished background task, or was handed a second message. The
+        // previous turn's status was collapsed into its receipt, so the
+        // continuation needs a live one of its own, below the reply.
+        if (
+          !group &&
+          ev.type === "system" &&
+          ev.subtype === "init" &&
+          status &&
+          !status.active
+        ) {
+          status = createStatus(chatKey);
+          statuses.set(chatKey, status);
+          void status.begin();
+        }
+        status?.onEvent(ev);
+      },
+      onTurn: async (result, _turn, pending) => {
+        // Collapse the status before the answer lands, so the thread reads
+        // status-receipt-then-answer rather than answer-then-a-stale-"working…".
+        // The receipt says what is still outstanding, which is the difference
+        // between an answer and an interim report.
+        await status?.finish(
+          !result.isError,
+          pending.length ? `⏳ ${describeTasks(pending)}` : "",
+        );
+        await deliver(chatKey, result, group);
+        // If this turn parked the run and something is queued behind it, the
+        // park is a chance to answer it — handleInbound only kicks drain for
+        // the first message, so a second one that arrived during the last park
+        // would otherwise wait out the whole run.
+        if (isWaiting(chatKey) && queues.get(chatKey)?.length)
+          void drain(chatKey);
+      },
+      onAbandon: (tasks, reason) => {
+        // These die with the process, and nothing else in the thread would
+        // ever say so — the last thing the chat heard was "I'll report back".
+        void sendTo(
+          chatKey,
+          `⚠ gave up waiting on ${describeTasks(tasks)} ` +
+            (reason === "timeout"
+              ? `after ${formatDuration(config.background.waitMs)}`
+              : `(${config.background.maxTurns}-turn limit)`) +
+            " — it was stopped, not finished. Ask again to pick it back up.",
+        );
+      },
+    });
+  } catch (err) {
+    await status?.replace(`⚠ gateway error`);
+    // Whatever this run still owes a reaction to. Undefined once a turn has
+    // been delivered — that message already has its ✅ and is not this error's.
+    react(chatKey, deliveryRefs.get(chatKey), config.reactions.error);
+    await sendTo(chatKey, `⚠ gateway error: ${String(err)}`);
+  } finally {
+    statuses.delete(chatKey);
+    deliveryRefs.delete(chatKey);
+    if (queue.length) void drain(chatKey);
+  }
+}
+
+/**
+ * One turn's answer, out to the chat.
+ *
+ * Called once per turn rather than once per run: a run that parks on
+ * background work answers now ("build started") and again when it wakes, and
+ * both are ordinary replies. The ✅ goes on whichever message asked — a
+ * wake-up answers nobody's message and reacts to nothing.
+ */
+async function deliver(
+  chatKey: string,
+  result: RunResult,
+  group: boolean,
+): Promise<void> {
+  const ref = deliveryRefs.get(chatKey);
+  if (ref !== undefined) {
     react(
       chatKey,
       ref,
       result.isError ? config.reactions.error : config.reactions.done,
     );
-    // A group reply is just an answer in a conversation — the cwd/session/auto
-    // banner is workspace bookkeeping and means nothing to the other people in
-    // the room, so it stays on the 1:1 surface.
-    // Only a 1:1 honours a send marker. In a group the members are not on the
-    // personal allowlist and claude has no filesystem there anyway — but the
-    // marker is parsed from text, and text is the one thing a room can steer.
-    const outbound =
-      config.attachments.enabled && !group
-        ? extractSendMarkers(result.text)
-        : { text: result.text, files: [], problems: [] };
-
-    if (group) {
-      await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);
-    } else {
-      const chat = getChat(chatKey);
-      const prefix = replyPrefix(
-        chat.cwd,
-        chat.sessionId,
-        chatMode(chatKey),
-        sessionName(chat),
-      );
-      await sendReply(
-        chatKey,
-        `${prefix}${result.isError ? " ⚠" : ""}\n${outbound.text}`,
-      );
-    }
-    // After the text, so the words arrive first on a slow link.
-    for (const file of outbound.files) {
-      const err = await sendFileTo(chatKey, file);
-      if (err) outbound.problems.push(`⚠ couldn't send ${file}: ${err}`);
-    }
-    if (outbound.problems.length)
-      await sendTo(chatKey, outbound.problems.join("\n"));
-  } catch (err) {
-    await status?.replace(`⚠ gateway error`);
-    react(chatKey, ref, config.reactions.error);
-    await sendTo(chatKey, `⚠ gateway error: ${String(err)}`);
-  } finally {
-    statuses.delete(chatKey);
-    queue.shift();
-    if (queue.length) void drain(chatKey);
+    // Spent: the next turn is either a wake-up (nobody's message) or a message
+    // that will set its own.
+    deliveryRefs.set(chatKey, undefined);
   }
+  // A group reply is just an answer in a conversation — the cwd/session/auto
+  // banner is workspace bookkeeping and means nothing to the other people in
+  // the room, so it stays on the 1:1 surface.
+  // Only a 1:1 honours a send marker. In a group the members are not on the
+  // personal allowlist and claude has no filesystem there anyway — but the
+  // marker is parsed from text, and text is the one thing a room can steer.
+  const outbound =
+    config.attachments.enabled && !group
+      ? extractSendMarkers(result.text)
+      : { text: result.text, files: [], problems: [] };
+
+  if (group) {
+    await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);
+  } else {
+    const chat = getChat(chatKey);
+    const prefix = replyPrefix(
+      chat.cwd,
+      chat.sessionId,
+      chatMode(chatKey),
+      sessionName(chat),
+    );
+    await sendReply(
+      chatKey,
+      `${prefix}${result.isError ? " ⚠" : ""}\n${outbound.text}`,
+    );
+  }
+  // After the text, so the words arrive first on a slow link.
+  for (const file of outbound.files) {
+    const err = await sendFileTo(chatKey, file);
+    if (err) outbound.problems.push(`⚠ couldn't send ${file}: ${err}`);
+  }
+  if (outbound.problems.length)
+    await sendTo(chatKey, outbound.problems.join("\n"));
 }
 
 /** The chat's permission stance, for the banner and !status. Empty string is
@@ -652,7 +762,16 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
             ? `group: tools limited to ${config.groups.allowedTools}`
             : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
           ...(isGroupChat(chatKey) ? [] : [unlockSummary(chatKey)]),
-          `state: ${isRunning(chatKey) ? "running" : "idle"}${q ? `, ${q} queued` : ""}` +
+          // "running" and "parked" are different answers to "why am I
+          // waiting?" — parked means it already replied and is holding an
+          // open process for a background task to report.
+          `state: ${
+            isWaiting(chatKey)
+              ? `parked on ${describeTasks(waitingOn(chatKey))}`
+              : isRunning(chatKey)
+                ? "running"
+                : "idle"
+          }${q ? `, ${q} queued` : ""}` +
             (isBashRunning(chatKey) ? ", bash running" : "") +
             (overflowSize(chatKey) ? `, ${overflowSize(chatKey)} chars unsent (!more)` : ""),
         ].join("\n"),
@@ -667,6 +786,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           "!more shows the rest of a reply that was cut short\n" +
           "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
+          "Long jobs run in the background: you get a reply now and a second " +
+          "one when they finish. !status shows what a chat is parked on\n" +
           "!lock locks the chat now; a 6-digit code unlocks it. !bash and !auto " +
           "need a code from the last few minutes\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +

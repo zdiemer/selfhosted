@@ -82,11 +82,23 @@ image:
   # v6: adds the messaging surface — signal-cli (native binary) + the
   #     gateway app at /opt/messaging-gateway (Signal/WhatsApp → headless
   #     claude, see `messaging:` below and README "Messaging surface").
+  # v23: background work stops needing a nudge. A `run_in_background` Bash or a
+  #      backgrounded subagent used to be KILLED at end of turn — `claude -p
+  #      <prompt>` closes stdin, the CLI reads that as the whole conversation
+  #      and tears the run down — so the chat sat on "I'll report back when the
+  #      build finishes" until someone sent another message. The prompt now
+  #      goes over `--input-format stream-json` and the run is held open, so
+  #      the CLI wakes itself and the chat gets a second reply when the work
+  #      lands (messaging.background.*). A message sent while a run is parked
+  #      is handed to it rather than queued behind the wait.
+  #      Also: the status message keeps a steady cadence and rolls onto a new
+  #      message when its nine revisions are spent, instead of doubling its gap
+  #      until the clock visibly stopped (messaging.progress.maxMessages).
   # v22: gateway fix — replies whose turn ends on a tool call (scheduled
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
-  tag: "v22"
+  tag: "v23"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -354,6 +366,35 @@ messaging:
   # answer they had already earned goes with them. `!stop` ends a run on
   # demand and a redeploy ends them all.
   claudeTimeoutSeconds: 0
+  background:
+    # Background work — a `run_in_background` Bash, a backgrounded subagent —
+    # outlives the turn that started it, and the CLI wakes ITSELF when one
+    # reports back. It can only do that while its process is still up, so the
+    # gateway feeds the prompt over stdin and holds the run open instead of
+    # closing it on the first answer. Before this the CLI tore the run down at
+    # end of turn and KILLED the task with it (they come back
+    # `status: "killed"`), and the chat sat on "I'll report back when the build
+    # finishes" until someone sent another message to nudge it.
+    #
+    # What a chat sees: a reply now ("build started"), a receipt saying what is
+    # still outstanding, and a second reply when it lands. `!status` says
+    # `parked on …` in between, and a message sent meanwhile is handed to the
+    # parked run rather than queued behind it.
+    #
+    # How long a run may sit parked. 0 means don't park at all — the old
+    # behaviour, where the first answer ends the run. (0 reads as "no wait"
+    # here, not "no limit" as it does for claudeTimeoutSeconds above: a wait of
+    # nothing is nothing, a timeout of nothing is no timeout.) Half an hour is
+    # the same bet approvalTimeoutSeconds makes: long enough for the build that
+    # was the point of backgrounding it, short enough that a wedged task
+    # doesn't hold the chat all day. Anything still outstanding when it lapses
+    # is killed with the process, and the chat is told so rather than left
+    # waiting on a reply that is never coming.
+    waitSeconds: 1800
+    # Turns one message may grow into, wake-ups included. The wall clock above
+    # bounds one park; this bounds the chain, so a run that starts a fresh
+    # background task on every wake cannot loop on the subscription unasked.
+    maxTurns: 10
   # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
   # else round-trips "Claude wants: … reply 1/2/3". `!auto on` allows those
   # unprompted too — but a question or a plan still reaches the chat, because
@@ -427,13 +468,21 @@ messaging:
     # WhatsApp is reached through an unofficial client (see "ban risk"), so a
     # fast tick is not on the table. The last state always lands regardless.
     editSeconds: 3
-    # Signal's FIRST gap; each later one doubles (5s, 10s, 20s …). Not a
-    # cadence, because Signal caps a message at ten revisions and drops the
-    # rest: the status gets nine progress edits and keeps the tenth for the
-    # receipt, so they are spent densely while the interesting steps happen
-    # and sparsely after, covering ~45 minutes. Raising this stretches the
-    # whole run at the cost of the early detail.
+    # Signal's redraw cadence, and a real cadence: steady for as long as one
+    # status message lasts. It used to be a FIRST gap that doubled per edit
+    # (5s, 10s, 20s …) to stretch nine revisions over the whole run, which
+    # bought coverage by going stale — past the first minute the message showed
+    # a tool call from four minutes ago beside a clock that had stopped.
     signalEditSeconds: 5
+    # Status messages one run may spend. Signal caps a message at ten revisions
+    # and silently drops the rest, so a run longer than that either continues
+    # on a new message or stops reporting — and stopping is what read as hung.
+    # The status now rolls onto a fresh message when its ninth progress edit is
+    # spent (the tenth retires the old one), and each message runs at twice the
+    # cadence of the last. Six at the 5s default covers about the first
+    # three-quarters of an hour: a minute of step-by-step detail, coarsening as
+    # the run goes, in six messages rather than eighty.
+    maxMessages: 6
   reactions:
     # Emoji on the sender's own message: working → done/failed, with the queued
     # one while another run in the same chat is still going. This is the only
