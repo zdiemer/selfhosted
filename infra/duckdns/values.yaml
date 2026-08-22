@@ -96,7 +96,6 @@ updater:
       - { node: zachd-ubuntu-2,        ip: 100.118.242.89 }
       # Fallback only (laptops; verify no `tailscale serve` on :443 first):
       - { node: zachd-ubuntu-laptop,   ip: 100.124.40.81 }
-      - { node: zachd-ubuntu-laptop-1, ip: 100.122.194.1 }
       - { node: zachd-ubuntu-laptop-2, ip: 100.81.206.46 }
       - { node: zachd-ubuntu-laptop-6, ip: 100.109.25.85 }
 
