@@ -13,6 +13,12 @@ At install time render is empty and this file produces nothing.
 githubConfigUrl: https://github.com/{{ .Values.github.owner }}/{{ $repo.name }}
 githubConfigSecret: actions-runner-github
 runnerScaleSetName: {{ $r.name }}
+# Explicit rather than discovered: the chart otherwise looks the controller up
+# by label at render time, which needs a live cluster and fails a dry run.
+# Release "arc" of gha-runner-scale-set-controller names its SA this.
+controllerServiceAccount:
+  name: arc-gha-rs-controller
+  namespace: {{ .Values.namespaces.controller }}
 minRunners: {{ $r.minRunners }}
 maxRunners: {{ $r.maxRunners }}
 {{- if $r.dind }}
