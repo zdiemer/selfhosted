@@ -410,6 +410,14 @@ catalog:
       # Its index declares `<link rel="icon" href="data:,">` — deliberately no
       # favicon — so the mark is seeded in brand/service-icons.
       note: LAN/tailnet only (WebRTC)
+    - name: SMT Imagine
+      category: Games
+      namespace: games
+      service: smt-imagine
+      # The tile links the account manager (Ingress); the game itself is three
+      # raw TCP ports on the node IPs. COMP_hack serves no favicon, so the mark
+      # is seeded in brand/service-icons.
+      note: client → smt.zachd.duckdns.org:10666, tailnet only
 
     # ------------------------------------------------------------------- Home
     - name: money

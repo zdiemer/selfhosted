@@ -1,0 +1,60 @@
+{{/*
+Three things the game client talks to, none of them HTTP-over-Traefik:
+
+  lobby   TCP 10666  the port in ImagineClient.dat; login + character select
+  channel TCP 14666  the zone server; the lobby hands the client this address
+                     (channel.externalIP) after character select
+  web     TCP 10999  the client's login POST goes to http://<host>:10999/ as
+                     named in webaccess.sdat — plain HTTP, by a 2008 client
+
+All three are published by klipper-lb on every node IP, the way minecraft/
+exposes 25565. DuckDNS resolves *.zachd.duckdns.org to a node's tailnet
+address (infra/duckdns mode: tailnet), so a tailnet device reaches all three
+via smt.zachd.duckdns.org; nothing is on the public internet.
+
+A separate ClusterIP fronts the same web port for the Ingress, so the account
+manager UI gets TLS and Authelia on a hostname while the client keeps its raw
+HTTP port.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}-game
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if eq .Values.service.type "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  ports:
+    - name: lobby
+      port: {{ .Values.ports.lobby }}
+      targetPort: lobby
+      protocol: TCP
+    - name: channel
+      port: {{ .Values.ports.channel }}
+      targetPort: channel
+      protocol: TCP
+    - name: web
+      port: {{ .Values.ports.web }}
+      targetPort: web
+      protocol: TCP
+  selector:
+    {{- include "smt-imagine.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.ports.web }}
+      targetPort: web
+      protocol: TCP
+  selector:
+    {{- include "smt-imagine.selectorLabels" . | nindent 4 }}

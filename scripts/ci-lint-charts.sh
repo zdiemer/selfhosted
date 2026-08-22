@@ -28,6 +28,8 @@ TEMPLATE_SKIP=(
   docs/paperless-ngx
   games/romm
   games/cloud-game
+  # admin.password is `required` (op://homelab/games-smt-imagine).
+  games/smt-imagine
   infra/actions-runner
   infra/cloudflared
   infra/democratic-csi

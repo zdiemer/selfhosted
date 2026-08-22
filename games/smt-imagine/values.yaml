@@ -1,0 +1,126 @@
+# smt-imagine — Shin Megami Tensei IMAGINE private server (COMP_hack 4.12.2).
+#
+#   ImagineClient.exe ──TCP 10666──▶ lobby  ─┐ localhost ┌─ SQLite PVC (database)
+#                     ──HTTP 10999──▶ lobby  ─┤ one pod  ─┤
+#                     ──TCP 14666──▶ channel ─┘ ◀─ world ─┘ datastore (image) +
+#                                                           client data PVC (data)
+#   browser ──HTTPS──▶ Traefik + Authelia ──▶ lobby :10999 /accountmanager/
+#
+# The client reaches the three game ports via klipper-lb on the node IPs, the
+# way minecraft/ exposes 25565. Tailnet/LAN only: there is no tunnel and the
+# login is plain HTTP from a 2008 game client.
+#
+# Things you need that are NOT in git, and why — see README:
+#   - the image: build.sh compiles it from the last surviving source tarball.
+#   - the client data: stage-client.sh copies BinaryData/ + the QMP maps from a
+#     ReIMAGINE client onto the data PVC (copyrighted; never in git or image).
+#   - the admin password: op://homelab/games-smt-imagine.
+
+image:
+  # Built by build.sh from the Launchpad PPA tarball (Dockerfile). Tag is
+  # "<comp_hack version>-<build n>": bump the suffix for a Dockerfile change,
+  # the prefix if a newer tarball ever appears (it won't; the project is dead).
+  repository: registry.zachd.duckdns.org/zdiemer/smt-imagine
+  tag: "4.12.2-2"
+  pullPolicy: IfNotPresent
+
+ports:
+  lobby: 10666
+  channel: 14666
+  # World is pod-internal (channel ↔ world on localhost); not in any Service.
+  world: 18666
+  # Lobby web server: the client's login POST AND the account-manager UI.
+  web: 10999
+
+service:
+  # LoadBalancer → klipper-lb binds the three game ports on every node IP.
+  # Cluster, not Local, so the DuckDNS node forwards to the pod wherever it is.
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+
+client:
+  # Must match the client exactly (lobby refuses a mismatch). The ReIMAGINE
+  # client in the archive.org SMTREIMAGINE bundle reports 2.032; the original
+  # Aeria/JP 1.666 client would need this at 1.666 AND a matching datastore.
+  version: "2.032"
+
+lobby:
+  # Let the client's "register" screen create accounts. Off: only the seeded
+  # admin account exists and new ones come from the account manager. A tailnet
+  # host is not the public internet, but there is no reason to leave it open.
+  openRegistration: false
+  playOpeningMovie: true
+
+world:
+  name: "Diemer Tokyo"
+  greeting: "Welcome back to Tokyo. The server is yours."
+  # Solo-server tuning. These are multipliers on top of retail rates (0 = off).
+  # The point of running this alone is not to grind like it is 2009.
+  bonus:
+    xp: 1.0
+    expertise: 1.0
+    dropRate: 0.5
+  deathPenaltyDisabled: true
+
+channel:
+  name: "Channel 1"
+  # THE ADDRESS THE GAME CLIENT CONNECTS TO AFTER CHARACTER SELECT. The lobby
+  # hands the client this string verbatim, so it must be an IP the client can
+  # reach — not the pod IP, not a ClusterIP. infra/duckdns publishes
+  # zachd.duckdns.org as a node's tailnet address; this is that address, so a
+  # client that can resolve smt.zachd.duckdns.org for the lobby can reach the
+  # channel on the same node. LAN-only play would use a 192.168.4.x node IP.
+  externalIP: "100.84.179.82"
+  # Seconds before an idle client is dropped. 0 = never.
+  timeoutSeconds: 0
+
+server:
+  # The DH key pair used to encrypt every client session (from
+  # contrib/nixconfig). Rotate with `comp_lobby --generate-keys` if it matters;
+  # for a tailnet-only solo server it does not, and it is not a credential.
+  diffieHellmanKeyPair: "940134C09FB9BABE187BCE1030E6364530F0966E951F358CE581139FF8189D65E4C24C75FA21D2DCB58280146F435ECB8857D9CF8F0147099A40D2089107647232E82606CBBF767BD202A50A00F080F242C7FFC7B2D4F6D0CCAD33CF2B5FBCDBC0F5B9189D5BD937AA94DD7E238312F3EFF5D6247CEB5C2CAE1D8F5357FA6F8B"
+
+admin:
+  username: admin
+  email: admin@zachd.duckdns.org
+  # Set ONLY via values.local (op://homelab/games-smt-imagine). Seeds the first
+  # account, GM level 1000.
+  password: ""
+  characterTickets: 3
+
+ingress:
+  enabled: true
+  className: traefik
+  host: smt.zachd.duckdns.org
+  # Tailnet only. Nothing here belongs on the tunnel: the account manager is a
+  # user database admin and the game itself cannot cross an HTTP tunnel anyway.
+  cloudflareHosts: []
+
+auth:
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+persistence:
+  database:
+    size: 2Gi
+    storageClass: truenas-iscsi   # SQLite needs real fsync
+  data:
+    # BinaryData (109MB) + QMP maps; 1Gi leaves room for a re-stage.
+    size: 1Gi
+    storageClass: truenas-iscsi
+
+resources:
+  lobby:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  world:
+    requests: { cpu: 20m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  channel:
+    # Holds every zone definition and the live AI; the real server.
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 2Gi }

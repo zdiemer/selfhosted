@@ -1,0 +1,7 @@
+# Stored at op://homelab/games-smt-imagine/values.local.yaml (see the secrets
+# CLI). One value: the password of the seeded GM account. It is written into
+# setup.xml, which the lobby reads only when the database is empty — changing
+# it later changes nothing; use the account manager for that.
+
+admin:
+  password: "CHANGE-ME"

@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: both PVCs are RWO on truenas-iscsi (single-node attach), and
+  # SQLite has exactly one writer anyway.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "smt-imagine.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # A config edit must restart the servers — they read /etc/comp_hack once.
+        checksum/config: {{ include (print $.Template.BasePath "/config-configmap.yaml") . | sha256sum }}
+        checksum/setup: {{ include (print $.Template.BasePath "/setup-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "smt-imagine.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      enableServiceLinks: false
+      # The world flushes character state on SIGTERM; give it room.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      {{- $img := printf "%s:%s" .Values.image.repository .Values.image.tag }}
+      {{- $mounts := list
+            (dict "name" "config" "mountPath" "/etc/comp_hack/lobby.xml" "subPath" "lobby.xml" "readOnly" true)
+            (dict "name" "config" "mountPath" "/etc/comp_hack/world.xml" "subPath" "world.xml" "readOnly" true)
+            (dict "name" "config" "mountPath" "/etc/comp_hack/channel.xml" "subPath" "channel.xml" "readOnly" true)
+            (dict "name" "setup" "mountPath" "/etc/comp_hack/setup.xml" "subPath" "setup.xml" "readOnly" true)
+            (dict "name" "database" "mountPath" "/var/lib/comp_hack/database" "subPath" "database")
+            (dict "name" "database" "mountPath" "/var/log/comp_hack" "subPath" "log")
+            (dict "name" "data" "mountPath" "/var/lib/comp_hack/data" "readOnly" true) }}
+      containers:
+        # The Debian package ran these as three systemd units on one host, all
+        # on 127.0.0.1. Three containers in one pod is the same topology: the
+        # world and channel find the lobby/world on localhost, and all three
+        # share the SQLite directory the way they shared /var/lib/comp_hack.
+        #
+        # Start order matters: channel registers with world, world with lobby.
+        # Each retries its upstream connection, so the pod simply starts all
+        # three and lets them converge; the readiness probe on the lobby's web
+        # port is what gates the Services.
+        - name: lobby
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/bin/comp_lobby", "/etc/comp_hack/lobby.xml"]
+          ports:
+            - name: lobby
+              containerPort: {{ .Values.ports.lobby }}
+            - name: web
+              containerPort: {{ .Values.ports.web }}
+          readinessProbe:
+            tcpSocket:
+              port: lobby
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: lobby
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            {{- toYaml $mounts | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.lobby | nindent 12 }}
+        - name: world
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/bin/comp_world", "/etc/comp_hack/world.xml"]
+          ports:
+            - name: world
+              containerPort: {{ .Values.ports.world }}
+          readinessProbe:
+            tcpSocket:
+              port: world
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            {{- toYaml $mounts | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.world | nindent 12 }}
+        - name: channel
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/bin/comp_channel", "/etc/comp_hack/channel.xml"]
+          ports:
+            - name: channel
+              containerPort: {{ .Values.ports.channel }}
+          readinessProbe:
+            tcpSocket:
+              port: channel
+            # The channel loads every zone, event and BinaryData definition
+            # before it listens; that is the slow start of the three.
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            {{- toYaml $mounts | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.channel | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "smt-imagine.fullname" . }}-config
+        - name: setup
+          secret:
+            secretName: {{ include "smt-imagine.fullname" . }}-setup
+        - name: database
+          persistentVolumeClaim:
+            claimName: {{ include "smt-imagine.fullname" . }}-database
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "smt-imagine.fullname" . }}-data

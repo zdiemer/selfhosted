@@ -1,0 +1,13 @@
+apiVersion: v2
+name: smt-imagine
+description: Shin Megami Tensei IMAGINE private server — COMP_hack 4.12.2 (lobby + world + channel) built from the last surviving source tarball, SQLite on a PVC, client data staged onto a second PVC
+type: application
+version: 0.1.0
+# appVersion tracks the COMP_hack release the Dockerfile builds (image.tag in
+# values.yaml is "<comp_hack version>-<build n>").
+appVersion: "4.12.2"
+sources:
+  - https://launchpad.net/~compomega/+archive/ubuntu/comphack
+  - https://github.com/HyperChiicken/SMT
+maintainers:
+  - name: zachd
