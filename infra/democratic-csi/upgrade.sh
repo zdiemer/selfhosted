@@ -155,12 +155,12 @@ for driver in iscsi nfs; do
   # --post-renderer: the chart hardcodes the driver-registrar liveness probe
   # with no timeoutSeconds, so it inherits the Kubernetes default of 1s for an
   # exec probe and kills the node plugin on any node briefly too busy to answer.
-  # There is no value to set, so it is patched after rendering. post-render.sh
+  # There is no value to set, so it is patched after rendering. post-render.py
   # carries the full reasoning and EXITS NON-ZERO if it finds nothing to patch —
   # if the chart is bumped and the template changes shape, this deploy fails
   # loudly rather than quietly reverting to a 1s timeout.
   helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" --cleanup-on-fail \
-    --post-renderer "${HERE}/post-render.sh" \
+    --post-renderer "${HERE}/post-render.py" \
     -f "$VALUES" \
     -f "${HERE}/values-${driver}.yaml" \
     -f <(sv_fd)
