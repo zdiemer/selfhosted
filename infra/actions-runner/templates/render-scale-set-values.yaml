@@ -1,0 +1,30 @@
+{{- /*
+NOT a Kubernetes object. upgrade.sh renders this with
+  --set render=<repo>
+and hands the output to the upstream gha-runner-scale-set chart as its values.
+At install time render is empty and this file produces nothing.
+*/ -}}
+{{- if and .Values.render (ne .Values.render "repos") -}}
+{{- $name := .Values.render -}}
+{{- $repo := dict -}}
+{{- range .Values.repos }}{{ if eq .name $name }}{{ $repo = . }}{{ end }}{{ end -}}
+{{- if not $repo.name }}{{ fail (printf "render: no repo named %q in .Values.repos" $name) }}{{ end -}}
+{{- $r := include "actions-runner.repoSettings" (list $repo .) | fromYaml -}}
+githubConfigUrl: https://github.com/{{ .Values.github.owner }}/{{ $repo.name }}
+githubConfigSecret: actions-runner-github
+runnerScaleSetName: {{ $r.name }}
+minRunners: {{ $r.minRunners }}
+maxRunners: {{ $r.maxRunners }}
+{{- if $r.dind }}
+containerMode:
+  type: dind
+{{- end }}
+template:
+  spec:
+    containers:
+      - name: runner
+        image: {{ $r.image }}
+        command: ["/home/runner/run.sh"]
+        resources:
+          {{- toYaml $r.resources | nindent 10 }}
+{{- end -}}

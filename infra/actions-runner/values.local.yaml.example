@@ -1,0 +1,10 @@
+# Stored at op://homelab/infra-actions-runner/values.local.yaml.
+#
+# Fine-grained PAT (github.com → Settings → Developer settings → Fine-grained
+# tokens): "Only select repositories" = the private repos in values.yaml;
+# Repository permissions: Administration = Read and write, Metadata = Read.
+# Runner registration is the only thing it does. Expiry is the one gotcha —
+# when it lapses, listener pods start failing to auth and every job queues
+# forever with "Waiting for a runner".
+github:
+  token: "github_pat_CHANGE-ME"

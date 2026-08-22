@@ -1,0 +1,10 @@
+apiVersion: v2
+name: actions-runner
+description: Self-hosted GitHub Actions runners for the private zdiemer repos — ARC runner scale sets that scale to zero
+type: application
+version: 0.1.0
+# appVersion tracks the ARC chart version pinned in upgrade.sh (ARC_VERSION).
+appVersion: "0.14.2"
+home: https://github.com/actions/actions-runner-controller
+maintainers:
+  - name: zachd

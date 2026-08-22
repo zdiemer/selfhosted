@@ -28,6 +28,7 @@ TEMPLATE_SKIP=(
   docs/paperless-ngx
   games/romm
   games/cloud-game
+  infra/actions-runner
   infra/cloudflared
   infra/democratic-csi
   infra/duckdns

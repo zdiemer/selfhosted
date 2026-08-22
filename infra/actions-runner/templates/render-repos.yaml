@@ -1,0 +1,7 @@
+{{- /* NOT a Kubernetes object: the repo list, for upgrade.sh (--set render=repos). */ -}}
+{{- if eq .Values.render "repos" }}
+repos:
+{{- range .Values.repos }}
+  - {{ .name }}
+{{- end }}
+{{- end }}

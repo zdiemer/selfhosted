@@ -1,0 +1,80 @@
+# Self-hosted GitHub Actions runners.
+#
+# WHY. GitHub bills Actions minutes only for PRIVATE repos, and a self-hosted
+# runner is free of that meter entirely. The private repos (talaria, money,
+# rachelfreeman, whatnowgg) were burning the monthly allowance — talaria alone
+# ran ~100 five-minute pipelines in a window, most of them Renovate PRs.
+#
+# SHAPE. Two upstream Helm charts from actions/actions-runner-controller (ARC),
+# both installed by upgrade.sh straight from ghcr.io:
+#   - gha-runner-scale-set-controller, once, in namespace arc-systems.
+#   - gha-runner-scale-set, ONCE PER REPO, in namespace arc-runners. A scale
+#     set registers against one GitHub scope; a personal account has no org,
+#     so the scope is the repo. Each one runs a tiny listener pod that holds a
+#     long-poll to GitHub and spawns a runner pod per queued job.
+# This chart itself owns only what those two don't: the PAT Secret they share,
+# and the list below, which upgrade.sh turns into one scale-set release each.
+#
+# PUBLIC REPOS ARE DELIBERATELY ABSENT. GitHub's own guidance: never attach a
+# self-hosted runner to a public repo — a pull request from a fork is untrusted
+# code, and on a self-hosted runner it executes inside this cluster. The public
+# repos (selfhosted, gamedex, smitele-bot, sms-relay) cost no minutes anyway.
+#
+# THE LABEL. Every scale set is named `arc`, so every workflow switches with the
+# same one-line change: `runs-on: arc`. The name only has to be unique within
+# its repo.
+github:
+  owner: zdiemer
+  # Fine-grained PAT, "Only select repositories" = the list below, with
+  # Repository permissions → Administration: Read and write (what runner
+  # registration needs) and Metadata: Read. Nothing else. Lives in
+  # values.local.yaml (op://homelab/infra-actions-runner).
+  token: ""
+
+runners:
+  # The `runs-on:` label.
+  name: arc
+  # The listener pod stays; runner pods appear per job and leave after. Zero
+  # idle runners is the point — a warm runner would sit on 1 CPU / 2Gi of a
+  # node for nothing most of the day, and a pod start is ~10s against jobs
+  # that take minutes.
+  minRunners: 0
+  maxRunners: 2
+  # Runner image. `latest` because GitHub retires old runner versions server
+  # side (a runner more than a few releases behind is refused at registration),
+  # so pinning this is how the fleet silently stops picking up jobs.
+  image: ghcr.io/actions/actions-runner:latest
+  # Docker-in-Docker sidecar, privileged. Three of the four repos run `docker
+  # build` / docker/build-push-action, which need a daemon on the runner.
+  # The cheaper shape — buildx with driver=remote against the in-cluster
+  # buildkitd, no privileged container, shared layer cache — is a per-workflow
+  # change (setup-buildx-action with endpoint tcp://buildkitd.buildkit:1234)
+  # and is the follow-up once jobs are running here at all.
+  dind: true
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "3"
+      memory: 4Gi
+
+# One scale-set release per entry: `arc-<name>` in namespace arc-runners,
+# registered against https://github.com/<github.owner>/<name>. Per-repo
+# overrides of the runners.* block go under `overrides`.
+repos:
+  - name: talaria
+    overrides:
+      # Four jobs per run; let two of them run side by side.
+      maxRunners: 3
+  - name: money
+  - name: rachelfreeman
+  - name: whatnowgg
+
+namespaces:
+  controller: arc-systems
+  runners: arc-runners
+
+# Internal: set by upgrade.sh when it renders the per-repo values and repo
+# list out of this chart. Never true at install time.
+render: ""
