@@ -407,7 +407,7 @@ async function drain(chatKey: string): Promise<void> {
     ]
       .filter(Boolean)
       .join("\n\n");
-    await runClaude(chatKey, message || NO_CAPTION, preamble, {
+    const final = await runClaude(chatKey, message || NO_CAPTION, preamble, {
       onEvent: (ev) => {
         // A new turn on a run that already answered once — the CLI woke itself
         // for a finished background task, or was handed a second message. The
@@ -468,6 +468,14 @@ async function drain(chatKey: string): Promise<void> {
         );
       },
     });
+    // A run that died mid-turn never reached onTurn, so nothing above has
+    // collapsed its status. Left alone, the ticker keeps editing and rolling
+    // "working…" messages for a process that is gone — which is what made a
+    // !stop look like a run that wouldn't die.
+    if (status?.active) await status.finish(false, final.aborted ? "stopped" : "");
+    // And nothing has answered the message that started it. Say how it ended,
+    // so the thread doesn't just go quiet (the old "claude exited 143").
+    if (final.aborted) await deliver(chatKey, final, group);
   } catch (err) {
     await status?.replace(`⚠ gateway error`);
     // Whatever this run still owes a reaction to. Undefined once a turn has

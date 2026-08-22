@@ -15,6 +15,10 @@ export interface RunResult {
    * not), so the gateway re-arms the timer on its side of the process boundary
    * (wakeup.ts). "stop" means the model ended its loop. */
   wakeup?: { at: number; prompt: string } | "stop";
+  /** The process ended without a result event — !stop, the timeout, a
+   * redeploy's SIGTERM, or a crash. No turn was reported for it, so the caller
+   * is the only one who can collapse the status and say something. */
+  aborted?: boolean;
 }
 
 /** A background task the CLI is still carrying — a `run_in_background` Bash,
@@ -584,6 +588,7 @@ export async function runClaude(
             (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
           sessionId,
           isError: true,
+          aborted: true,
         };
         // Not before the last turn's reply has actually gone out: the caller
         // takes this as "the run is over" and starts draining the queue.
