@@ -34,7 +34,7 @@
 #   ./minecraft/claude-bridge/upgrade.sh
 # ============================================================================
 
-# Built + pushed to GHCR by build.sh; the package is public so the node pulls
+# Built + pushed to the in-cluster registry by build.sh, so every node pulls
 # it anonymously. Previously this was side-loaded into containerd with
 # pullPolicy: Never, which cannot survive kubelet image GC: once the pod is
 # down (e.g. a reboot) the image is unreferenced and gets reclaimed, and with
@@ -44,7 +44,7 @@
 # rebuilds and pushes 0.1.0 in place, and IfNotPresent would keep serving the
 # node's cached copy, so a rebuild would silently roll nothing.
 image:
-  repository: ghcr.io/zdiemer/claude-bridge
+  repository: registry.zachd.duckdns.org/zdiemer/claude-bridge
   tag: "0.1.0"
   pullPolicy: Always
 

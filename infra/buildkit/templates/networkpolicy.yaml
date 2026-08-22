@@ -3,7 +3,7 @@
 The TCP listener has no auth (no mTLS — README), so this policy IS the auth:
 only pods in the client namespace may reach it. Egress is what a builder
 needs and nothing more: DNS, plus HTTPS to public registries (pull base
-images from docker.io/ghcr.io, push results to ghcr.io) and HTTP for apt —
+images from docker.io/ghcr.io, push results to the registry via Traefik or to ghcr.io) and HTTP for apt —
 Debian images fetch deb.debian.org over port 80 by default (apt's signature
 checks cover integrity), so RUN apt-get layers die without it.
 */}}
@@ -39,6 +39,23 @@ spec:
         - port: {{ .Values.service.port }}
           protocol: TCP
   egress:
+    {{- if .Values.networkPolicy.registryEgress.enabled }}
+    # The in-cluster registry (infra/registry). Inside the cluster,
+    # *.zachd.duckdns.org resolves to Traefik's ClusterIP (infra/coredns-config),
+    # so a push to registry.zachd.duckdns.org lands on a Traefik pod — a 10.42
+    # address the public-IPs-only rule below rejects. Named by pod, not by CIDR,
+    # so this admits the ingress and nothing else private.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.registryEgress.traefikNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: websecure
+          protocol: TCP
+    {{- end }}
     - to:
         - namespaceSelector: {}
           podSelector:

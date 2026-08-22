@@ -577,6 +577,14 @@ catalog:
       namespace: buildkit
       service: buildkitd
       workload: buildkit
+    - name: Registry
+      category: Infrastructure
+      namespace: infra
+      service: registry
+      # distribution serves no favicon (its `/` is a bare 200), so the mark is
+      # seeded in brand/service-icons. Pulls never use the public host: every
+      # node mirrors it to the pinned ClusterIP (infra/registry README).
+      note: images; nodes pull over the LAN
     - name: Egress proxy
       category: Infrastructure
       namespace: infra

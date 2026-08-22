@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the cloud-game image and push it to GHCR.
+# Build the cloud-game image and push it to the in-cluster registry (infra/registry).
 #
 # Upstream ships no container image, only a multi-stage Dockerfile, so we build
 # THEIR repo at a pinned commit (image.upstreamRef in values.yaml) with the
@@ -10,10 +10,10 @@
 # The build compiles GStreamer from source: expect 10-20 minutes on the
 # in-cluster buildkitd the first time. Later builds hit its cache.
 #
-# Requires: docker login ghcr.io (PAT with write:packages) on a laptop, or —
+# Requires: docker login registry.zachd.duckdns.org on a laptop, or —
 # inside the claude-workspace pod, where there is no docker — buildctl + the
-# in-cluster buildkitd (infra/buildkit) + a GHCR PAT in ~/.docker/config.json
-# (see dev/claude-workspace/README.md, "Cluster powers").
+# in-cluster buildkitd (infra/buildkit) + the registry credential in ~/.docker/config.json
+# (see selfhosted/infra/registry/README.md).
 
 set -euo pipefail
 
@@ -34,8 +34,8 @@ if command -v docker >/dev/null; then
   docker push "${IMAGE}"
 elif command -v buildctl >/dev/null; then
   [[ -f "${HOME}/.docker/config.json" ]] || {
-    echo "missing ~/.docker/config.json — create the GHCR PAT file first"
-    echo "(see dev/claude-workspace/README.md, Cluster powers)"; exit 1; }
+    echo "missing ~/.docker/config.json — add the registry credential first (selfhosted/infra/registry/README.md)"
+    echo "(see selfhosted/infra/registry/README.md)"; exit 1; }
 
   echo "==> Building + pushing ${IMAGE} from ${UPSTREAM}#${REF} (buildctl → ${BUILDKIT_HOST:-unset})"
   buildctl build \
@@ -49,5 +49,3 @@ else
 fi
 
 echo "==> Done. Run upgrade.sh to roll the deployment onto the new image."
-echo "    (First push only: set the GHCR package visibility to Public so nodes"
-echo "     can pull it without an imagePullSecret.)"

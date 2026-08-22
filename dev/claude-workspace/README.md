@@ -49,9 +49,8 @@ recent; both work under `happy` too).
 ## First install
 
 ```sh
-# 1. Image (once per Dockerfile change; needs docker login ghcr.io)
+# 1. Image (once per Dockerfile change; needs the registry credential, see infra/registry)
 ./build.sh
-# First push only: set ghcr.io/zdiemer/claude-workspace package → Public.
 
 # 2. Install with ingress off
 kubectl create namespace claude
@@ -108,7 +107,7 @@ Three capabilities, three mechanisms:
   **cluster-admin** (`rbac.clusterAdmin`, see the ⚠️ in values.yaml). kubectl
   and helm pick up the in-cluster SA token automatically; there is no
   kubeconfig file anywhere.
-- **Build + push images to GHCR** — `buildctl` against the in-cluster rootless
+- **Build + push images to the in-cluster registry** — `buildctl` against the in-cluster rootless
   buildkitd ([`infra/buildkit`](../../infra/buildkit/)); every per-chart
   `build.sh` falls back from docker to buildctl automatically. Push auth comes
   from `~/.docker/config.json` on the PVC (setup below).
@@ -116,7 +115,7 @@ Three capabilities, three mechanisms:
   image (since v5). A one-time `gh auth login` (device flow) persists under
   `~/.config/gh` on the PVC, so Claude can scaffold and push new app repos
   (e.g. `finance/money`) without leaving the workspace. This is a **separate**
-  credential from the GHCR PAT below (that one is packages-only): `gh` needs a
+  credential from the registry password below: `gh` needs a
   token with `repo` + `read:org` scope.
 - **Node maintenance (`scripts/k3s/`)** — a `tailscaled` container (userspace
   networking, unprivileged) joins the pod to the tailnet so
@@ -136,19 +135,16 @@ internet and cluster-admin + root-on-every-node. Never disable
    `ssh` rules allow this node as a source for `root@` the k3s nodes** — a
    healthy `tailscale status` with a failing `tailscale ssh` means ACLs, not
    the pod. State persists on the PVC.
-2. **GHCR PAT** (classic PAT with `write:packages`; there is no docker CLI in
-   the pod, so write the auth file directly):
-
-   ```sh
-   read -rs GHCR_PAT
-   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' \
-     "$(printf 'zdiemer:%s' "$GHCR_PAT" | base64 -w0)" > ~/.docker/config.json
-   chmod 600 ~/.docker/config.json; unset GHCR_PAT
-   ```
+2. **Registry credential** for `registry.zachd.duckdns.org` in
+   `~/.docker/config.json` — the recipe is in
+   [`infra/registry/README.md`](../../infra/registry/README.md) ("Pushing from
+   somewhere new"); it reads the password from the vault, no typing. A GHCR
+   entry is only still needed for the two images that remain on GitHub
+   (rachel-freeman, whatnowgg).
 3. **GitHub CLI** (`gh`, for creating repos / pushing from the pod): run
    `gh auth login` (choose GitHub.com → HTTPS → login with a web browser) and
    authorize the device code. Use a token/login with `repo` + `read:org` scope
-   — the GHCR PAT above is packages-only and `gh` will reject it. Auth persists
+   — the registry password above is not a GitHub credential and `gh` will reject it. Auth persists
    on the PVC at `~/.config/gh`.
 4. **Repo**: clone this repo to `~/code/selfhosted`. The secrets it needs are
    no longer a manual step — see below.

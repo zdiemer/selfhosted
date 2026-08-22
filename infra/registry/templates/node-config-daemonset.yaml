@@ -1,0 +1,79 @@
+{{- if .Values.nodeConfig.enabled }}
+{{/*
+The DaemonSet itself; the Secret, RBAC and script it runs are in node-config.yaml
+(split so the checksum below can include that file without including itself).
+*/}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-config
+spec:
+  selector:
+    matchLabels:
+      {{- include "registry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-config
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      annotations:
+        # A changed Secret or script recreates the pods; the script then
+        # notices the file differs and does the staggered restart itself.
+        checksum/node-config: {{ include (print $.Template.BasePath "/node-config.yaml") . | sha256sum }}
+      labels:
+        {{- include "registry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-config
+    spec:
+      serviceAccountName: {{ include "registry.fullname" . }}-node-config
+      enableServiceLinks: false
+      hostPID: true
+      priorityClassName: platform-core
+      # Every node, including control-plane and whatever is cordoned today.
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: apply
+          image: "{{ .Values.nodeConfig.image.repository }}:{{ .Values.nodeConfig.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/apply.sh"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: STAGGER
+              value: {{ .Values.nodeConfig.stagger | quote }}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: k3s-etc
+              mountPath: /host/etc/rancher/k3s
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "registry.fullname" . }}-node-config
+        - name: scripts
+          configMap:
+            name: {{ include "registry.fullname" . }}-node-config-script
+        - name: k3s-etc
+          hostPath:
+            path: /etc/rancher/k3s
+            type: Directory
+{{- end }}

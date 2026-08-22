@@ -6,9 +6,9 @@
 # run ./build.sh && ./upgrade.sh.
 
 image:
-  # Built + pushed to GHCR by build.sh; the package must be PUBLIC so every node
+  # Built + pushed to the in-cluster registry by build.sh, so every node
   # can pull it anonymously (multi-node cluster, no in-cluster registry).
-  repository: ghcr.io/zdiemer/luke-birthday
+  repository: registry.zachd.duckdns.org/zdiemer/luke-birthday
   tag: "1.5.1"
   # IfNotPresent — so NEVER reuse a tag. Rebuilding over an existing tag will not
   # re-pull and the cluster will keep serving the old bytes.

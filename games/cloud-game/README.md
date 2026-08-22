@@ -38,7 +38,7 @@ node IP. That means:
 1. Create the vault item `games-cloud-game` with a `values.local.yaml` field
    (see `values.local.yaml.example`; the RomM NAS user is fine).
 2. `./build.sh` — compiles the upstream Dockerfile at the pinned master commit
-   (`image.upstreamRef`) and pushes `ghcr.io/zdiemer/cloud-game:<tag>`. First build is slow (GStreamer from
+   (`image.upstreamRef`) and pushes `registry.zachd.duckdns.org/zdiemer/cloud-game:<tag>`. First build is slow (GStreamer from
    source). Make the package public after the first push.
 3. `./upgrade.sh`.
 4. Open https://retro.zachd.duckdns.org, sign in to Authelia, pick a game.

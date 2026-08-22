@@ -1,11 +1,11 @@
 image:
   # Upstream publishes no container image, so build.sh compiles the upstream
-  # Dockerfile at `upstreamRef` (target `cloud-game`) and pushes it to GHCR as a
+  # Dockerfile at `upstreamRef` (target `cloud-game`) and pushes it to the in-cluster registry as a
   # public package. Pinned to a master COMMIT, not a release: the last tag
   # (v3.1.1) is from 2023 and predates the GStreamer encoder, the vp8 default
   # and the llvmpipe GL shim that this chart relies on. The image tag is
   # "main-<short sha>" so a bump is visible in the pod spec.
-  repository: ghcr.io/zdiemer/cloud-game
+  repository: registry.zachd.duckdns.org/zdiemer/cloud-game
   tag: "main-3c003f8"
   upstreamRef: "3c003f8d580e8b41d8651e37fd401e02475f8ea2"
   pullPolicy: IfNotPresent

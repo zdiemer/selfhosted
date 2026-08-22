@@ -195,8 +195,9 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
   submodule so this repo still lists everything on the cluster. The app repo owns
   its chart *and* its source together — `Chart.yaml` `appVersion` tracks
   `values.yaml` `image.tag`, so a release is one commit in one place. It builds to
-  `ghcr.io/zdiemer/<name>` (public package: the cluster is multi-node, so every
-  node pulls anonymously) and ships `build.sh` + `upgrade.sh`.
+  `registry.zachd.duckdns.org/zdiemer/<name>` — the in-cluster registry,
+  [`infra/registry`](infra/registry/), so a pod can reschedule while GitHub is
+  down; every node holds the pull credential — and ships `build.sh` + `upgrade.sh`.
   [zdiemer/gamedex](https://github.com/zdiemer/gamedex) is the reference shape.
   Work in the app's own checkout and deploy from there — that checkout is the
   **source** for its `values.local.yaml`, and the submodule copy here is a
@@ -240,7 +241,7 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
   underneath, rather than the other way round. The submodule has to sit inside the
   chart directory because `docker build` cannot COPY from outside its context —
   which also means npm only ever runs in the build, so the submodule worktree is
-  never dirtied. Everything else — GHCR, `build.sh`, `upgrade.sh`, appVersion
+  never dirtied. Everything else — the registry, `build.sh`, `upgrade.sh`, appVersion
   tracking `image.tag` — is the same shape.
 - **The lint checks run before the push, not just after it.**
   [`.github/workflows/lint.yml`](.github/workflows/lint.yml) has always run

@@ -1,0 +1,164 @@
+{{- if .Values.nodeConfig.enabled }}
+{{/*
+The node half of the registry: /etc/rancher/k3s/registries.yaml on every node.
+
+WHY A DAEMONSET AND NOT scripts/k3s/
+containerd reads registries.yaml once, at k3s start, and a node's containerd
+cannot resolve a Service name — so each node needs a file naming the pinned
+ClusterIP, and a k3s restart after any change. A script over tailscale ssh
+does that for the nodes that are up today; this does it for the laptop that
+rejoins next month, and re-does it when the credential rotates in the vault,
+without anyone remembering. It runs once per node and then polls; the steady
+state is `cmp` saying "same" every five minutes.
+
+WHY IT IS SAFE TO RESTART k3s FROM INSIDE k3s
+Restarting the k3s service leaves containerd — and therefore every running
+container, including this one — untouched. The pod sees nothing but a brief
+API outage. Control-plane nodes are restarted ONE AT A TIME: each waits for
+its position in name order, and for every schedulable node to be Ready, before
+it touches anything, so etcd never loses two members at once. A restart that
+does not come back within 90s puts the previous file back and restarts again,
+so a malformed registries.yaml costs one node one minute, not the cluster.
+
+THE POD IS PRIVILEGED, hostPID, AND MOUNTS /etc/rancher/k3s
+That is the whole job; there is no narrower set of rights that can write a
+root-owned file and run systemctl on the host. Nothing else should borrow
+this ServiceAccount or image.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  registries.yaml: |
+    {{- $lan := printf "%s:%d" .Values.service.clusterIP (int .Values.service.port) }}
+    {{- $auth := dict "username" .Values.registry.auth.username "password" (include "registry.password" .) }}
+    {{- $cfg := dict
+      "mirrors" (dict .Values.registry.host (dict "endpoint" (list (include "registry.lanEndpoint" .))))
+      "configs" (dict
+        $lan (dict "auth" $auth)
+        .Values.registry.host (dict "auth" $auth)
+      )
+    }}
+    {{- $cfg = mergeOverwrite $cfg .Values.nodeConfig.extra }}
+    {{- toYaml $cfg | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+rules:
+  # Only to order itself among its peers and to wait for them to be Ready.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "registry.fullname" . }}-node-config
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "registry.fullname" . }}-node-config
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "registry.fullname" . }}-node-config-script
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+data:
+  apply.sh: |
+    #!/bin/sh
+    # Keep /etc/rancher/k3s/registries.yaml on this node equal to the Secret,
+    # restarting k3s when it changes. See the template header for the why.
+    set -u
+    DESIRED=/config/registries.yaml
+    TARGET=/host/etc/rancher/k3s/registries.yaml
+    BACKUP=/host/etc/rancher/k3s/.registries.yaml.prev
+    STAGGER="${STAGGER:-45}"
+
+    host() { nsenter -t 1 -m -u -i -n -p -- "$@"; }
+    log()  { echo "[node-config] $(date -u +%FT%TZ) $*"; }
+
+    k3s_unit() {
+      if host systemctl list-unit-files k3s-agent.service 2>/dev/null | grep -q '^k3s-agent'; then
+        echo k3s-agent
+      else
+        echo k3s
+      fi
+    }
+
+    # Every schedulable node Ready; cordoned nodes (the parked laptops) are
+    # not waited for, or nothing would ever proceed.
+    cluster_settled() {
+      kubectl get nodes -o json | jq -e '
+        [.items[] | select(.spec.unschedulable != true)
+          | (.status.conditions[] | select(.type=="Ready") | .status)]
+        | all(. == "True")' >/dev/null
+    }
+
+    my_slot() {
+      kubectl get nodes -o json | jq -r '.items[].metadata.name' | sort | grep -nx "$NODE_NAME" | cut -d: -f1
+    }
+
+    apply() {
+      unit="$(k3s_unit)"
+      [ -f "$TARGET" ] && cp "$TARGET" "$BACKUP"
+      install -m 600 "$DESIRED" "$TARGET"
+      log "wrote $TARGET; restarting $unit"
+      host systemctl restart "$unit"
+      n=0
+      while [ "$n" -lt 90 ]; do
+        host systemctl is-active --quiet "$unit" && { log "$unit active"; return 0; }
+        n=$((n + 1)); sleep 1
+      done
+      log "!! $unit did not come back in 90s; restoring previous registries.yaml"
+      if [ -f "$BACKUP" ]; then cp "$BACKUP" "$TARGET"; else rm -f "$TARGET"; fi
+      host systemctl restart "$unit"
+      return 1
+    }
+
+    while true; do
+      if cmp -s "$DESIRED" "$TARGET"; then
+        sleep 300
+        continue
+      fi
+      # Take turns. The slot is a position in name order; combined with the
+      # settled check, two nodes never restart at once.
+      slot="$(my_slot || echo 1)"
+      log "registries.yaml differs; slot $slot, waiting $(( (slot - 1) * STAGGER ))s"
+      sleep $(( (slot - 1) * STAGGER ))
+      n=0
+      until cluster_settled; do
+        n=$((n + 1))
+        [ "$n" -gt 60 ] && { log "cluster not settled after 10 min; proceeding anyway"; break; }
+        sleep 10
+      done
+      if ! apply; then
+        # Sit on the failure rather than retrying into the same wall every
+        # five minutes; a new Secret (a fixed file) restarts the pod.
+        log "!! giving up on this node until the Secret changes"
+        while cmp -s "$DESIRED" /config/registries.yaml; do sleep 60; done
+      fi
+    done
+{{- end }}

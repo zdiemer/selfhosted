@@ -1,10 +1,10 @@
 image:
   # Custom image (Dockerfile in this dir): node + claude-code CLI + happy CLI
   # (mobile remote control via dev/happy-server) + bakery (bun) + ttyd + tmux
-  # + dev basics. Built by build.sh, pushed to a PUBLIC GHCR package so every
+  # + dev basics. Built by build.sh, pushed to the in-cluster registry so every
   # node can pull it anonymously — see minecraft/claude-bridge/build.sh for
   # why we never side-load images.
-  repository: "ghcr.io/zdiemer/claude-workspace"
+  repository: "registry.zachd.duckdns.org/zdiemer/claude-workspace"
   # v4: merges the happy swap with the bakery surface (built pod-side as an
   #     unpushed v3; that tag was later overwritten by the happy build — v4
   #     is the first tag containing both).

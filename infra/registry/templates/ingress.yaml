@@ -1,0 +1,52 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+The push path. No Authelia middleware: every client is docker/buildkit, which
+cannot complete an interactive login, so the gate is distribution's own
+htpasswd on every request. Nodes do not come through here at all — their pulls
+are short-circuited to the ClusterIP by registries.yaml — which keeps image
+pulls off the edge rate limit (infra/traefik) and off the VPS relay.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "registry.fullname" . }}
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # Declared for infra/ingress-policy: published without forward-auth on
+    # purpose; the authentication is distribution's htpasswd, which the policy
+    # cannot see from the Ingress.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "registry.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "registry.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

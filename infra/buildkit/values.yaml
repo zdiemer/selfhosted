@@ -38,6 +38,11 @@ networkPolicy:
   # Also admit any namespace carrying this label: the GitHub Actions runner
   # namespaces from infra/actions-runner. Set "" to admit none.
   clientNamespaceLabel: actions-runner.zachd/repo
+  # Let builds push to infra/registry. From inside the cluster that hostname is
+  # Traefik, which the public-IPs-only egress rule would otherwise reject.
+  registryEgress:
+    enabled: true
+    traefikNamespace: kube-system
 
 resources:
   requests:
