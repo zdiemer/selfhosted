@@ -35,6 +35,9 @@ networkPolicy:
   enabled: true
   # Only pods in this namespace may reach the (unauthenticated) TCP listener.
   clientNamespace: claude
+  # Also admit any namespace carrying this label: the GitHub Actions runner
+  # namespaces from infra/actions-runner. Set "" to admit none.
+  clientNamespaceLabel: actions-runner.zachd/repo
 
 resources:
   requests:

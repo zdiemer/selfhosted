@@ -25,6 +25,16 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.clientNamespace }}
+        {{- if .Values.networkPolicy.clientNamespaceLabel }}
+        # Every namespace carrying this label — the ARC runner namespaces
+        # (infra/actions-runner stamps arc-<repo> with it), so CI image builds
+        # share this daemon and its cache instead of each spinning up a cold
+        # privileged dind.
+        - namespaceSelector:
+            matchExpressions:
+              - key: {{ .Values.networkPolicy.clientNamespaceLabel }}
+                operator: Exists
+        {{- end }}
       ports:
         - port: {{ .Values.service.port }}
           protocol: TCP

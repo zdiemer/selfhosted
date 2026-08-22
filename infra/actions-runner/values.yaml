@@ -70,7 +70,12 @@ repos:
     overrides:
       # Four jobs per run; let two of them run side by side.
       maxRunners: 3
+      # No container builds in its CI at all.
+      dind: false
   - name: money
+    overrides:
+      # Builds with buildx against the in-cluster buildkitd (see README).
+      dind: false
   - name: rachelfreeman
   - name: whatnowgg
 
