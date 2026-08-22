@@ -16,9 +16,20 @@ service:
 cache:
   # Build cache (layers, snapshots). buildkitd's default GC keeps it bounded;
   # tune via a buildkitd.toml ConfigMap if this ever fills.
+  # NOTE: local-path can't expand a bound PVC — changing size means deleting
+  # the PVC (and its Retained PV) and letting the next upgrade re-provision.
+  # Cache is disposable, so that's cheap, but it must be done by hand.
   enabled: true
-  size: 30Gi
+  size: 100Gi
   storageClass: ""              # "" → cluster default (k3s local-path)
+
+scheduling:
+  # Pin to the 20-core/32Gi build node so big images (rachelfreeman's frontend)
+  # stop OOMKilling the daemon on the small workers. Hostname selector, same
+  # convention as jellyfin's transcode pin; "" → unpinned, scheduler's choice.
+  # The cache PVC is local-path (node-bound), so changing this also means
+  # recreating the PVC on the new node — see the cache note above.
+  nodeName: zachd-ubuntu-4
 
 networkPolicy:
   enabled: true
@@ -28,6 +39,8 @@ networkPolicy:
 resources:
   requests:
     cpu: 100m
-    memory: 512Mi
+    memory: 1Gi
   limits:
-    memory: 4Gi
+    # Sized for the worst known build (rachelfreeman) with headroom; the pinned
+    # node has 32Gi. No CPU limit on purpose — builds should use every core.
+    memory: 16Gi

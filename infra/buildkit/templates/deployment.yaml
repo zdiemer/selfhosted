@@ -43,6 +43,12 @@ spec:
       # retries, but a cache left inconsistent costs every later build a rebuild
       # of layers it already had.
       terminationGracePeriodSeconds: 60
+      {{- if .Values.scheduling.nodeName }}
+      # nodeSelector, NOT nodeName: nodeName bypasses the scheduler, so a full
+      # node means kubelet-rejected pods churning forever; a selector just Pends.
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.scheduling.nodeName }}
+      {{- end }}
       containers:
         - name: buildkitd
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

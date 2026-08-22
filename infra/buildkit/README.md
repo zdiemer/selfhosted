@@ -26,9 +26,13 @@ The nodes run Ubuntu 24.04, which defaults `kernel.apparmor_restrict_unprivilege
 tailscale ssh root@<node> 'printf "kernel.apparmor_restrict_unprivileged_userns=0\n" > /etc/sysctl.d/60-buildkit-userns.conf && sysctl --system >/dev/null'
 ```
 
+## Placement & sizing
+
+Pinned via `scheduling.nodeName` to **zachd-ubuntu-4** (20 cores / 32Gi), with a 16Gi memory limit — sized so the worst known build (rachelfreeman's frontend, which OOMKilled the old 4Gi cap and had to build on Actions) fits with headroom. Set `scheduling.nodeName: ""` to unpin, but note the cache PVC is local-path and therefore node-bound: moving nodes means deleting the PVC (and its Retained PV + data dir on the old node) and letting the next `./upgrade.sh` re-provision.
+
 ## Cache
 
-30Gi PVC (`cache.size`) on the default StorageClass, mounted at buildkitd's snapshot store. buildkitd's built-in GC keeps it bounded; if it ever fills anyway, tune GC via a `buildkitd.toml` ConfigMap (not wired up yet — deliberately, YAGNI).
+100Gi PVC (`cache.size`) on the default StorageClass, mounted at buildkitd's snapshot store. buildkitd's built-in GC keeps it bounded; if it ever fills anyway, tune GC via a `buildkitd.toml` ConfigMap (not wired up yet — deliberately, YAGNI). local-path can't expand in place — resizing is the same delete-and-reprovision dance as moving nodes.
 
 ## Deploy
 
