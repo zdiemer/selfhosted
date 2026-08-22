@@ -6,6 +6,6 @@ version: 1.0.0
 # No image of our own: this is kubectl exec plus the cscli already in the LAPI
 # pod. appVersion tracks the kubectl image, which is the only thing that runs.
 # renovate: image=alpine/kubectl
-appVersion: "1.36.2"
+appVersion: "1.36.4"
 maintainers:
   - name: zachd
