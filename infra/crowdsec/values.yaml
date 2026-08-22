@@ -211,9 +211,27 @@ agent:
 lapi:
   # Bouncer API keys + the decisions DB live here; losing them means
   # re-registering everything, so both PVCs stay on (chart default sizes:
-  # 1Gi data / 100Mi config). storageClassName deliberately left at "" —
-  # rendering an empty string is fine in THIS chart (it omits the field);
-  # local-path default applies.
+  # 1Gi data / 100Mi config).
+  #
+  # Moved off local-path onto truenas-iscsi on 2026-08-21 via migrate-pvcs.sh.
+  # They were local-path with node affinity pinned to zachd-ubuntu-laptop, which
+  # meant the decisions DB existed on exactly one node's disk and that node could
+  # never be retired without losing it. That was the last thing blocking its
+  # demotion from control plane.
+  #
+  # existingClaim rather than storageClassName: the claims were created and
+  # populated out-of-band so the data could be copied and checksummed BEFORE the
+  # chart was pointed at them. Switching to existingClaim makes helm prune the
+  # old chart-managed PVCs — both old PVs were patched to Retain first, so they
+  # survive as Released and remain the rollback path.
+  #
+  # NOTE the data volume is mounted with subPath: crowdsec, so the database is
+  # at <volume-root>/crowdsec/crowdsec.db, not at the root.
+  persistentVolume:
+    config:
+      existingClaim: crowdsec-config-nas
+    data:
+      existingClaim: crowdsec-db-nas
   resources:
     requests:
       cpu: 50m
