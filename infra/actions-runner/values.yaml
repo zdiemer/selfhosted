@@ -47,13 +47,11 @@ runners:
   # side (a runner more than a few releases behind is refused at registration),
   # so pinning this is how the fleet silently stops picking up jobs.
   image: ghcr.io/actions/actions-runner:latest
-  # Docker-in-Docker sidecar, privileged. Three of the four repos run `docker
-  # build` / docker/build-push-action, which need a daemon on the runner.
-  # The cheaper shape — buildx with driver=remote against the in-cluster
-  # buildkitd, no privileged container, shared layer cache — is a per-workflow
-  # change (setup-buildx-action with endpoint tcp://buildkitd.buildkit:1234)
-  # and is the follow-up once jobs are running here at all.
-  dind: true
+  # Docker-in-Docker sidecar, privileged. OFF: every workflow that builds an
+  # image drives the in-cluster buildkitd via buildx's remote driver instead
+  # (README), which needs no daemon on the runner. Turn on per repo only for a
+  # workflow that runs plain `docker build` / `docker run`.
+  dind: false
   resources:
     requests:
       cpu: 500m
@@ -70,8 +68,6 @@ repos:
     overrides:
       # Four jobs per run; let two of them run side by side.
       maxRunners: 3
-      # No container builds in its CI at all.
-      dind: false
       # Frontend Checks (vite build + tsc + vitest) was OOMKilled at 4Gi.
       resources:
         requests:
@@ -81,9 +77,6 @@ repos:
           cpu: "4"
           memory: 8Gi
   - name: money
-    overrides:
-      # Builds with buildx against the in-cluster buildkitd (see README).
-      dind: false
   - name: rachelfreeman
   - name: whatnowgg
 
