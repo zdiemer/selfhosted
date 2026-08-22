@@ -3,8 +3,8 @@
 # one runner scale set per repo listed in values.yaml.
 #
 # Order matters on first install: the scale-set chart's listener needs the
-# controller's CRDs (AutoscalingRunnerSet) to exist and the Secret to read, so
-# the controller and this chart go first and the scale sets last.
+# controller's CRDs (AutoscalingRunnerSet) to exist and its namespace + Secret
+# to read, so the controller and this chart go first and the scale sets last.
 
 set -euo pipefail
 
@@ -25,14 +25,14 @@ command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 sv_load "$HERE" || exit 1
 
 NS_CTRL="$(awk '/^  controller:/{print $2; exit}' "$VALUES")"
-NS_RUN="$(awk '/^  runners:/{print $2; exit}' "$VALUES")"
+NS_PREFIX="$(awk '/^  runnersPrefix:/{print $2; exit}' "$VALUES")"
 
 echo "==> 1/3 controller: gha-runner-scale-set-controller@${ARC_VERSION} -n ${NS_CTRL}"
 helm upgrade --install arc "${OCI}/gha-runner-scale-set-controller" --version "$ARC_VERSION" \
   -n "$NS_CTRL" --create-namespace --cleanup-on-fail --wait
 
-echo "==> 2/3 secret: actions-runner -n ${NS_RUN}"
-helm upgrade --install actions-runner "$HERE" -n "$NS_RUN" --create-namespace \
+echo "==> 2/3 namespaces + secrets: actions-runner -n ${NS_CTRL}"
+helm upgrade --install actions-runner "$HERE" -n "$NS_CTRL" \
   -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
 
 echo "==> 3/3 scale sets"
@@ -42,18 +42,23 @@ REPOS="$(helm template "$HERE" -f "$VALUES" --set render=repos -s templates/rend
 for REPO in $REPOS; do
   echo "    arc-${REPO}  (https://github.com/$(awk '/^  owner:/{print $2; exit}' "$VALUES")/${REPO})"
   helm upgrade --install "arc-${REPO}" "${OCI}/gha-runner-scale-set" --version "$ARC_VERSION" \
-    -n "$NS_RUN" --cleanup-on-fail \
+    -n "${NS_PREFIX}-${REPO}" --cleanup-on-fail \
     -f <(helm template "$HERE" -f "$VALUES" --set "render=${REPO}" -s templates/render-scale-set-values.yaml | sed '/^---/d;/^# Source:/d')
 done
 
-# Prune scale sets for repos no longer listed.
-for REL in $(helm list -n "$NS_RUN" -q | grep '^arc-' || true); do
-  grep -qx "${REL#arc-}" <<<"$REPOS" || { echo "==> removing ${REL} (not in values.yaml)"; helm uninstall "$REL" -n "$NS_RUN"; }
+# Prune scale sets for repos no longer listed: their namespace carries the
+# chart's repo label, and helm's uninstall of this chart drops the namespace.
+for NS in $(kubectl get ns -l actions-runner.zachd/repo -o jsonpath='{.items[*].metadata.name}'); do
+  REPO="${NS#${NS_PREFIX}-}"
+  grep -qx "$REPO" <<<"$REPOS" && continue
+  echo "==> removing arc-${REPO} (not in values.yaml)"
+  helm uninstall "arc-${REPO}" -n "$NS" || true
+  kubectl delete ns "$NS"
 done
 
 echo "==> Listeners (one per repo; Running = registered with GitHub)"
 kubectl -n "$NS_CTRL" get pods
-kubectl -n "$NS_RUN" get pods
+for REPO in $REPOS; do kubectl -n "${NS_PREFIX}-${REPO}" get pods; done
 echo
 echo "Each repo's runner shows under Settings → Actions → Runners as '$(awk '/^  name:/{print $2; exit}' "$VALUES")'."
 echo "Switch a workflow with:  runs-on: $(awk '/^  name:/{print $2; exit}' "$VALUES")"

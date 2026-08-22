@@ -8,12 +8,15 @@
 # SHAPE. Two upstream Helm charts from actions/actions-runner-controller (ARC),
 # both installed by upgrade.sh straight from ghcr.io:
 #   - gha-runner-scale-set-controller, once, in namespace arc-systems.
-#   - gha-runner-scale-set, ONCE PER REPO, in namespace arc-runners. A scale
-#     set registers against one GitHub scope; a personal account has no org,
-#     so the scope is the repo. Each one runs a tiny listener pod that holds a
-#     long-poll to GitHub and spawns a runner pod per queued job.
-# This chart itself owns only what those two don't: the PAT Secret they share,
-# and the list below, which upgrade.sh turns into one scale-set release each.
+#   - gha-runner-scale-set, ONCE PER REPO, each in its own namespace
+#     arc-<repo>. A scale set registers against one GitHub scope; a personal
+#     account has no org, so the scope is the repo. Each one runs a tiny
+#     listener pod that holds a long-poll to GitHub and spawns a runner pod per
+#     queued job. Own namespace because ARC names a scale set's RBAC after the
+#     label + namespace, and every one here is labelled `arc`.
+# This chart itself owns only what those two don't: the namespaces, the PAT
+# Secret in each, a no-permission ServiceAccount for runner pods, and the list
+# below, which upgrade.sh turns into one scale-set release each.
 #
 # PUBLIC REPOS ARE DELIBERATELY ABSENT. GitHub's own guidance: never attach a
 # self-hosted runner to a public repo — a pull request from a fork is untrusted
@@ -72,8 +75,10 @@ repos:
   - name: whatnowgg
 
 namespaces:
+  # The controller, and this chart.
   controller: arc-systems
-  runners: arc-runners
+  # Scale sets live in <runnersPrefix>-<repo>.
+  runnersPrefix: arc
 
 # Internal: set by upgrade.sh when it renders the per-repo values and repo
 # list out of this chart. Never true at install time.

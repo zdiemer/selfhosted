@@ -27,6 +27,8 @@ containerMode:
 {{- end }}
 template:
   spec:
+    # See templates/runner-serviceaccount.yaml.
+    serviceAccountName: actions-runner
     containers:
       - name: runner
         image: {{ $r.image }}
