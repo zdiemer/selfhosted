@@ -1,0 +1,41 @@
+{{- $name := include "win11.name" . -}}
+{{/*
+The root disk, as a plain PVC.
+
+WHY NOT A DataVolume. The obvious shape is a dataVolumeTemplate with a `blank`
+source, and it does not work here: CDI's importer runs unprivileged and cannot
+open a raw block device provisioned by democratic-csi's iSCSI driver —
+
+    blockdev: cannot open /dev/cdi-block-volume: Permission denied
+
+The device node comes back root-owned and CDI's importer pod is not, and the
+driver does not apply fsGroup to a block volume. Filesystem-mode imports (the
+two ISOs) are unaffected, which is why only this one failed.
+
+The fix is to notice that the import was pointless work: a `blank` source asks
+CDI to spend a pass zeroing 128Gi, and a freshly provisioned sparse zvol already
+reads as zeros — and Windows Setup formats it regardless. Claiming the volume
+directly skips both the import and the failure.
+
+The trade-off is lifecycle: a dataVolumeTemplate is garbage-collected with its
+VM, and this is not. For a pet VM holding a Windows install that is the safer
+side to err on, and resource-policy: keep makes it explicit — `helm uninstall`
+will not take 128Gi of installed Windows with it.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-root
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+  annotations:
+    {{- include "win11.pvcAnnotations" . | nindent 4 }}
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.disks.root.accessMode }}
+  volumeMode: {{ .Values.disks.root.volumeMode }}
+  resources:
+    requests:
+      storage: {{ .Values.disks.root.size }}
+  storageClassName: {{ .Values.disks.root.storageClass }}

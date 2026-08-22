@@ -8,28 +8,6 @@ metadata:
 spec:
   runStrategy: {{ .Values.vm.runStrategy }}
 
-  {{- /*
-    The root disk, as a template rather than a standalone DataVolume: this one
-    SHOULD share the VM's lifecycle. A blank source means CDI provisions the
-    volume and hands it over empty for Windows Setup to partition.
-  */}}
-  dataVolumeTemplates:
-    - metadata:
-        name: {{ $name }}-root
-        annotations:
-          {{- include "win11.pvcAnnotations" . | nindent 10 }}
-      spec:
-        storage:
-          accessModes:
-            - {{ .Values.disks.root.accessMode }}
-          volumeMode: {{ .Values.disks.root.volumeMode }}
-          resources:
-            requests:
-              storage: {{ .Values.disks.root.size }}
-          storageClassName: {{ .Values.disks.root.storageClass }}
-        source:
-          blank: {}
-
   template:
     metadata:
       labels:
@@ -194,9 +172,11 @@ spec:
           pod: {}
 
       volumes:
+        {{- /* templates/pvc-root.yaml — a plain claim, not a DataVolume. See the
+           comment there for why CDI is deliberately out of this path. */}}
         - name: rootdisk
-          dataVolume:
-            name: {{ $name }}-root
+          persistentVolumeClaim:
+            claimName: {{ $name }}-root
         {{- if and .Values.disks.installer.enabled .Values.disks.installer.attached }}
         - name: installer
           dataVolume:

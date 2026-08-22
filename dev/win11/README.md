@@ -100,6 +100,17 @@ migration possible — verified on this cluster: democratic-csi binds an
 RWX+Block claim on `truenas-iscsi`. Drop to RWO and the VM still runs fine, it
 just stops instead of moving when a node is drained.
 
+**The root disk is a plain PVC, not a DataVolume.** The obvious shape — a
+`dataVolumeTemplate` with a `blank` source — fails on this cluster: CDI's
+importer runs unprivileged and cannot open a raw block device from
+democratic-csi's iSCSI driver (`blockdev: cannot open /dev/cdi-block-volume:
+Permission denied`). Filesystem-mode imports are unaffected, which is why only
+this one broke. The import was pointless anyway — a `blank` source spends a pass
+zeroing 128Gi that a fresh sparse zvol already reads as zeros, and Windows Setup
+formats it regardless. The side effect is that **deleting the VM no longer
+deletes its disk**, which for a pet VM is the safer default;
+`helm.sh/resource-policy: keep` makes it explicit.
+
 **`cpu.model: host-model`, not `host-passthrough`.** Passthrough is faster and
 is the only way to expose nested virtualization, but it pins the guest to one
 CPU. This cluster is mixed Intel *and* AMD, and no setting migrates a guest
