@@ -42,6 +42,7 @@ secrets/
 # the trailing-slash form would make the next line dead.
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 
 # apartment-watch search stipulations — carries the alert phone number and a
 # personal shortlist of where to live. criteria.example.yaml is the tracked
