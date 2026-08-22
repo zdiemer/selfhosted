@@ -5,7 +5,7 @@
 # generated GIFs and a WAV. So this is a single stage that copies the files into
 # the same nginx-unprivileged base the rest of web/ uses.
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 # Replaces the stock default.conf. The base image's /docker-entrypoint.d scripts
 # test writability before touching this file, so a read-only rootfs is fine.
