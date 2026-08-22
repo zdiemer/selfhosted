@@ -193,7 +193,7 @@ spec:
           # server newer than itself, and silently produces a dump the older
           # server cannot restore if it is older — so this tracks the server.
           # renovate: datasource=docker depName=postgres
-          image: postgres:15.18-alpine
+          image: postgres:15.19-alpine
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:
