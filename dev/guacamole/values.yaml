@@ -59,14 +59,22 @@ auth:
   password: ""
 
   forwardAuth:
-    # Authelia in front, as a second gate. OFF by default because
-    # *.zachd.duckdns.org is already tailnet-only (infra/duckdns runs in
-    # `tailnet` mode, so the A record is a 100.x CGNAT address that does not
-    # route from the internet) and Guacamole has its own login on top of that.
-    # Two portals to cross for a LAN desktop is friction without a threat.
+    # Authelia in front, as a second gate on top of Guacamole's own login.
     #
-    # Turn it on if this host is ever published through the Cloudflare tunnel.
-    enabled: false
+    # ON, for two reasons. The first is that infra/ingress-policy's authPolicy
+    # asks every Ingress to state its position: either name a forward-auth
+    # middleware, or annotate ingress.zachd/public-unauthenticated="true". The
+    # second option would be a false statement here — this host is neither
+    # public (it is tailnet-only) nor unauthenticated (Guacamole has a login) —
+    # and an annotation that misdescribes a host is worse than the warning it
+    # silences.
+    #
+    # The second reason is that it is nearly free. Authelia's session cookie is
+    # shared across *.zachd.duckdns.org, so in practice you are already signed
+    # in when you land here; it is not a second portal per visit. And a remote
+    # desktop gateway is the highest-value thing on this network to put one
+    # extra door in front of.
+    enabled: true
     autheliaService: authelia
     autheliaNamespace: auth
     autheliaPort: 9091

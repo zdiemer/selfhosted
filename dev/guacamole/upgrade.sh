@@ -43,8 +43,10 @@ try:
 except Exception:
     sys.exit(0)
 for c in v.get("connections") or []:
-    host = str(c.get("hostname", ""))
-    print(f"    {c.get(\"name\")}: {host}:{c.get(\"port\")}")
+    name = c.get("name")
+    host = c.get("hostname", "")
+    port = c.get("port")
+    print(f"    {name}: {host}:{port}")
 ' || true
 
 for svc in $($K get svc -o name 2>/dev/null | grep -- '-rdp$' || true); do

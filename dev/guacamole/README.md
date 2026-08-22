@@ -35,9 +35,16 @@ MySQL to hold two rows, which is a whole extra stateful service to back up and
 upgrade. The trade is that connections are declared in git rather than edited in
 the UI; for a fixed set of VMs that's an improvement.
 
-Authelia forward-auth is available but **off** by default: the host is already
-tailnet-only and Guacamole has its own login, so a second portal is friction
-without a threat.
+Authelia forward-auth is **on**, in front of Guacamole's own login.
+`infra/ingress-policy`'s authPolicy asks every Ingress to state its position —
+name a forward-auth middleware, or annotate
+`ingress.zachd/public-unauthenticated="true"`. The second would be a false
+statement here: the host is neither public (tailnet-only) nor unauthenticated
+(Guacamole has a login), and an annotation that misdescribes a host is worse
+than the warning it silences. It also costs almost nothing — Authelia's session
+cookie is shared across `*.zachd.duckdns.org`, so you are usually already signed
+in when you land here. Turn it off with `auth.forwardAuth.enabled: false` if you
+disagree.
 
 The guest credentials in each connection are **empty by default**, so Guacamole
 shows Windows' own login screen in the browser and the Windows password never
