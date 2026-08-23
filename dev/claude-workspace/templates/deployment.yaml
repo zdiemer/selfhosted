@@ -498,6 +498,12 @@ spec:
               value: {{ .Values.messaging.model | quote }}
             - name: GW_EFFORT
               value: {{ .Values.messaging.effort | quote }}
+            {{- with .Values.messaging.schedules }}
+            # Recurring gateway-fired runs, as JSON — a list of structured
+            # entries has no comma-separated encoding worth inventing.
+            - name: GW_SCHEDULES
+              value: {{ toJson . | quote }}
+            {{- end }}
             - name: GW_BASH_ENABLED
               value: {{ .Values.messaging.bash.enabled | quote }}
             - name: GW_BASH_TIMEOUT_SECONDS

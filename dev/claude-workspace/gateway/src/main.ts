@@ -11,6 +11,7 @@ import {
   registerTransport,
   sendTo,
 } from "./transport.ts";
+import { armSchedules } from "./schedules.ts";
 import { rearmWakeups } from "./wakeup.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
@@ -107,5 +108,10 @@ console.log(
 announceRestart();
 // Wake-ups that were pending when the last process died re-arm per surface,
 // after its transport can actually deliver the reply. Overdue ones fire now.
-onTransportReady((prefix) => rearmWakeups(prefix));
+// Recurring schedules arm the same way; occurrences missed while down are
+// skipped, not caught up (schedules.ts says why).
+onTransportReady((prefix) => {
+  rearmWakeups(prefix);
+  armSchedules(prefix);
+});
 installShutdownHandler();

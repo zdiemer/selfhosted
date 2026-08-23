@@ -17,11 +17,13 @@ import {
   isRunning,
   isWaiting,
   latestSessionId,
+  type RunOverrides,
   type RunResult,
   runClaude,
   stop,
   waitingOn,
 } from "./claude.ts";
+import { scheduleStatus, setScheduleRunner } from "./schedules.ts";
 import {
   groupRateAllows,
   groupRateResetMinutes,
@@ -97,31 +99,77 @@ interface Queued {
   /** This entry is a scheduled wake-up firing, not something the person typed.
    * The run gets told so, and there is no inbound message to react to. */
   wakeup?: boolean;
+  /** Pinned cwd/session for a gateway-scheduled run — or a wake-up such a run
+   * armed. The run happens in this thread regardless of where the chat's
+   * `!use`/`!cwd` currently point. */
+  run?: RunOverrides;
+  /** Name of the gateway schedule behind this entry, for its preamble. */
+  schedName?: string;
 }
 const queues = new Map<string, Queued[]>();
 let droppedLog = 0;
 
-// A wake-up firing is a message from the schedule, not from the person. It
-// enters the same per-chat queue an inbound message does — so it hands off to
-// a parked run exactly like a typed message would, queues behind a busy one,
-// and its reply goes out with the usual banner.
-setWakeupRunner((chatKey, prompt) => {
+function enqueueScheduled(chatKey: string, item: Queued): void {
   const queue = queues.get(chatKey) ?? [];
   if (queue.length >= config.queueDepth) {
     void sendTo(chatKey, "⚠ queue full — scheduled wake-up dropped");
     return;
   }
-  queue.push({ body: prompt, wakeup: true });
+  queue.push(item);
   queues.set(chatKey, queue);
   if (queue.length === 1 && (!isRunning(chatKey) || isWaiting(chatKey)))
     void drain(chatKey);
-});
+}
+
+// A wake-up firing is a message from the schedule, not from the person. It
+// enters the same per-chat queue an inbound message does — so it hands off to
+// a parked run exactly like a typed message would, queues behind a busy one,
+// and its reply goes out with the usual banner.
+setWakeupRunner((chatKey, wakeup) =>
+  enqueueScheduled(chatKey, {
+    body: wakeup.prompt,
+    wakeup: true,
+    run: wakeup.run,
+    schedName: wakeup.schedName,
+  }),
+);
+
+// A gateway schedule firing (values.yaml messaging.schedules). Same queue,
+// same quiet-on-empty delivery as a wake-up; what differs is that the timer
+// belongs to the gateway and the run is pinned to its own cwd and session.
+setScheduleRunner((spec, chatKey) =>
+  enqueueScheduled(chatKey, {
+    body: spec.prompt,
+    wakeup: true,
+    schedName: spec.name,
+    run: {
+      cwd: spec.cwd,
+      session: spec.session,
+      fresh: spec.fresh,
+      model: spec.model,
+      effort: spec.effort,
+    },
+  }),
+);
 
 /** What a wake-up run is told about why it is running. */
 const WAKEUP_PREAMBLE =
   "[Scheduled wake-up: this run was started by your own ScheduleWakeup call, " +
   "not by a new message from the user. The prompt below is the one you " +
   "scheduled.]";
+
+/** And what a gateway-scheduled run is told. The distinction matters: this
+ * run never armed anything and must not believe it owes the user an answer —
+ * a turn with nothing to report should end with no text at all. */
+function preambleFor(item: Queued): string {
+  if (!item.wakeup) return "";
+  if (!item.schedName) return WAKEUP_PREAMBLE;
+  return (
+    `[Scheduled run "${item.schedName}": started by the gateway's recurring ` +
+    "schedule, not by a message from the user. If there is nothing that " +
+    "needs the user's attention, end your turn with no text.]"
+  );
+}
 
 /** Reaction state machine on the sender's own message. Both networks replace a
  * previous reaction from the same account, so each call is the whole update. */
@@ -356,8 +404,16 @@ async function drain(chatKey: string): Promise<void> {
   // ending this one and killing the tasks with it.
   if (isWaiting(chatKey)) {
     const item = queue[0];
+    // A pinned run is never handed to a parked one: the parked run is some
+    // other thread's context (or last firing's session), and injecting a
+    // scheduled prompt there is exactly the cross-thread leak pinning exists
+    // to prevent. Wait the park out and try again.
+    if (item.run) {
+      setTimeout(() => void drain(chatKey), 60_000);
+      return;
+    }
     const handOffPreamble = [
-      item.wakeup ? WAKEUP_PREAMBLE : "",
+      preambleFor(item),
       attachmentPreamble(item.files ?? []),
     ]
       .filter(Boolean)
@@ -383,7 +439,8 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const { body: message, ref, files, wakeup } = queue.shift()!;
+  const item = queue.shift()!;
+  const { body: message, ref, files, wakeup, run: runOverrides } = item;
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -406,7 +463,7 @@ async function drain(chatKey: string): Promise<void> {
     // The attachment preamble goes in front of the group context, so the
     // files are the first thing the run reads about.
     const preamble = [
-      wakeup ? WAKEUP_PREAMBLE : "",
+      preambleFor(item),
       attachmentPreamble(files ?? []),
       group ? takeGroupContext(chatKey) : "",
     ]
@@ -437,7 +494,15 @@ async function drain(chatKey: string): Promise<void> {
         // what THIS turn asked for (WakeupTracker.take) — arming is not
         // re-affirmed turn to turn, so a spent wake-up can't come back.
         if (result.wakeup === "stop") cancelWakeup(chatKey);
-        else if (result.wakeup) armWakeup(chatKey, result.wakeup);
+        // A pinned run's wake-up inherits the pin (resuming, not fresh — the
+        // follow-up continues the session that asked for it), so an intraday
+        // "check back in an hour" lands in the schedule's own thread.
+        else if (result.wakeup)
+          armWakeup(chatKey, {
+            ...result.wakeup,
+            run: runOverrides && { ...runOverrides, fresh: false },
+            schedName: item.schedName,
+          });
         // Collapse the status before the answer lands, so the thread reads
         // status-receipt-then-answer rather than answer-then-a-stale-"working…".
         // The receipt says what is still outstanding, which is the difference
@@ -454,7 +519,7 @@ async function drain(chatKey: string): Promise<void> {
         const unprompted = !awaitingReply.get(chatKey);
         awaitingReply.set(chatKey, false);
         if (!result.text && !result.isError && unprompted) return;
-        await deliver(chatKey, result, group);
+        await deliver(chatKey, result, group, runOverrides);
         // If this turn parked the run and something is queued behind it, the
         // park is a chance to answer it — handleInbound only kicks drain for
         // the first message, so a second one that arrived during the last park
@@ -480,7 +545,7 @@ async function drain(chatKey: string): Promise<void> {
             " — it was stopped, not finished. Ask again to pick it back up.",
         );
       },
-    });
+    }, runOverrides);
     // A run that died mid-turn never reached onTurn, so nothing above has
     // collapsed its status. Left alone, the ticker keeps editing and rolling
     // "working…" messages for a process that is gone — which is what made a
@@ -488,7 +553,7 @@ async function drain(chatKey: string): Promise<void> {
     if (status?.active) await status.finish(false, final.aborted ? "stopped" : "");
     // And nothing has answered the message that started it. Say how it ended,
     // so the thread doesn't just go quiet (the old "claude exited 143").
-    if (final.aborted) await deliver(chatKey, final, group);
+    if (final.aborted) await deliver(chatKey, final, group, runOverrides);
   } catch (err) {
     await status?.replace(`⚠ gateway error`);
     // Whatever this run still owes a reaction to. Undefined once a turn has
@@ -514,6 +579,7 @@ async function deliver(
   chatKey: string,
   result: RunResult,
   group: boolean,
+  run?: RunOverrides,
 ): Promise<void> {
   const ref = deliveryRefs.get(chatKey);
   if (ref !== undefined) {
@@ -542,11 +608,13 @@ async function deliver(
     await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);
   } else {
     const chat = getChat(chatKey);
+    // A pinned run's banner names ITS thread — cwd, session slot, and the
+    // session id the run actually produced — not wherever the chat points.
     const prefix = replyPrefix(
-      chat.cwd,
-      chat.sessionId,
+      run?.cwd ?? chat.cwd,
+      run ? result.sessionId : chat.sessionId,
       chatMode(chatKey),
-      sessionName(chat),
+      run?.session ?? sessionName(chat),
     );
     await sendReply(
       chatKey,
@@ -835,6 +903,11 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           ...(wake
             ? [`wake-up: in ${formatDuration(wake.at - Date.now())} (!stop cancels)`]
             : []),
+          ...scheduleStatus().map(
+            (s) =>
+              `schedule ${s.name}: ` +
+              (s.next ? `next in ${formatDuration(s.next.getTime() - Date.now())}` : "never"),
+          ),
           `cwd: ${chat.cwd}`,
           `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,

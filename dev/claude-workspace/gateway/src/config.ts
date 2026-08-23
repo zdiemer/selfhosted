@@ -23,6 +23,73 @@ function envIntOrZero(name: string, fallback: number): number {
 
 const home = process.env.HOME ?? os.homedir();
 
+/** One recurring gateway-fired run (values.yaml messaging.schedules). The
+ * gateway owns the timer, so unlike a ScheduleWakeup chain nothing depends on
+ * the model remembering to re-arm and nothing dies with a redeploy. */
+export interface ScheduleSpec {
+  name: string;
+  /** Five-field cron, evaluated in `timezone`. */
+  cron: string;
+  timezone?: string;
+  /** Which transport's owner 1:1 the run belongs to (reply, approvals,
+   * banner). The owner is the first configured allowed sender. */
+  surface?: "signal" | "whatsapp";
+  /** Working directory for the run; defaults to the chat's current cwd. */
+  cwd?: string;
+  /** Named session slot the run is pinned to. The run resumes THIS session
+   * (not whatever the chat currently points at) and its new session ids land
+   * back in the same slot — a schedule never hijacks the thread you are
+   * typing in. */
+  session?: string;
+  /** Start a fresh session every firing instead of resuming the slot. The
+   * newest id still lands in the slot, so `!use <session>` reaches it. */
+  fresh?: boolean;
+  prompt: string;
+  model?: string;
+  effort?: string;
+}
+
+/** Exported for tests. Invalid entries are dropped loudly rather than taking
+ * the gateway down: a bad schedule in values.yaml should cost that schedule,
+ * not the whole messaging surface. */
+export function parseSchedules(raw: string | undefined): ScheduleSpec[] {
+  if (!raw?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.error("config: GW_SCHEDULES is not valid JSON; ignoring");
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    console.error("config: GW_SCHEDULES must be a JSON array; ignoring");
+    return [];
+  }
+  const out: ScheduleSpec[] = [];
+  for (const entry of parsed) {
+    const s = entry as Partial<ScheduleSpec>;
+    if (
+      typeof s.name !== "string" ||
+      typeof s.cron !== "string" ||
+      typeof s.prompt !== "string" ||
+      !s.name.trim() ||
+      !s.cron.trim() ||
+      !s.prompt.trim()
+    ) {
+      console.error(
+        `config: schedule entry missing name/cron/prompt, dropped: ${JSON.stringify(entry)}`,
+      );
+      continue;
+    }
+    if (out.some((o) => o.name === s.name)) {
+      console.error(`config: duplicate schedule name ${s.name}, dropped`);
+      continue;
+    }
+    out.push(s as ScheduleSpec);
+  }
+  return out;
+}
+
 // Appended to Claude Code's own system prompt (--append-system-prompt), not a
 // replacement — the default one is what teaches it the tools it has.
 const DEFAULT_SYSTEM_PROMPT = `You are reachable over Signal and WhatsApp rather than a terminal. Your reply is delivered as chat messages on a phone, often on a slow or intermittent connection.
@@ -280,6 +347,9 @@ export const config = {
       "Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)",
   maxConcurrentClaude: envInt("GW_MAX_CONCURRENT", 2),
   queueDepth: envInt("GW_QUEUE_DEPTH", 5),
+  // Recurring gateway-fired runs (schedules.ts). JSON in the env because a
+  // list of structured entries has no comma-separated encoding worth having.
+  schedules: parseSchedules(process.env.GW_SCHEDULES),
 };
 
 export const approvalSocketPath = path.join(config.runtimeDir, "approve.sock");

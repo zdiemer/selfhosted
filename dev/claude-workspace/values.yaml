@@ -98,6 +98,16 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v26: recurring gateway-owned schedules (messaging.schedules): cron-fired
+  #      headless runs pinned to their own cwd + named session slot, so a
+  #      firing never lands in the thread the chat currently points at. The
+  #      gateway owns the timers (croner), so a redeploy re-arms them from
+  #      config — no model re-arming, no state to lose. 1:1 runs also gain the
+  #      MCP servers registered for their cwd at project scope in
+  #      ~/.claude.json (the trading agent's brokerage MCP), still under
+  #      --strict-mcp-config; a wake-up armed by a pinned run inherits the pin.
+  #      !status lists armed schedules. Motivating case: the Robinhood trading
+  #      agent, moved off a mortal tmux session on zachd-Ubuntu.
   # v25: a turn that says nothing and answers nobody sends nothing. The CLI
   #      resuming after a stale task notification ("continue from where you
   #      left off") can end with no text; the phone got a bare banner reading
@@ -112,7 +122,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v25"
+  tag: "v26"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -420,6 +430,44 @@ messaging:
   # chat at runtime; these are the defaults every chat starts from.
   model: claude-opus-5
   effort: medium
+  # Recurring gateway-fired runs. The GATEWAY owns these timers (croner, in
+  # schedules.ts): they survive redeploys because they are config, and unlike a
+  # ScheduleWakeup chain nothing depends on the model re-arming itself — the
+  # failure mode that left the trading agent dead in a tmux session for three
+  # weeks. Each entry fires a headless run into the surface owner's 1:1 (the
+  # first allowed sender), pinned to its own cwd and named session slot so a
+  # firing never lands in — or writes its session id over — whatever thread
+  # the chat is currently pointed at. `fresh: true` starts a new session per
+  # firing (files in the cwd are the durable memory; the newest id still lands
+  # in the slot so `!use <session>` reaches it). Runs are "unprompted": one
+  # that ends with no text sends nothing, so a schedule is quiet unless it has
+  # something to say. Occurrences missed while the pod is down are skipped,
+  # not caught up. Cron is five-field, evaluated in `timezone`.
+  schedules:
+    - name: trading-open
+      cron: "45 9 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: high
+      prompt: >-
+        Scheduled market-open trading run. Follow CLAUDE.md in this directory:
+        read positions.md and the latest journal, reconcile against the live
+        book, act only where the written theses or new edge say to, journal
+        and push. Stay quiet unless a report trigger fires.
+    - name: trading-close
+      cron: "30 15 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: high
+      prompt: >-
+        Scheduled pre-close trading run. Follow CLAUDE.md in this directory:
+        manage the book before the 4pm bell (fills, invalidations, planned
+        exits), journal and push. If today is Friday, always send the weekly
+        report. Otherwise stay quiet unless a report trigger fires.
   bash:
     # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
     # For the cheap questions (`kubectl get pods`) where a whole claude run plus
