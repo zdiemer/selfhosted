@@ -1,0 +1,21 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+Traefik basicAuth in front of the whole host. Not Authelia forward-auth — see
+the note in values.yaml: every client here is an API client, and Ollama itself
+has no authentication of any kind.
+
+Rendered into THIS chart's namespace (same reasoning as finance/money's
+forwardauth middleware): the Ingress references it as
+<ns>-<release>-basicauth@kubernetescrd without needing allowCrossNamespace.
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "ollama.fullname" . }}-basicauth
+  labels:
+    {{- include "ollama.labels" . | nindent 4 }}
+spec:
+  basicAuth:
+    secret: {{ include "ollama.fullname" . }}-basicauth
+    removeHeader: true
+{{- end }}
