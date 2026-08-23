@@ -68,9 +68,11 @@ address is `world.advertisedIP` in values.yaml.
 ## Client setup
 
 You need the retail 1.0 install — the DVD or its ISO with `ffxivsetup.exe`
-at the root. Square Enix never re-released it and it is not on archive.org as
-a clean image; the disc is the legal source and discs are cheap. Everything
-after that is automated:
+at the root. Square Enix never re-released it. archive.org holds a rip of the
+Windows disc (item `ffxiv-1.0`, a 4.9 GB `FFXIV 1.0.rar`, uploaded 2021) and
+a Redump-style dump of disc 2 of the JP release (`Nova_FFXIVOnlineDisc2_JPN`,
+disc 1 missing); the physical disc is still the clean source and is cheap.
+Everything after that is automated:
 
 1. Install the base game (`2010.09.18.0000`). On Linux or a Mac, upstream's
    [XIV-1.0-Linux-Installer](https://github.com/swstegall/XIV-1.0-Linux-Installer)
