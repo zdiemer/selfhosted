@@ -1,0 +1,14 @@
+apiVersion: v2
+name: ffxiv-1x
+description: FINAL FANTASY XIV 1.23b (the original 2010 game) private server — Garlemald Server, the Rust port of Project Meteor; web + lobby + world + map in one pod on SQLite, driving Meteor's Lua content scripts
+type: application
+version: 0.1.0
+# appVersion tracks the upstream commit build.sh compiles (image.upstreamRef in
+# values.yaml, short form). Upstream tags releases (0.1.x) but moves faster than
+# they do; we pin commits.
+appVersion: "main-70e54f3"
+sources:
+  - https://github.com/swstegall/Garlemald-Server
+  - https://bitbucket.org/Ioncannon/project-meteor-server
+maintainers:
+  - name: zachd

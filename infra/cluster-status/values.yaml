@@ -418,6 +418,14 @@ catalog:
       # raw TCP ports on the node IPs. COMP_hack serves no favicon, so the mark
       # is seeded in brand/service-icons.
       note: client → smt.zachd.duckdns.org:10666, tailnet only
+    - name: FFXIV 1.0
+      category: Games
+      namespace: games
+      service: ffxiv-1x
+      # No Ingress: the launcher posts to the plain web port and the lobby
+      # hands the client an IP. Garlemald serves no favicon; mark is seeded.
+      address: 100.84.179.82:54994
+      note: Garlemald Server (1.23b), tailnet only
 
     # ------------------------------------------------------------------- Home
     - name: money

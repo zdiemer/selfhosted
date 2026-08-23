@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ffxiv-1x.fullname" . }}
+  labels:
+    {{- include "ffxiv-1x.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: RWO PVC on truenas-iscsi, and SQLite wants one writer set.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ffxiv-1x.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "ffxiv-1x.selectorLabels" . | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      {{- $img := printf "%s:%s" .Values.image.repository .Values.image.tag }}
+      {{- $mounts := list
+            (dict "name" "config" "mountPath" "/srv/garlemald/configs" "readOnly" true)
+            (dict "name" "data" "mountPath" "/srv/garlemald/data" "subPath" "data")
+            (dict "name" "data" "mountPath" "/srv/garlemald/logs" "subPath" "logs") }}
+      {{- $env := list (dict "name" "RUST_LOG" "value" .Values.logging.rustLog) }}
+      {{- /* preStop sleep: endpoint removal and SIGTERM are concurrent (README,
+           availability conventions); 3s lets klipper-lb stop forwarding first. */}}
+      {{- $lifecycle := dict "preStop" (dict "sleep" (dict "seconds" 3)) }}
+      containers:
+        # Upstream's run-all.sh in pod form: four binaries, one SQLite file,
+        # 127.0.0.1 between them. All four open the database and apply the
+        # schema idempotently (schema_migrations), so start order is free; the
+        # world retries its dial to the map until it answers.
+        - name: web
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["web-server", "--config", "/srv/garlemald/configs/web.toml"]
+          env: {{- toYaml $env | nindent 12 }}
+          lifecycle: {{- toYaml $lifecycle | nindent 12 }}
+          ports:
+            - name: web
+              containerPort: {{ .Values.ports.web }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: web }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts: {{- toYaml $mounts | nindent 12 }}
+          resources: {{- toYaml .Values.resources.web | nindent 12 }}
+        - name: lobby
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["lobby-server", "--config", "/srv/garlemald/configs/lobby.toml"]
+          env: {{- toYaml $env | nindent 12 }}
+          lifecycle: {{- toYaml $lifecycle | nindent 12 }}
+          ports:
+            - name: lobby
+              containerPort: {{ .Values.ports.lobby }}
+          readinessProbe:
+            tcpSocket: { port: lobby }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts: {{- toYaml $mounts | nindent 12 }}
+          resources: {{- toYaml .Values.resources.lobby | nindent 12 }}
+        - name: world
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["world-server", "--config", "/srv/garlemald/configs/world.toml"]
+          env: {{- toYaml $env | nindent 12 }}
+          lifecycle: {{- toYaml $lifecycle | nindent 12 }}
+          ports:
+            - name: world
+              containerPort: {{ .Values.ports.world }}
+          readinessProbe:
+            tcpSocket: { port: world }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts: {{- toYaml $mounts | nindent 12 }}
+          resources: {{- toYaml .Values.resources.world | nindent 12 }}
+        - name: map
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["map-server", "--config", "/srv/garlemald/configs/map.toml"]
+          # Upstream feeds GM commands to the map server on stdin; keep it open
+          # so `kubectl attach -c map` can do the same.
+          stdin: true
+          env: {{- toYaml $env | nindent 12 }}
+          lifecycle: {{- toYaml $lifecycle | nindent 12 }}
+          ports:
+            - name: map
+              containerPort: {{ .Values.ports.map }}
+          readinessProbe:
+            tcpSocket: { port: map }
+            # Loads 1,142 Lua scripts and every zone first.
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts: {{- toYaml $mounts | nindent 12 }}
+          resources: {{- toYaml .Values.resources.map | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ffxiv-1x.fullname" . }}-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ffxiv-1x.fullname" . }}-data

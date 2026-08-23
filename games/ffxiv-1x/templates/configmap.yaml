@@ -1,0 +1,70 @@
+{{/*
+The five TOML files upstream keeps under configs/, rendered from values. Every
+binary binds 0.0.0.0 inside the pod (the Service decides what is reachable);
+they find each other on 127.0.0.1 exactly as upstream's one-box default.
+*/}}
+{{- $v := .Values }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ffxiv-1x.fullname" . }}-config
+  labels:
+    {{- include "ffxiv-1x.labels" . | nindent 4 }}
+data:
+  web.toml: |
+    [server]
+    bind_ip = "0.0.0.0"
+    port = {{ $v.ports.web }}
+    show_timestamp = true
+    [database]
+    path = "/srv/garlemald/data/garlemald.db"
+    [session]
+    hours = {{ $v.web.sessionHours }}
+  lobby.toml: |
+    [server]
+    bind_ip = "0.0.0.0"
+    port = {{ $v.ports.lobby }}
+    show_timestamp = true
+    [database]
+    path = "/srv/garlemald/data/garlemald.db"
+    [servers]
+    path = "/srv/garlemald/configs/servers.toml"
+  world.toml: |
+    [server]
+    bind_ip = "0.0.0.0"
+    port = {{ $v.ports.world }}
+    show_timestamp = true
+    world_id = 1
+    [database]
+    path = "/srv/garlemald/data/garlemald.db"
+    [servers]
+    path = "/srv/garlemald/configs/servers.toml"
+  map.toml: |
+    [server]
+    # 0.0.0.0 rather than upstream's 127.0.0.1 so kubelet's readiness probe
+    # (which dials the pod IP) can see it. The Service does not publish this
+    # port, so nothing outside the pod can.
+    bind_ip = "0.0.0.0"
+    port = {{ $v.ports.map }}
+    show_timestamp = true
+    world_id = 1
+    [database]
+    path = "/srv/garlemald/data/garlemald.db"
+    [scripting]
+    script_root = "/srv/garlemald/scripts/lua"
+    load_from_database = true
+    [world]
+    dalamud_phase = {{ $v.map.dalamudPhase }}
+    weather_id = {{ $v.map.weatherId }}
+    weather_transition = 1
+  servers.toml: |
+    # The world list at character select. `address` is what the lobby embeds
+    # in the select-confirm packet, so it is the player-reachable IP.
+    [[servers]]
+    id            = 1
+    name          = {{ $v.world.name | quote }}
+    address       = {{ required "world.advertisedIP is the IP the client dials for the world server" $v.world.advertisedIP | quote }}
+    port          = {{ $v.ports.world }}
+    list_position = 1
+    max_chars     = 5000
+    is_active     = true
