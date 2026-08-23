@@ -15,12 +15,24 @@ import { allChats, getChat, updateChat } from "./state.ts";
 export interface PendingWakeup {
   at: number;
   prompt: string;
+  /** Pinned cwd/session, carried over when the wake-up was armed by a
+   * gateway-scheduled run (claude.ts RunOverrides) — its follow-up must land
+   * in the same thread, not whatever the chat points at by then. */
+  run?: {
+    cwd?: string;
+    session?: string;
+    fresh?: boolean;
+    model?: string;
+    effort?: string;
+  };
+  /** Schedule name, for the preamble the follow-up run is handed. */
+  schedName?: string;
 }
 
 /** Runs the wake-up prompt as a fresh headless run. Registered by router.ts at
  * import time — the same registration shape as the transports, and for the
  * same reason: importing the router from here would be a cycle. */
-type Runner = (chatKey: string, prompt: string) => void;
+type Runner = (chatKey: string, wakeup: PendingWakeup) => void;
 
 let runner: Runner = () => {};
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -96,5 +108,5 @@ function fire(chatKey: string): void {
   // Cleared before the run rather than after: the run itself is what arms the
   // next wake-up (or doesn't — which is how a loop ends).
   updateChat(chatKey, { wakeup: undefined });
-  runner(chatKey, wakeup.prompt);
+  runner(chatKey, wakeup);
 }

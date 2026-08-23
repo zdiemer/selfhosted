@@ -120,7 +120,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("armWakeup persists, fires the runner once, and clears state", async () => {
   const fired: [string, string][] = [];
-  setWakeupRunner((chatKey, prompt) => fired.push([chatKey, prompt]));
+  setWakeupRunner((chatKey, w) => fired.push([chatKey, w.prompt]));
 
   armWakeup("test:fire", { at: Date.now() + 20, prompt: "wake" });
   expect(pendingWakeup("test:fire")).toBeDefined();
@@ -144,7 +144,7 @@ test("cancelWakeup clears the pending wake-up and reports it", async () => {
 
 test("rearming a new wake-up replaces the old timer, not doubles it", async () => {
   const fired: string[] = [];
-  setWakeupRunner((_chatKey, prompt) => fired.push(prompt));
+  setWakeupRunner((_chatKey, w) => fired.push(w.prompt));
 
   armWakeup("test:replace", { at: Date.now() + 20, prompt: "first" });
   armWakeup("test:replace", { at: Date.now() + 40, prompt: "second" });

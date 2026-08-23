@@ -467,6 +467,40 @@ While a run is going, three things say so, in increasing order of detail:
   answer just bought happens against a status that is both out of revisions and
   scrolled off the screen.
 
+### Schedules
+
+`messaging.schedules` (values.yaml) is a list of cron entries the **gateway**
+fires as headless runs — the durable way to run a recurring agent, and the
+successor to asking the model to keep a ScheduleWakeup chain alive. The
+difference is who owns the next occurrence: a wake-up chain dies the first
+time a run errors or forgets to re-arm (which is how the Robinhood trading
+agent sat dead in a tmux session for three weeks), while a cron entry is
+config — every boot re-arms it, and `!status` lists what is armed and when it
+next fires.
+
+Each entry names a five-field cron (evaluated in its `timezone`), a `cwd`,
+a named `session` slot, and a `prompt`; optional `model`/`effort` override
+the chat defaults, and `fresh: true` starts a new session per firing (the
+files in the cwd are then the agent's durable memory — its CLAUDE.md should
+say so). Firings are **pinned**: they resume their own slot and write their
+session ids back to it, never the thread the chat's `!use`/`!cwd` currently
+point at, and a ScheduleWakeup armed by a pinned run inherits the pin, so an
+intraday "check back in an hour" lands in the schedule's thread too. Replies
+go to the surface owner's 1:1 (the first allowed sender) with the usual
+banner; a firing whose turn ends with no text sends nothing — quiet is the
+default, and the prompt should say when to speak. Occurrences missed while
+the pod is down are skipped, not caught up: these are cadences, not promises,
+and a market-open run fired at 11pm because the pod was rescheduled is worse
+than no run.
+
+Pinned 1:1 runs (all 1:1 runs, in fact) also get the MCP servers registered
+for their cwd at **project scope** in `~/.claude.json` — `claude mcp add`
+from the directory is the registration, and stored MCP OAuth credentials
+match by server name + URL, so an HTTP OAuth server (the trading agent's
+brokerage MCP) authenticates identically headless. `--strict-mcp-config`
+still stands: project servers are merged in deliberately, the global block
+stays interactive-only, and the `gw` approval relay always wins its name.
+
 **Background work survives the answer.** A long job — a build, a migration, a
 test suite — can be started as a background task, and Claude Code wakes *itself*
 when one reports back. It can only do that while its process is still up, and
