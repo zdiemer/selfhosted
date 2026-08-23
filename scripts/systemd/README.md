@@ -1,6 +1,6 @@
 # Timers
 
-Four systemd **user** timers keep the plumbing honest without anyone
+Five systemd **user** timers keep the plumbing honest without anyone
 driving it:
 
 | Timer | When | What |
@@ -9,6 +9,7 @@ driving it:
 | `selfhosted-secrets-backup` | Sun 03:00 | age-encrypted archive + vault dump to `//192.168.4.36/backups/selfhosted-secrets` |
 | `selfhosted-submodules-sync` | daily 04:30 | move submodule pins to the commits the cluster is actually running |
 | `selfhosted-versions-report` | Sat 07:00 | node-lane staleness report (apt/kernel/k3s/tailscale) → versions-report ConfigMap (status.diemer.codes panel) + pinned GitHub issue |
+| `selfhosted-trading-watchdog` | Mon–Fri 17:00 | dead-man's switch: fail (→ SMS) if the trading agent's journal repo stopped moving (see `scripts/trading-watchdog.sh`) |
 
 All fail loudly: `OnFailure=selfhosted-alert@%n.service` texts through
 `infra/sms-relay`. A scheduled job that fails silently is worse than no job,
