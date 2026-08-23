@@ -145,14 +145,15 @@ export function assistantText(ev: StreamEvent): string {
 
 /** The result event's text is empty when the turn ended on a tool call
  * (a scheduled wake-up, a background handoff) — the words the model wrote
- * before that call are in an earlier assistant event, not in `result`. A
- * banner with no body is what the phone gets otherwise. */
+ * before that call are in an earlier assistant event, not in `result`.
+ * Empty when the turn said nothing at all; the router decides whether that
+ * deserves a message (it does not, for a wake nobody asked for). */
 export function pickResultText(
   result: string | undefined,
   lastAssistant: string,
 ): string {
   if (result?.trim()) return result;
-  return lastAssistant || "(no result text)";
+  return lastAssistant;
 }
 
 /**

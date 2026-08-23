@@ -144,6 +144,9 @@ const statuses = new Map<string, Status>();
  * answers the build, not the phone, and there is nothing there to react to.
  */
 const deliveryRefs = new Map<string, MsgRef | undefined>();
+/** A person's message is waiting on the next turn's reply. Off for gateway
+ * wake-ups and the CLI's own resumptions, whose turns may say nothing. */
+const awaitingReply = new Map<string, boolean>();
 
 export function activeStatus(chatKey: string): Status | undefined {
   return statuses.get(chatKey);
@@ -362,6 +365,7 @@ async function drain(chatKey: string): Promise<void> {
     if (handOff(chatKey, item.body || NO_CAPTION, handOffPreamble)) {
       queue.shift();
       deliveryRefs.set(chatKey, item.ref);
+      awaitingReply.set(chatKey, !item.wakeup);
       react(chatKey, item.ref, config.reactions.working);
       // The parked run's onTurn below delivers this reply; there is no second
       // run to start and nothing here to await.
@@ -388,6 +392,7 @@ async function drain(chatKey: string): Promise<void> {
   }
   react(chatKey, ref, config.reactions.working);
   deliveryRefs.set(chatKey, ref);
+  awaitingReply.set(chatKey, !wakeup);
   const group = isGroupChat(chatKey);
   // No status message in a group: the room did not ask to watch the bot's tool
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
@@ -441,6 +446,14 @@ async function drain(chatKey: string): Promise<void> {
           !result.isError,
           pending.length ? `⏳ ${describeTasks(pending)}` : "",
         );
+        // A turn with no words and nobody waiting on it — the CLI resuming
+        // after a stale task notification ("continue from where you left
+        // off") and finding nothing to say — gets no message. A bare banner
+        // reading "(no result text)" is noise on a phone. A turn that answers
+        // a real message still goes out, so silence never eats a reply.
+        const unprompted = !awaitingReply.get(chatKey);
+        awaitingReply.set(chatKey, false);
+        if (!result.text && !result.isError && unprompted) return;
         await deliver(chatKey, result, group);
         // If this turn parked the run and something is queued behind it, the
         // park is a chance to answer it — handleInbound only kicks drain for
@@ -519,10 +532,11 @@ async function deliver(
   // Only a 1:1 honours a send marker. In a group the members are not on the
   // personal allowlist and claude has no filesystem there anyway — but the
   // marker is parsed from text, and text is the one thing a room can steer.
+  const text = result.text || "(no result text)";
   const outbound =
     config.attachments.enabled && !group
-      ? extractSendMarkers(result.text)
-      : { text: result.text, files: [], problems: [] };
+      ? extractSendMarkers(text)
+      : { text, files: [], problems: [] };
 
   if (group) {
     await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);

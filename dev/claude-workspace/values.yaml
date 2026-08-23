@@ -98,6 +98,10 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v25: a turn that says nothing and answers nobody sends nothing. The CLI
+  #      resuming after a stale task notification ("continue from where you
+  #      left off") can end with no text; the phone got a bare banner reading
+  #      "(no result text)". Turns answering a real message still deliver.
   # v24: ScheduleWakeup wake-ups actually fire. The tool's timer lives in the
   #      claude child: alive (parked on background work) it fires itself, but
   #      a child with nothing else outstanding exits at end of turn and the
@@ -108,7 +112,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v24"
+  tag: "v25"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

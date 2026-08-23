@@ -33,6 +33,7 @@ test("empty result falls back to the last assistant text", () => {
   expect(pickResultText("   ", "build started")).toBe("build started");
 });
 
-test("nothing anywhere still says so instead of sending a bare banner", () => {
-  expect(pickResultText("", "")).toBe("(no result text)");
+test("nothing anywhere is empty, so the router can stay quiet", () => {
+  expect(pickResultText("", "")).toBe("");
+  expect(pickResultText(undefined, "")).toBe("");
 });
