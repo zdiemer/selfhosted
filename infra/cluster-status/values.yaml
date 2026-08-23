@@ -535,6 +535,13 @@ catalog:
       # and the icon has to be looked for one level down.
       iconUrl: http://guacamole.dev.svc.cluster.local:8080/guacamole/
       note: via Guacamole
+    - name: Ollama
+      category: Dev
+      namespace: ai
+      service: ollama
+      # Ollama serves no favicon — its `/` is a plain-text banner — so the mark
+      # is seeded in brand/service-icons.
+      note: local LLM API — basic auth, no UI
 
     # ------------------------------------------------------------------- Bots
     - name: Smite-le bot
