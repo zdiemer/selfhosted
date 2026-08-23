@@ -717,10 +717,12 @@ resources:
       cpu: 50m
       memory: 1536Mi
     limits:
-      # 4Gi to match `term`: the same claude-sized session, plus room for one
-      # build alongside it. Heavy image builds should still go to the in-cluster
-      # buildkitd (BUILDKIT_HOST) rather than run here.
-      memory: 4Gi
+      # Was 4Gi to match `term`; on 2026-08-22 a pytest-xdist run (a dozen
+      # python workers at ~250Mi each) on top of the session tipped it over,
+      # OOM-killing bun mid-conversation. 6Gi leaves room for one test suite.
+      # Heavy image builds should still go to the in-cluster buildkitd
+      # (BUILDKIT_HOST) rather than run here.
+      memory: 6Gi
   # Native-image signal-cli daemon: no JVM heap ballooning, but give it room
   # for attachment buffers and the receive queue.
   signalCli:
