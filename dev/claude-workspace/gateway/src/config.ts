@@ -339,6 +339,25 @@ export const config = {
     // loop nobody asked for.
     maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
   },
+  // Transcript health (router.ts transcriptHealth). A cold resume has to
+  // rebuild the session's jsonl tail into the context window, and past
+  // roughly 1.4MB the rebuild — and the auto-compaction the CLI tries as a
+  // rescue — both come back as API 400 "Prompt is too long", killing the
+  // thread. A live child never notices (its in-context management is not
+  // persisted), which is how a chat balloons for hours and then dies on the
+  // first message after its process exits. So: compact well before the wall,
+  // and once past saving, say so while there is still time to wrap up.
+  transcript: {
+    // Where the gateway queues a quiet `/compact` turn. Measured on the tail
+    // a resume would rebuild (claude.ts resumableBytes), not the file — the
+    // file never shrinks, compaction just adds a boundary to rebuild from.
+    compactBytes: envIntOrZero("GW_COMPACT_KB", 1024) * 1024,
+    // Past this, the compaction request itself no longer fits and the thread
+    // cannot be rescued, only warned about. Between the two thresholds a
+    // compact is still worth attempting; zero for compactBytes disables the
+    // auto-compact and leaves only the warning.
+    capBytes: envInt("GW_TRANSCRIPT_CAP_KB", 1440) * 1024,
+  },
   // Read-only tools that never prompt; everything else goes through the
   // approval relay. Space-separated, claude --allowedTools syntax.
   allowedTools:

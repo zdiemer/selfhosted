@@ -396,8 +396,23 @@ pod (chat, tmux, Happy) and nothing you ran anywhere else.
 Runs default to **Opus 5 at medium effort** (`messaging.model` /
 `messaging.effort`); `!model` and `!effort` override per chat and persist in the
 state file. `!clear` is `!new` under a name that reads right in a chat — it
-drops the session pointer so the next message starts cold. The transcript itself
+drops the session pointer so the next message starts cold, and kills a live run
+and its pending wake-up with it. (It has to: a parked child would otherwise be
+handed the next message with the full old context, landing the clear one
+message late — on the reply that needed that context.) The transcript itself
 stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
+
+Long threads are kept resumable rather than left to die. A cold resume rebuilds
+the session jsonl's tail into the context window, and past ~1.4MB the rebuild —
+and the auto-compaction the CLI tries as a rescue — both come back `Prompt is
+too long`, permanently. A live child never notices (its in-context trimming
+isn't persisted), so the thread balloons for hours and dies on the first
+message after its process exits. The gateway now measures that tail after every
+turn (`messaging.transcript`): past `compactKB` it queues a quiet `/compact`
+turn (announced as `⚙ … compacting in the background`); past `capKB`, where
+even compaction no longer fits, it warns to wrap up. And if a resume still
+comes back `Prompt is too long`, the run is retried once from a fresh session
+instead of delivering a dead thread's error forever.
 
 Anything else is sent to claude. Replies are prefixed
 `[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k (Signal) / ~2.9k

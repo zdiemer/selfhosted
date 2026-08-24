@@ -17,6 +17,7 @@ import {
   isRunning,
   isWaiting,
   latestSessionId,
+  resumableBytes,
   type RunOverrides,
   type RunResult,
   runClaude,
@@ -105,6 +106,9 @@ interface Queued {
   run?: RunOverrides;
   /** Name of the gateway schedule behind this entry, for its preamble. */
   schedName?: string;
+  /** Gateway maintenance (the auto-compact turn): no reaction, no status
+   * ticker, and the reply stays in unless it is an error. */
+  quiet?: boolean;
 }
 const queues = new Map<string, Queued[]>();
 let droppedLog = 0;
@@ -195,6 +199,12 @@ const deliveryRefs = new Map<string, MsgRef | undefined>();
 /** A person's message is waiting on the next turn's reply. Off for gateway
  * wake-ups and the CLI's own resumptions, whose turns may say nothing. */
 const awaitingReply = new Map<string, boolean>();
+
+/** Chats whose NEXT turn is gateway maintenance (a quiet `/compact`), set at
+ * dispatch and consumed by onTurn. A set rather than a field on the run: a
+ * hand-off lands in a run whose onTurn closed over some earlier message's
+ * item, so the flag has to travel outside the closure. */
+const quietTurn = new Set<string>();
 
 export function activeStatus(chatKey: string): Status | undefined {
   return statuses.get(chatKey);
@@ -420,8 +430,9 @@ async function drain(chatKey: string): Promise<void> {
       .join("\n\n");
     if (handOff(chatKey, item.body || NO_CAPTION, handOffPreamble)) {
       queue.shift();
+      if (item.quiet) quietTurn.add(chatKey);
       deliveryRefs.set(chatKey, item.ref);
-      awaitingReply.set(chatKey, !item.wakeup);
+      awaitingReply.set(chatKey, !item.wakeup && !item.quiet);
       react(chatKey, item.ref, config.reactions.working);
       // The parked run's onTurn below delivers this reply; there is no second
       // run to start and nothing here to await.
@@ -448,13 +459,21 @@ async function drain(chatKey: string): Promise<void> {
     await sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again");
   }
   react(chatKey, ref, config.reactions.working);
+  if (item.quiet) quietTurn.add(chatKey);
   deliveryRefs.set(chatKey, ref);
-  awaitingReply.set(chatKey, !wakeup);
+  awaitingReply.set(chatKey, !wakeup && !item.quiet);
   const group = isGroupChat(chatKey);
+  // What this run resumes, if anything. A "Prompt is too long" coming back on
+  // a resume means THAT thread can no longer be rebuilt — not that this
+  // message was too big — and is recoverable by starting over. Pinned runs
+  // manage their own slots and sit this out.
+  const resumingId = runOverrides ? undefined : getChat(chatKey).sessionId;
+  let retryFresh = false;
   // No status message in a group: the room did not ask to watch the bot's tool
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
-  // is very little to watch.
-  let status = group ? undefined : createStatus(chatKey);
+  // is very little to watch. None for maintenance either — a ticker would
+  // make the quiet turn loud.
+  let status = group || item.quiet ? undefined : createStatus(chatKey);
   if (status) {
     statuses.set(chatKey, status);
     await status.begin();
@@ -477,6 +496,7 @@ async function drain(chatKey: string): Promise<void> {
         // continuation needs a live one of its own, below the reply.
         if (
           !group &&
+          !quietTurn.has(chatKey) &&
           ev.type === "system" &&
           ev.subtype === "init" &&
           status &&
@@ -488,7 +508,29 @@ async function drain(chatKey: string): Promise<void> {
         }
         status?.onEvent(ev);
       },
-      onTurn: async (result, _turn, pending) => {
+      onTurn: async (result, turn, pending) => {
+        // A resumed thread answering "Prompt is too long" is dead: by the
+        // time this text comes back the CLI's own rescue (auto-compact,
+        // retry) has already failed, and nothing said to the thread can ever
+        // land again. Trade the history for a working chat — drop the
+        // pointer, say so, and run the message again from nothing (the
+        // unshift after the run). Once by construction: the retry resumes no
+        // session, so it cannot take this branch.
+        if (
+          resumingId &&
+          turn === 1 &&
+          result.isError &&
+          /prompt is too long/i.test(result.text)
+        ) {
+          retryFresh = true;
+          updateChat(chatKey, { sessionId: undefined });
+          await sendTo(
+            chatKey,
+            "⚠ this thread outgrew the context window and can't be resumed " +
+              `— starting it fresh (old transcript kept: ${resumingId.slice(0, 8)})`,
+          );
+          return;
+        }
         // The turn's own wake-up request, applied before its reply goes out so
         // "next check at …" in the text is true by the time it is read. Only
         // what THIS turn asked for (WakeupTracker.take) — arming is not
@@ -511,6 +553,14 @@ async function drain(chatKey: string): Promise<void> {
           !result.isError,
           pending.length ? `⏳ ${describeTasks(pending)}` : "",
         );
+        // Every turn grows the transcript — wake-ups and hand-offs to parked
+        // children most of all, since those are the runs that live for hours.
+        // Checked before the quiet-turn return below, so a compact that
+        // didn't help (or made things worse) is seen too.
+        if (!group && !runOverrides) transcriptHealth(chatKey);
+        // The maintenance turn's reply is bookkeeping, not conversation. Its
+        // receipt is the health notice already sent; only a failure speaks.
+        if (quietTurn.delete(chatKey) && !result.isError) return;
         // A turn with no words and nobody waiting on it — the CLI resuming
         // after a stale task notification ("continue from where you left
         // off") and finding nothing to say — gets no message. A bare banner
@@ -554,6 +604,10 @@ async function drain(chatKey: string): Promise<void> {
     // And nothing has answered the message that started it. Say how it ended,
     // so the thread doesn't just go quiet (the old "claude exited 143").
     if (final.aborted) await deliver(chatKey, final, group, runOverrides);
+    // The dead-resume retry: the pointer is already cleared and the user
+    // told, so put the message back at the head and let the finally's drain
+    // run it again — this time with no session to resume.
+    if (retryFresh) queue.unshift(item);
   } catch (err) {
     await status?.replace(`⚠ gateway error`);
     // Whatever this run still owes a reaction to. Undefined once a turn has
@@ -563,8 +617,51 @@ async function drain(chatKey: string): Promise<void> {
   } finally {
     statuses.delete(chatKey);
     deliveryRefs.delete(chatKey);
+    // A quiet flag whose turn never ran (child died first) must not survive
+    // to swallow some later, real reply.
+    quietTurn.delete(chatKey);
     if (queue.length) void drain(chatKey);
   }
+}
+
+// Transcript health: compact before a thread outgrows what a cold resume can
+// rebuild, and once it is past saving, say so while there is still time to
+// wrap up. The cooldown is in-memory rather than persisted — after a restart
+// the worst case is one repeated nudge.
+const nudgedAt = new Map<string, number>();
+const NUDGE_COOLDOWN_MS = 10 * 60_000;
+
+function transcriptHealth(chatKey: string): void {
+  const chat = getChat(chatKey);
+  if (!chat.sessionId) return;
+  const bytes = resumableBytes(chat.cwd, chat.sessionId);
+  const { compactBytes, capBytes } = config.transcript;
+  if (bytes < capBytes && (!compactBytes || bytes < compactBytes)) return;
+  const last = nudgedAt.get(chatKey) ?? 0;
+  if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
+  nudgedAt.set(chatKey, Date.now());
+  const mb = (bytes / 1048576).toFixed(1);
+  if (bytes >= capBytes) {
+    // Too big even for /compact — the compaction request itself would no
+    // longer fit. The thread keeps working while its child is alive; the
+    // first cold resume is what dies (and now recovers by starting over, see
+    // runQueued). Say so while wrapping up is still an option.
+    void sendTo(
+      chatKey,
+      `⚠ this thread's transcript (~${mb}MB) is past compacting — once the ` +
+        "current run ends it can't be resumed, and the next message will " +
+        "start fresh. Wrap up what matters now, or !clear at a good break.",
+    );
+    return;
+  }
+  // Still rescuable: a quiet /compact through the ordinary queue, so it hands
+  // off to a parked child (trimming the live thread, where the bloat actually
+  // accumulates) or spawns a short resume of its own.
+  void sendTo(
+    chatKey,
+    `⚙ thread transcript is ~${mb}MB — compacting in the background to keep it resumable`,
+  );
+  enqueueScheduled(chatKey, { body: "/compact", quiet: true });
 }
 
 /**
@@ -711,12 +808,27 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           : "send your 6-digit code as its own message",
       );
     case "!new":
-    case "!clear":
+    case "!clear": {
       // Drops the session pointer, so the next message starts a run with no
       // history. The old transcript stays on the PVC under ~/.claude — this
       // forgets it, it doesn't delete it, and `!resume <id>` can still reach it.
+      //
+      // A live run dies with the pointer. Left alone, a parked child
+      // resurrects the thread — drain() hands the next message to it, full
+      // old context — and the clear lands one message late, on the reply that
+      // needed that context. A pending wake-up goes too: fired after a clear
+      // it would land in a fresh thread with nothing behind its prompt.
+      const killed = [
+        stop(chatKey) ? "stopped its run" : "",
+        cancelWakeup(chatKey) ? "cancelled its wake-up" : "",
+      ].filter(Boolean);
       updateChat(chatKey, { sessionId: undefined });
-      return sendTo(chatKey, "✓ history cleared — next message starts fresh");
+      return sendTo(
+        chatKey,
+        `✓ history cleared${killed.length ? ` (${killed.join(", ")})` : ""}` +
+          " — next message starts fresh",
+      );
+    }
     case "!model": {
       if (!arg)
         return sendTo(

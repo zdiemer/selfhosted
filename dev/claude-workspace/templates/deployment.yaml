@@ -492,6 +492,16 @@ spec:
               value: {{ .Values.messaging.background.waitSeconds | default 1800 | quote }}
             - name: GW_BACKGROUND_MAX_TURNS
               value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
+            # Transcript health thresholds (see values.yaml): auto-compact
+            # past compactKB (0 disables), warn past capKB.
+            {{- with .Values.messaging.transcript }}
+            # No `| default`: it would turn an explicit 0 ("don't compact")
+            # into the fallback. An empty value falls back in config.ts.
+            - name: GW_COMPACT_KB
+              value: {{ .compactKB | quote }}
+            - name: GW_TRANSCRIPT_CAP_KB
+              value: {{ .capKB | quote }}
+            {{- end }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}
             - name: GW_MODEL

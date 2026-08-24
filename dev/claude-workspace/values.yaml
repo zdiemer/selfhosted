@@ -98,6 +98,15 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v27: !clear kills the live run (and its wake-up) with the pointer — a
+  #      parked child used to be handed the next message with the full old
+  #      context, landing the clear one message late, on the reply that
+  #      needed it (the "Not a fan of any of those" cold start, 2026-08-24).
+  #      Transcript health: past messaging.transcript.compactKB the gateway
+  #      queues a quiet /compact turn; past capKB (where compaction itself no
+  #      longer fits) it warns to wrap up; and a resume that still comes back
+  #      "Prompt is too long" retries once from a fresh session instead of
+  #      delivering a dead thread's error forever.
   # v26: recurring gateway-owned schedules (messaging.schedules): cron-fired
   #      headless runs pinned to their own cwd + named session slot, so a
   #      firing never lands in the thread the chat currently points at. The
@@ -122,7 +131,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v26"
+  tag: "v27"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -419,6 +428,16 @@ messaging:
     # bounds one park; this bounds the chain, so a run that starts a fresh
     # background task on every wake cannot loop on the subscription unasked.
     maxTurns: 10
+  # Transcript health. A cold resume rebuilds the session jsonl's tail (after
+  # its last compact boundary) into the context window; past ~1.4MB that
+  # rebuild — and the compaction that would rescue it — both come back as API
+  # 400 "Prompt is too long" and the thread is dead, which is how a chat that
+  # spent an evening reading rendered PNGs died on the first message after its
+  # process exited. Past compactKB the gateway queues a quiet `/compact` turn
+  # (0 disables); past capKB it can only warn to wrap up and !clear.
+  transcript:
+    compactKB: 1024
+    capKB: 1440
   # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
   # else round-trips "Claude wants: … reply 1/2/3". `!auto on` allows those
   # unprompted too — but a question or a plan still reaches the chat, because

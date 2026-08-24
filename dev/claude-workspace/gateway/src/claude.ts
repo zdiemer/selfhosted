@@ -666,6 +666,27 @@ export async function runClaude(
   }
 }
 
+/** Bytes of transcript a cold resume would have to rebuild into context: the
+ * session jsonl's tail after its last compact boundary. The file itself only
+ * ever grows — compaction appends a boundary rather than rewriting — so raw
+ * size overstates a compacted thread; the tail is what has to fit back into
+ * the window. 0 when the transcript doesn't exist yet. */
+export function resumableBytes(cwd: string, sessionId: string): number {
+  const p = path.join(
+    config.home,
+    ".claude/projects",
+    cwd.replace(/[/.]/g, "-"),
+    `${sessionId}.jsonl`,
+  );
+  try {
+    const text = fs.readFileSync(p, "utf8");
+    const boundary = text.lastIndexOf('"compact_boundary"');
+    return boundary < 0 ? text.length : text.length - boundary;
+  } catch {
+    return 0;
+  }
+}
+
 /** Newest session jsonl for a cwd — claude names project dirs by munging
  * '/' and '.' to '-'. Used by !resume to pick up a tmux/Happy session. */
 export function latestSessionId(cwd: string): string | undefined {
