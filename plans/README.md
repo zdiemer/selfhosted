@@ -20,3 +20,4 @@ a stale plan, and will be read as a live one.
 | Plan | What it covers | Status |
 |---|---|---|
 | [`network-segmentation.md`](network-segmentation.md) | Splitting the flat `192.168.4.0/22` home LAN into cluster / trusted / untrusted VLANs, with the NAS dual-homed by direct IP on two of them and the SMS relay handset moved to wired isolation. Requires replacing the eero's routing and the unmanaged switch. | Not started — blocked on hardware |
+| [`carson.md`](carson.md) | "Mr. Carson" — personal CRM / assistant: todo tracker, birthday/anniversary reminders with Claude-researched gift links, calendar assistant (reads iCloud + Google, publishes its own ICS feed), and an email/iMessage watcher (IMAP + nightly `idevicebackup2` wireless backups) with Ollama doing bulk extraction and gateway-scheduled Claude runs doing the judgment work. | Not started |
