@@ -63,6 +63,16 @@ spec:
             # Secret below is mounted here.
             - name: GUACAMOLE_HOME
               value: /etc/guacamole
+            # WHAT PUTS THE APP AT "/" INSTEAD OF "/guacamole".
+            # The entrypoint deploys the war as
+            #   $CATALINA_BASE/webapps/${WEBAPP_CONTEXT:-guacamole}.war
+            # so the default context path is /guacamole, and Tomcat answers
+            # every other path — including "/" — with its own 404 page. The
+            # Ingress here routes "/", so without this the host serves nothing
+            # but "HTTP Status 404 – Not Found" from Tomcat while the pod
+            # reports perfectly healthy.
+            - name: WEBAPP_CONTEXT
+              value: "ROOT"
           ports:
             - name: http
               containerPort: 8080
@@ -72,13 +82,13 @@ spec:
               readOnly: true
           readinessProbe:
             httpGet:
-              path: /guacamole/
+              path: /
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /guacamole/
+              path: /
               port: http
             initialDelaySeconds: 90
             periodSeconds: 30
