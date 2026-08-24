@@ -1,0 +1,18 @@
+# Copy to values.local.yaml (gitignored) and fill in — or let
+# scripts/secrets.sh keep it in 1Password and never write it to disk at all.
+#
+# Only unattend.password is required, and only while unattend.enabled is true.
+
+unattend:
+  # The local Administrator account Windows Setup creates. It also ends up in
+  # the answer file as plaintext, because that is the only form Windows Setup
+  # accepts — which is why the answer file is a Secret and not a ConfigMap.
+  password: "generate-a-long-random-one"
+
+# Once Windows is installed, detach the installer ISO and let the VM come back
+# on its own after a node failure:
+# disks:
+#   installer:
+#     attached: false
+# vm:
+#   runStrategy: Always

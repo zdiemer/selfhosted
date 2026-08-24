@@ -134,6 +134,56 @@ disks:
     # DataVolume to re-pull a newer one.
     url: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
 
+# Unattended install. When enabled, Windows Setup reads an autounattend.xml off
+# a CD that KubeVirt builds from a Secret, and the whole install runs with
+# nobody watching — partitioning, the virtio storage driver, the local account,
+# and switching Remote Desktop on at the end.
+#
+# WHY THIS IS NOT OPTIONAL IN PRACTICE. Without it, installing Windows means
+# sitting in a VNC console clicking through Setup, and the very first screen is
+# a disk picker showing NO DISKS (Windows has no virtio driver, so it cannot see
+# the root disk). This file is what makes a Windows VM reproducible instead of
+# hand-built.
+unattend:
+  enabled: true
+
+  # Which edition to pull out of the ISO. A retail Windows 11 ISO carries
+  # several; Setup fails with "no images are available" if this does not match
+  # one exactly. Check yours with:
+  #   7z l Win11.iso sources/install.wim   (or wiminfo sources/install.wim)
+  imageName: "Windows 11 Pro"
+
+  # Optional. A generic KMS *client setup key* here only selects the edition —
+  # it does not activate. Leave empty unless Setup complains about edition
+  # ambiguity.
+  productKey: ""
+
+  computerName: "win11"
+  locale: "en-US"
+  # Windows timezone id, NOT an IANA one ("America/Los_Angeles" is rejected).
+  timezone: "Pacific Standard Time"
+
+  # The local account Setup creates. The password is REQUIRED when unattend is
+  # enabled — it lands in a Secret, and in the answer file as plaintext, which
+  # is how Windows Setup consumes it. Set it in values.local.yaml.
+  username: "zach"
+  password: ""
+
+  # Log the account in automatically after install. Handy for a VM you reach
+  # over the console; turn it off if you would rather the lock screen greet you.
+  autoLogon: true
+
+  # Switch Remote Desktop on during setup, and open the firewall for it.
+  # Without this the guest installs fine and nothing can reach it — the single
+  # most common "Guacamole says connection refused" cause.
+  enableRdp: true
+
+  # Disable Network Level Authentication. NLA needs credentials before the
+  # session opens, which is incompatible with dev/guacamole's default of
+  # prompting inside the session (security: any, empty username). Set to false
+  # if you pre-fill the guest credentials in Guacamole instead.
+  disableNla: true
+
 service:
   # In-cluster RDP endpoint. ClusterIP is the right default: dev/guacamole
   # reaches it from inside the cluster, and the VM is never exposed directly.

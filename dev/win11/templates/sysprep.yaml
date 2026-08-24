@@ -1,0 +1,210 @@
+{{- if .Values.unattend.enabled }}
+{{- $name := include "win11.name" . -}}
+{{- $u := .Values.unattend -}}
+{{- $pw := required "unattend.password is required when unattend.enabled — set it in values.local.yaml (op://homelab/dev-win11)" $u.password -}}
+{{/*
+Windows Setup's answer file, delivered as a CD-ROM.
+
+KubeVirt's `sysprep` volume source builds an ISO from this Secret and attaches
+it; Windows Setup scans removable media for autounattend.xml and runs itself
+from what it finds. A Secret rather than a ConfigMap because the local account
+password is in here — Setup only accepts it as plaintext, so it must not sit in
+a ConfigMap.
+
+THE THREE PASSES, AND WHY EACH ONE IS HERE:
+
+  windowsPE   runs inside the installer. Loads the virtio storage driver (or
+              Setup shows an empty disk list and cannot continue), wipes and
+              partitions the disk, and picks the edition out of the ISO.
+  specialize  runs after the image is laid down. Names the machine and turns
+              Remote Desktop on, which is what makes the VM reachable at all.
+  oobeSystem  runs at first boot. Skips the out-of-box screens, creates the
+              local account, and installs the rest of the virtio drivers.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-sysprep
+  labels:
+    {{- include "win11.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  autounattend.xml: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+      <settings pass="windowsPE">
+        <component name="Microsoft-Windows-International-Core-WinPE"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <SetupUILanguage><UILanguage>{{ include "win11.xml" $u.locale }}</UILanguage></SetupUILanguage>
+          <InputLocale>{{ include "win11.xml" $u.locale }}</InputLocale>
+          <SystemLocale>{{ include "win11.xml" $u.locale }}</SystemLocale>
+          <UILanguage>{{ include "win11.xml" $u.locale }}</UILanguage>
+          <UserLocale>{{ include "win11.xml" $u.locale }}</UserLocale>
+        </component>
+
+        <!--
+          THE STEP THAT MAKES THE INSTALL POSSIBLE AT ALL.
+          Windows ships no virtio driver, so without this Setup's disk picker is
+          empty and a human has to click "Load driver". The virtio ISO's drive
+          letter is not knowable ahead of time in WinPE, so every plausible
+          letter is listed; missing paths are ignored rather than fatal.
+        -->
+        <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <DriverPaths>
+            {{- range $i, $drive := (list "D" "E" "F" "G") }}
+            <PathAndCredentials wcm:action="add" wcm:keyValue="{{ add $i 1 }}"
+                                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Path>{{ $drive }}:\viostor\w11\amd64</Path>
+            </PathAndCredentials>
+            {{- end }}
+          </DriverPaths>
+        </component>
+
+        <component name="Microsoft-Windows-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <DiskConfiguration>
+            <!--
+              WipeDisk on disk 0. The only fixed disk attached is the virtio
+              root volume — the two ISOs are SATA CD-ROMs — so this cannot eat
+              anything else. The layout is the standard UEFI/GPT one Windows 11
+              requires: ESP, MSR, then the OS partition taking the remainder.
+            -->
+            <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <DiskID>0</DiskID>
+              <WillWipeDisk>true</WillWipeDisk>
+              <CreatePartitions>
+                <CreatePartition wcm:action="add">
+                  <Order>1</Order><Type>EFI</Type><Size>300</Size>
+                </CreatePartition>
+                <CreatePartition wcm:action="add">
+                  <Order>2</Order><Type>MSR</Type><Size>16</Size>
+                </CreatePartition>
+                <CreatePartition wcm:action="add">
+                  <Order>3</Order><Type>Primary</Type><Extend>true</Extend>
+                </CreatePartition>
+              </CreatePartitions>
+              <ModifyPartitions>
+                <ModifyPartition wcm:action="add">
+                  <Order>1</Order><PartitionID>1</PartitionID>
+                  <Label>System</Label><Format>FAT32</Format>
+                </ModifyPartition>
+                <ModifyPartition wcm:action="add">
+                  <Order>2</Order><PartitionID>2</PartitionID>
+                </ModifyPartition>
+                <ModifyPartition wcm:action="add">
+                  <Order>3</Order><PartitionID>3</PartitionID>
+                  <Label>Windows</Label><Letter>C</Letter><Format>NTFS</Format>
+                </ModifyPartition>
+              </ModifyPartitions>
+            </Disk>
+            <WillShowUI>OnError</WillShowUI>
+          </DiskConfiguration>
+
+          <ImageInstall>
+            <OSImage>
+              <InstallFrom>
+                <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                  <Key>/IMAGE/NAME</Key>
+                  <Value>{{ include "win11.xml" $u.imageName }}</Value>
+                </MetaData>
+              </InstallFrom>
+              <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+              <WillShowUI>OnError</WillShowUI>
+            </OSImage>
+          </ImageInstall>
+
+          <UserData>
+            <AcceptEula>true</AcceptEula>
+            {{- with $u.productKey }}
+            <ProductKey><Key>{{ include "win11.xml" . }}</Key><WillShowUI>OnError</WillShowUI></ProductKey>
+            {{- end }}
+          </UserData>
+        </component>
+      </settings>
+
+      <settings pass="specialize">
+        <component name="Microsoft-Windows-Shell-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <ComputerName>{{ include "win11.xml" $u.computerName }}</ComputerName>
+          <TimeZone>{{ include "win11.xml" $u.timezone }}</TimeZone>
+        </component>
+        {{- if $u.enableRdp }}
+        <!-- Remote Desktop off is the Windows default; leaving it that way means
+             the VM installs perfectly and nothing can ever connect to it. -->
+        <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <fDenyTSConnections>false</fDenyTSConnections>
+        </component>
+        <component name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <UserAuthentication>{{ if $u.disableNla }}0{{ else }}1{{ end }}</UserAuthentication>
+        </component>
+        <!-- Opening the port is a separate step from enabling the service. -->
+        <component name="Networking-MPSSVC-Svc"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <FirewallGroups>
+            <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop"
+                           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Active>true</Active>
+              <Group>@FirewallAPI.dll,-28752</Group>
+              <Profile>all</Profile>
+            </FirewallGroup>
+          </FirewallGroups>
+        </component>
+        {{- end }}
+      </settings>
+
+      <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Shell-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <OOBE>
+            <HideEULAPage>true</HideEULAPage>
+            <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+            <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+            <!-- Windows 11 pushes a Microsoft account by default and there is
+                 nobody here to decline it. This plus a LocalAccount below is
+                 what keeps OOBE from parking on the sign-in screen forever. -->
+            <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+            <ProtectYourPC>3</ProtectYourPC>
+          </OOBE>
+          <UserAccounts>
+            <LocalAccounts>
+              <LocalAccount wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                <Name>{{ include "win11.xml" $u.username }}</Name>
+                <DisplayName>{{ include "win11.xml" $u.username }}</DisplayName>
+                <Group>Administrators</Group>
+                <Password><Value>{{ include "win11.xml" $pw }}</Value><PlainText>true</PlainText></Password>
+              </LocalAccount>
+            </LocalAccounts>
+          </UserAccounts>
+          {{- if $u.autoLogon }}
+          <AutoLogon>
+            <Enabled>true</Enabled>
+            <Username>{{ include "win11.xml" $u.username }}</Username>
+            <Password><Value>{{ include "win11.xml" $pw }}</Value><PlainText>true</PlainText></Password>
+          </AutoLogon>
+          {{- end }}
+          <FirstLogonCommands>
+            <!-- The virtio ISO's letter is not fixed, so hunt for the installer
+                 rather than assuming one. This is what brings up the NIC:
+                 viostor (loaded in WinPE above) only covers the disk. -->
+            <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Order>1</Order>
+              <Description>Install virtio guest tools</Description>
+              <CommandLine>cmd /c "for %d in (D E F G) do @if exist %d:\virtio-win-guest-tools.exe start /wait %d:\virtio-win-guest-tools.exe /install /quiet /norestart"</CommandLine>
+            </SynchronousCommand>
+          </FirstLogonCommands>
+        </component>
+      </settings>
+    </unattend>
+{{- end }}

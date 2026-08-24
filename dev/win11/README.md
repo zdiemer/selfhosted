@@ -36,22 +36,32 @@ virtctl image-upload dv win11-installer \
   --insecure
 ```
 
-**2. Start it and open the console:**
+Any Windows 11 x64 ISO works. Check which editions yours carries and make
+`unattend.imageName` match one exactly, or Setup stops with "no images are
+available":
+
+```bash
+7z l Win11.iso sources/install.wim     # or: wiminfo sources/install.wim
+```
+
+**2. Start it. That is the whole install.**
 
 ```bash
 virtctl start win11 -n dev
-virtctl vnc   win11 -n dev
+virtctl vnc   win11 -n dev             # optional — to watch, not to click
 ```
 
-**3. Load the storage driver during setup.** Windows Setup will show **no
-disks** — it has no virtio driver and cannot see the root disk. Click *Load
-driver*, browse to the virtio CD, and pick `viostor\w11\amd64`. The disk
-appears; install normally.
+`unattend.enabled` (on by default) hands Setup an `autounattend.xml` on a CD
+that KubeVirt builds from a Secret. It partitions the disk, loads the virtio
+storage driver, installs the edition named above, creates the local account,
+skips OOBE, switches Remote Desktop on, and installs the virtio guest tools at
+first logon. Nobody has to be watching.
 
-**4. After Windows is up**, install the rest of the drivers from the same CD
-(`virtio-win-guest-tools.exe`) — that is what gives the guest a working NIC.
+Turn `unattend.enabled` off to install by hand instead — in which case Setup's
+disk picker will be **empty** (no virtio driver), and you click *Load driver*
+and point it at `viostor\w11\amd64` on the virtio CD.
 
-**5. Detach the installer** so every boot stops offering the DVD:
+**3. Detach the installer** so every boot stops offering the DVD:
 
 ```yaml
 # values.local.yaml
@@ -68,13 +78,39 @@ vm:
 
 ## Turn on RDP in the guest
 
-Nothing can RDP in until Windows allows it — the Service will have endpoints
-and the connection will still be refused. In an elevated PowerShell:
+The unattended install already does this (`unattend.enableRdp`, on by default),
+so this section is only for a hand-built guest — or to check the setting.
+Nothing can RDP in until Windows allows it: the Service will have endpoints and
+the connection will still be refused. In an elevated PowerShell:
 
 ```powershell
 Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
 Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 ```
+
+## The answer file
+
+`templates/sysprep.yaml` renders `autounattend.xml` into a Secret, which
+KubeVirt turns into a CD-ROM (`sysprep` volume source). Windows Setup finds it
+by scanning removable media. A Secret rather than a ConfigMap because the local
+account password is in it, and Windows Setup only accepts that as plaintext.
+
+Three passes do three jobs:
+
+| pass | what it fixes |
+|---|---|
+| `windowsPE` | loads the virtio storage driver — **without this Setup's disk list is empty** — then wipes and GPT-partitions the disk and picks the edition |
+| `specialize` | names the machine, enables Remote Desktop, opens the firewall group |
+| `oobeSystem` | skips the out-of-box screens, creates the local account, installs the virtio guest tools (the NIC) |
+
+Every value interpolated into that XML goes through a `win11.xml` escaping
+helper. That is not cosmetic: a password containing `&` or `<` produces a
+malformed answer file, and Setup does not report that as an error — it ignores
+the file and silently drops to the interactive installer, so an unattended
+build becomes a machine waiting for a human.
+
+The virtio CD's drive letter is not knowable in WinPE, so the driver path lists
+`D:` through `G:` and the guest-tools command loops the same letters.
 
 ## Why the settings are what they are
 

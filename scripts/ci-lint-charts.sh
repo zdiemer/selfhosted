@@ -22,6 +22,8 @@ TEMPLATE_SKIP=(
   auth/authelia
   # auth.password is `required` (op://homelab/dev-guacamole).
   dev/guacamole
+  # unattend.password is `required` while unattend.enabled (op://homelab/dev-win11).
+  dev/win11
   auth/keepass
   dev/happy-server
   discord/vocard
