@@ -28,13 +28,25 @@ still waiting.
 
 **1. Push the ISO** (needs `virtctl`, and the cluster reachable):
 
+`cdi-uploadproxy` is a ClusterIP with no Ingress, and CDI does not publish an
+external address for it — `kubectl get cdi cdi -o jsonpath='{.status.uploadProxyURL}'`
+is empty. So virtctl has nothing to discover and the proxy URL has to be given
+explicitly, over a port-forward:
+
 ```bash
+kubectl port-forward -n cdi svc/cdi-uploadproxy 18443:443 &
+
 virtctl image-upload dv win11-installer \
   --namespace dev \
-  --size 12Gi \
-  --image-path ~/Downloads/Win11_24H2_English_x64.iso \
-  --insecure
+  --no-create \
+  --uploadproxy-url=https://127.0.0.1:18443 \
+  --insecure \
+  --image-path ~/Downloads/Win11_25H2_English_x64_v2.iso
 ```
+
+`--no-create` because the DataVolume already exists — `upgrade.sh` made it, and
+it is sitting in `UploadReady` waiting. `--size` belongs to the create path and
+is not needed here.
 
 Any Windows 11 x64 ISO works. Check which editions yours carries and make
 `unattend.imageName` match one exactly, or Setup stops with "no images are
@@ -44,12 +56,29 @@ available":
 7z l Win11.iso sources/install.wim     # or: wiminfo sources/install.wim
 ```
 
-**2. Start it. That is the whole install.**
+**2. Start it — and press a key in the first ~30 seconds.**
 
 ```bash
 virtctl start win11 -n dev
-virtctl vnc   win11 -n dev             # optional — to watch, not to click
+virtctl vnc   win11 -n dev             # to press the key, then to watch
 ```
+
+The one keystroke this chart cannot declare away. Microsoft's ISO boots through
+a UEFI loader that prints **"Press any key to boot from CD or DVD"** and waits
+about five seconds. The root disk is blank on a first install, so when that
+prompt times out UEFI finds nothing bootable, prints `BdsDxe: No bootable
+option or device was found`, and parks at the firmware menu — where it will sit
+forever, looking like a hung VM rather than one waiting on a keypress.
+
+Headless, `virtctl vnc --proxy-only --port 15900` exposes RFB on localhost and
+any VNC client can send the key. Do not try to *time* the keypress off the
+`vnc/screenshot` subresource — it lags the live framebuffer badly (observed
+reporting 1280x800 while the RFB socket reported 640x480), so it will tell you
+the prompt is up only after the window has closed. Send Enter every ~150ms from
+the moment the VM starts instead; keystrokes before the loader are harmless.
+
+Once Windows is on the disk this stops mattering: the disk boots first, and
+with the installer detached (step 3) there is no CD to prompt from at all.
 
 `unattend.enabled` (on by default) hands Setup an `autounattend.xml` on a CD
 that KubeVirt builds from a Secret. It partitions the disk, loads the virtio

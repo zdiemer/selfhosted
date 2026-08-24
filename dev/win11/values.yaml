@@ -153,10 +153,21 @@ unattend:
   #   7z l Win11.iso sources/install.wim   (or wiminfo sources/install.wim)
   imageName: "Windows 11 Pro"
 
-  # Optional. A generic KMS *client setup key* here only selects the edition —
-  # it does not activate. Leave empty unless Setup complains about edition
-  # ambiguity.
-  productKey: ""
+  # REQUIRED IN PRACTICE, despite reading like a licensing field. This is a
+  # generic KMS *client setup key*: it selects an edition and does not
+  # activate anything, and Microsoft publishes it openly.
+  #
+  # Leaving it empty does not mean "skip the product key" — it means the
+  # answer file carries no <ProductKey> element, and Setup responds by
+  # SHOWING THE PRODUCT KEY PAGE and waiting. Everything else in the answer
+  # file still applies (the language screen and "Install now" are skipped),
+  # so the failure looks like a half-working unattend rather than a missing
+  # value, and the VM sits on that page forever.
+  #
+  # Must agree with imageName above — a Pro key against an imageName of
+  # "Windows 11 Home" puts Setup back on the same page.
+  # https://learn.microsoft.com/windows-server/get-started/kms-client-activation-keys
+  productKey: "W269N-WFGWX-YVC9B-4J6C9-T83GX"   # Windows 11 Pro
 
   computerName: "win11"
   locale: "en-US"

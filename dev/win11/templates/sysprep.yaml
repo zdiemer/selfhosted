@@ -164,6 +164,24 @@ stringData:
       </settings>
 
       <settings pass="oobeSystem">
+        <!--
+          THE COMPONENT THAT ACTUALLY SKIPS OOBE'S FIRST SCREENS.
+          The International-Core-WinPE component in the windowsPE pass above
+          covers Setup only; it says nothing about the installed system. With
+          no locale declared for this pass, OOBE has nothing to apply and
+          stops to ask — "Is this the right country or region?", then the
+          keyboard pages — no matter what the Hide*Page flags below say. The
+          machine installs perfectly and then waits for a human, which is the
+          same failure the answer file exists to prevent.
+        -->
+        <component name="Microsoft-Windows-International-Core"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <InputLocale>{{ include "win11.xml" $u.locale }}</InputLocale>
+          <SystemLocale>{{ include "win11.xml" $u.locale }}</SystemLocale>
+          <UILanguage>{{ include "win11.xml" $u.locale }}</UILanguage>
+          <UserLocale>{{ include "win11.xml" $u.locale }}</UserLocale>
+        </component>
         <component name="Microsoft-Windows-Shell-Setup"
                    processorArchitecture="amd64"
                    publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
