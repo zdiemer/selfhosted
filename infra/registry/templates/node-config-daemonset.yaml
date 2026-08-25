@@ -75,5 +75,12 @@ spec:
         - name: k3s-etc
           hostPath:
             path: /etc/rancher/k3s
-            type: Directory
+            # DirectoryOrCreate, not Directory: k3s agents only have this
+            # directory if something already put a registries.yaml in it, and
+            # writing that file is precisely this DaemonSet's job. Requiring it
+            # to pre-exist is a chicken-and-egg — the pod that would create the
+            # credentials cannot start on a node that has never had them.
+            # zachd-ubuntu-laptop-2 sat in ContainerCreating for three days for
+            # this reason, and every authenticated pull scheduled there failed.
+            type: DirectoryOrCreate
 {{- end }}
