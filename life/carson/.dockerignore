@@ -1,0 +1,8 @@
+**/__pycache__
+**/*.pyc
+templates/
+*.md
+*.sh
+Chart.yaml
+values*.yaml
+.helmignore

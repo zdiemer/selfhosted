@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "carson.fullname" . }}-data
+  labels:
+    {{- include "carson.labels" . | nindent 4 }}
+  annotations:
+    # Every contact, date, note and todo lives in the one SQLite file on this
+    # volume, and none of it exists anywhere else — it is hand-entered, not
+    # derived. Losing it is not a resync, it is retyping.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- /*
+    Gated with `with` so a blank value renders NO field. `storageClassName: ""`
+    means "no StorageClass at all" and leaves the PVC Pending forever.
+  */}}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

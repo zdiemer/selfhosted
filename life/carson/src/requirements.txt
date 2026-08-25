@@ -1,0 +1,13 @@
+# Pinned for reproducible image builds — bump deliberately.
+# Everything here has a manylinux wheel, so the image needs no build toolchain.
+#
+# Deliberately absent: any ICS library. The feed carries all-day yearly
+# recurrences and a handful of timed events; RFC 5545 for that is ~80 lines in
+# ics.py, and icalendar/ics.py would be a dependency to track forever for it.
+# Also absent: an ORM. The schema is nine tables and the queries are hand-written.
+fastapi==0.141.1
+uvicorn==0.52.1
+# Required by Starlette for `request.form()`. FastAPI does not depend on it,
+# and without it every HTML form post in the UI raises at runtime rather than
+# at import — so it is easy to omit and only notice in production.
+python-multipart==0.0.32

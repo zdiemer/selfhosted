@@ -1,0 +1,19 @@
+# Copy of what lives at op://homelab/life-carson/values.local.yaml.
+# This file is an EXAMPLE — the real values are resolved from 1Password by
+# upgrade.sh via scripts/lib/secret-values.sh. Never commit real values here.
+secrets:
+  # Per-service key from sms-relay's SMS_RELAY_API_KEYS map. Add `carson` there
+  # first, then paste the key it issues.
+  smsApiKey: "REPLACE_ME"
+
+  # The unguessable path segment in the calendar feed URL:
+  #   https://carson.zachd.duckdns.org/feed/<feedToken>.ics
+  # This is the ONLY thing protecting the feed — Apple and Google Calendar
+  # cannot log in, so the feed Ingress carries no Authelia middleware. Generate
+  # with:  python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+  # Rotating it silently breaks every subscription until they are re-added.
+  feedToken: "REPLACE_ME"
+
+sms:
+  # Where reminders are texted. E.164.
+  to: "REPLACE_ME"

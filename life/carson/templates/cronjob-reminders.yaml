@@ -1,0 +1,64 @@
+{{- if .Values.reminders.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "carson.fullname" . }}-reminders
+  labels:
+    {{- include "carson.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.reminders.cron | quote }}
+  timeZone: {{ .Values.reminders.timeZone | quote }}
+  concurrencyPolicy: {{ .Values.reminders.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.reminders.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.reminders.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.reminders.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.reminders.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.reminders.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "carson.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: reminders
+        spec:
+          restartPolicy: Never
+          {{- /*
+            Kubernetes injects Docker-link-style env vars (CARSON_PORT,
+            CARSON_SERVICE_HOST, ...) for every Service in this namespace. The
+            Service is named `carson`, so CARSON_PORT lands as "tcp://IP:PORT" and
+            shadows the app's own config. Nothing here consumes those legacy vars.
+          */}}
+          enableServiceLinks: false
+          {{- if .Values.imageCredentials.pat }}
+          imagePullSecrets:
+            - name: {{ include "carson.fullname" . }}-ghcr
+          {{- end }}
+          containers:
+            - name: reminders
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["remind"]
+              env:
+                {{- include "carson.env" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            {{- /*
+              NO data volume. The PVC is ReadWriteOnce, so mounting it here
+              only works when the scheduler happens to co-locate this pod with
+              the web pod; when it does not, the job hangs in ContainerCreating
+              and the reminder is silently never sent. This container just
+              POSTs to the API instead. See src/main.py cmd_remind.
+            */}}
+            - name: tmp
+              emptyDir: {}
+{{- end }}

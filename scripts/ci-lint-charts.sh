@@ -34,6 +34,9 @@ TEMPLATE_SKIP=(
   games/smt-imagine
   infra/actions-runner
   infra/cloudflared
+  # secrets.smsApiKey / secrets.feedToken / sms.to all `fail` — a reminder
+  # release that renders without them would text nowhere.
+  life/carson
   infra/democratic-csi
   infra/duckdns
   infra/egress-proxy

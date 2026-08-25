@@ -1,0 +1,69 @@
+{{- if and .Values.ingress.enabled .Values.feedIngress.enabled }}
+{{/*
+THE CALENDAR FEED, AND WHY IT IS A SECOND INGRESS.
+
+Traefik attaches middleware to a ROUTER, and one Ingress is one router per
+host — so there is no way to say "Authelia on /, none on /feed" within the
+Ingress above. It has to be a second object.
+
+It must not be behind Authelia. Apple Calendar and Google Calendar cannot
+complete an interactive login; put the feed behind a login page and they do not
+report an error, they simply stop refreshing, and the failure looks like
+"carson stopped adding birthdays" weeks later.
+
+What protects it instead is the token in the path (`secrets.feedToken`,
+32 bytes of urlsafe randomness) which src/api.py compares with
+`secrets.compare_digest` and answers 404 — not 403 — on a mismatch, so probing
+cannot even confirm the endpoint exists.
+
+A more specific path wins in Traefik's matcher, so /feed reaches this router
+rather than the catch-all above.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "carson.fullname" . }}-feed
+  labels:
+    {{- include "carson.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # NO forward-auth middleware here. That is the entire point of this file.
+    #
+    # And this annotation is how the cluster is told that the omission is
+    # deliberate rather than forgotten — infra/ingress-policy's
+    # `ingress-policy-auth` rejects an un-gated Ingress that does not say so out
+    # loud. It is not a way to silence the check; it is the check working. What
+    # stands in for authentication here is the 32-byte token in the path.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.feedIngress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "carson.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: {{ $.Values.feedIngress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "carson.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}
