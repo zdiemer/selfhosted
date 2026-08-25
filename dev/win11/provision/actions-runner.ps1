@@ -121,7 +121,35 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. The runner itself.
+# 4. 7-Zip.
+#
+# Same trap as git, and the same root cause: windows-latest preinstalls a pile
+# of tooling that workflows never think to declare. romnas locates it with
+# shutil.which("7z"), so the directory has to be on the MACHINE path -- the
+# service does not inherit an interactive session's environment.
+# ---------------------------------------------------------------------------
+$sevenZipDir = Join-Path $Env:ProgramFiles '7-Zip'
+if (Get-Command 7z -ErrorAction SilentlyContinue) {
+  Write-Host '==> 7z already present'
+} else {
+  Write-Host '==> Installing 7-Zip'
+  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/ip7z/7zip/releases/latest' -Headers $api
+  $asset = $rel.assets | Where-Object { $_.name -match '^7z.*-x64\.exe$' } | Select-Object -First 1
+  if (-not $asset) { throw 'No x64 7-Zip installer in the latest release' }
+  $exe = Join-Path $Env:TEMP $asset.name
+  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exe
+  Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+}
+# Idempotent, and machine scope so the runner service sees it too.
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($machinePath -notlike "*$sevenZipDir*") {
+  Write-Host "==> Adding $sevenZipDir to the machine PATH"
+  [Environment]::SetEnvironmentVariable('Path', "$machinePath;$sevenZipDir", 'Machine')
+}
+$Env:PATH = "$Env:PATH;$sevenZipDir"
+
+# ---------------------------------------------------------------------------
+# 5. The runner itself.
 #
 # Version resolved at run time for the same reason infra/actions-runner pins
 # its image to :latest -- GitHub refuses a runner more than a few releases
@@ -218,7 +246,7 @@ if ($configured) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Defender.
+# 6. Defender.
 #
 # Real-time scanning of a build tree is the single largest tax on Windows CI --
 # every file a compiler or an unpacker touches is scanned synchronously. The
@@ -232,7 +260,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Make sure it is actually running.
+# 7. Make sure it is actually running.
 # ---------------------------------------------------------------------------
 $svc = Get-Service -Name 'actions.runner.*' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $svc) { throw 'config.cmd reported success but installed no service' }
