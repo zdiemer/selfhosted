@@ -79,6 +79,18 @@ repos:
   - name: money
   - name: rachelfreeman
   - name: whatnowgg
+  - name: kelsey-dot-green
+  # Only romnas' LINUX leg lands here. Its matrix also builds on Windows, and
+  # that runner is not a pod — a Windows runner pod needs a Windows node and
+  # every node here is Linux. It is the agent installed inside the KubeVirt
+  # guest instead; see dev/win11 §A Windows Actions runner. The macOS leg has
+  # no self-hosted answer at all and stays on GitHub's meter.
+  #
+  # Its Linux job installs Qt runtime libs with `sudo apt-get`, which works:
+  # this image ships sudo with passwordless rights for the runner user, unlike
+  # the hosted image's preinstalled-everything approach. Verified on
+  # ghcr.io/actions/actions-runner:latest.
+  - name: romnas
 
 namespaces:
   # The controller, and this chart.

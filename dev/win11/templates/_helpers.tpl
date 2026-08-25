@@ -43,3 +43,21 @@ entities the later rules introduce.
 {{- define "win11.xml" -}}
 {{- . | toString | replace "&" "&amp;" | replace "<" "&lt;" | replace ">" "&gt;" | replace "\"" "&quot;" | replace "'" "&apos;" -}}
 {{- end -}}
+
+{{/*
+Quote a value as a PowerShell single-quoted string literal.
+
+The provisioning script is generated, and every value interpolated into it
+comes from values.yaml — a GitHub PAT, a repo name, a password. Single quotes
+are PowerShell's literal form (no $variable expansion, no backtick escapes), so
+the only character that needs handling is the quote itself, which doubles.
+Without this a value containing an apostrophe terminates the literal early and
+the rest of it is executed as code.
+
+Deliberately NOT the same helper as win11.xml: these strings land in a .ps1
+file on the sysprep CD, not inside autounattend.xml, so XML entities would be
+passed through to PowerShell verbatim and corrupt the value.
+*/}}
+{{- define "win11.ps1" -}}
+{{- printf "'%s'" (. | toString | replace "'" "''") -}}
+{{- end -}}

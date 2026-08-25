@@ -169,6 +169,17 @@ unattend:
   # https://learn.microsoft.com/windows-server/get-started/kms-client-activation-keys
   productKey: "W269N-WFGWX-YVC9B-4J6C9-T83GX"   # Windows 11 Pro
 
+  # Tell Windows the emulated RTC holds UTC, which under QEMU it does.
+  #
+  # ON BY DEFAULT, and it should stay on. Windows assumes a hardware clock is
+  # local time, so without this the guest boots a full timezone offset ahead of
+  # reality and stays there. The visible symptom is a wrong taskbar clock; the
+  # expensive one is that anything minting a signed, timestamped token has it
+  # rejected as not-yet-valid, with an error that never mentions time. It cost
+  # an afternoon on the Actions runner (see README section A Windows Actions
+  # runner). Turn it off only for a guest whose RTC really is local time.
+  realTimeIsUniversal: true
+
   computerName: "win11"
   locale: "en-US"
   # Windows timezone id, NOT an IANA one ("America/Los_Angeles" is rejected).
@@ -194,6 +205,52 @@ unattend:
   # prompting inside the session (security: any, empty username). Set to false
   # if you pre-fill the guest credentials in Guacamole instead.
   disableNla: true
+
+# Guest provisioning — an escape hatch for "and then run this once inside
+# Windows". Anything the answer file has no element for: install a package,
+# join a domain, register a build agent, drop a config file.
+#
+# HOW IT GETS IN. KubeVirt builds the sysprep CD out of EVERY key in the Secret
+# templates/sysprep.yaml renders, not just autounattend.xml (kubevirt's
+# getFilesLayout ISOs the whole mounted directory). So the script rides the CD
+# that is already attached, and a FirstLogonCommand runs it. No network fetch,
+# no second volume, nothing to host.
+#
+# WHEN IT RUNS. Once, at first logon, AFTER the virtio guest tools — that
+# ordering is deliberate and load-bearing: the guest tools install the NIC, so
+# anything that needs the network has to come second.
+#
+# IT DOES NOT RE-RUN ON `helm upgrade`. FirstLogonCommands fire exactly once,
+# on a guest that has just been installed. Changing the script here and
+# upgrading updates the CD's contents, but the CD image is only rebuilt when
+# the VMI starts, and nothing re-invokes it. To apply a change to a guest that
+# already exists: upgrade, restart the VM, then run it by hand from the CD —
+# README §Provisioning has the one-liner.
+provision:
+  enabled: false
+
+  # A script file shipped inside this chart, resolved with .Files.Get. Keeps
+  # a real .ps1 in version control — syntax-highlighted, diffable, and not
+  # fighting YAML's escaping — instead of a wall of quoted string.
+  #
+  # `provision/actions-runner.ps1` ships with the chart and turns this VM into
+  # a self-hosted GitHub Actions runner; see README §A Windows Actions runner.
+  scriptFile: ""
+
+  # An inline script instead. Wins over scriptFile when both are set. Fine for
+  # a couple of lines; anything longer belongs in a file.
+  script: ""
+
+  # Values handed to the script as environment variables. Rendered as
+  # PowerShell assignments at the top of the generated file and escaped as
+  # string literals, so a password containing a quote cannot break out into
+  # code.
+  #
+  # THESE ARE NOT SECRET FROM THE GUEST. They land in the sysprep Secret, and
+  # from there onto a CD that anyone with a session on this VM can read — the
+  # same place unattend.password already is. Fine for a scoped PAT on a VM you
+  # control; not a place to put a credential the guest should not have.
+  env: {}
 
 service:
   # In-cluster RDP endpoint. ClusterIP is the right default: dev/guacamole

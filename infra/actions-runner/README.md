@@ -28,6 +28,21 @@ Add a repo: append to `repos:` in values.yaml, add it to the PAT's repository
 list, `./upgrade.sh`. Remove one: delete the entry, `./upgrade.sh` uninstalls
 its release and namespace.
 
+## Linux only — where Windows jobs go
+
+Everything here is a pod, so everything here is Linux. A Windows runner pod
+would need a Windows node and all ten in this cluster are Linux, and a KubeVirt
+VM is not something a runner scale set can schedule. `runs-on: arc` therefore
+never satisfies a Windows job.
+
+Windows is the ordinary runner agent installed inside the `dev/win11` guest and
+registered as a service — `runs-on: win11`. See that chart's README §A Windows
+Actions runner. It is long-lived rather than ephemeral, which is exactly why
+the same public-repo prohibition applies there, harder.
+
+macOS has no self-hosted answer at all: no mac in the cluster, and Apple's
+licensing rules out a VM. Those legs stay on GitHub's meter.
+
 ## What a job gets
 
 `ghcr.io/actions/actions-runner` — Ubuntu with the runner, git, docker CLI,
@@ -35,6 +50,10 @@ and not much else. **No node, no python**: `ubuntu-latest` has them preinstalled
 and workflows written against it lean on that silently (whatnowgg's
 `node --test` did). `actions/setup-python`, `setup-node`, `setup-uv` download
 what they need on first use, every job — a runner pod lives for exactly one.
+
+It *does* ship `sudo`, passwordless for the `runner` user, so a workflow that
+apt-installs system libraries works unchanged (romnas installs Qt runtime libs
+that way). Verified against `ghcr.io/actions/actions-runner:latest`.
 
 **Image builds** go to the in-cluster buildkitd, not a daemon on the runner:
 

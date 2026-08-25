@@ -16,3 +16,26 @@ unattend:
 #     attached: false
 # vm:
 #   runStrategy: Always
+
+# Make this VM a self-hosted GitHub Actions runner for a PRIVATE repo.
+# See README §A Windows Actions runner. Lives here rather than in values.yaml
+# because of GITHUB_TOKEN — everything in provision.env is readable from inside
+# the guest, so treat it like unattend.password above.
+#
+# provision:
+#   enabled: true
+#   scriptFile: provision/actions-runner.ps1
+#   env:
+#     GITHUB_OWNER: zdiemer
+#     GITHUB_REPO: romnas
+#     # Fine-grained PAT, "Only select repositories" = the repo above,
+#     # Repository permissions -> Administration: Read and write. That is all
+#     # runner registration needs. The same shape infra/actions-runner uses.
+#     GITHUB_TOKEN: "github_pat_CHANGE-ME"
+#     # What workflows put in `runs-on:`.
+#     RUNNER_LABELS: "win11"
+#     # Run the service as the account the answer file creates, not as
+#     # NETWORK SERVICE — toolchain installers (setup-uv, setup-python) need a
+#     # real user profile to write into.
+#     RUNNER_SERVICE_USER: "zach"
+#     RUNNER_SERVICE_PASSWORD: "same-as-unattend.password-above"

@@ -195,6 +195,132 @@ idle desktop.
 short; Windows would still be shutting down when the kubelet SIGKILLs it, and
 the next boot runs a repair.
 
+## Provisioning the guest
+
+`provision` is the chart's escape hatch for "and then run this once inside
+Windows" — the things the answer file has no element for.
+
+The delivery path is the interesting part, because it needs nothing new.
+KubeVirt builds the sysprep CD out of **every key** in the Secret
+`templates/sysprep.yaml` renders, not just `autounattend.xml`: it validates
+that one of `autounattend.xml`/`unattend.xml` is present and then hands the
+whole mounted directory to the ISO builder (`getFilesLayout` in
+`kubevirt/pkg/config`). So a second key becomes a second file on the CD Windows
+already has — no extra volume, no web server, nothing to fetch.
+
+```yaml
+provision:
+  enabled: true
+  scriptFile: provision/actions-runner.ps1   # a real .ps1 in this chart
+  env:
+    SOME_SETTING: value                      # -> $Env:SOME_SETTING at the top
+```
+
+`script:` takes an inline string instead, and wins if both are set. Values in
+`env` are rendered as PowerShell string literals through the `win11.ps1`
+helper, for the same reason `win11.xml` exists: an unescaped apostrophe in a
+password ends the literal and the rest of the value runs as code.
+
+**The script must be pure ASCII, and the chart enforces it.** A Windows 11
+guest has Windows PowerShell 5.1 and no `pwsh`, and 5.1 decodes a `.ps1` with
+no BOM using the ANSI codepage rather than UTF-8. One em dash inside a string
+literal arrives as three mojibake bytes ending in `"`, which closes the literal
+early; the parse then collapses several lines later with `Unexpected token`,
+pointing nowhere near the actual character. `helm template` fails on any
+non-ASCII byte in the assembled file -- header, `env` values and script body
+alike -- because the alternative is discovering it in a guest at first boot.
+
+**Ordering is load-bearing.** The script runs as `FirstLogonCommands` *Order 2*,
+after the virtio guest tools. Those tools install the NIC, so anything that
+touches the network can only work second. The script's own first step should
+still wait for DHCP — `actions-runner.ps1` does.
+
+**Nothing is secret from the guest.** `provision.env` lands in the sysprep
+Secret and from there on a CD that any session on this VM can read, exactly
+like `unattend.password`. That is fine for a scoped PAT on a VM you control.
+
+### It does not re-run on `helm upgrade`
+
+`FirstLogonCommands` fire once, on a guest that has just been installed.
+Changing the script and upgrading updates the Secret, but the CD image is only
+rebuilt when the VMI starts and nothing re-invokes it. For a guest that already
+exists — including the one running right now:
+
+```bash
+./upgrade.sh
+virtctl restart win11 -n dev          # rebuilds the CD from the new Secret
+```
+
+then in an elevated PowerShell in the guest:
+
+```powershell
+# the CD's letter is not fixed, so find it the way the answer file does
+$s = 68..90 | ForEach-Object { [char]$_ + ':\provision.ps1' } |
+     Where-Object { Test-Path $_ } | Select-Object -First 1
+powershell -NoProfile -ExecutionPolicy Bypass -File $s
+```
+
+**Not `& $s`.** A client Windows 11 defaults to an execution policy of
+`Restricted`, which refuses every script — `& $s` fails with
+`PSSecurityException / UnauthorizedAccess` and reads like a permissions problem
+with the CD rather than a policy one. The first-logon path never hits this
+because it passes `-ExecutionPolicy Bypass` itself; a hand-run has to say so
+too. Same reason the child process is spawned rather than dot-sourcing: it
+inherits the elevation of the prompt you started from, and `config.cmd
+--runasservice` needs it.
+
+A first-logon run leaves its transcript at `C:\Windows\Temp\provision.log`.
+Check it there when a guest comes up looking healthy and did not do the thing —
+an unattended failure is otherwise completely silent.
+
+## A Windows Actions runner
+
+`provision/actions-runner.ps1` ships with the chart and registers this VM as a
+self-hosted GitHub Actions runner. Turn it on with the `provision` block in
+`values.local.yaml` (`values.local.yaml.example` has the whole thing), then
+`runs-on: win11` in the workflow.
+
+**Why this is a VM and not a pod.** `infra/actions-runner` runs GitHub's Linux
+runner as pods — ephemeral, scale-to-zero, no state between jobs — and that is
+strictly the better model. It cannot do Windows. A Windows runner pod needs a
+Windows node and all ten nodes here are Linux, and a KubeVirt VM is not
+something a runner scale set can schedule. So the Windows runner is the
+ordinary agent installed in the guest, registered as a service.
+
+**What that costs, and the rule it implies.** This runner is *not* ephemeral.
+The work directory, the environment, and whatever a job leaves behind all
+persist into the next job. That is tolerable for a private repo running its own
+code. **Never point a public repo at it** — a pull request from a fork is
+untrusted code, and here it would run on a persistent box inside the cluster.
+Same rule `infra/actions-runner`'s `values.yaml` argues at length, with less
+margin for error because nothing gets torn down afterwards.
+
+What the script does, and why each part is there:
+
+| step | why |
+|---|---|
+| wait for `api.github.com` | it runs seconds after the NIC appeared; DHCP has usually not finished, and every step after this is a web request |
+| install Git for Windows | **not optional** — `actions/checkout` silently falls back to a REST tarball without git, losing history, tags and submodules. `windows-latest` preinstalls it and workflows assume it |
+| download the runner | version resolved at run time, not pinned: GitHub refuses a runner more than a few releases behind at registration |
+| mint a registration token | `config.cmd` wants a registration token, not a PAT, and it expires in an hour — which is why the PAT has to be readable from inside the guest at all |
+| `config.cmd --runasservice` | headless, survives reboot. `--replace` so a rebuilt guest reclaims its name instead of piling up offline runners |
+| Defender exclusion on `_work` | real-time scanning of a build tree is the largest single tax on Windows CI |
+
+Re-running it is safe: a configured runner (`C:\actions-runner\.runner` exists)
+is left alone and only the service state is reconciled.
+
+### Two things to set before it will work
+
+- The fine-grained PAT needs **this repo** in its "Only select repositories"
+  list, with Administration: Read and write. A PAT that cannot see the repo
+  fails at the registration-token call, which reads like a bad token.
+- `vm.runStrategy: Always`, so a CI host comes back after a node failure
+  instead of staying down. The chart ships `Halted` for the install.
+
+Registration failures land in the transcript at `C:\Windows\Temp\provision.log`.
+Once it is up, the runner appears under the repo's Settings → Actions →
+Runners, and `Get-Service actions.runner.*` in the guest is the local check.
+
 ## Backups
 
 VM disks are excluded from k8up (`k8up.io/backup: "false"` on every PVC this
