@@ -140,6 +140,19 @@ Unfiltered, the library plans **~4,300 sidecars** — REMUX releases here carry
 folder and noise in every track picker. So the script defaults to English only,
 first track per language. On a 12-file sample that is 9 sidecars instead of 95.
 
+**Budget the run by bytes, not by file count.** ffmpeg has to demux the whole
+file to reach the subtitle packets — they are interleaved throughout a
+Matroska, not seekable to — so cost tracks file *size*. Measured here: a 1.3GB
+episode takes ~32s, a 22GB REMUX takes minutes. Across the 1.8TB library that
+is roughly **12 hours of continuous NFS reads**, competing with playback on the
+same mount and node the entire time.
+
+So scope it rather than running it whole: `--path /media/tv/<show>` for a series
+you are about to watch (FROM's 40 episodes are ~21 minutes), and `--max-gb` to
+skip the movie remuxes — a 22-minute read to save an 11-second stall on a film
+watched once is a bad trade, while a series you watch eight episodes of back to
+back is a good one. Run it when nobody is watching.
+
 Two things the audit surfaces that no setting can fix:
 
 - **Bitmap subtitles.** 62 PGS/VOBSUB streams in those same 12 files. They are

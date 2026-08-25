@@ -17,6 +17,20 @@
 #   ./extract-subtitles.sh --langs eng,spa --apply
 #   ./extract-subtitles.sh --all-tracks         # include duplicate tracks per language
 #   ./extract-subtitles.sh --apply --limit 5
+#   ./extract-subtitles.sh --path /media/tv/FROM --apply     # one show
+#   ./extract-subtitles.sh --max-gb 8 --apply                # skip the big remuxes
+#
+# COST — read this before a full run. ffmpeg has to demux the whole file to
+# reach the subtitle packets (they are interleaved throughout a Matroska, not
+# seekable to), so extraction time tracks FILE SIZE, not subtitle length.
+# Measured here: a 1.3GB episode takes ~32s; a 22GB REMUX takes minutes. Across
+# 1.8TB that is roughly 12 hours of continuous NFS reads, which will compete
+# with playback on the same mount and the same node the whole time.
+#
+# So scope it: --path per show, or --max-gb to skip the movie remuxes (a
+# 22-minute read to save an 11-second stall on a film watched once is a bad
+# trade; a series you watch 8 episodes of back to back is a good one). And run
+# it when nobody is watching.
 #
 # Defaults are narrow on purpose. A full unfiltered run over this library plans
 # ~4,300 files — REMUX releases routinely carry 15-45 subtitle languages, and a
@@ -44,6 +58,8 @@ APPLY=0
 LIMIT=0
 LANGS="${LANGS:-eng}"
 ALL_TRACKS=0
+ROOTS="/media/tv /media/movies"
+MAX_GB=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +67,8 @@ while [[ $# -gt 0 ]]; do
     --limit) LIMIT="$2"; shift 2 ;;
     --langs) LANGS="$2"; shift 2 ;;
     --all-tracks) ALL_TRACKS=1; shift ;;
+    --path) ROOTS="$2"; shift 2 ;;
+    --max-gb) MAX_GB="$2"; shift 2 ;;
     # Print the header block, whatever length it grows to.
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -68,7 +86,8 @@ echo "==> pod ${POD} (ns/${NAMESPACE})  apply=${APPLY}  langs=${LANGS}  all-trac
 # The whole scan runs in one exec: a per-file round trip would be dominated by
 # kubectl startup, and ffprobe over NFS is the slow part regardless.
 kubectl -n "$NAMESPACE" exec -i "$POD" -- env \
-  APPLY="$APPLY" LIMIT="$LIMIT" LANGS="$LANGS" ALL_TRACKS="$ALL_TRACKS" sh -s <<'REMOTE'
+  APPLY="$APPLY" LIMIT="$LIMIT" LANGS="$LANGS" ALL_TRACKS="$ALL_TRACKS" \
+  ROOTS="$ROOTS" MAX_GB="$MAX_GB" sh -s <<'REMOTE'
 set -eu
 
 FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe
@@ -77,10 +96,11 @@ FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg
 list=$(mktemp); sfile=$(mktemp)
 trap 'rm -f "$list" "$sfile"' EXIT
 
-find /media/tv /media/movies -type f \( -name '*.mkv' -o -name '*.mp4' \) 2>/dev/null \
+# shellcheck disable=SC2086 -- ROOTS is a deliberate multi-path word split
+find $ROOTS -type f \( -name '*.mkv' -o -name '*.mp4' \) 2>/dev/null \
   | sort > "$list"
 
-planned=0; written=0; failed=0; skipped=0; bitmap=0; seen=0; otherlang=0; dupe=0
+planned=0; written=0; failed=0; skipped=0; bitmap=0; seen=0; otherlang=0; dupe=0; toobig=0
 
 # ",eng," so a substring test can't match "en" inside "eng" or "ger" inside "ge".
 langset=",$(echo "$LANGS" | tr -d ' '),"
@@ -91,6 +111,15 @@ while IFS= read -r f; do
 
   if [ "$LIMIT" -gt 0 ] && [ "$seen" -ge "$LIMIT" ]; then break; fi
   seen=$((seen + 1))
+
+  # Size gate before ffprobe: the whole cost of this script is proportional to
+  # bytes read, so the cheapest file is the one never opened.
+  if [ "$MAX_GB" -gt 0 ]; then
+    sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    if [ "$sz" -gt $(( MAX_GB * 1024 * 1024 * 1024 )) ]; then
+      toobig=$((toobig + 1)); continue
+    fi
+  fi
 
   base="${f%.*}"
 
@@ -149,7 +178,9 @@ while IFS= read -r f; do
       # -c:s srt converts ass/ssa/mov_text to SubRip; for a subrip source it is
       # a copy in all but name. Write to .part first so an interrupted run never
       # leaves a truncated sidecar that the next run then skips as "exists".
-      if "$FFMPEG" -v error -y -i "$f" -map "0:${idx}" -c:s srt -- "${out}.part" 2>/dev/null \
+      # -f srt is required, not redundant: the .part suffix defeats ffmpeg's
+      # extension-based muxer detection and it refuses to open the output.
+      if "$FFMPEG" -v error -y -i "$f" -map "0:${idx}" -c:s srt -f srt -- "${out}.part" 2>/dev/null \
          && [ -s "${out}.part" ]; then
         mv -- "${out}.part" "$out"
         written=$((written + 1))
@@ -169,6 +200,7 @@ echo "---"
 echo "files scanned:    ${seen}"
 echo "sidecars planned: ${planned}"
 echo "already present:  ${skipped}"
+echo "over --max-gb:    ${toobig} (skipped unopened)"
 echo "other languages:  ${otherlang} (filtered out by --langs)"
 echo "duplicate tracks: ${dupe} (use --all-tracks to include)"
 if [ "$APPLY" = "1" ]; then echo "written:          ${written}  (failed: ${failed})"; fi
