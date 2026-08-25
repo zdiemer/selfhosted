@@ -1,3 +1,9 @@
+#!/bin/sh
+# The body of the subtitle extraction, kept separate so that
+# extract-subtitles.sh (which pipes it to `sh -s` over kubectl exec) and
+# subtitle-extract-job.yaml (which mounts it from a ConfigMap) run identical
+# code. Not meant to be run directly — it expects APPLY/LIMIT/LANGS/ALL_TRACKS/
+# ROOTS/MAX_GB in the environment.
 set -eu
 
 FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe
