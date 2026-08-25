@@ -6,7 +6,8 @@ FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg
 list=$(mktemp); sfile=$(mktemp)
 trap 'rm -f "$list" "$sfile"' EXIT
 
-# shellcheck disable=SC2086 -- ROOTS is a deliberate multi-path word split
+# ROOTS is a deliberate multi-path word split, not an accident.
+# shellcheck disable=SC2086
 find $ROOTS -type f \( -name '*.mkv' -o -name '*.mp4' \) 2>/dev/null \
   | sort > "$list"
 
