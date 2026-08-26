@@ -132,13 +132,15 @@ spec:
     - expression: >-
         has(object.metadata.annotations) && (
           ('{{ $mw }}' in object.metadata.annotations &&
-           object.metadata.annotations['{{ $mw }}'].lowerAscii().contains('{{ .Values.authPolicy.forwardAuthMarker }}')) ||
+           (object.metadata.annotations['{{ $mw }}'].lowerAscii().contains('{{ .Values.authPolicy.forwardAuthMarker }}') ||
+            object.metadata.annotations['{{ $mw }}'].lowerAscii().contains('{{ .Values.authPolicy.basicAuthMarker }}'))) ||
           ('{{ $pub }}' in object.metadata.annotations &&
            object.metadata.annotations['{{ $pub }}'] == 'true')
         )
       message: >-
-        Ingress must either route through Authelia forward-auth (a
-        {{ $mw }} value naming a forwardauth middleware), or declare
+        Ingress must either route through Authelia forward-auth or basic
+        auth (a {{ $mw }} value naming a forwardauth or basicauth
+        middleware), or declare
         {{ $pub }}: "true" to state that this host is deliberately
         unauthenticated. Plenty of hosts here are legitimately public — the
         point is that "deliberate" and "forgotten" must not look identical.

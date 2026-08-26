@@ -1,4 +1,13 @@
 {{- if .Values.ingress.enabled }}
+{{- $fa := .Values.auth.forwardAuth -}}
+{{- $ba := .Values.auth.basicAuth -}}
+{{/*
+  Two Ingresses when the public host has its own gate, because the middleware
+  annotation is per-Ingress: keeping both hosts on one object would put the
+  same gate on the tailnet host too. Same shape romm uses for its publicOnly
+  split, for the same reason.
+*/}}
+{{- $split := and (gt (len .Values.ingress.cloudflareHosts) 0) $ba.enabled -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -8,7 +17,7 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.auth.forwardAuth.enabled }}
+    {{- if $fa.enabled }}
     # cloud-game has no login of its own: Authelia IS the login.
     traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "cloud-game.fullname" . }}-forwardauth@kubernetescrd
     {{- else }}
@@ -33,9 +42,11 @@ spec:
       Cloudflare-fronted host(s). Only the coordinator's HTTP + /ws ride the
       tunnel — WebRTC media CANNOT (cloudflared proxies HTTP origins, and there
       is no inbound UDP path), so these hosts are only usable together with a
-      TURN server in webrtc.iceServers. Authelia gates every host here, so
-      unlike romm there is no publicOnly split.
+      TURN server in webrtc.iceServers. When $split they move to the second
+      Ingress below, so the shared password lands on them WITHOUT also
+      replacing Authelia on the tailnet host.
     */}}
+    {{- if not $split }}
     {{- range .Values.ingress.cloudflareHosts }}
     - host: {{ . | quote }}
       http:
@@ -48,9 +59,43 @@ spec:
                 port:
                   number: {{ $.Values.service.port }}
     {{- end }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
   {{- end }}
+{{- if $split }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cloud-game.fullname" . }}-public
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # One shared password, handed to friends. See templates/middleware-basicauth.yaml.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "cloud-game.fullname" . }}-basicauth@kubernetescrd
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cloud-game.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{/*
+    No tls: block — these hosts terminate TLS at Cloudflare and reach Traefik
+    on its default cert, exactly as they did on the combined Ingress.
+  */}}
+{{- end }}
 {{- end }}

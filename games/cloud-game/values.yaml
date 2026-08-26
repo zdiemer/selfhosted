@@ -301,9 +301,22 @@ ingress:
     enabled: true
 
 # cloud-game has NO login of its own: anyone who reaches the coordinator can
-# pick a ROM and play. So Authelia gates EVERY host — there is no publicOnly
-# split like romm, because there is no native client that needs one.
+# pick a ROM and play, so every host needs a gate — but not the SAME gate.
+#
+# Authelia holds the tailnet host. The public (Cloudflare) host gets a single
+# shared password instead: these are friends, not accounts, and a CloudRetro
+# room is shared by design — everyone on the link drives a controller port on
+# one emulator. Per-guest identities would buy nothing and cost an Authelia
+# user each. That split is why there are two Ingresses (see templates/ingress.yaml).
 auth:
+  # Shared-password gate, applied to ingress.cloudflareHosts only. The password
+  # itself lives in values.local.yaml — rotate it there and re-run upgrade.sh.
+  basicAuth:
+    enabled: true
+    username: player
+    # Shown in the browser's password prompt, so make it say where they are.
+    realm: "retro.diemer.codes"
+    # password: comes from values.local.yaml (1Password), never committed.
   forwardAuth:
     enabled: true
     autheliaService: authelia

@@ -127,6 +127,19 @@ authPolicy:
   # chart that names a forward-auth middleware has answered it.
   forwardAuthMarker: forwardauth
 
+  # Basic auth answers the same question a different way. games/cloud-game's
+  # public host uses it deliberately: it is a shared password handed to friends,
+  # not per-user accounts, because CloudRetro rooms are shared anyway and an
+  # Authelia identity per guest buys nothing. Same substring reasoning as
+  # forwardAuthMarker — each chart names its own <ns>-<release>-basicauth.
+  #
+  # This does NOT weaken the rule. The question is "did anyone decide", and a
+  # chart that attaches a basic-auth middleware has decided just as clearly as
+  # one that attaches forward-auth. What it stops is the alternative, which was
+  # to label a password-protected host `public-unauthenticated: true` and make
+  # the audit trail a lie.
+  basicAuthMarker: basicauth
+
   binding:
     # Warn + Audit, NOT Deny. See above: 18 live Ingresses fail this today and
     # some of them live in repos this one cannot edit. Flip to Deny once

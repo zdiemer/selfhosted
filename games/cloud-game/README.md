@@ -12,7 +12,7 @@ ROMs come read-only from the same NAS share RomM uses.
 ## Architecture
 
 ```
-browser ──HTTPS/WSS──▶ Traefik (+Authelia) ──▶ coordinator :8000 ─┐
+browser ──HTTPS/WSS──▶ Traefik (+auth) ──▶ coordinator :8000 ─┐
 browser ◀══UDP 8443 (WebRTC media+input)══▶ worker ◀──localhost──┘
                                               │  └─ Xvfb :99 (shared X socket)
                                               ├─ SMB (RO): Roms/<platform> → assets/games/<core>
@@ -95,8 +95,37 @@ The TURN credential is a static long-term one, so **it is handed to the browser
 in the coordinator's INIT message** — any player can read it. That is inherent
 to TURN without a credential-minting API, and it is why coturn denies RFC1918
 *and* 100.64/10 as peers (an allocation can never be aimed into the tailnet)
-and caps `user-quota`/`total-quota`/`max-bps`. Authelia still gates the page,
-so it is authenticated players only.
+and caps `user-quota`/`total-quota`/`max-bps`. The page is still gated (see
+below), so it is authenticated players only.
+
+### Two hosts, two gates
+
+cloud-game has no login of its own — anyone who reaches the coordinator can
+pick a ROM and play — so both hosts need a gate, but not the same one.
+
+| host | gate | why |
+|---|---|---|
+| `retro.zachd.duckdns.org` (tailnet) | Authelia forward-auth | it is you, and you already have an account |
+| `retro.diemer.codes` (public) | one shared password | it is friends, and a room is shared anyway |
+
+Per-guest Authelia accounts would buy nothing here: everyone who opens the room
+link drives a controller port on the *same* emulator instance, so there is no
+per-user state to protect — only the front door. The password lives in
+`values.local.yaml` (`auth.basicAuth.password`); rotate it with
+`scripts/secrets.sh edit games/cloud-game` and re-run `./upgrade.sh`.
+
+The middleware annotation is per-Ingress, so this is why there are **two**
+Ingress objects — one host each. Putting both on one object would apply the
+same gate to both. `infra/ingress-policy` rule 4 was taught to accept a
+`basicauth` middleware alongside `forwardauth`: the question it asks is "did
+anyone decide", and the alternative was to label a password-protected host
+`public-unauthenticated: true`, which would make the audit trail a lie.
+
+Basic auth survives the `/ws` upgrade — the browser replays the cached
+credentials on the WebSocket handshake (verified: `101` with them, `401`
+without). Note that a raw `curl` test of this needs `--http1.1`; over HTTP/2
+`Connection: Upgrade` is invalid and Traefik answers `400`, which looks like an
+auth failure and is not one.
 
 Manual step, one time: add `retro.diemer.codes` as a Public Hostname on the
 tunnel in the Cloudflare dashboard (→ `https://traefik.kube-system.svc.cluster.local:443`,
@@ -111,7 +140,8 @@ tunnel in the Cloudflare dashboard (→ `https://traefik.kube-system.svc.cluster
    source). Make the package public after the first push.
 3. `./upgrade.sh`.
 4. Open https://retro.zachd.duckdns.org, sign in to Authelia, pick a game.
-   Share the room URL for multiplayer.
+   Share the room URL for multiplayer. Friends off the tailnet use
+   https://retro.diemer.codes and the shared password instead.
 
 The worker fetches the libretro cores from the buildbot on first start into
 the data PVC, so the first game load takes a minute.
