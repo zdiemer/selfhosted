@@ -29,6 +29,25 @@ spec:
                 name: {{ include "cloud-game.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
+    {{/*
+      Cloudflare-fronted host(s). Only the coordinator's HTTP + /ws ride the
+      tunnel — WebRTC media CANNOT (cloudflared proxies HTTP origins, and there
+      is no inbound UDP path), so these hosts are only usable together with a
+      TURN server in webrtc.iceServers. Authelia gates every host here, so
+      unlike romm there is no publicOnly split.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cloud-game.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:

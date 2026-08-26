@@ -4,3 +4,9 @@
 smb:
   username: "roms-reader"
   password: "CHANGE-ME"
+
+# Long-term credential for coturn on the egress VPS, matching the `user=` line
+# in /etc/turnserver.conf there (infra/egress-proxy/vps, TURN_RELAY=true).
+# Only needed while an entry in webrtc.iceServers sets credentialSecret.
+turn:
+  credential: "CHANGE-ME"

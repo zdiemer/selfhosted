@@ -66,6 +66,14 @@ ACME_EMAIL="${ACME_EMAIL:-zach.diemer@gmail.com}"
 # Node Tailscale IPs, :30096 = the jellyfin-lan NodePort (etp=Cluster, so any
 # node reaches the pod). Space-separated; Caddy load-balances with failover.
 MEDIA_NODES="${MEDIA_NODES:-100.121.136.39:30096 100.84.179.82:30096 100.118.242.89:30096 100.124.40.81:30096 100.122.194.1:30096}"
+# Run coturn on this box so games/cloud-game works for players off the tailnet.
+# WebRTC media cannot ride the Cloudflare tunnel (HTTP origins only, no inbound
+# UDP), so the browser and the worker relay through here instead. Opens UDP
+# 3478 + the relay range. The credential is generated on first run and must be
+# copied into games/cloud-game/values.local.yaml as turn.credential.
+TURN_RELAY="${TURN_RELAY:-false}"
+TURN_USER="${TURN_USER:-cloudgame}"
+TURN_REALM="${TURN_REALM:-turn.diemer.codes}"
 # Run CrowdSec on this box, with the nftables firewall bouncer ENFORCING.
 #
 # This is the one control here that both detects and blocks, and it is the only
@@ -197,9 +205,10 @@ fi
 # to collapse three rules onto one `;`-separated line to work at all.
 if [[ "$MC_RELAY" == "true" ]]; then MC_P=""; else MC_P="# "; fi
 if [[ "$MEDIA_RELAY" == "true" ]]; then MEDIA_P=""; else MEDIA_P="# "; fi
+if [[ "$TURN_RELAY" == "true" ]]; then TURN_P=""; else TURN_P="# "; fi
 sed -e "s|@PROXY_PORT@|${PROXY_PORT}|g" -e "s|@SSH_PORT@|${SSH_PORT}|g" \
     -e "s|@PUBLIC_FALLBACK_V4@|${FB4}|" -e "s|@PUBLIC_FALLBACK_V6@|${FB6}|" \
-    -e "s|@MC_@|${MC_P}|g" -e "s|@MEDIA_@|${MEDIA_P}|g" \
+    -e "s|@MC_@|${MC_P}|g" -e "s|@MEDIA_@|${MEDIA_P}|g" -e "s|@TURN_@|${TURN_P}|g" \
   "${HERE}/nftables.conf" > /etc/nftables.conf.new
 
 # CHECK BEFORE SWAPPING. haproxy gets `haproxy -c` and Caddy gets `caddy
@@ -327,6 +336,99 @@ if [[ "$MEDIA_RELAY" == "true" ]]; then
 elif systemctl is-active --quiet caddy 2>/dev/null; then
   echo "==> MEDIA_RELAY=false but caddy is running — stopping it"
   systemctl disable --now caddy
+fi
+
+# ---------------------------------------------------------------------------
+# coturn — TURN relay for games/cloud-game
+# ---------------------------------------------------------------------------
+if [[ "$TURN_RELAY" == "true" ]]; then
+  echo "==> TURN relay (coturn on :3478/udp)"
+  if ! command -v turnserver >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y coturn >/dev/null
+  fi
+
+  # Same shape as the squid credential above: generated here on first run and
+  # kept thereafter, because the cluster pins a copy. If you rotate this file
+  # you MUST update turn.credential in games/cloud-game/values.local.yaml
+  # (scripts/secrets.sh edit games/cloud-game) or every player silently falls
+  # back to a direct candidate and off-tailnet play stops working.
+  install -d -m 0700 /etc/coturn
+  if [[ ! -f /etc/coturn/turn_password ]]; then
+    openssl rand -base64 30 | tr -d '\n/+=' | cut -c1-40 > /etc/coturn/turn_password
+    chmod 600 /etc/coturn/turn_password
+    echo "    generated a NEW credential — copy it into values.local.yaml:"
+    echo "    $(cat /etc/coturn/turn_password)"
+  fi
+  TURN_PASS="$(cat /etc/coturn/turn_password)"
+
+  # PUBLIC_IP is this box's own address; coturn must be pinned to it. The
+  # droplet also carries two RFC1918 addresses and a tailnet /32, and coturn
+  # binds every interface it can find unless told otherwise — which would both
+  # advertise unusable relay addresses and expose the relay on the tailnet.
+  PUBLIC_IP="$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
+  cat > /etc/turnserver.conf <<TURNEOF
+# Written by bootstrap.sh — edit there, not here.
+listening-ip=${PUBLIC_IP}
+relay-ip=${PUBLIC_IP}
+external-ip=${PUBLIC_IP}
+listening-port=3478
+
+# One UDP port per allocation. Must match the range in nftables.conf.
+min-port=49152
+max-port=49500
+
+# Long-term credentials: cloud-game's iceServers are static username/credential
+# strings, so the REST/static-auth-secret scheme does not fit.
+lt-cred-mech
+realm=${TURN_REALM}
+user=${TURN_USER}:${TURN_PASS}
+
+# 443 is Caddy's on this box (TCP and UDP, HTTP/3), so there is no TLS listener.
+# turns: on 443 would be the traversal-friendly upgrade and needs its own
+# hostname and cert.
+no-tls
+no-dtls
+
+fingerprint
+no-multicast-peers
+no-cli
+syslog
+no-stdout-log
+
+# This box relays between two PUBLIC endpoints and nothing else. Denying
+# 100.64/10 matters as much as RFC1918 here: the droplet is on the tailnet, so
+# without it an allocation could be aimed into the tailnet.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+# vp8 is pinned at 3.2 Mbit/s per viewer, so 1 MB/s per allocation leaves
+# headroom without letting this become an open pipe.
+max-bps=1000000
+user-quota=30
+total-quota=40
+stale-nonce=600
+TURNEOF
+  # 0640 root:turnserver, NOT 0600. The daemon drops to the turnserver user and
+  # a file it cannot read is not an error it reports — it silently falls back to
+  # built-in defaults, which means no realm, no credentials and a listener on
+  # every interface including the tailnet.
+  chown root:turnserver /etc/turnserver.conf
+  chmod 640 /etc/turnserver.conf
+  sed -i 's/^#*TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+  grep -q '^TURNSERVER_ENABLED=1' /etc/default/coturn || echo 'TURNSERVER_ENABLED=1' >> /etc/default/coturn
+  systemctl enable coturn >/dev/null 2>&1 || true
+  systemctl restart coturn
+elif systemctl is-active --quiet coturn 2>/dev/null; then
+  echo "==> TURN_RELAY=false but coturn is running — stopping it"
+  systemctl disable --now coturn
 fi
 
 # ---------------------------------------------------------------------------

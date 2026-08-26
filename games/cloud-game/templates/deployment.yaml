@@ -91,9 +91,21 @@ spec:
           env:
             - name: CLOUD_GAME_COORDINATOR_DEBUG
               value: {{ .Values.coordinator.debug | quote }}
+            {{- /* The browser's TURN credentials come from here: the
+                   coordinator ships this list in its INIT message. */}}
+            {{- include "cloud-game.iceServersEnv" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8000
+          # Endpoint removal races SIGTERM: Traefik can still be routing a
+          # browser's /ws handshake here when the coordinator starts shutting
+          # down. Sleeping first lets the endpoint withdrawal land, so a player
+          # opening the page mid-rollout gets the new pod rather than a dead
+          # socket. Covered by terminationGracePeriodSeconds: 30 above.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
           readinessProbe:
             httpGet:
               path: /
@@ -145,6 +157,7 @@ spec:
             - name: CLOUD_GAME_WEBRTC_LOGLEVEL
               value: {{ . | quote }}
             {{- end }}
+            {{- include "cloud-game.iceServersEnv" . | nindent 12 }}
           ports:
             - name: worker
               containerPort: 9000

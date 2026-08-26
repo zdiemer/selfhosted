@@ -61,6 +61,35 @@ webrtc:
   # connection that dies at "connecting" is guesswork without this — 0 prints
   # every candidate, why one was discarded, and the chosen pair.
   logLevel: 6
+  # Handed to BOTH ends: the coordinator ships this list to the browser in its
+  # INIT message, and the worker gathers with it.
+  #
+  # The TURN entry is what makes ingress.cloudflareHosts usable. Media cannot
+  # cross the Cloudflare tunnel (cloudflared proxies HTTP origins; there is no
+  # inbound UDP path, and Cloudflare's UDP/TCP support needs WARP on the
+  # VIEWER's machine, which a browser tab cannot do). So internet players relay
+  # through coturn on the egress VPS instead.
+  #
+  # This does NOT slow local players down. A relay candidate is ADDITIVE and
+  # ICE ranks it last, so LAN/tailnet players keep the direct host candidate
+  # from iceIpMap above and only fall back to the relay if that fails. That is
+  # exactly why TURN is the right answer here and pointing iceIpMap at the VPS
+  # is not — iceIpMap is single-valued, so it would drag local players out to
+  # SFO3 too.
+  #
+  # coturn config lives in infra/egress-proxy/vps (TURN_RELAY=true).
+  iceServers:
+    - urls: "stun:stun.l.google.com:19302"
+    - urls: "turn:147.182.206.23:3478?transport=udp"
+      username: "cloudgame"
+      # No `credential` here on purpose — it comes from values.local.yaml as
+      # turn.credential, via the chart Secret. See templates/turn-credentials.yaml.
+      credentialSecret: true
+
+# TURN credential, resolved from 1Password into values.local.yaml at deploy
+# time (never committed). Referenced by the iceServers entry above.
+turn:
+  credential: ""
 
 # Worker-side switches, all CLOUD_GAME_* env vars (see upstream pkg/config/config.yaml).
 worker:
@@ -257,7 +286,18 @@ ingress:
   enabled: true
   className: traefik
   host: retro.zachd.duckdns.org
+  # Public, Cloudflare-tunnelled host(s). ONLY the coordinator's HTTP + /ws go
+  # through the tunnel; media relays via the TURN server in webrtc.iceServers.
+  # Adding a host here without TURN configured gives a page that loads and then
+  # sits on the splash screen forever, because ICE has no reachable candidate.
+  #
+  # Each hostname also needs "No TLS Verify" ON in the Cloudflare tunnel's
+  # Public Hostname config, like every other service in this repo.
+  cloudflareHosts:
+    - retro.diemer.codes
   tls:
+    # Only ingress.host is listed: the Cloudflare hosts terminate TLS at
+    # Cloudflare and reach Traefik on its default cert.
     enabled: true
 
 # cloud-game has NO login of its own: anyone who reaches the coordinator can
