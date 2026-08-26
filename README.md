@@ -1,7 +1,20 @@
+<div align="center">
+
+<img src="docs/banner.png" alt="selfhosted" width="100%">
+
+[![lint](https://img.shields.io/github/actions/workflow/status/zdiemer/selfhosted/lint.yml?style=flat-square&label=lint)](https://github.com/zdiemer/selfhosted/actions/workflows/lint.yml)
+![License](https://img.shields.io/github/license/zdiemer/selfhosted?style=flat-square)
+![k3s](https://img.shields.io/badge/k3s-9_nodes-FFC61C?style=flat-square&logo=k3s&logoColor=black)
+![Helm](https://img.shields.io/badge/Helm-53_charts-0F1689?style=flat-square&logo=helm&logoColor=white)
+![Traefik](https://img.shields.io/badge/Traefik-single_ingress-24A1C1?style=flat-square&logo=traefikproxy&logoColor=white)
+![Renovate](https://img.shields.io/badge/Renovate-enabled-1A1F6C?style=flat-square&logo=renovate&logoColor=white)
+
+</div>
+
 # selfhosted
 
 Helm charts and install scripts for the services running on my home k3s
-cluster (7 nodes: 3 control-plane, 4 workers). External exposure goes
+cluster (9 nodes: 3 control-plane, 6 workers). External exposure goes
 through [`infra/traefik/`](infra/traefik/) — the single ingress choke point,
 its ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard cert
 (no cert-manager involved), and its access log — with the DuckDNS side of
@@ -31,6 +44,22 @@ the recorded pins after every pull, checkout and rebase
 (`scripts/submodules-refresh.sh`) and refuse commits that would move a pin
 backwards or to a commit GitHub has never seen (`.githooks/pre-commit`). The
 pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
+
+## What that looks like
+
+<p align="center">
+  <img src="docs/shots/nodes.png" alt="kubectl get nodes" width="88%">
+</p>
+
+Every chart in this repo, deployed:
+
+<p align="center">
+  <img src="docs/shots/releases.png" alt="helm list -A" width="94%">
+</p>
+
+Real command output, not mockups —
+[`docs/capture/termshot.py`](docs/capture/termshot.py) runs the command, parses
+the ANSI it prints, and paints it into the window above.
 
 ## Projects
 
