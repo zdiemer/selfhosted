@@ -1,6 +1,7 @@
 {{/*
-Shell script for the stage-library init container: unzip the curated games of
-every `unzip: true` platform from the read-only share onto the data PVC.
+Shell script for the stage-library init container: stage the curated games of
+every platform from the read-only share onto the data PVC — unzipping the
+`unzip: true` ones, copying the `unzip: false` ones that carry an `include`.
 Idempotent — a game whose zip has already been extracted (marker file keyed by
 zip name) is skipped, so a pod restart costs seconds, not a re-extract.
 
@@ -58,9 +59,51 @@ data:
       done
       echo "stage: $core: $(wc -l < "$wanted") wanted, $n newly extracted"
     }
+    # Same contract as stage_platform, but for sets stored as bare files (PSX
+    # is one .chd per game). Those can't be filtered by a subPath mount — it is
+    # all or nothing, and "all" is 5.5k entries in one dropdown — so the wanted
+    # ones are copied onto the PVC instead and that folder is mounted as the
+    # core folder. Marker file per game, so a restart costs a stat, not a copy.
+    copy_platform() {
+      core="$1"; src="$NAS/$2"; shift 2
+      out="$STAGE/$core"; mkdir -p "$out/.done"
+      [ -d "$src" ] || { echo "stage: $core: missing $src on the share"; return 0; }
+      wanted="$out/.wanted"; : > "$wanted"
+      if [ $# -eq 0 ]; then set -- '*'; fi
+      for pat in "$@"; do
+        ( cd "$src" && IFS=$(printf '\nx') && IFS=${IFS%x} && for f in $pat; do [ -f "$f" ] && echo "$f"; done ) >> "$wanted" || true
+      done
+      sort -u "$wanted" -o "$wanted"
+      n=0
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        marker="$out/.done/$f"
+        if [ -f "$marker" ]; then continue; fi
+        echo "stage: $core: copy $f"
+        # Copy to scratch first so an interrupted pod can't leave a truncated
+        # ROM behind that looks complete on the next start.
+        tmp="$out/.tmp"; rm -f "$tmp"
+        cp "$src/$f" "$tmp"
+        mv -f "$tmp" "$out/$f"
+        echo "$f" > "$marker"
+        n=$((n+1))
+      done < "$wanted"
+      # Prune, same as stage_platform.
+      for marker in "$out/.done"/*; do
+        [ -f "$marker" ] || continue
+        f="${marker##*/}"
+        grep -qxF "$f" "$wanted" && continue
+        echo "stage: $core: prune $f"
+        while IFS= read -r x; do rm -f "$out/$x"; done < "$marker"
+        rm -f "$marker"
+      done
+      echo "stage: $core: $(wc -l < "$wanted") wanted, $n newly copied"
+    }
     {{- range $core, $p := .Values.library.platforms }}
     {{- if $p.unzip }}
     stage_platform {{ $core | quote }} {{ $p.source | quote }}{{ range $p.include }} {{ . | quote }}{{ end }}
+    {{- else if $p.include }}
+    copy_platform {{ $core | quote }} {{ $p.source | quote }}{{ range $p.include }} {{ . | quote }}{{ end }}
     {{- end }}
     {{- end }}
     echo "stage: done"

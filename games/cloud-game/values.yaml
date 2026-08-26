@@ -67,10 +67,12 @@ smb:
 # cloud-game's library is one folder per CORE, named after the core key (nes,
 # snes, n64, gba, psx, mame, dos). The NAS is laid out per PLATFORM under Roms/.
 #
-# Two ways to get a NAS folder under a core folder:
+# Ways to get a NAS folder under a core folder:
 #
 #   unzip: false — subPath-mount the NAS folder straight onto the core folder.
-#     Right for sets stored as bare files (PSX is .chd).
+#     Right for sets stored as bare files (PSX is .chd). A subPath mount cannot
+#     filter, so this shows EVERY file in the folder; add an `include` (below)
+#     to curate one of these instead.
 #   unzip: true  — the NAS set is one .zip per game, and cloud-game does NOT
 #     open zips for anything but the mame core (its extractor only serves core
 #     downloads; a "Mario Kart 64.zip" is invisible to mupen). An init container
@@ -78,10 +80,15 @@ smb:
 #     each start, skipping ones already there, and that PVC folder is mounted
 #     as the core folder. Nothing on the share is touched.
 #
+# `include` works in both modes. With `unzip: false` the matching files are
+# COPIED onto the data PVC instead of extracted, and that folder is mounted as
+# the core folder — so raise persistence.data.size to suit (PSX .chd are
+# 100-500 MB each).
+#
 # Keep `include` curated: cloud-game lists every ROM it finds in one dropdown,
-# and the full N64 set alone is 447 games / 14 GB zipped. Globs are shell
-# patterns against the zip filename (No-Intro names). An empty list means
-# everything in the folder — you've been warned.
+# and the full N64 set alone is 447 games / 14 GB zipped, the PSX set 5,529
+# discs. Globs are shell patterns against the filename (No-Intro names). An
+# empty list means everything in the folder — you've been warned.
 library:
   platforms:
     n64:
@@ -119,10 +126,25 @@ library:
         - "Mario Kart - Super Circuit (USA)*"
     psx:
       source: "Roms/PSX"
+      # .chd, so nothing to unzip — but the set is 5,529 discs, mostly Japanese
+      # demo discs and shovelware, which is unusable as a single dropdown. The
+      # `include` matches are copied onto the PVC (~4 GB for the list below).
       unzip: false
+      include:
+        - "Crash Bandicoot (USA)*"
+        - "Crash Bandicoot 2 - Cortex Strikes Back (USA)*"
+        - "Twisted Metal 2 (USA)*"
+        - "Tekken 3 (USA)*"
+        - "Spyro the Dragon (USA)*"
+        - "Castlevania - Symphony of the Night (USA)*"
+        - "Gran Turismo 2 (USA) (Arcade Mode)*"
+        - "Bomberman World (USA)*"
+        - "Micro Machines V3 (USA)*"
+        - "Final Fantasy VII (USA) (Disc 1)*"
+        - "Metal Gear Solid (USA) (Disc 1)*"
 
-# Utility image for the unzip init container. Needs sh, find and unzip; the
-# cloud-game image has none of those.
+# Utility image for the library staging init container. Needs sh, find, cp and
+# unzip; the cloud-game image has none of those.
 # renovate: datasource=docker depName=busybox
 stagerImage: busybox:1.37.0
 

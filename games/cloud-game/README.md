@@ -51,11 +51,23 @@ the data PVC, so the first game load takes a minute.
 
 cloud-game wants one folder per core; the NAS is per platform, and most sets
 are one zip per game, which cloud-game can't open (only the mame core takes
-zips). So `library.platforms` in values.yaml has two modes: `unzip: false`
-subPath-mounts the NAS folder directly (PSX .chd), `unzip: true` has an init
-container extract the games matching `include` onto the data PVC on every
-start — idempotent, and games dropped from the list are pruned. Edit the
-list, `./upgrade.sh`, the pod restarts and the dropdown follows.
+zips). So `library.platforms` in values.yaml has three modes:
+
+| mode | what happens | for |
+|---|---|---|
+| `unzip: true` + `include` | init container extracts the matches onto the data PVC | zipped sets (NES, SNES, N64, GBA) |
+| `unzip: false` + `include` | init container copies the matching files onto the data PVC | bare-file sets you want curated (PSX .chd) |
+| `unzip: false`, no `include` | the NAS folder is subPath-mounted directly | small folders where you want everything |
+
+The first two are idempotent — a game already staged costs a stat, not a
+re-copy — and games dropped from `include` are pruned. Edit the list,
+`./upgrade.sh`, the pod restarts and the dropdown follows.
+
+Curate deliberately: cloud-game puts every ROM it finds in ONE dropdown, and
+it only renders after the WebRTC connection is up. The PSX set is 5,529 discs;
+mounted whole it made the coordinator's init message 387 KB. Note that
+`unzip: false` + `include` COPIES the ROMs, so watch `persistence.data.size`
+(the shipped PSX list is ~4 GB).
 
 Add a core by adding an entry — the key must be a core name cloud-game knows
 (`nes`, `snes`, `gba`, `n64`, `psx`, `mame`, `dos`).
