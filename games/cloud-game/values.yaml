@@ -34,12 +34,33 @@ webrtc:
   singlePort: 8443
   # The IP the worker advertises in its ICE candidate. Inside the pod it only
   # knows its 10.42.x.x address, which no browser can reach — override with an
-  # address players CAN hit. LAN players: any node IP. Tailnet players: the
-  # tailnet address of a node. Leave empty to let STUN discover it (works only
-  # if the pod has a real public path, which it doesn't here).
-  iceIpMap: "192.168.4.26"
+  # address players CAN hit. Only ONE address is allowed: upstream does
+  # SetNAT1To1IPs([]string{iceIpMap}) (pkg/network/webrtc/factory.go), not a list.
+  #
+  # THIS MUST BE A TAILNET ADDRESS, not a LAN one, and the reason is subtle.
+  # Browsers hide their real LAN IP behind an mDNS name (RFC 8828: a random
+  # "<uuid>.local" host candidate), and upstream hardcodes
+  # SetICEMulticastDNSMode(MulticastDNSModeDisabled), so pion throws every one
+  # of them away — "Remote mDNS candidate added, but mDNS is disabled". With no
+  # remote candidate the worker has NO candidate pairs and can never ping first.
+  #
+  # That leaves the browser to make the first move, which is fine — its check
+  # teaches the worker a peer-reflexive candidate and the connection forms — but
+  # ONLY if the browser can actually reach this address. retro.* resolves to a
+  # tailnet IP, so browsers gather tailnet candidates and their sockets are bound
+  # there; no peer advertises a subnet route for 192.168.4.0/22, so a LAN address
+  # here is unreachable from that socket and BOTH sides sit mute until ICE times
+  # out (the splash screen never turns into the game list).
+  #
+  # A tailnet address is reachable from LAN players (Tailscale has a direct path)
+  # and from anyone remote, and it makes the mDNS behaviour irrelevant.
+  iceIpMap: "100.84.179.82"   # zachd-ubuntu-1, same node retro.* resolves to
   serviceType: LoadBalancer
   externalTrafficPolicy: Cluster
+  # pion's own ICE log level: -1 trace, 0 debug, 6 nothing. Diagnosing a
+  # connection that dies at "connecting" is guesswork without this — 0 prints
+  # every candidate, why one was discarded, and the chosen pair.
+  logLevel: 6
 
 # Worker-side switches, all CLOUD_GAME_* env vars (see upstream pkg/config/config.yaml).
 worker:

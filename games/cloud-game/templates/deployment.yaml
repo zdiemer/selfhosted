@@ -141,6 +141,10 @@ spec:
             - name: CLOUD_GAME_WEBRTC_ICEIPMAP
               value: {{ .Values.webrtc.iceIpMap | quote }}
             {{- end }}
+            {{- with .Values.webrtc.logLevel }}
+            - name: CLOUD_GAME_WEBRTC_LOGLEVEL
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: worker
               containerPort: 9000

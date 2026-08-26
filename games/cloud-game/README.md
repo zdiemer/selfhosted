@@ -25,13 +25,46 @@ One pod, three containers (xvfb, coordinator, worker), `Recreate` strategy.
 
 Media never touches Traefik. After the websocket handshake the browser sends
 UDP straight to `webrtc.iceIpMap:8443`, which klipper-lb publishes on every
-node IP. That means:
+node IP (and on every node's tailnet address, since the hostPort is bound on
+all interfaces). That means:
 
-- It works on the LAN, and on the tailnet if `iceIpMap` is a node's tailnet
-  address (the tailnet must also pass UDP to it).
 - It does NOT work through the Cloudflare tunnel (HTTP only), so there is
   deliberately no `cloudflareHosts`. Internet friends would need a port
   forward or a TURN server — follow-up, not v1.
+- **`iceIpMap` must be a tailnet address.** A LAN address there looks correct
+  and fails with no error anywhere — see below. It is currently a node's
+  100.x, which serves LAN and remote players alike.
+
+### Why a LAN `iceIpMap` deadlocks (cost a long debug session, 2026-08-26)
+
+The symptom is the splash screen never becoming the game list: the menu is
+only drawn from `onConnect`, so a stalled WebRTC connection looks like an
+empty library. The worker just logs `ice: failed` after 30s.
+
+Two things have to line up, and with a LAN `iceIpMap` neither does:
+
+1. **The worker cannot ping first.** Browsers hide their LAN IP behind an mDNS
+   `<uuid>.local` host candidate (RFC 8828), and upstream hardcodes
+   `SetICEMulticastDNSMode(MulticastDNSModeDisabled)`, so pion discards all of
+   them: `Remote mDNS candidate added, but mDNS is disabled`, then `Failed to
+   ping without candidate pairs` every 200ms until it gives up.
+2. **So the browser has to ping first** — normally fine, since that teaches the
+   worker a peer-reflexive candidate. But `retro.*` resolves to a tailnet IP,
+   so the browser gathers *tailnet* candidates and binds its sockets there, and
+   nothing advertises a subnet route for `192.168.4.0/22`. A LAN `iceIpMap` is
+   simply unreachable from that socket.
+
+Both sides stay silent and nothing reaches the wire — which makes it look
+exactly like a firewall or a routing problem. It is neither: probe
+`iceIpMap:8443` with `nc -u` from the player's machine and the packets arrive
+fine. Set `webrtc.logLevel: 0` and read the worker log instead; it names the
+discarded candidates outright.
+
+Confirming from the browser: `about:config` →
+`media.peerconnection.ice.obfuscate_host_addresses: false` makes Firefox
+advertise its real IP, and the connection succeeds instantly. That is a
+diagnostic, not a fix — a tailnet `iceIpMap` is what makes it work for
+everyone with stock browser settings.
 
 ## Deploy
 
