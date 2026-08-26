@@ -28,9 +28,11 @@ UDP straight to `webrtc.iceIpMap:8443`, which klipper-lb publishes on every
 node IP (and on every node's tailnet address, since the hostPort is bound on
 all interfaces). That means:
 
-- It does NOT work through the Cloudflare tunnel (HTTP only), so there is
-  deliberately no `cloudflareHosts`. Internet friends would need a port
-  forward or a TURN server — follow-up, not v1.
+- The tunnel carries the coordinator's HTTP + `/ws` and nothing else. Media
+  cannot cross it and no setting changes that: cloudflared proxies HTTP
+  origins, and Cloudflare's UDP/TCP support needs WARP on the *viewer's*
+  machine, which a browser tab cannot do. Internet players therefore relay
+  through TURN — see below.
 - **`iceIpMap` must be a tailnet address.** A LAN address there looks correct
   and fails with no error anywhere — see below. It is currently a node's
   100.x, which serves LAN and remote players alike.
@@ -65,6 +67,40 @@ Confirming from the browser: `about:config` →
 advertise its real IP, and the connection succeeds instantly. That is a
 diagnostic, not a fix — a tailnet `iceIpMap` is what makes it work for
 everyone with stock browser settings.
+
+### Internet players: TURN, not the tunnel
+
+`webrtc.iceServers` points at coturn on the egress VPS
+(`infra/egress-proxy/vps`, `TURN_RELAY=true`), and `retro.diemer.codes` is in
+`ingress.cloudflareHosts`. The worker then offers three candidates:
+
+| candidate | priority | who ends up on it |
+|---|---|---|
+| `<tailnet-ip>:8443 typ host` | 2130706431 | LAN and tailnet players — direct |
+| `<home-public-ip>:<port> typ srflx` | 1694498815 | only if the home NAT cooperates |
+| `<vps-ip>:<port> typ relay` | 1023 | everyone else |
+
+**A relay candidate is additive, which is the whole reason this works.** ICE
+ranks it last, so local players keep the direct path and only internet players
+pay the SFO3 round trip. Pointing `iceIpMap` at the VPS instead would have been
+simpler and wrong: it is single-valued, so it would have dragged LAN and
+tailnet players out to SFO3 too. It also means the worker needs no inbound port
+anywhere.
+
+Bandwidth is the running cost. vp8 is pinned at 3.2 Mbit/s and every viewer
+gets their own peer connection, so a 4-player room is ~12.8 Mbit/s out of the
+house and ~5.8 GB per hour through the VPS in each direction.
+
+The TURN credential is a static long-term one, so **it is handed to the browser
+in the coordinator's INIT message** — any player can read it. That is inherent
+to TURN without a credential-minting API, and it is why coturn denies RFC1918
+*and* 100.64/10 as peers (an allocation can never be aimed into the tailnet)
+and caps `user-quota`/`total-quota`/`max-bps`. Authelia still gates the page,
+so it is authenticated players only.
+
+Manual step, one time: add `retro.diemer.codes` as a Public Hostname on the
+tunnel in the Cloudflare dashboard (→ `https://traefik.kube-system.svc.cluster.local:443`,
+**No TLS Verify on**). Nothing in git can create that.
 
 ## Deploy
 
