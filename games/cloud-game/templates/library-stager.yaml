@@ -29,7 +29,14 @@ data:
       for pat in "$@"; do
         # Patterns are shell globs against the zip filename. IFS is newline
         # so "Mario Kart 64 (USA)*" globs as ONE word instead of four.
-        ( cd "$src" && IFS=$(printf '\nx') && IFS=${IFS%x} && for z in $pat; do [ -f "$z" ] && echo "$z"; done ) >> "$wanted" || true
+        # `|| true` matters: with no match the subshell's last command is a
+        # failing [ -f ], and `set -e` would kill the whole init container.
+        hits=$( cd "$src" && IFS=$(printf '\nx') && IFS=${IFS%x} && for z in $pat; do [ -f "$z" ] && echo "$z"; done ) || true
+        # A pattern that matches nothing is almost always a typo or a No-Intro
+        # name that differs from what you assumed. Say so — silently staging
+        # one game fewer than values.yaml lists is how it goes unnoticed.
+        [ -n "$hits" ] || echo "stage: $core: WARNING no match for include: $pat"
+        [ -z "$hits" ] || echo "$hits" >> "$wanted"
       done
       sort -u "$wanted" -o "$wanted"
       n=0
@@ -71,7 +78,9 @@ data:
       wanted="$out/.wanted"; : > "$wanted"
       if [ $# -eq 0 ]; then set -- '*'; fi
       for pat in "$@"; do
-        ( cd "$src" && IFS=$(printf '\nx') && IFS=${IFS%x} && for f in $pat; do [ -f "$f" ] && echo "$f"; done ) >> "$wanted" || true
+        hits=$( cd "$src" && IFS=$(printf '\nx') && IFS=${IFS%x} && for f in $pat; do [ -f "$f" ] && echo "$f"; done ) || true
+        [ -n "$hits" ] || echo "stage: $core: WARNING no match for include: $pat"
+        [ -z "$hits" ] || echo "$hits" >> "$wanted"
       done
       sort -u "$wanted" -o "$wanted"
       n=0

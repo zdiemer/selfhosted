@@ -102,6 +102,18 @@ mounted whole it made the coordinator's init message 387 KB. Note that
 `unzip: false` + `include` COPIES the ROMs, so watch `persistence.data.size`
 (the shipped PSX list is ~4 GB).
 
+A pattern matching nothing is only a `stage: <core>: WARNING no match for
+include: ...` line in the init container log — the pod still starts, one game
+short. Check it after editing the lists.
+
+The lists are curated for couch multiplayer, which is bounded by the console,
+not the chart: cloud-game runs one emulator instance and gives each person who
+opens the room link a controller port. n64 has 4, nes/snes/psx have 2 (a few
+titles reach 4 via an emulated multitap), and **gba has 1** — there is no
+link-cable emulation, so GBA stays single-player however many people join.
+Multi-disc PSX games are left out on purpose: there is no disc-swap UI, so
+anything spanning discs can't be finished.
+
 Add a core by adding an entry — the key must be a core name cloud-game knows
 (`nes`, `snes`, `gba`, `n64`, `psx`, `mame`, `dos`).
 

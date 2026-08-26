@@ -111,58 +111,133 @@ smb:
 # discs. Globs are shell patterns against the filename (No-Intro names). An
 # empty list means everything in the folder — you've been warned.
 library:
+  # HOW MANY PLAYERS A GAME CAN ACTUALLY HAVE: cloud-game runs ONE emulator
+  # instance and hands each person who opens the room link a controller port,
+  # so the ceiling is the console's port count, not the chart's. n64 gives 4,
+  # nes/snes/psx give 2 (a few titles below take more via an emulated multitap),
+  # and gba gives 1 — there is no link-cable emulation, so GBA is single-player
+  # no matter how many people join. Curated for couch multiplayer accordingly.
   platforms:
+    # Four controller ports and the best party library of the five. This is the
+    # platform to reach for when people are actually in the room.
     n64:
       source: "Roms/Nintendo 64"
       unzip: true
       include:
         - "Mario Kart 64 (USA)*"
         - "Super Smash Bros. (USA)*"
+        - "Mario Party (USA)*"
         - "Mario Party 2 (USA)*"
+        - "Mario Party 3 (USA)*"
         - "GoldenEye 007 (USA)*"
-        - "Super Mario 64 (USA)*"
+        - "Perfect Dark (USA)*"
         - "Diddy Kong Racing (USA)*"
+        - "Star Fox 64 (USA)*"
+        - "Mario Tennis (USA)*"
+        - "Mario Golf (USA)*"
+        - "Bomberman 64 (USA)*"
+        - "F-Zero X (USA)*"
+        - "Wave Race 64 - Kawasaki Jet Ski (USA)*"
+        - "Pokemon Stadium 2 (USA)*"
+        - "WWF No Mercy (USA)*"
+        - "NFL Blitz (USA)*"
+        - "Micro Machines 64 Turbo (USA)*"
+        - "Super Mario 64 (USA)*"
+    # Two ports as standard. Super Bomberman 3 and NBA Jam TE go to 4 via the
+    # emulated multitap; Secret of Mana is 3-player co-op.
     snes:
       source: "Roms/SNES"
       unzip: true
       include:
         - "Super Mario Kart (USA)*"
         - "Super Bomberman 2 (USA)*"
+        - "Super Bomberman 3 (Europe)*"
         - "Street Fighter II Turbo (USA)*"
-        - "Super Mario World (USA)*"
+        - "Street Fighter Alpha 2 (USA)*"
+        - "Killer Instinct (USA)*"
+        - "Mortal Kombat II (USA)*"
+        - "NBA Jam - Tournament Edition (USA)*"
         - "Kirby Super Star (USA)*"
+        - "Pocky & Rocky (USA)*"
+        - "Pocky & Rocky 2 (USA)*"
+        - "Secret of Mana (USA)*"
+        - "Zombies Ate My Neighbors (USA)*"
+        - "Contra III - The Alien Wars (USA)*"
+        - "Goof Troop (USA)*"
+        - "Legend of the Mystical Ninja, The (USA)*"
+        - "Teenage Mutant Ninja Turtles IV - Turtles in Time (USA)*"
+        - "Sunset Riders (USA)*"
+        - "Super Off Road (USA)*"
+        - "Micro Machines (USA)*"
+        # There is no standalone "Super Mario World (USA)" on the share — the
+        # only copy is inside the All-Stars compilation, which also carries
+        # SMB 1-3 and Lost Levels.
+        - "Super Mario All-Stars + Super Mario World (USA)*"
+    # Two ports; Gauntlet II takes 4 and Bomberman II 3. Note the 2-player
+    # simultaneous Tetris is the TENGEN one — Nintendo's is single-player only,
+    # kept because it is the famous one.
     nes:
       source: "Roms/NES"
       unzip: true
       include:
-        - "Super Mario Bros. 3 (USA)*"
-        - "Tetris (USA)*"
         - "Contra (USA)*"
         - "Bubble Bobble (USA)*"
+        - "Super Mario Bros. 3 (USA)*"
+        - "Tetris (USA) (Tengen)*"
+        - "Tetris (USA).*"
+        - "Gauntlet II (USA)*"
+        - "Bomberman II (USA)*"
+        - "Double Dragon II - The Revenge (USA)*"
+        - "Teenage Mutant Ninja Turtles II - The Arcade Game (USA)*"
+        - "Teenage Mutant Ninja Turtles III - The Manhattan Project (USA)*"
+        - "River City Ransom (USA)*"
+        - "Ice Climber (USA, Europe, Asia)*"
+        - "Balloon Fight (USA)*"
+        - "Jackal (USA)*"
+        - "Ivan 'Ironman' Stewart's Super Off Road (USA)*"
+        - "Super Spike V'Ball + Nintendo World Cup (USA)*"
+        - "Micro Machines (USA) (v1.1)*"
+    # .chd, so nothing to unzip — but the set is 5,529 discs, mostly Japanese
+    # demo discs and shovelware, which is unusable as a single dropdown. The
+    # `include` matches are COPIED onto the PVC — ~6 GB for the list below, so
+    # mind persistence.data.size when adding to it.
+    #
+    # Multi-disc games are deliberately absent: cloud-game has no disc-swap UI,
+    # so anything that spans discs (FF7, MGS, ...) is unfinishable here.
+    psx:
+      source: "Roms/PSX"
+      unzip: false
+      include:
+        - "CTR - Crash Team Racing (USA)*"
+        - "Crash Bash (USA)*"
+        - "Twisted Metal 2 (USA)*"
+        - "Twisted Metal 4 (USA)*"
+        - "Vigilante 8 - 2nd Offense (USA)*"
+        - "Micro Machines V3 (USA)*"
+        - "R4 - Ridge Racer Type 4 (USA)*"
+        - "Gran Turismo 2 (USA) (Arcade Mode)*"
+        - "Bomberman World (USA)*"
+        - "Bishi Bashi Special (Europe)*"
+        - "Worms World Party (USA)*"
+        - "Rampage - World Tour (USA)*"
+        - "Tekken 3 (USA)*"
+        - "Street Fighter Alpha 3 (USA)*"
+        - "Marvel vs. Capcom - Clash of Super Heroes (USA)*"
+        - "WWF SmackDown! 2 - Know Your Role (USA)*"
+        - "ISS Pro Evolution (USA)*"
+        # Single-player, but too good to leave off.
+        - "Crash Bandicoot (USA)*"
+        - "Crash Bandicoot 2 - Cortex Strikes Back (USA)*"
+        - "Spyro the Dragon (USA)*"
+        - "Castlevania - Symphony of the Night (USA)*"
+    # ONE controller port — cloud-game cannot emulate a link cable, so these are
+    # single-player only however many people join the room.
     gba:
       source: "Roms/Game Boy Advance"
       unzip: true
       include:
         - "Pokemon - Emerald Version (USA*"
         - "Mario Kart - Super Circuit (USA)*"
-    psx:
-      source: "Roms/PSX"
-      # .chd, so nothing to unzip — but the set is 5,529 discs, mostly Japanese
-      # demo discs and shovelware, which is unusable as a single dropdown. The
-      # `include` matches are copied onto the PVC (~4 GB for the list below).
-      unzip: false
-      include:
-        - "Crash Bandicoot (USA)*"
-        - "Crash Bandicoot 2 - Cortex Strikes Back (USA)*"
-        - "Twisted Metal 2 (USA)*"
-        - "Tekken 3 (USA)*"
-        - "Spyro the Dragon (USA)*"
-        - "Castlevania - Symphony of the Night (USA)*"
-        - "Gran Turismo 2 (USA) (Arcade Mode)*"
-        - "Bomberman World (USA)*"
-        - "Micro Machines V3 (USA)*"
-        - "Final Fantasy VII (USA) (Disc 1)*"
-        - "Metal Gear Solid (USA) (Disc 1)*"
 
 # Utility image for the library staging init container. Needs sh, find, cp and
 # unzip; the cloud-game image has none of those.
