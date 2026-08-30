@@ -1,0 +1,42 @@
+{{- if .Values.ingestService.enabled }}
+{{/*
+The device plane, on the node IPs.
+
+This exists because the ESP32 cannot reach anything else. Every hostname this
+repo publishes (*.zachd.duckdns.org) resolves to a TAILSCALE address, the
+cluster advertises no subnet routes, and a microcontroller cannot run
+tailscaled — so an Ingress is not an option for this client, however much it
+would look like the rest of the repo.
+
+It targets the pod's INGEST port, not the dashboard port. That is the whole
+point of there being two listeners: what is published to the LAN is one route
+that accepts a vibration reading, not the dashboard and the cycle history.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "laundry.fullname" . }}-ingest
+  labels:
+    {{- include "laundry.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ingestService.type }}
+  {{- with .Values.ingestService.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  # externalTrafficPolicy stays at the default `Cluster`, deliberately.
+  # `Local` would preserve the sensor's source IP, which is nicer in logs — but
+  # with one replica it also means ONLY the node running the pod answers on
+  # :8420, and k3s restricts the klipper-lb DaemonSet to nodes holding an
+  # endpoint. The firmware has a single node IP compiled into it, so the first
+  # time the pod is rescheduled the device would go silent until someone
+  # reflashed it. Cluster forwards from any node, which is what makes "point it
+  # at any node IP" true and keeps the sensor working across a drain.
+  ports:
+    - port: {{ .Values.ingestService.port }}
+      targetPort: ingest
+      protocol: TCP
+      name: ingest
+  selector:
+    {{- include "laundry.selectorLabels" . | nindent 4 }}
+{{- end }}

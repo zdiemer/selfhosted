@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "laundry.fullname" . }}
+  labels:
+    {{- include "laundry.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- /*
+    Recreate, not RollingUpdate. Two pods would be two SQLite writers on one
+    RWO volume, and — worse than the storage problem — two independent copies
+    of the machine state machine seeing half the samples each, so neither ever
+    accumulates enough quiet to call a load finished.
+  */}}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "laundry.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "laundry.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the secret changes: the ingest token and the SMS key
+        # are read at startup, so a rotated token would otherwise keep rejecting
+        # the newly-flashed device until something unrelated restarted the pod.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        # And when the tuning changes, since the machine list is env too.
+        checksum/machines: {{ .Values.machines | toJson | sha256sum }}
+    spec:
+      {{- /* One block only: two `imagePullSecrets:` keys is invalid YAML. */}}
+      {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
+      imagePullSecrets:
+        {{- with .Values.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.imageCredentials.pat }}
+        - name: {{ include "laundry.fullname" . }}-ghcr
+        {{- end }}
+      {{- end }}
+      {{- /*
+        Kubernetes injects Docker-link-style env vars (LAUNDRY_PORT,
+        LAUNDRY_SERVICE_HOST, ...) for every Service in this namespace. The
+        Service is named `laundry`, so LAUNDRY_PORT would land as
+        "tcp://IP:PORT". Nothing here reads those, and src/main.py uses
+        LAUNDRY_HTTP_PORT for exactly this reason, but the injection is noise.
+      */}}
+      enableServiceLinks: false
+      securityContext:
+        # SQLite in WAL mode writes -wal and -shm SIBLINGS of the database, so
+        # the process needs write access to the DIRECTORY, not just the file.
+        fsGroup: 10001
+      containers:
+        - name: laundry
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: ingest
+              containerPort: {{ .Values.service.ingestPort }}
+              protocol: TCP
+          env:
+            - name: LAUNDRY_DB
+              value: /data/laundry.db
+            - name: LAUNDRY_HTTP_PORT
+              value: {{ .Values.service.port | quote }}
+            - name: LAUNDRY_INGEST_PORT
+              value: {{ .Values.service.ingestPort | quote }}
+            - name: LAUNDRY_SMS_URL
+              value: {{ .Values.sms.url | quote }}
+            - name: LAUNDRY_SAMPLE_RETENTION_DAYS
+              value: {{ .Values.sampleRetentionDays | quote }}
+            {{- /*
+              The whole machine list as JSON. One variable rather than a
+              generated LAUNDRY_WASHER_* set, because it is a list that grows
+              when the second sensor is mounted.
+            */}}
+            - name: LAUNDRY_MACHINES
+              value: {{ .Values.machines | toJson | quote }}
+            {{- /* Local time for "finished 3:42 PM" in the text. */}}
+            - name: TZ
+              value: {{ .Values.timeZone | quote }}
+            - name: LAUNDRY_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "laundry.fullname" . }}
+                  key: LAUNDRY_INGEST_TOKEN
+            - name: LAUNDRY_SMS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "laundry.fullname" . }}
+                  key: LAUNDRY_SMS_API_KEY
+            - name: LAUNDRY_SMS_TO
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "laundry.fullname" . }}
+                  key: LAUNDRY_SMS_TO
+            {{- range $k, $v := .Values.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "laundry.fullname" . }}-data
+        {{- /* readOnlyRootFilesystem needs somewhere writable for tempfiles. */}}
+        - name: tmp
+          emptyDir: {}

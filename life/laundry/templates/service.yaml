@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "laundry.fullname" . }}
+  labels:
+    {{- include "laundry.labels" . | nindent 4 }}
+  {{- if .Values.metrics.enabled }}
+  annotations:
+    # Picked up by infra/alloy's pod scrape.
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.service.port | quote }}
+    prometheus.io/path: /metrics
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "laundry.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: laundry
+description: "Laundry-done detector — an ESP32 + MPU-6050 on the washer and dryer reports vibration; the cluster decides when a load has finished and texts through infra/sms-relay"
+type: application
+version: 0.1.0
+# appVersion tracks the image tag in values.yaml (image.tag).
+appVersion: "v1"
+maintainers:
+  - name: zachd

@@ -1,0 +1,9 @@
+# Pinned for reproducible image builds — bump deliberately.
+# Everything here has a manylinux wheel, so the image needs no build toolchain.
+#
+# Deliberately absent: prometheus_client (metrics.py is forty lines of text
+# formatting), any HTTP client library (urllib does one POST to sms-relay), and
+# any charting library — the dashboard's trace is an inline SVG polyline drawn
+# from the JSON, which is a dozen lines and no supply chain.
+fastapi==0.141.1
+uvicorn==0.52.1

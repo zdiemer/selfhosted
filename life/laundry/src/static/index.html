@@ -1,0 +1,195 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>laundry</title>
+<!--
+  The tuning instrument, not a status page. Everything on it exists to answer
+  one of two questions:
+    "what does this machine read when it is idle, and when it is running?"
+      -> the live mg figure and the trace, against the threshold line.
+    "how long is the longest pause INSIDE a cycle?"
+      -> the trace again; that pause is what quiet_seconds has to clear.
+  Server-rendered shell, one fetch loop, inline SVG. No build step, no
+  dependency to keep patched.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4; --card: #fff; --ink: #1a1a1a; --dim: #6b6b6b;
+    --line: #e2e2de; --run: #1d7a3e; --idle: #6b6b6b; --warn: #b4530a;
+    --accent: #2f6fb0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --card: #1e2024; --ink: #e8e8e6; --dim: #9a9a97;
+      --line: #2e3137; --run: #4ec97b; --idle: #8a8a88; --warn: #e08b3e;
+      --accent: #6aa9e0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 16px;
+  }
+  .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .name { font-size: 17px; font-weight: 600; }
+  .pill {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 3px 8px; border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .running { color: var(--run); }
+  .idle { color: var(--idle); }
+  .offline { color: var(--warn); }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 14px 18px; margin: 16px 0 4px;
+  }
+  .k { font-size: 11px; color: var(--dim); text-transform: uppercase;
+       letter-spacing: 0.05em; }
+  .v { font-size: 19px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .v small { font-size: 12px; color: var(--dim); font-weight: 400; }
+  svg { display: block; width: 100%; height: 110px; margin-top: 10px; }
+  .axis { font-size: 10px; fill: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; color: var(--dim); font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.05em;
+       padding: 0 8px 6px 0; }
+  td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line);
+       font-variant-numeric: tabular-nums; }
+  .muted { color: var(--dim); }
+  .err { color: var(--warn); }
+  button {
+    font: inherit; font-size: 13px; padding: 5px 11px; cursor: pointer;
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  button:hover { border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--dim); margin-top: 10px; }
+</style>
+
+<main>
+  <h1>laundry</h1>
+  <p class="sub">Vibration on the washer and dryer, and what it decided.</p>
+  <div id="machines"></div>
+  <div class="card">
+    <div class="name" style="margin-bottom:12px">Recent cycles</div>
+    <table><thead><tr>
+      <th>Machine</th><th>Started</th><th>Ran for</th><th>Peak</th><th>Text</th>
+    </tr></thead><tbody id="cycles"></tbody></table>
+  </div>
+</main>
+
+<script>
+const fmtClock = t => new Date(t * 1000).toLocaleString([],
+  {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+
+function fmtDur(s) {
+  if (s == null) return '—';
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + ' s';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
+}
+
+// The trace. A plain polyline plus a dashed threshold line — the only two
+// things you need to see at once to pick a threshold.
+function trace(points, threshold) {
+  if (!points.length) return '<p class="hint">No readings yet.</p>';
+  const W = 800, H = 110, PAD = 4;
+  const vals = points.map(p => p.rms_mg);
+  // Always include the threshold in the y-range, or a machine that never
+  // crosses it draws a full-height trace that looks like it is running.
+  const top = Math.max(threshold * 1.4, ...vals, 1);
+  const t0 = points[0].t, span = Math.max(1, points[points.length - 1].t - t0);
+  const x = p => PAD + (p.t - t0) / span * (W - 2 * PAD);
+  const y = v => H - PAD - (v / top) * (H - 2 * PAD - 12);
+  const d = points.map(p => `${x(p).toFixed(1)},${y(p.rms_mg).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+            aria-label="Vibration over time">
+    <line x1="0" y1="${y(threshold).toFixed(1)}" x2="${W}" y2="${y(threshold).toFixed(1)}"
+          stroke="var(--warn)" stroke-width="1" stroke-dasharray="4 4"/>
+    <polyline points="${d}" fill="none" stroke="var(--accent)" stroke-width="1.5"
+              vector-effect="non-scaling-stroke"/>
+    <text class="axis" x="2" y="10">${top.toFixed(0)} mg</text>
+    <text class="axis" x="${W - 2}" y="10" text-anchor="end">threshold ${threshold} mg</text>
+  </svg>`;
+}
+
+async function tick() {
+  const s = await (await fetch('api/v1/state')).json();
+  const cards = [];
+  for (const m of s.machines) {
+    const cls = !m.online ? 'offline' : (m.running ? 'running' : 'idle');
+    const label = !m.online ? 'sensor offline' : (m.running ? 'running' : 'idle');
+    const tr = await (await fetch(`api/v1/trace?device=${encodeURIComponent(m.device)}&minutes=120`)).json();
+
+    // While a cycle is open and the machine has gone quiet, the countdown to
+    // the text is the single most informative number on the page.
+    let right = '';
+    if (m.running && m.quiet_for_s != null) {
+      right = `<div><div class="k">Texts in</div><div class="v">${
+        fmtDur(Math.max(0, m.quiet_seconds - m.quiet_for_s))}
+        <small>if it stays still</small></div></div>`;
+    } else if (m.running) {
+      right = `<div><div class="k">Running for</div><div class="v">${fmtDur(m.cycle_elapsed_s)}</div></div>`;
+    } else {
+      right = `<div><div class="k">Starts after</div><div class="v">${
+        fmtDur(m.start_seconds)}<small> above threshold</small></div></div>`;
+    }
+
+    cards.push(`<div class="card">
+      <div class="head">
+        <span class="name">${m.label}</span>
+        <span class="pill ${cls}">${label}</span>
+        <span style="flex:1"></span>
+        <button onclick="testNotify('${m.device}')">Send a test text</button>
+      </div>
+      <div class="grid">
+        <div><div class="k">Vibration now</div><div class="v ${cls}">${
+          m.last_rms_mg.toFixed(1)} <small>mg</small></div></div>
+        <div><div class="k">Threshold</div><div class="v">${m.threshold_mg} <small>mg</small></div></div>
+        <div><div class="k">Last reading</div><div class="v">${
+          m.last_sample_age_s == null ? '—' : fmtDur(m.last_sample_age_s) + ' ago'}</div></div>
+        ${right}
+      </div>
+      ${trace(tr.points, tr.threshold_mg)}
+      <p class="hint">Idle floor vs running level is what <code>threshold_mg</code>
+        goes between. The longest dip <em>inside</em> a run is what
+        <code>quiet_seconds</code> (${fmtDur(m.quiet_seconds)}) must clear.</p>
+    </div>`);
+  }
+  document.getElementById('machines').innerHTML = cards.join('');
+
+  const c = await (await fetch('api/v1/cycles?limit=15')).json();
+  document.getElementById('cycles').innerHTML = c.cycles.length
+    ? c.cycles.map(r => `<tr>
+        <td>${r.device}</td>
+        <td>${fmtClock(r.started_at)}</td>
+        <td>${fmtDur(r.duration_s)}</td>
+        <td>${r.false_start ? '<span class="muted">false start</span>' : Math.round(r.peak_mg) + ' mg'}</td>
+        <td>${r.false_start ? '<span class="muted">—</span>'
+              : r.notified ? 'sent'
+              : `<span class="err">failed: ${r.notify_error || 'unknown'}</span>`}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="muted">Nothing yet.</td></tr>';
+}
+
+async function testNotify(device) {
+  const r = await (await fetch(`api/v1/test-notify?device=${encodeURIComponent(device)}`,
+    {method: 'POST'})).json();
+  alert(r.ok ? 'Queued with sms-relay:\n\n' + r.body : 'Failed:\n\n' + r.error);
+}
+
+tick();
+setInterval(tick, 5000);
+</script>

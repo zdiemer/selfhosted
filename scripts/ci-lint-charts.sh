@@ -37,6 +37,9 @@ TEMPLATE_SKIP=(
   # secrets.smsApiKey / secrets.feedToken / sms.to all `fail` — a reminder
   # release that renders without them would text nowhere.
   life/carson
+  # secrets.ingestToken / secrets.smsApiKey / sms.to all `fail` — an ingest
+  # port with no token, or a detector that texts nobody.
+  life/laundry
   infra/democratic-csi
   infra/duckdns
   infra/egress-proxy

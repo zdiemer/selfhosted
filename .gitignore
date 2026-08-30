@@ -49,6 +49,11 @@ secrets/
 # template; the real one stays local, same shape as values.local.yaml.
 web/apartment-watch/criteria.yaml
 web/apartment-watch/.venv/
+life/laundry/.venv/
+# PlatformIO build output and the firmware's wifi/token header.
+life/laundry/firmware/.pio/
+life/laundry/firmware/.piovenv/
+life/laundry/firmware/include/config.h
 
 # Gradle build artifacts (claude-mod). The JAR is sideloaded via install.sh,
 # not checked in.
