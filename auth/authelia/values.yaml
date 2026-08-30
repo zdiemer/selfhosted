@@ -120,8 +120,13 @@ accessControl:
     # Same apps on the diemer.codes tunnel (infra/cloudflared). default_policy is
     # already two_factor, so these are explicit-for-parity rather than strictly
     # required; keeping them mirrors the duckdns hosts as those get retired.
-    - domain: "keepass.diemer.codes"
-      policy: "two_factor"
+    #
+    # keepass.diemer.codes was here and is gone: KeeWeb is tailnet-only now
+    # (auth/keepass keeweb.ingress.cloudflareHosts is empty), so the rule
+    # guarded a host Traefik no longer routes. A rule for a dead host is worse
+    # than no rule — it reads as coverage during a review while protecting
+    # nothing, and default_policy: two_factor catches the host anyway if it
+    # ever comes back.
     # romm.diemer.codes — public (Cloudflare) host only; the tailnet host stays
     # on RomM's own login so native clients keep working. See games/romm
     # auth.forwardAuth.publicOnly.

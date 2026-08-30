@@ -22,7 +22,7 @@ browser ──TLS──▶ Cloudflare edge ──tunnel──▶ cloudflared (th
                               traefik.kube-system.svc.cluster.local:443
                                                    │ routes by Host header
                                                    ▼
-                    authelia / keepass / paperless / stirling / gamedex / romm
+                       authelia / stirling / gamedex / romm / smitele / talaria
 ```
 
 Minecraft services stay on DuckDNS. `kelsey.green` is a separate domain with its
@@ -52,27 +52,28 @@ so the only column that actually varies is the hostname:
 | Hostname | Backing ingress | Service |
 |---|---|---|
 | `auth.diemer.codes` | `auth/authelia` | `authelia:9091` |
-| `docs.diemer.codes` | `docs/paperless` | `paperless:8000` |
 | `games.diemer.codes` | `games/gamedex` | `gamedex:8080` |
-| `keepass.diemer.codes` | `auth/keepass-keeweb` | `keepass-keeweb:80` |
 | `old.diemer.codes` | `web/old-diemer-codes` | `old-diemer-codes:80` |
 | `pdf.diemer.codes` | `docs/stirling` | `stirling:8080` |
 | `romm.diemer.codes` | `games/romm` | `romm:8080` |
 | `smite.diemer.codes` | `discord/smitele-bot-web` | `smitele-bot-web:8080` |
-| `webdav.diemer.codes` | `auth/keepass-webdav` | `keepass-webdav:80` |
 | `talaria.deals` | `default/talaria-deals` | `talaria-nginx:80` |
 
 ### Deliberately absent from this table
 
-`claude`, `happy` and `status` were published here and have been **delisted** —
-they are tailnet-only now, reachable on their `*.zachd.duckdns.org` names and
-not from the internet at all. Short version of why:
+`claude`, `happy`, `status`, `docs`, `webdav` and `keepass` were published here
+and have been **delisted** — they are tailnet-only now, reachable on their
+`*.zachd.duckdns.org` names and not from the internet at all. Short version of
+why:
 
 | Host | Why it left |
 |---|---|
 | `claude.diemer.codes` | A ttyd web terminal on a pod holding cluster-admin, with one boolean (`auth.forwardAuth.enabled`) between it and the internet. |
 | `happy.diemer.codes` | Unauthenticated by design (the app can't do forward-auth), and the control plane for that same cluster-admin pod's session daemon. No edge gate fits a mobile app: Access needs a browser login or a service-token header, mTLS needs a client cert. |
 | `status.diemer.codes` | Published node names, the pod inventory, namespaces and raw event text. Free reconnaissance, and its only readers were us. |
+| `docs.diemer.codes` | Personal documents (Paperless). Nothing here is for an audience. |
+| `webdav.diemer.codes` | The `.kdbx` endpoint. Native KeePass clients can't follow an OIDC redirect, so its only gate is static HTTP Basic — never meant to be the sole guard on the public internet. |
+| `keepass.diemer.codes` | KeeWeb, the browser client for that same vault. Authelia in front of it was real, but it made any browser anywhere one password-plus-TOTP away from the password database. The vault now lives entirely behind one boundary rather than two of differing strength. |
 
 **Delisting is two steps, and this file is the second one.** Emptying a chart's
 `ingress.cloudflareHosts` stops Traefik routing the host, but the Public

@@ -90,8 +90,15 @@ keeweb:
     # Additional hosts published via the Cloudflare tunnel (infra/cloudflared). TLS
     # for these is terminated at Cloudflare, so they are NOT added to the ACME cert
     # list. A list — add more domains here to serve this app on them too.
-    cloudflareHosts:
-      - keepass.diemer.codes
+    #
+    # Emptied deliberately: KeeWeb is tailnet-only now, joining its WebDAV
+    # sibling (emptied above in dcd3566) so the whole vault lives behind one
+    # boundary. Authelia in front of it was real, but it made a browser at any
+    # coffee shop one password-plus-TOTP away from the password database, and
+    # a Cloudflare-terminated hostname is a standing invitation to credential
+    # stuffing that the tailnet simply does not answer. The keepass.diemer.codes
+    # tunnel hostname is already gone from the CF dashboard.
+    cloudflareHosts: []
     # Authelia forward-auth Middleware — full OIDC + TOTP. Format is
     # `<namespace>-<release>-forwardauth@kubernetescrd`. If you renamed
     # the Authelia Helm release or namespace, update accordingly.
