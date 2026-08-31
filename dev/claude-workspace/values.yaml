@@ -463,18 +463,26 @@ messaging:
   # something to say. Occurrences missed while the pod is down are skipped,
   # not caught up. Cron is five-field, evaluated in `timezone`.
   schedules:
-    - name: trading-open
-      cron: "45 9 * * 1-5"
+    # Hourly through the session, not twice a day: the account has margin
+    # enabled (2026-08-31) and can now round-trip intraday, so the tactical
+    # sleeve needs a look often enough to actually manage a same-day position.
+    # 9:45 skips the opening auction; the 15:30 run below is the last one.
+    # Medium effort here and high at the close — the intraday runs are mostly
+    # reconcile-and-check, the close run writes the weekly report.
+    - name: trading-hourly
+      cron: "45 9-14 * * 1-5"
       timezone: America/New_York
       cwd: /home/node/code/trading
       session: trading
       fresh: true
-      effort: high
+      effort: medium
       prompt: >-
-        Scheduled market-open trading run. Follow CLAUDE.md in this directory:
+        Scheduled intraday trading run. Follow CLAUDE.md in this directory:
         read positions.md and the latest journal, reconcile against the live
-        book, act only where the written theses or new edge say to, journal
-        and push. Stay quiet unless a report trigger fires.
+        book, manage the tactical sleeve against its written levels, act
+        where the theses or new edge say to, journal and push. Send nothing
+        unless a failure or a big-move trigger fires — routine trades go in
+        Friday's weekly report, not to the phone.
     - name: trading-close
       cron: "30 15 * * 1-5"
       timezone: America/New_York
@@ -485,8 +493,9 @@ messaging:
       prompt: >-
         Scheduled pre-close trading run. Follow CLAUDE.md in this directory:
         manage the book before the 4pm bell (fills, invalidations, planned
-        exits), journal and push. If today is Friday, always send the weekly
-        report. Otherwise stay quiet unless a report trigger fires.
+        exits, any same-day tactical position that must not carry overnight),
+        journal and push. If today is Friday, always send the weekly report.
+        Otherwise send nothing unless a failure or big-move trigger fires.
   bash:
     # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
     # For the cheap questions (`kubectl get pods`) where a whole claude run plus

@@ -2,7 +2,7 @@
 # Dead-man's switch for the Robinhood trading agent.
 #
 # The agent runs in the claude-workspace pod (dev/claude-workspace,
-# messaging.schedules "trading-open"/"trading-close") and ends every run —
+# messaging.schedules "trading-hourly"/"trading-close") and ends every run —
 # including no-op ones — by committing and pushing its journal to
 # github.com/zdiemer/trading-journal. So "the journal moved recently" is the
 # one signal that covers the whole chain: pod up, gateway up, schedule armed,
@@ -13,9 +13,11 @@
 #
 # Runs from a systemd user timer Mon–Fri evenings (see
 # scripts/systemd/selfhosted-trading-watchdog.timer). Thresholds: the agent
-# pushes at least twice per market day (9:45 + 15:30 ET), so on Tue–Fri
-# anything older than MAX_AGE_HOURS is wrong; Monday allows the weekend gap
-# since Friday's 15:30 ET run.
+# pushes every hour of the session (9:45–14:45 at :45, plus 15:30 ET), so on
+# Tue–Fri anything older than MAX_AGE_HOURS is wrong; Monday allows the
+# weekend gap since Friday's 15:30 ET run. The thresholds stay loose on
+# purpose — a market holiday means no runs at all, and a false alarm on
+# Thanksgiving trains you to ignore the real one.
 #
 # If this fires: check `kubectl -n claude get pods`, the messaging-gateway
 # container logs, and `!status` over Signal. Manual takeover from this machine
