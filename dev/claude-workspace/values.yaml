@@ -496,6 +496,36 @@ messaging:
         exits, any same-day tactical position that must not carry overnight),
         journal and push. If today is Friday, always send the weekly report.
         Otherwise send nothing unless a failure or big-move trigger fires.
+    # Crypto is the only instrument this account can trade when the equity
+    # market is shut (Robinhood does not offer 24-hour trading here), so it
+    # gets the overnight and weekend slots. Same cwd and session slot as the
+    # market-hours runs — one book, one journal, just a different lane open.
+    - name: trading-crypto-evening
+      cron: "0 20 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: medium
+      prompt: >-
+        Evening crypto run. Follow CLAUDE.md in this directory. Equities and
+        options are closed — this run is for the crypto sleeve: check any
+        crypto position against its written stop, target and time stop, and
+        hunt for crypto swing setups worth taking overnight. Journal and push.
+        Send nothing unless a failure or big-move trigger fires.
+    - name: trading-crypto-weekend
+      cron: "0 10,18 * * 6,0"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: medium
+      prompt: >-
+        Weekend crypto run. Follow CLAUDE.md in this directory. The equity
+        market is closed all weekend, so crypto is the only lane open: manage
+        any crypto position against its written levels and hunt for setups —
+        a weekend run is not a formality. Journal and push. Send nothing
+        unless a failure or big-move trigger fires.
   bash:
     # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
     # For the cheap questions (`kubectl get pods`) where a whole claude run plus
