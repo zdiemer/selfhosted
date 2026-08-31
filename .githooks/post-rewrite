@@ -8,4 +8,8 @@
 # the rewritten history is final.
 # $1 is "rebase" or "amend"; amend cannot move a gitlink that was not staged,
 # but running the refresh is cheap when nothing drifted, so no filter.
-exec "$(git rev-parse --show-toplevel)/scripts/submodules-refresh.sh" --quiet
+ROOT="$(git rev-parse --show-toplevel)"
+"$ROOT/scripts/submodules-refresh.sh" --quiet
+# The same operation can move scripts/secrets.sh, which the copy of it on
+# PATH cannot notice on its own. No-op when it already matches.
+"$ROOT/scripts/refresh-secrets-cli.sh" --quiet
