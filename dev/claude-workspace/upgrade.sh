@@ -149,13 +149,25 @@ STATUS="$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
 if [[ "$STATUS" == pending-* ]]; then
   echo "==> Release is ${STATUS} from an interrupted run; repairing"
   python3 - "$RELEASE" "$NAMESPACE" <<'PY'
-import base64, gzip, json, subprocess, sys
+import base64, gzip, json, subprocess, sys, tempfile
 
 release, namespace = sys.argv[1], sys.argv[2]
 
 def kubectl(*args, capture=True):
     return subprocess.run(["kubectl", "-n", namespace, *args],
                           capture_output=capture, text=True, check=True).stdout
+
+def patch_secret(name, patch):
+    # Through a file, never `-p <json>`: this chart's release payload is a few
+    # hundred KB of gzipped manifests, and as an argv it blows the kernel's
+    # exec limit (OSError E2BIG, "Argument list too long: kubectl") — which
+    # left the repair half-done, the stuck revision deleted and the previous
+    # one never restored.
+    with tempfile.NamedTemporaryFile("w", suffix=".json") as fh:
+        fh.write(patch)
+        fh.flush()
+        kubectl("patch", "secret", name, "--type", "merge",
+                "--patch-file", fh.name, capture=False)
 
 secrets = json.loads(kubectl(
     "get", "secrets", "-l", f"owner=helm,name={release}", "-o", "json"))["items"]
@@ -183,8 +195,7 @@ patch = json.dumps({
     "data": {"release": base64.b64encode(
         base64.b64encode(gzip.compress(json.dumps(payload).encode()))).decode()},
 })
-kubectl("patch", "secret", prev["metadata"]["name"], "--type", "merge", "-p", patch,
-        capture=False)
+patch_secret(prev["metadata"]["name"], patch)
 print(f"    revision {version} restored as the current one")
 PY
 fi
