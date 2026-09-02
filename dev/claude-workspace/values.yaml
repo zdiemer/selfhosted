@@ -98,6 +98,15 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v28: a gateway schedule is silent unless it says otherwise. Its final text
+  #      is delivered only when the run puts [[notify]] on a line of its own;
+  #      everything else is dropped (and logged). The old rule sent anything
+  #      non-empty, and being told three times to end quiet runs with no text
+  #      — preamble, schedule prompt, CLAUDE.md — did not stop the trading
+  #      agent closing every hourly run with "nothing that needs you", which
+  #      is a phone notification reporting that there was nothing to notify
+  #      about (2026-09-01, seven of them). Errors and a killed run still
+  #      speak unmarked: a failure that goes quiet is the worse bug.
   # v27: !clear kills the live run (and its wake-up) with the pointer — a
   #      parked child used to be handed the next message with the full old
   #      context, landing the clear one message late, on the reply that
@@ -131,7 +140,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v27"
+  tag: "v28"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -482,7 +491,9 @@ messaging:
         book, manage the tactical sleeve against its written levels, act
         where the theses or new edge say to, journal and push. Send nothing
         unless a failure or a big-move trigger fires — routine trades go in
-        Friday's weekly report, not to the phone.
+        Friday's weekly report, not to the phone. To send, put [[notify]] on
+        its own line in your final message; without it nothing is delivered,
+        so end a routine run with no text rather than a sign-off.
     - name: trading-close
       cron: "30 15 * * 1-5"
       timezone: America/New_York
@@ -494,7 +505,9 @@ messaging:
         Scheduled pre-close trading run. Follow CLAUDE.md in this directory:
         manage the book before the 4pm bell (fills, invalidations, planned
         exits, any same-day tactical position that must not carry overnight),
-        journal and push. If today is Friday, always send the weekly report.
+        journal and push. Sending requires [[notify]] on its own line in your
+        final message — text without it is discarded. If today is Friday, the
+        weekly report always goes out, so it MUST carry that marker.
         Otherwise send nothing unless a failure or big-move trigger fires.
     # Crypto is the only instrument this account can trade when the equity
     # market is shut (Robinhood does not offer 24-hour trading here), so it
@@ -512,7 +525,8 @@ messaging:
         options are closed — this run is for the crypto sleeve: check any
         crypto position against its written stop, target and time stop, and
         hunt for crypto swing setups worth taking overnight. Journal and push.
-        Send nothing unless a failure or big-move trigger fires.
+        Send nothing unless a failure or big-move trigger fires, and to send
+        put [[notify]] on its own line — unmarked text is not delivered.
     - name: trading-crypto-weekend
       cron: "0 10,18 * * 6,0"
       timezone: America/New_York
@@ -525,7 +539,8 @@ messaging:
         market is closed all weekend, so crypto is the only lane open: manage
         any crypto position against its written levels and hunt for setups —
         a weekend run is not a formality. Journal and push. Send nothing
-        unless a failure or big-move trigger fires.
+        unless a failure or big-move trigger fires, and to send put [[notify]]
+        on its own line — unmarked text is not delivered.
   bash:
     # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
     # For the cheap questions (`kubectl get pods`) where a whole claude run plus

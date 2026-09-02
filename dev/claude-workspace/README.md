@@ -502,8 +502,17 @@ session ids back to it, never the thread the chat's `!use`/`!cwd` currently
 point at, and a ScheduleWakeup armed by a pinned run inherits the pin, so an
 intraday "check back in an hour" lands in the schedule's thread too. Replies
 go to the surface owner's 1:1 (the first allowed sender) with the usual
-banner; a firing whose turn ends with no text sends nothing — quiet is the
-default, and the prompt should say when to speak. Occurrences missed while
+banner — but only when the run asks for it: since v28 a firing's final text
+is delivered **only if it contains `[[notify]]` on a line of its own**, which
+is stripped before sending. Silence is the default and speaking is the opt-in,
+because the instruction alone did not hold — told in the preamble, its schedule
+prompt and its own CLAUDE.md to end quiet runs with no text, the trading agent
+still signed off every hourly run with "nothing that needs you", and on a phone
+that is indistinguishable from an alert. Unmarked text is dropped and logged
+(`schedule <name>: held back N chars`); a run that errored or was killed still
+speaks unmarked, since a failure that goes quiet is the worse bug. A schedule
+whose prompt has a *must-send* case (the Friday weekly) has to name the marker.
+Occurrences missed while
 the pod is down are skipped, not caught up: these are cadences, not promises,
 and a market-open run fired at 11pm because the pod was rescheduled is worse
 than no run.

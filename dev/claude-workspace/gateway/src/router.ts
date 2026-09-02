@@ -162,17 +162,57 @@ const WAKEUP_PREAMBLE =
   "not by a new message from the user. The prompt below is the one you " +
   "scheduled.]";
 
+/** The marker a scheduled run writes to break its own silence. */
+const NOTIFY_MARKER_TEXT = "[[notify]]";
+const NOTIFY_MARKER = /^\s*\[\[notify\]\]\s*$/i;
+
 /** And what a gateway-scheduled run is told. The distinction matters: this
  * run never armed anything and must not believe it owes the user an answer —
- * a turn with nothing to report should end with no text at all. */
+ * a turn with nothing to report should end with no text at all.
+ *
+ * Silence is the default and speaking is the opt-in, because the instruction
+ * alone does not hold: the trading agent was told to end quiet runs with no
+ * text here, in its schedule prompt, and in its own CLAUDE.md, and still
+ * closed every hourly run with "nothing that needs you" — which is a phone
+ * notification saying there was no reason to send a phone notification. So
+ * the marker is what actually sends, and a turn that forgets it is silent. */
 function preambleFor(item: Queued): string {
   if (!item.wakeup) return "";
   if (!item.schedName) return WAKEUP_PREAMBLE;
   return (
     `[Scheduled run "${item.schedName}": started by the gateway's recurring ` +
-    "schedule, not by a message from the user. If there is nothing that " +
-    "needs the user's attention, end your turn with no text.]"
+    "schedule, not by a message from the user. Your final text is NOT " +
+    "delivered by default — this run is silent unless it opts in. If " +
+    "something genuinely needs the user's attention, put " +
+    `${NOTIFY_MARKER_TEXT} on a line by itself in your final message and the ` +
+    "rest of that message is sent to their phone. Otherwise end your turn " +
+    "with no text. Do not write a sign-off, a summary of a routine run, or " +
+    "a note explaining that you are staying quiet: unmarked text is " +
+    "discarded, so it reaches nobody either way.]"
   );
+}
+
+/**
+ * Split the marker off a scheduled run's reply.
+ *
+ * Same shape as the `[[send:]]` attachment marker: on its own line, taken out
+ * of the text before it goes out, so the person reads the message rather than
+ * the mechanism.
+ */
+export function takeNotifyMarker(text: string): {
+  notify: boolean;
+  text: string;
+} {
+  const kept: string[] = [];
+  let notify = false;
+  for (const line of text.split("\n")) {
+    if (NOTIFY_MARKER.test(line)) notify = true;
+    else kept.push(line);
+  }
+  return {
+    notify,
+    text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+  };
 }
 
 /** Reaction state machine on the sender's own message. Both networks replace a
@@ -205,6 +245,14 @@ const awaitingReply = new Map<string, boolean>();
  * hand-off lands in a run whose onTurn closed over some earlier message's
  * item, so the flag has to travel outside the closure. */
 const quietTurn = new Set<string>();
+
+/** Chats whose current run came from a gateway schedule, by schedule name.
+ * Its turns are silent unless they carry the notify marker. Set at dispatch
+ * and cleared when the run ends rather than consumed per-turn: a scheduled
+ * run that chains a ScheduleWakeup is still the schedule talking, and every
+ * turn of it owes the same silence. A person who messages mid-run is not
+ * caught by this — their turn is guarded by awaitingReply, not by this map. */
+const scheduledRuns = new Map<string, string>();
 
 export function activeStatus(chatKey: string): Status | undefined {
   return statuses.get(chatKey);
@@ -462,6 +510,8 @@ async function drain(chatKey: string): Promise<void> {
   if (item.quiet) quietTurn.add(chatKey);
   deliveryRefs.set(chatKey, ref);
   awaitingReply.set(chatKey, !wakeup && !item.quiet);
+  if (item.schedName) scheduledRuns.set(chatKey, item.schedName);
+  else scheduledRuns.delete(chatKey);
   const group = isGroupChat(chatKey);
   // What this run resumes, if anything. A "Prompt is too long" coming back on
   // a resume means THAT thread can no longer be rebuilt — not that this
@@ -569,7 +619,27 @@ async function drain(chatKey: string): Promise<void> {
         const unprompted = !awaitingReply.get(chatKey);
         awaitingReply.set(chatKey, false);
         if (!result.text && !result.isError && unprompted) return;
-        await deliver(chatKey, result, group, runOverrides);
+        // A gateway schedule fires on a clock, not because anyone asked, so
+        // its text ships only when it says so with the marker. An error still
+        // speaks: a run that crashed cannot be trusted to have opted in, and
+        // the whole point of the schedule is that a failure is not silent.
+        const sched = scheduledRuns.get(chatKey);
+        let delivered = result;
+        if (sched && unprompted && !result.isError) {
+          const marked = takeNotifyMarker(result.text);
+          // Marker with nothing after it is silence too — "(no result text)"
+          // under a banner is the notification with the news taken out.
+          if (!marked.notify || !marked.text) {
+            if (result.text)
+              console.log(
+                `schedule ${sched}: held back ${result.text.length} chars ` +
+                  `from ${chatKey} (${marked.notify ? "marker, no text" : "unmarked"})`,
+              );
+            return;
+          }
+          delivered = { ...result, text: marked.text };
+        }
+        await deliver(chatKey, delivered, group, runOverrides);
         // If this turn parked the run and something is queued behind it, the
         // park is a chance to answer it — handleInbound only kicks drain for
         // the first message, so a second one that arrived during the last park
@@ -617,6 +687,7 @@ async function drain(chatKey: string): Promise<void> {
   } finally {
     statuses.delete(chatKey);
     deliveryRefs.delete(chatKey);
+    scheduledRuns.delete(chatKey);
     // A quiet flag whose turn never ran (child died first) must not survive
     // to swallow some later, real reply.
     quietTurn.delete(chatKey);
