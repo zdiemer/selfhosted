@@ -166,6 +166,15 @@ RUN cd /opt/messaging-gateway \
  && chown -R 1000:1000 /opt/messaging-gateway/node_modules \
  && rm -rf /root/.bun/install/cache
 
+# The journal viewer (read-only web view of the trading journal checkout on the
+# PVC, see journal/ and README "Journal surface"). Same shape as the gateway:
+# in-repo bun app, deps resolved at build time, read-only at runtime.
+COPY --chown=1000:1000 journal /opt/journal-viewer
+RUN cd /opt/journal-viewer \
+ && HOME=/root bun install --frozen-lockfile --production \
+ && chown -R 1000:1000 /opt/journal-viewer/node_modules \
+ && rm -rf /root/.bun/install/cache
+
 # UTF-8 so the claude TUI's box-drawing renders in tmux/ttyd.
 # BUILDKIT_HOST points buildctl at the in-cluster buildkitd (infra/buildkit) so
 # the per-chart build.sh scripts work from inside the pod with no flags.

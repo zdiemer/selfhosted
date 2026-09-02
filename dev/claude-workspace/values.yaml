@@ -98,6 +98,18 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v30: adds the journal surface — a read-only web view of the trading
+  #      journal checkout on the PVC, on its own duckdns host behind the same
+  #      Authelia middleware (journal/, values `journal:`, README "Journal
+  #      surface"). The agent reports to Signal once a week by design; this is
+  #      where the per-run detail it deliberately doesn't send can be read.
+  # v29: a scheduled run no longer sends a status message either. v28 held
+  #      back the text but left the "⏺ working…" ticker and its "✓ done"
+  #      receipt, so seven silent trading runs a day still lit the phone
+  #      seven times with nothing in them — the notification the silence
+  #      exists to avoid. Suppressed the same way a group or maintenance turn
+  #      suppresses it; a schedule with something to say still says it in the
+  #      reply.
   # v28: a gateway schedule is silent unless it says otherwise. Its final text
   #      is delivered only when the run puts [[notify]] on a line of its own;
   #      everything else is dropped (and logged). The old rule sent anything
@@ -140,7 +152,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v29"
+  tag: "v30"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -154,6 +166,8 @@ service:
   # match bakery's own defaults (PI_WEB_PORT / vite --port).
   bakeryServerPort: 3141
   bakeryWebPort: 5173
+  # The journal viewer's own host (journal.host below), so no path-splitting.
+  journalPort: 8088
 
 persistence:
   # One PVC = the pod's entire $HOME (/home/node). Holds ~/.claude (OAuth
@@ -367,6 +381,33 @@ bakery:
   # Extra env for the bakery SERVER container (e.g. PI_WEB_DEFAULT_MODEL,
   # PI_WEB_ALLOWED_MODELS, PI_WEB_FAKE_AGENT).
   extraEnv: {}
+
+journal:
+  # A read-only web view of the trading journal (journal/, baked at
+  # /opt/journal-viewer). The trading agent runs headless on the gateway
+  # schedules below and reports to Signal once a week; this is where the detail
+  # it deliberately doesn't send goes — the per-run entries, positions.md, the
+  # SPY benchmark, and the commit log that doubles as its heartbeat.
+  #
+  # It reads `dir` straight off the same $HOME PVC the agent writes, so there
+  # is nothing to sync and nothing to keep fresh. Read-only in the container
+  # too: it serves GET, resolves every path back inside `dir` (realpath, so a
+  # symlink can't leave it), and shells out to nothing but `git log`.
+  enabled: true
+  # DuckDNS only, and no cloudflareHosts equivalent — deliberately. This is a
+  # live view of a real brokerage account's positions and cash; infra/duckdns
+  # is in `mode: tailnet`, so this host resolves to a 100.x address and being
+  # on the tailnet is the first of the two gates. Authelia (the same
+  # forward-auth middleware as every other host on this chart) is the second.
+  host: trading.zachd.duckdns.org
+  # The checkout to serve. The agent's own working copy — see
+  # trading/CLAUDE.md, which is what the "mandate" nav entry renders.
+  dir: /home/node/code/trading
+  # Shown in the header and the <title>.
+  title: trading journal
+  # Entries on the front page. Seven hourly runs a market day, so eight covers
+  # today plus the tail of yesterday.
+  recent: 8
 
 messaging:
   # Signal/WhatsApp → headless `claude -p` in this pod's $HOME: the
@@ -848,6 +889,14 @@ resources:
       # Heavy image builds should still go to the in-cluster buildkitd
       # (BUILDKIT_HOST) rather than run here.
       memory: 6Gi
+  # The journal viewer reads a few hundred KB of markdown per request and holds
+  # nothing between them — the only thing that grows is bun's own heap.
+  journal:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   # Native-image signal-cli daemon: no JVM heap ballooning, but give it room
   # for attachment buffers and the receive queue.
   signalCli:

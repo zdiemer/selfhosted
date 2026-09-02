@@ -1,0 +1,3 @@
+# Deps are installed at image build time (Dockerfile: bun install
+# --frozen-lockfile against the committed bun.lock). Never in git.
+node_modules/

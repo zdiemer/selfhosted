@@ -55,6 +55,10 @@ spec:
         - port: {{ .Values.service.bakeryWebPort }}
           protocol: TCP
         {{- end }}
+        {{- if .Values.journal.enabled }}
+        - port: {{ .Values.service.journalPort }}
+          protocol: TCP
+        {{- end }}
   egress:
     # DNS resolution for external hostnames.
     - to:

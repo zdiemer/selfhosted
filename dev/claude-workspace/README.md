@@ -58,9 +58,10 @@ helm install claude-workspace . -n claude -f values.yaml
 kubectl -n claude get pods -w
 
 # 3. Smoke test the ports
-kubectl -n claude port-forward svc/claude-workspace 7681:7681 5173:5173 3141:3141
+kubectl -n claude port-forward svc/claude-workspace 7681:7681 5173:5173 3141:3141 8088:8088
 #   http://localhost:7681/term → tmux prompt echoes keystrokes
 #   http://localhost:3141/healthz → bakery server "ok"
+#   http://localhost:8088/ → journal viewer's latest runs
 #   (bakery web on 5173 refuses a localhost Host header — allowedHosts is set
 #    to the ingress host — so verify it end-to-end after the ingress is up)
 
@@ -293,6 +294,47 @@ artifacts, and metadata live under `bakery.dataDir`
   deliberately (then `./build.sh`), same as the claude CLI.
 - Turn the whole surface off with `bakery.enabled: false` (drops both
   containers, the two service ports, the ingress host, and the netpol rule).
+
+## Journal surface
+
+`https://trading.zachd.duckdns.org` — a read-only web view of the trading
+agent's journal (`journal/` in this chart, baked to `/opt/journal-viewer`,
+served by one bun container).
+
+The trading agent runs on the gateway schedules below and, by design, says
+almost nothing: routine runs are silent and the only scheduled message is
+Friday's weekly report (`trading/CLAUDE.md`, "Reporting — one message a
+week"). Everything it *doesn't* send still gets written down. This is where
+you read it.
+
+- **Front page**: the last `journal.recent` runs (8 = a market day of hourly
+  runs plus yesterday's tail), newest first, each collapsible, the latest one
+  open. Nav has `positions.md`, `benchmark.md`, the mandate (`CLAUDE.md`), the
+  commit log, and each month's journal file.
+- **No copy, no cache.** It reads `journal.dir` — the agent's own working copy
+  on the shared `$HOME` PVC — on every request. The agent commits and pushes
+  each run, so the checkout is the freshest thing that exists; anything
+  mirrored from git would only ever be staler. `cache-control: no-store` for
+  the same reason: a cached page can be wrong about a position that just moved.
+- **`/log`** shells out to `git log` over that checkout. One commit per run, so
+  it is also the quickest answer to "did the 11:45 run actually happen?" — the
+  push is the agent's dead-man's-switch heartbeat.
+- **Read-only in the strong sense**: GET (and HEAD) only, no writes, no shell
+  but `git log`, read-only rootfs, and every `/f/<path>` resolved with
+  `realpath` back inside `journal.dir` — so `..`, an absolute path and a
+  symlink out of the checkout all fail the same way. It will serve any `.md`
+  under that directory; the nav is a menu, not the boundary.
+- **DuckDNS only — no Cloudflare host, deliberately.** This is a live view of a
+  brokerage account's positions and cash. `infra/duckdns` is in `mode:
+  tailnet`, so the host resolves to a 100.x address (no DNS record to add —
+  the wildcard already answers), and Authelia's forward-auth is the second
+  gate. Same two-gate reasoning as the `/term` host; see `ingress.cloudflareHosts`.
+- Turn it off with `journal.enabled: false` (drops the container, the service
+  port, the ingress host and the netpol rule).
+
+Point it at a different repo by setting `journal.dir` — nothing in the viewer
+is specific to trading beyond the defaults (a `journal/` directory of month
+files with one `##` heading per entry is what the front page splits on).
 
 ## Messaging surface
 
