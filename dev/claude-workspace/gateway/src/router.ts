@@ -523,7 +523,14 @@ async function drain(chatKey: string): Promise<void> {
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
   // is very little to watch. None for maintenance either — a ticker would
   // make the quiet turn loud.
-  let status = group || item.quiet ? undefined : createStatus(chatKey);
+  //
+  // And none for a gateway schedule. Its text is held back unless it opts in
+  // with the notify marker, but the status message never was — so a silent
+  // hourly run still lit the phone with "⏺ working…" and then a "✓ done"
+  // receipt under it, which is the notification the silence exists to avoid.
+  // A schedule that has something to say says it in the reply.
+  let status =
+    group || item.quiet || item.schedName ? undefined : createStatus(chatKey);
   if (status) {
     statuses.set(chatKey, status);
     await status.begin();

@@ -140,7 +140,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v28"
+  tag: "v29"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
