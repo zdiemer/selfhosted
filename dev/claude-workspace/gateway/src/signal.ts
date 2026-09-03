@@ -370,10 +370,10 @@ export function startSignal(): void {
         });
       }
     },
-    // An edit is one local socket call to signal-cli, so the status message
-    // can tick its clock about once a second without the volume concerns that
-    // hold WhatsApp back.
-    editIntervalMs: config.progress.signalIntervalMs,
+    // An edit is one local socket call to signal-cli, so the constraint here
+    // is Signal's ten-revisions-per-message cap rather than the volume
+    // concerns that hold WhatsApp back.
+    minEditIntervalMs: config.progress.signalMinIntervalMs,
     async edit(chatKey, target, text) {
       // signal-cli's `send --edit-timestamp`, targeting the LATEST revision:
       // each edit is its own message with its own timestamp, and the next one

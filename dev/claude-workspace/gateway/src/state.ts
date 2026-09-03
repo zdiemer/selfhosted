@@ -23,6 +23,11 @@ export interface ChatState {
    * !effort. Unset means "follow the chart default". */
   model?: string;
   effort?: string;
+  /** How closely this chat's live status message follows a run — a
+   * config.VERBOSITY_MS level name, set with !verbose. Unset means the chart
+   * default. Per chat rather than per run because it is a property of how you
+   * read this thread, not of the question you just asked. */
+  verbosity?: string;
   /** A run was started and has not finished. Survives on the PVC precisely so
    * the *next* process can see it: a true here after a boot means the pod went
    * down mid-run, which is what the restart notice reports. */

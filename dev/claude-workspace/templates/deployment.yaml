@@ -599,10 +599,12 @@ spec:
               value: {{ .Values.messaging.attachments.maxMB | quote }}
             - name: GW_PROGRESS_ENABLED
               value: {{ .Values.messaging.progress.enabled | quote }}
-            - name: GW_PROGRESS_EDIT_SECONDS
-              value: {{ .Values.messaging.progress.editSeconds | quote }}
-            - name: GW_PROGRESS_SIGNAL_EDIT_SECONDS
-              value: {{ .Values.messaging.progress.signalEditSeconds | quote }}
+            - name: GW_PROGRESS_VERBOSITY
+              value: {{ .Values.messaging.progress.verbosity | default "normal" | quote }}
+            - name: GW_PROGRESS_MIN_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.minEditSeconds | default 3 | quote }}
+            - name: GW_PROGRESS_SIGNAL_MIN_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.signalMinEditSeconds | default 5 | quote }}
             - name: GW_PROGRESS_MAX_MESSAGES
               value: {{ .Values.messaging.progress.maxMessages | default 6 | quote }}
             - name: GW_REACTIONS_ENABLED

@@ -13,6 +13,20 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** One of a fixed set, or the fallback. A typo in a chart value should cost the
+ * setting and say so, not take the gateway down or silently mean something. */
+function envEnum(name: string, allowed: string[], fallback: string): string {
+  const v = (process.env[name] ?? "").trim();
+  if (!v) return fallback;
+  if (!allowed.includes(v)) {
+    console.error(
+      `config: ${name}=${v} is not one of ${allowed.join("|")}; using ${fallback}`,
+    );
+    return fallback;
+  }
+  return v;
+}
+
 /** Like envInt, but 0 is a meaningful value ("off") rather than a typo. */
 function envIntOrZero(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -110,6 +124,49 @@ const DEFAULT_GROUP_SYSTEM_PROMPT = `This is a group chat. Everyone in the room 
 
 You have no filesystem, shell, or cluster access in a group. Answer from the conversation, or look something up on the web. If something genuinely needs the workspace, say so and suggest they ask you directly.`;
 
+/**
+ * How closely the live status message follows a run, by name. The question a
+ * person actually has is "how much of this do I want to watch", not "how many
+ * seconds between edits", so the setting is named levels and the seconds are an
+ * implementation detail of each.
+ *
+ * `normal` is a minute because this is a phone, not a terminal: the status is
+ * there to say the run is alive and roughly where it is, and a message that
+ * rewrites itself every five seconds buys nothing for that and costs a
+ * notification-shaped flicker, a revision of Signal's ten-per-message budget,
+ * and (on WhatsApp) traffic on an unofficial client. `live` is the old
+ * five-second behaviour, kept for when you ARE watching.
+ *
+ * `quiet` is not "slow" — it is no status message at all, which is how this
+ * surface behaved before the live status existed: the answer, and nothing
+ * until the answer.
+ */
+export const VERBOSITY_MS: Record<string, number> = {
+  quiet: 0,
+  low: 180_000,
+  normal: 60_000,
+  high: 15_000,
+  live: 5_000,
+};
+
+export const VERBOSITY_LEVELS = Object.keys(VERBOSITY_MS);
+
+/** Redraw cadence for a level name, in ms; the instance default for an unset or
+ * unknown one. Zero means no status message (see `quiet`). */
+export function verbosityMs(level: string | undefined): number {
+  return VERBOSITY_MS[level ?? ""] ?? VERBOSITY_MS[config.progress.verbosity];
+}
+
+/** What a level means, in words — the reply to `!verbose` is the only place
+ * anyone finds out what these names buy. */
+export function describeVerbosity(level: string): string {
+  const ms = verbosityMs(level);
+  if (ms <= 0) return "no status message";
+  return ms < 60_000
+    ? `updates every ${Math.round(ms / 1000)}s`
+    : `updates every ${Math.round(ms / 60_000)}m`;
+}
+
 export const config = {
   home,
   // Persistent (PVC) state: session map + Baileys auth keys.
@@ -167,23 +224,25 @@ export const config = {
   // and nothing until the answer.
   progress: {
     enabled: (process.env.GW_PROGRESS_ENABLED ?? "true") === "true",
-    // Redraw cadence, and so also the minimum gap between edits. Baileys is an
-    // unofficial WhatsApp client (see the chart README on ban risk), so it
-    // keeps the conservative default; Signal talks to signal-cli over a local
-    // socket and sets its own, faster interval when it registers.
-    editIntervalMs: envInt("GW_PROGRESS_EDIT_SECONDS", 3) * 1000,
-    // Signal's cadence. The clock ticks on its own timer, so this is about how
-    // often a still-running status redraws — five seconds reads as alive
-    // without turning a long run into hundreds of revisions of one message.
-    signalIntervalMs: envInt("GW_PROGRESS_SIGNAL_EDIT_SECONDS", 5) * 1000,
+    // Instance default cadence, as a VERBOSITY_MS level name. `!verbose`
+    // overrides it per chat, and that override is what most people will use —
+    // this is what a chat that has never said anything about it gets.
+    verbosity: envEnum("GW_PROGRESS_VERBOSITY", VERBOSITY_LEVELS, "normal"),
+    // Floors, not cadences: the fastest a surface will redraw whatever the
+    // chosen verbosity asks for. Baileys is an unofficial WhatsApp client (see
+    // the chart README on ban risk), so it keeps the conservative default;
+    // Signal talks to signal-cli over a local socket and sets its own when it
+    // registers. Every level above is at or above both, so these only bite if
+    // someone adds a faster one.
+    minEditIntervalMs: envInt("GW_PROGRESS_MIN_EDIT_SECONDS", 3) * 1000,
+    signalMinIntervalMs: envInt("GW_PROGRESS_SIGNAL_MIN_EDIT_SECONDS", 5) * 1000,
     // Status messages one run may spend. Signal allows ten revisions of a
     // message and no more, so a long run has to continue on a new one or stop
     // reporting; this bounds how many times it may do that before it does
     // stop. Each message runs at twice the cadence of the last (status.ts
-    // gap()), so six of them at the 5s default cover roughly the first
-    // three-quarters of an hour: a minute of second-by-second detail at the
-    // start, coarsening as the run goes, and six messages in the thread rather
-    // than eighty.
+    // gap()), so six of them at the one-minute default reach several hours: a
+    // message a minute for the first nine, coarsening as the run goes, and a
+    // handful of messages in the thread rather than eighty.
     maxMessages: envInt("GW_PROGRESS_MAX_MESSAGES", 6),
   },
   // Reactions on the sender's own message: accepted → working → done/failed.

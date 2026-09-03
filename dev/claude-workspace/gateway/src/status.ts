@@ -1,9 +1,10 @@
-import { config } from "./config.ts";
+import { config, verbosityMs } from "./config.ts";
 import type { StreamEvent } from "./claude.ts";
+import { getChat } from "./state.ts";
 import {
   editMsg,
   canEdit,
-  editIntervalFor,
+  minEditIntervalFor,
   sendOne,
   type EditResult,
   type MsgRef,
@@ -130,6 +131,19 @@ export function renderStatus(s: Snapshot): string {
   return [head, s.action, s.note].filter(Boolean).join("\n");
 }
 
+/**
+ * Redraw cadence for a run in this chat: what its verbosity asks for, never
+ * faster than the surface allows. Zero means no status message at all — a
+ * `quiet` chat, or a surface whose floor is the way it says "not here".
+ *
+ * Read per run rather than held, so `!verbose` takes effect on the next
+ * message instead of the next restart.
+ */
+export function statusIntervalFor(chatKey: string): number {
+  const want = verbosityMs(getChat(chatKey).verbosity);
+  return want <= 0 ? 0 : Math.max(want, minEditIntervalFor(chatKey));
+}
+
 export class Status {
   private ref: MsgRef | undefined;
   private started = 0;
@@ -167,19 +181,28 @@ export class Status {
     private chatKey: string,
     private io: StatusIO = defaultIO,
     /** Overridable so tests can run the throttle at millisecond scale rather
-     * than waiting out the real one. */
-    private intervalMs: number = editIntervalFor(chatKey),
+     * than waiting out the real one. Zero or less is `quiet`: no status
+     * message for this run. */
+    private intervalMs: number = statusIntervalFor(chatKey),
     /** Also test-only: a fake clock lets the tick behaviour be checked in
      * milliseconds instead of the real seconds the display counts in. */
     private now: () => number = Date.now,
   ) {}
 
-  /** Send the initial message and start the clock. No-op if progress is off or
-   * the surface can't edit — a status message that never updates is worse than
-   * none. */
+  /** Send the initial message and start the clock. No-op if progress is off,
+   * the chat asked for none (`!verbose quiet`), or the surface can't edit — a
+   * status message that never updates is worse than none.
+   *
+   * The clock still starts: `finish` reports the run's elapsed time either way,
+   * and on a quiet chat that receipt is simply never sent. */
   async begin(): Promise<void> {
     this.started = this.now();
-    if (!config.progress.enabled || !this.io.supported(this.chatKey)) return;
+    if (
+      !config.progress.enabled ||
+      this.intervalMs <= 0 ||
+      !this.io.supported(this.chatKey)
+    )
+      return;
     this.ref = await this.io.send(this.chatKey, INITIAL);
     this.lastText = INITIAL;
     this.lastEditAt = this.now();
@@ -233,10 +256,10 @@ export class Status {
    * from four minutes ago beside a clock that had stopped.
    *
    * What doubles now is the cadence of each successive MESSAGE. Nine edits at
-   * the base interval cover the first minute step by step, and when that
-   * budget runs out the status rolls onto a fresh message at twice the step.
-   * An hour of run costs a handful of messages instead of eighty, and none of
-   * them is ever more than one cadence stale.
+   * the chat's verbosity cover the start of the run step by step, and when
+   * that budget runs out the status rolls onto a fresh message at twice the
+   * step. A long run costs a handful of messages instead of eighty, and none
+   * of them is ever more than one cadence stale.
    */
   private gap(): number {
     return this.intervalMs * 2 ** this.rolls;

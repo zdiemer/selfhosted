@@ -32,7 +32,12 @@ import {
   recordGroupMessage,
   takeGroupContext,
 } from "./chat.ts";
-import { config, isWithinCwdRoots } from "./config.ts";
+import {
+  config,
+  describeVerbosity,
+  isWithinCwdRoots,
+  VERBOSITY_LEVELS,
+} from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import {
   autoActive,
@@ -938,6 +943,37 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       updateChat(chatKey, { effort: arg });
       return sendTo(chatKey, `✓ effort ${arg}`);
     }
+    case "!verbose":
+    case "!verbosity": {
+      // How much of the run you want to watch. Takes effect on the next
+      // message: the status message of a run already going was paced when it
+      // was sent, and re-pacing it mid-run would spend its edit budget faster
+      // than the message it is written on can afford.
+      const current = chat.verbosity ?? config.progress.verbosity;
+      const usage = `usage: !verbose ${VERBOSITY_LEVELS.join("|")}|default`;
+      if (!arg)
+        return sendTo(
+          chatKey,
+          `verbosity: ${current} — ${describeVerbosity(current)} ` +
+            `(default ${config.progress.verbosity})\n` +
+            usage,
+        );
+      if (arg === "default") {
+        updateChat(chatKey, { verbosity: undefined });
+        return sendTo(
+          chatKey,
+          `✓ verbosity back to default (${config.progress.verbosity} — ` +
+            `${describeVerbosity(config.progress.verbosity)})`,
+        );
+      }
+      if (!VERBOSITY_LEVELS.includes(arg)) return sendTo(chatKey, usage);
+      updateChat(chatKey, { verbosity: arg });
+      return sendTo(
+        chatKey,
+        `✓ verbosity ${arg} — ${describeVerbosity(arg)} ` +
+          `(applies to the next message)`,
+      );
+    }
     case "!resume": {
       const id = arg || latestSessionId(chat.cwd);
       if (!id) return sendTo(chatKey, `no sessions found for ${chat.cwd}`);
@@ -1101,6 +1137,9 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           `cwd: ${chat.cwd}`,
           `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
+          `verbosity: ${chat.verbosity ?? config.progress.verbosity} (${describeVerbosity(
+            chat.verbosity ?? config.progress.verbosity,
+          )})`,
           isGroupChat(chatKey)
             ? `group: tools limited to ${config.groups.allowedTools}`
             : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
@@ -1126,6 +1165,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
           "!auto takes a duration too: !auto 30m, !auto 2h\n" +
+          `!verbose ${VERBOSITY_LEVELS.join("|")} — how often the status ` +
+          "message redraws while a run is going (quiet sends none)\n" +
           "!more shows the rest of a reply that was cut short\n" +
           "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +

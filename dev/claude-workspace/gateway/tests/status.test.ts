@@ -5,9 +5,15 @@ import {
   formatElapsed,
   formatSpend,
   renderStatus,
+  statusIntervalFor,
   toolLabel,
 } from "../src/status.ts";
-import type { EditResult, MsgRef } from "../src/transport.ts";
+import { updateChat } from "../src/state.ts";
+import {
+  registerTransport,
+  type EditResult,
+  type MsgRef,
+} from "../src/transport.ts";
 
 // A transport that records instead of sending. The throttle runs at
 // millisecond scale here so the tests exercise the real timer rather than a
@@ -280,6 +286,46 @@ test("a failed run says so", async () => {
   await h.status.begin();
   await h.status.finish(false);
   expect(h.edits[h.edits.length - 1]).toMatch(/^⚠ failed · 0 tools · \d+s$/);
+});
+
+test("verbosity sets the cadence, and the surface floor is a floor", () => {
+  // A surface that redraws slowly whatever anyone asks for — WhatsApp, in
+  // production — and one that would allow anything.
+  const surface = { chunkLimit: 100, async send() {}, async edit() {} };
+  registerTransport("slowsurface", { ...surface, minEditIntervalMs: 30_000 });
+  registerTransport("fastsurface", { ...surface, minEditIntervalMs: 1_000 });
+
+  // Unset means the chart default, which is a minute.
+  expect(statusIntervalFor("fastsurface:default")).toBe(60_000);
+
+  updateChat("fastsurface:1", { verbosity: "high" });
+  expect(statusIntervalFor("fastsurface:1")).toBe(15_000);
+
+  // The chat asked for 5s; this surface will not go below 30s.
+  updateChat("slowsurface:1", { verbosity: "live" });
+  expect(statusIntervalFor("slowsurface:1")).toBe(30_000);
+
+  // quiet is not "slow" — it is no status message, floor or no floor.
+  updateChat("fastsurface:2", { verbosity: "quiet" });
+  expect(statusIntervalFor("fastsurface:2")).toBe(0);
+
+  // A level that no longer exists falls back to the default rather than
+  // leaving a chat with a zero interval it never asked for.
+  updateChat("fastsurface:3", { verbosity: "chatty" });
+  expect(statusIntervalFor("fastsurface:3")).toBe(60_000);
+});
+
+test("a quiet chat gets no status message at all", async () => {
+  // `!verbose quiet` is a zero interval, and the run then behaves exactly as
+  // it did before the live status existed: the answer, and nothing before it.
+  const h = harness();
+  const status = new Status("stdin:test", h.io, 0);
+  await status.begin();
+  status.onEvent(toolEvent("Read", { file_path: "a.ts" }));
+  await settle();
+  await status.finish(true);
+  expect(h.sends).toEqual([]);
+  expect(h.edits).toEqual([]);
 });
 
 test("a surface that cannot edit gets no status message at all", async () => {

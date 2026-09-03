@@ -98,6 +98,15 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v31: the status message's redraw cadence is a per-chat verbosity setting
+  #      (!verbose quiet|low|normal|high|live) rather than a fixed 5s, and the
+  #      default is now a minute. Five seconds spent Signal's whole
+  #      ten-revision budget inside one minute — that is what made a long run
+  #      roll onto message after message — for a line that on a phone only
+  #      needs to say the run is alive. quiet sends no status message at all;
+  #      live is the old behaviour. messaging.progress.editSeconds /
+  #      signalEditSeconds become minEditSeconds / signalMinEditSeconds:
+  #      floors under whatever verbosity asks for, not cadences.
   # v30: adds the journal surface — a read-only web view of the trading
   #      journal checkout on the PVC, on its own duckdns host behind the same
   #      Authelia middleware (journal/, values `journal:`, README "Journal
@@ -152,7 +161,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v30"
+  tag: "v31"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -640,24 +649,36 @@ messaging:
     # It is always a separate message from the reply — the reply is chunked
     # across up to four messages and can't be an edit target.
     enabled: true
-    # Redraw cadence for that message on WhatsApp. Not a cosmetic knob:
-    # WhatsApp is reached through an unofficial client (see "ban risk"), so a
-    # fast tick is not on the table. The last state always lands regardless.
-    editSeconds: 3
-    # Signal's redraw cadence, and a real cadence: steady for as long as one
-    # status message lasts. It used to be a FIRST gap that doubled per edit
-    # (5s, 10s, 20s …) to stretch nine revisions over the whole run, which
-    # bought coverage by going stale — past the first minute the message showed
-    # a tool call from four minutes ago beside a clock that had stopped.
-    signalEditSeconds: 5
+    # How closely that message follows the run, as a named level. Each chat can
+    # override this with `!verbose <level>`; this is what a chat that has never
+    # said gets.
+    #
+    #   quiet  — no status message at all, just the answer
+    #   low    — every 3m
+    #   normal — every 1m (default)
+    #   high   — every 15s
+    #   live   — every 5s, the old behaviour
+    #
+    # A minute because this is a phone: the status is there to say the run is
+    # alive and roughly where it is. Redrawing every five seconds bought
+    # nothing for that and spent Signal's ten-revisions-per-message budget in
+    # under a minute, which is what made long runs roll onto message after
+    # message.
+    verbosity: normal
+    # Floors, not cadences: the fastest each surface will redraw whatever the
+    # verbosity asks for. WhatsApp is reached through an unofficial client (see
+    # "ban risk"), so a fast tick is not on the table there. Every level above
+    # is already slower than both, so these only matter if you add a faster one.
+    minEditSeconds: 3
+    signalMinEditSeconds: 5
     # Status messages one run may spend. Signal caps a message at ten revisions
     # and silently drops the rest, so a run longer than that either continues
     # on a new message or stops reporting — and stopping is what read as hung.
-    # The status now rolls onto a fresh message when its ninth progress edit is
+    # The status rolls onto a fresh message when its ninth progress edit is
     # spent (the tenth retires the old one), and each message runs at twice the
-    # cadence of the last. Six at the 5s default covers about the first
-    # three-quarters of an hour: a minute of step-by-step detail, coarsening as
-    # the run goes, in six messages rather than eighty.
+    # cadence of the last. Six at the one-minute default is several hours of
+    # run: nine minutes of step-by-step detail, coarsening as the run goes, in
+    # six messages rather than eighty.
     maxMessages: 6
   reactions:
     # Emoji on the sender's own message: working → done/failed, with the queued

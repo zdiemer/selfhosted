@@ -414,7 +414,10 @@ context used to destroy the old thread · `!plan [on|off]` per-chat plan mode (`
 researches and proposes, never edits; bare `!plan` turns it on, and it clears
 `!auto`, which is the opposite instruction) ·
 `!model opus|sonnet|haiku|fable|<id>|default` · `!effort
-low|medium|high|xhigh|max|default` · `!bash <cmd>` shell command in the chat's
+low|medium|high|xhigh|max|default` ·
+`!verbose quiet|low|normal|high|live|default` how often the live status message
+redraws while a run is going (see below) ·
+`!bash <cmd>` shell command in the chat's
 cwd, no model in the loop · `!usage [days]` token totals ·
 `!stop` SIGTERM the running claude (and any `!bash`) · `!status` · `!help`.
 
@@ -507,15 +510,22 @@ While a run is going, three things say so, in increasing order of detail:
   ends on. That budget used to be stretched over the whole run by doubling the
   gap after every edit, which bought coverage by going stale — past the first
   minute you were reading a tool call from four minutes ago beside a clock that
-  had stopped. So the gap is now a real **cadence**, steady at
-  `messaging.progress.signalEditSeconds` (5s; WhatsApp keeps
-  `messaging.progress.editSeconds`, 3s) for as long as one message lasts, and
-  when the ninth edit is spent the status **rolls onto a new message**: the old
+  had stopped. So the gap is a real **cadence**, steady for as long as one
+  message lasts, and set by **verbosity**: `!verbose quiet|low|normal|high|live`
+  per chat (no status message at all / 3m / 1m / 15s / 5s), defaulting to
+  `messaging.progress.verbosity` (`normal`). A minute is the default because
+  this is a phone — the status says the run is alive and roughly where it is,
+  and the 5s this used to run at spent Signal's whole budget in under a minute
+  for a line nobody was watching that closely. `live` is that old behaviour if
+  you want it. `messaging.progress.minEditSeconds` (3s) and `signalMinEditSeconds`
+  (5s) are floors under whatever verbosity asks for, not cadences: WhatsApp is
+  an unofficial client and does not get a fast tick regardless.
+  When the ninth edit is spent the status **rolls onto a new message**: the old
   one is retired to `⏺ continued below`, a fresh one starts with a fresh
   ten-revision budget, and the elapsed clock and tool count carry over. Each
   successive message runs at twice the cadence of the last, so
-  `messaging.progress.maxMessages` (6) covers roughly the first three-quarters
-  of an hour — a minute of step-by-step detail, coarsening as the run goes, in
+  `messaging.progress.maxMessages` (6) at the one-minute default is several
+  hours — nine minutes of step-by-step detail, coarsening as the run goes, in
   six messages rather than eighty. WhatsApp targets the original key throughout,
   which is what that surface expects. Groups get no status message — the room
   did not ask to watch, and a group run only has `WebFetch`/`WebSearch` to show.
