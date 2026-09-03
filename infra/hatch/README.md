@@ -123,6 +123,18 @@ Two honest limits:
 
 Scaling uses the `deployments/scale` subresource, never a patch of the parent.
 
+One trap worth knowing, because it fails silently rather than loudly: the
+generated Kubernetes client negotiates a patch `Content-Type` with
+`select_header_content_type([json-patch, merge-patch, strategic-merge, …])`,
+which returns `content_types[0]` — so patches go out as
+`application/json-patch+json`, and `_content_type=` is not an accepted kwarg.
+`json-patch` at least *errors* on a dict body. `merge-patch` would be accepted
+and would **replace** the whole pod-template annotations map, deleting the
+target chart's own `checksum/*` and rolling it for unrelated reasons. `k8s.py`
+therefore keeps a separate `ApiClient` whose default header forces strategic
+merge, since `__call_api` applies `default_headers` last. `app/tests/
+test_patch_content_type.py` pins all three facts.
+
 ## Audit
 
 One JSON line to stdout per mutation, per denial, and per pod-log read — the
@@ -154,10 +166,19 @@ token (write-only — it cannot run a query) and not `infra-grafana-dashboards`'
 `glsa_` **Admin** token (it can rewrite every dashboard and alert rule). Make a
 service account `hatch-readonly`, role **Viewer**.
 
-A Viewer token 403s on `GET /api/datasources`, which is why UIDs are resolved
-from `/api/frontend/settings`. Do not "fix" that 403 by promoting the token.
-Datasources are matched by **exact UID** (`grafanacloud-logs`) — the stack has
-three Loki datasources and the wrong one returns an empty result set silently.
+UIDs are resolved from `/api/frontend/settings`, which the least-privileged
+token can read. Never promote this token to Admin to clear a 403.
+
+Datasources are matched by **exact UID**, because the failure mode is silence.
+Measured on this stack with one LogQL query:
+
+```
+grafanacloud-logs            -> HTTP 200, 4 streams
+grafanacloud-usage-insights  -> HTTP 200, 0 streams
+```
+
+Three Loki datasources exist, and two Prometheus. The wrong pick is not an
+error — it is an empty answer with a success code.
 
 ## Operating
 

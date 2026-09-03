@@ -45,7 +45,9 @@ secrets:
   #   3. Name it `hatch-readonly`, role **Viewer**
   #   4. Add service account token -> copy the glsa_... (shown once)
   #
-  # A Viewer token 403s on GET /api/datasources. That is expected: hatch
-  # resolves datasource UIDs from /api/frontend/settings instead. Do not
-  # "fix" the 403 by promoting this to Admin.
+  # hatch resolves datasource UIDs from /api/frontend/settings, which the
+  # least-privileged token can read. If a Grafana endpoint ever 403s, do NOT
+  # "fix" it by promoting this token to Admin — the Admin token in
+  # infra-grafana-dashboards can rewrite every dashboard and alert rule, which
+  # is exactly what this separate credential exists to avoid.
   grafanaToken: "REPLACE_ME"

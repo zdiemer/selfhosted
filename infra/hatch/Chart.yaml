@@ -4,6 +4,6 @@ description: "Read-mostly REST/JSON cluster API for an external AI agent on the 
 type: application
 version: 0.1.0
 # appVersion tracks the image tag in values.yaml (image.tag).
-appVersion: "v1"
+appVersion: "v2"
 maintainers:
   - name: zachd

@@ -6,9 +6,13 @@ Two things here are the product of a documented mistake elsewhere in this repo:
   The Cloud stack has three Loki datasources; two of them answer queries
   happily while containing none of this cluster's logs, so the wrong pick is a
   silent empty result rather than an error.
-* UIDs are resolved from /api/frontend/settings, not /api/datasources. A Viewer
-  token 403s on the latter — infra/grafana-dashboards/upgrade.sh documents this
-  and exits on it. Do not "fix" that 403 by promoting the token to Admin.
+* UIDs are resolved from /api/frontend/settings first, because every signed-in
+  principal can read it, and /api/datasources only as a fallback.
+  infra/grafana-dashboards/upgrade.sh warns that a Viewer 403s on the latter;
+  measured here it does not, so the ordering is about the least-privileged
+  token that could be issued rather than about this one. Never clear a 403 from
+  Grafana by promoting this token — the Admin token it would become can rewrite
+  every dashboard and alert rule in the stack.
 """
 
 from __future__ import annotations

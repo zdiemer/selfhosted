@@ -12,7 +12,7 @@ replicaCount: 2
 
 image:
   repository: ghcr.io/zdiemer/hatch
-  tag: "v1"
+  tag: "v2"
   # IfNotPresent, unlike carson, and the reason is specific to this chart.
   # hatch is the thing you want running when something else is broken, so a
   # node reboot during an outage must not leave it unable to pull. That only
@@ -146,22 +146,27 @@ clusterStatus:
 # dashboard and alert rule in the stack). See values.local.yaml.example.
 # ---------------------------------------------------------------------------
 grafana:
-  enabled: false
+  enabled: true
   url: "https://maroonmulberry1632.grafana.net"
 
-  # Matched by exact UID, never "the first datasource of type loki" — the Cloud
-  # stack has three Loki datasources and two of them accept queries happily
-  # while containing none of this cluster's logs. A silent empty result set is
-  # the failure mode, which is why this is pinned rather than discovered.
+  # Matched by exact UID, never "the first datasource of type loki". Measured
+  # on this stack: three Loki datasources exist, and the same query returns
+  #     grafanacloud-logs            -> HTTP 200, 4 streams
+  #     grafanacloud-usage-insights  -> HTTP 200, 0 streams
+  # Same status code, silently different answer. That is why these are pinned
+  # rather than discovered by type. Two Prometheus datasources, likewise.
   datasourceUids:
     prometheus: grafanacloud-prom
     loki: grafanacloud-logs
 
-  # Verified once at startup. A Viewer token 403s on GET /api/datasources (see
-  # infra/grafana-dashboards/upgrade.sh), so the primary source is
-  # /api/frontend/settings, which any signed-in principal can read. A missing
-  # UID degrades the query routes to 503 listing what the stack actually has;
-  # it does not fail the pod, because losing history should not lose /v1/pods.
+  # Verified once at startup, from /api/frontend/settings — readable by any
+  # signed-in principal, so it works for the least-privileged token that could
+  # ever be issued here. (infra/grafana-dashboards/upgrade.sh warns that a
+  # Viewer 403s on /api/datasources; measured against this stack the
+  # hatch-readonly Viewer token reads it fine, so that is a fallback rather
+  # than a workaround.) A missing UID degrades the query routes to 503 listing
+  # what the stack actually has; it does not fail the pod, because losing
+  # history should not also lose /v1/pods.
   verifyDatasources: true
 
   # auto  — try the datasource proxy first (it returns native Prometheus/Loki
@@ -184,7 +189,7 @@ actions:
   # false => the act ClusterRole and its bindings are NOT RENDERED. Turning
   # actions off removes the authority, not just the code path, so a bug in the
   # guard cannot become a mutation. `kubectl auth can-i` gives the true answer.
-  enabled: false
+  enabled: true
 
   restart: { enabled: true }
   deletePod: { enabled: true }

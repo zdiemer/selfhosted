@@ -26,10 +26,15 @@ logger = logging.getLogger(__name__)
 
 _core: client.CoreV1Api | None = None
 _apps: client.AppsV1Api | None = None
+_apps_patch: client.AppsV1Api | None = None
+
+# Every patch this service sends is a strategic merge, and getting that wrong is
+# silent rather than loud — see rollout_restart().
+_STRATEGIC_MERGE = "application/strategic-merge-patch+json"
 
 
 def init() -> None:
-    global _core, _apps
+    global _core, _apps, _apps_patch
     try:
         config.load_incluster_config()
     except config.ConfigException:
@@ -37,6 +42,23 @@ def init() -> None:
         config.load_kube_config()
     _core = client.CoreV1Api()
     _apps = client.AppsV1Api()
+
+    # A SEPARATE client for patches, and the reason is a trap in the generated
+    # code. Its patch methods negotiate the content type with
+    # select_header_content_type([json-patch, merge-patch, strategic-merge,
+    # apply-patch]), which returns content_types[0] whenever "application/json"
+    # is not in the list — so every patch goes out as
+    # application/json-patch+json, which expects a LIST of RFC-6902 ops, not the
+    # dict body below. There is no per-call override: `_content_type` is not in
+    # the method's all_params and is rejected outright.
+    #
+    # ApiClient.__call_api does `header_params.update(self.default_headers)`
+    # AFTER the negotiated value is set, so a default header is the one thing
+    # that reliably wins. It is scoped to its own client rather than the shared
+    # one so it cannot leak onto an unrelated request.
+    patch_client = client.ApiClient()
+    patch_client.set_default_header("Content-Type", _STRATEGIC_MERGE)
+    _apps_patch = client.AppsV1Api(patch_client)
 
 
 def core() -> client.CoreV1Api:
@@ -49,6 +71,13 @@ def apps() -> client.AppsV1Api:
     if _apps is None:
         raise RuntimeError("kubernetes client not initialised")
     return _apps
+
+
+def apps_patch() -> client.AppsV1Api:
+    """The AppsV1Api whose patches go out as strategic merge. See init()."""
+    if _apps_patch is None:
+        raise RuntimeError("kubernetes client not initialised")
+    return _apps_patch
 
 
 # --------------------------------------------------------------------------
@@ -366,8 +395,6 @@ def pod_logs(
 # mutations
 # --------------------------------------------------------------------------
 
-_PATCH_CT = "application/strategic-merge-patch+json"
-
 _PATCHERS = {
     "deployment": "patch_namespaced_deployment",
     "statefulset": "patch_namespaced_stateful_set",
@@ -380,10 +407,12 @@ def rollout_restart(kind: str, namespace: str, name: str) -> dict[str, Any]:
 
     Three details, each a silent bug if missed:
 
-    1. The content type is STRATEGIC merge, passed explicitly. A plain
-       application/merge-patch+json would REPLACE the whole annotations map,
-       deleting the target chart's checksum/secret and friends and triggering
-       an unrelated rollout.
+    1. The content type must be STRATEGIC merge, which is why this goes through
+       apps_patch() rather than apps() — see init(). The client's default of
+       application/json-patch+json rejects this dict body outright, and a plain
+       application/merge-patch+json would silently REPLACE the whole annotations
+       map, deleting the target chart's checksum/secret and friends and
+       triggering an unrelated rollout.
     2. The value has to change. Writing the same restartedAt is a no-op that
        still returns 200, so compare metadata.generation before and after and
        report changed=false rather than a restart that did not happen.
@@ -416,9 +445,7 @@ def rollout_restart(kind: str, namespace: str, name: str) -> dict[str, Any]:
     body = {"spec": {"template": {"metadata": {"annotations": {
         "kubectl.kubernetes.io/restartedAt": stamp,
     }}}}}
-    after = getattr(apps(), _PATCHERS[k])(
-        name, namespace, body, _content_type=_PATCH_CT,
-    )
+    after = getattr(apps_patch(), _PATCHERS[k])(name, namespace, body)
     return {
         "kind": k,
         "namespace": namespace,
@@ -531,9 +558,7 @@ def scale(kind: str, namespace: str, name: str, replicas: int) -> dict[str, Any]
     read_fn, patch_fn = _SCALE_READERS[k]
     current = getattr(apps(), read_fn)(name, namespace)
     before = current.spec.replicas
-    getattr(apps(), patch_fn)(
-        name, namespace, {"spec": {"replicas": replicas}}, _content_type=_PATCH_CT,
-    )
+    getattr(apps_patch(), patch_fn)(name, namespace, {"spec": {"replicas": replicas}})
     return {"kind": k, "namespace": namespace, "name": name,
             "from": before, "to": replicas}
 
