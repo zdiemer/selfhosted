@@ -1,0 +1,29 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Ingress from Traefik only, on the app port. Off by default: a wrong netpol
+fails in a way that looks exactly like an application bug, so turn it on once
+the service is known good.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hatch.fullname" . }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hatch.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+{{- end }}

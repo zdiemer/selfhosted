@@ -1,0 +1,315 @@
+# hatch — a read-mostly REST/JSON API for an external AI agent on the tailnet.
+#
+# The agent ("hatch") holds no kubeconfig, no SSH key and no 1Password session.
+# It holds one bearer token and talks to this. That is the whole point: the
+# grant is a reviewable list of HTTP endpoints instead of an RBAC role, and the
+# two things that can actually hurt — whose logs it may read, and what it may
+# restart — are deny-lists in this file rather than judgement calls in an agent.
+#
+# Two replicas, no volume, no state that outlives a pod.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/zdiemer/hatch
+  tag: "v1"
+  # IfNotPresent, unlike carson, and the reason is specific to this chart.
+  # hatch is the thing you want running when something else is broken, so a
+  # node reboot during an outage must not leave it unable to pull. That only
+  # holds if a cached layer can be trusted, which requires tags to be
+  # immutable — build.sh refuses to push over a tag that already exists.
+  pullPolicy: IfNotPresent
+
+# The GHCR package is public, so no pull secret is needed. Kept for the same
+# shape as every other chart here, in case it is ever made private.
+imageCredentials:
+  registry: ghcr.io
+  username: zdiemer
+  pat: ""
+imagePullSecrets: []
+
+service:
+  port: 8080
+
+# ---------------------------------------------------------------------------
+# Ingress — ONE Ingress. Nothing here needs a different middleware chain per
+# path, so the carson two-Ingress split would be duplication.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: traefik
+  host: hatch.zachd.duckdns.org
+
+  # MUST STAY EMPTY. This would put a cluster-mutation API on the public
+  # internet behind one bearer token. It would also move the caller out of
+  # CrowdSec's clientTrustedIPs (100.64.0.0/10), so the agent's own polling
+  # could get it banned by the bouncer.
+  cloudflareHosts: []
+
+  tls:
+    enabled: true
+
+  # NO tailnet ipAllowList middleware, and this is a measured decision rather
+  # than an omission.
+  #
+  # Traefik's Service is externalTrafficPolicy: Cluster behind klipper-lb, so a
+  # request arriving over the tailnet is SNAT'd through the svclb pod before
+  # Traefik sees it. Measured against status.zachd.duckdns.org, Traefik logged
+  # ClientHost 10.42.7.199 — zachd-ubuntu-1's pod CIDR, the node DuckDNS points
+  # at. Traefik never observes a 100.64.0.0/10 source, so
+  # `ipAllowList: {sourceRange: [100.64.0.0/10]}` would 403 every real request.
+  #
+  # Tailnet-only is therefore enforced where it already is for every other host
+  # in this cluster: at DNS. infra/duckdns runs updater.mode: tailnet, so
+  # *.zachd.duckdns.org resolves to a CGNAT address that is unroutable off the
+  # tailnet. The bearer token below is what distinguishes hatch from anything
+  # else already on it.
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+auth:
+  # Both header forms, same as infra/sms-relay. Compared with
+  # hmac.compare_digest against EVERY configured key, so a wrong key costs the
+  # same time as a right one and the comparison leaks nothing.
+  #
+  # NEVER accept a key as a query parameter. Traefik's JSON access log field
+  # RequestPath includes the query string, and those logs ship to Grafana
+  # Cloud — a key in a URL is a key in someone else's log store.
+  acceptXApiKey: true
+
+# ---------------------------------------------------------------------------
+# Pod logs — a DENY-list. Everything not named here is readable.
+# ---------------------------------------------------------------------------
+logs:
+  enabled: true
+
+  # infra/cluster-status refuses pods/log for itself on the grounds that log
+  # text is "unbounded application output, a different class of disclosure from
+  # object metadata". That reasoning still holds; hatch takes the grant because
+  # diagnosis is the job, and pays for it with this list.
+  denyNamespaces:
+    - auth      # Authelia — session material, usernames, OIDC exchanges
+    - finance   # money — personal figures
+
+  maxTailLines: 2000
+  defaultTailLines: 200
+  maxBytes: 262144
+
+  # Applied to every line BEFORE it leaves the pod, and it matters more than
+  # the namespace list above: everything hatch returns ends up in an LLM
+  # provider's context. The namespace list covers the two obvious offenders;
+  # this covers the ones nobody thinks of, like a stack trace that prints a
+  # connection URL.
+  redact:
+    enabled: true
+    patterns:
+      - '(?i)\b(bearer|token|api[-_]?key|password|passwd|secret)\b\s*[:=]\s*\S+'
+      # `Authorization: Bearer <opaque>` — the header form, where the separator
+      # follows "Authorization" rather than the keyword, so the pattern above
+      # misses it. This is the shape of hatch's OWN key, so an app that logs an
+      # inbound header would otherwise hand it straight back.
+      - '(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}'
+      - '(?i)\bgl[sc]a?_[A-Za-z0-9]{20,}'
+      - '(?i)\bgh[pousr]_[A-Za-z0-9]{20,}'
+      - '[A-Za-z][A-Za-z0-9+.-]*://[^:/\s]+:[^@/\s]+@'   # user:pass@host in any URL
+      - 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+
+# ---------------------------------------------------------------------------
+# cluster-status passthrough
+#
+# infra/cluster-status already collects nodes (CPU/RAM/disk/network via
+# nodes/proxy + nodes/stats), problem pods, workloads, events, ingresses,
+# storage and jobs, every 15s. hatch proxies that instead of collecting it
+# again — which is also why hatch's own RBAC does not need nodes/proxy, the one
+# grant cluster-status warns nothing else should borrow.
+# ---------------------------------------------------------------------------
+clusterStatus:
+  enabled: true
+  url: "http://cluster-status.infra.svc.cluster.local:80/status.json"
+  # >= the collector's own interval. Below that, hatch's two replicas poll two
+  # different collectors (that Service is sessionAffinity: ClientIP) and answer
+  # with different generatedAt values for no benefit.
+  cacheSeconds: 15
+  timeoutSeconds: 5
+  # status.json is ~165KB, which is ~45k tokens — one unprojected call would
+  # eat the agent's whole context. /v1/cluster/status returns these sections
+  # unless asked otherwise; `?section=all` is an explicit opt-in.
+  defaultSections: [nodes, problemPods, deployments, statefulSets, daemonSets, recentEvents]
+
+# ---------------------------------------------------------------------------
+# Grafana Cloud — history and alert state.
+#
+# This needs a THIRD token, a new one. Not infra/alloy's glc_ access-policy
+# token (logs:write + metrics:write — it cannot run a query), and not
+# infra/grafana-dashboards' glsa_ Admin token (which can rewrite every
+# dashboard and alert rule in the stack). See values.local.yaml.example.
+# ---------------------------------------------------------------------------
+grafana:
+  enabled: false
+  url: "https://maroonmulberry1632.grafana.net"
+
+  # Matched by exact UID, never "the first datasource of type loki" — the Cloud
+  # stack has three Loki datasources and two of them accept queries happily
+  # while containing none of this cluster's logs. A silent empty result set is
+  # the failure mode, which is why this is pinned rather than discovered.
+  datasourceUids:
+    prometheus: grafanacloud-prom
+    loki: grafanacloud-logs
+
+  # Verified once at startup. A Viewer token 403s on GET /api/datasources (see
+  # infra/grafana-dashboards/upgrade.sh), so the primary source is
+  # /api/frontend/settings, which any signed-in principal can read. A missing
+  # UID degrades the query routes to 503 listing what the stack actually has;
+  # it does not fail the pod, because losing history should not lose /v1/pods.
+  verifyDatasources: true
+
+  # auto  — try the datasource proxy first (it returns native Prometheus/Loki
+  #         JSON, which an agent already knows how to read), fall back to
+  #         /api/ds/query on 401/403. `proxy` and `ds-query` force one.
+  queryMode: auto
+
+  timeoutSeconds: 20
+  # Bounds so a badly-formed agent query cannot blow the free-tier budget.
+  maxRangePoints: 200
+  maxLookbackHours: 168
+  logs:
+    defaultLimit: 200
+    maxLimit: 1000
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+actions:
+  # false => the act ClusterRole and its bindings are NOT RENDERED. Turning
+  # actions off removes the authority, not just the code path, so a bug in the
+  # guard cannot become a mutation. `kubectl auth can-i` gives the true answer.
+  enabled: false
+
+  restart: { enabled: true }
+  deletePod: { enabled: true }
+  scale:
+    enabled: true
+    min: 0
+    max: 10
+
+  # DENY-LIST, matched before any API call is made. Entry forms:
+  #     name                    any kind, any namespace
+  #     namespace/name          both must match
+  #     Kind:namespace/name     all three (kind compared case-insensitively)
+  # fnmatch globs (* ?) are supported.
+  #
+  # These are the workloads where a restart either severs hatch's own access or
+  # breaks the cluster while hatch is trying to fix it. Traefik is the sharpest
+  # case: restarting it kills the request mid-flight, so hatch sees a connection
+  # reset it cannot distinguish from a crash, and may well try again.
+  #
+  # The chart always appends this release's own name and namespace, so hatch
+  # cannot be talked into restarting itself.
+  denyWorkloads:
+    - traefik
+    - authelia
+    - coredns
+    - alloy
+    - "democratic-csi*"
+    - "buildkit*"
+    - cluster-status
+    - claude-workspace
+
+  # Stronger than the name list and worth having alongside it: traefik and
+  # coredns both live in kube-system, and a namespace deny survives a rename.
+  denyNamespaces:
+    - kube-system
+    - auth
+
+  # PRESENT BUT OFF — you did not ask for these. Neither is enforced today;
+  # both are here so that turning one on is a values edit, not a code change.
+  cooldown:
+    # Refuse a repeat restart of the same workload within `seconds`, read from
+    # the target's own kubectl.kubernetes.io/restartedAt annotation — so it is
+    # stateless and survives hatch's own pod restarts, unlike a counter.
+    #
+    # Worth saying once, plainly: with this off there is nothing stopping a
+    # confused agent from restart-looping a workload, and the first you would
+    # hear of it is /v1/audit or Loki.
+    enabled: false
+    seconds: 300
+  notify:
+    # A push per action. Needs a credential in values.local.yaml first.
+    enabled: false
+    url: "http://ntfy.infra.svc.cluster.local/hatch"
+    events: ["action", "denied"]
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+audit:
+  # One structured JSON line to stdout per mutation, per denial, and per pod-log
+  # read — the log read is the sensitive read, so it belongs in the same trail.
+  # infra/alloy ships it because the pod carries logging.zachd/external-ingress,
+  # so the durable record is free and off-box. That stream IS the audit record.
+  ringSize: 500
+  # memory — this replica's ring buffer only. Honest but incomplete: with two
+  #          replicas, two consecutive /v1/audit calls can return two different
+  #          halves of the history, and a pod restart loses its half.
+  # loki   — LogQL over the shipped lines, merged with the local ring and
+  #          deduped on auditId so a just-performed action is never missing
+  #          while Loki catches up. Requires grafana.enabled.
+  source: memory
+
+# ---------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------
+rbac:
+  create: true
+  act:
+    # cluster    — one ClusterRoleBinding: hatch may mutate anywhere the
+    #              deny-list does not stop it, i.e. the guard in this pod is the
+    #              only thing between a bug and kube-system.
+    # namespaced — RoleBindings in allowNamespaces only, so the API SERVER
+    #              enforces where a mutation can land and the deny-list becomes
+    #              a second layer rather than the only one.
+    #
+    # namespaced is the default because RBAC has no field-level scope: `patch`
+    # on a Deployment is also patch on its image, its env and its
+    # serviceAccountName. Narrowing WHERE is the only narrowing available.
+    mode: namespaced
+    allowNamespaces: [media, docs, games, discord, life, minecraft, web, ai]
+
+networkPolicy:
+  # Ingress from Traefik only. Off by default because it is easy to get wrong
+  # in a way that looks like an application bug; turn it on after the service
+  # is known good.
+  enabled: false
+
+resources:
+  requests:
+    # The kubernetes client's model classes, plus a cluster-wide pod list.
+    cpu: 25m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    # 512Mi rather than carson's 256Mi: `import kubernetes.client` alone is
+    # ~40MB RSS, and a full pod list across ~150 pods is not free.
+    memory: 512Mi
+
+probes:
+  # Deliberately shallow — /healthz touches nothing external, so a slow API
+  # server cannot make the kubelet kill the pod that is meant to tell you the
+  # API server is slow. The deep check is GET /v1/ready.
+  readiness: { path: /healthz, initialDelaySeconds: 3, periodSeconds: 10 }
+  liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 30 }
+
+# Multi-replica tier per the root README: 5s preStop, grace strictly greater.
+lifecycle:
+  preStopSleepSeconds: 5
+terminationGracePeriodSeconds: 30
+
+extraEnv: {}
+
+secrets:
+  # Both come from values.local.yaml, never from here. If apiKeys is empty the
+  # app exits non-zero at startup rather than serving an unauthenticated
+  # cluster API — see values.local.yaml.example.
+  apiKeys: ""
+  grafanaToken: ""

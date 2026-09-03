@@ -1,0 +1,51 @@
+# Copy of what lives at op://homelab/infra-hatch/values.local.yaml.
+# This file is an EXAMPLE — the real values are resolved into memory by
+# upgrade.sh via scripts/lib/secret-values.sh. Never commit real values here.
+#
+# Create the vault item with:  ./scripts/secrets.sh new infra/hatch
+
+secrets:
+  # ---------------------------------------------------------------------
+  # 1. REQUIRED. Caller name -> {key, scopes}.
+  #
+  # One key per caller, so a leak is revocable without touching the others.
+  # Generate with:   openssl rand -hex 32
+  #
+  # Scopes are "read" and "act". Omitting `scopes` means both, which is the
+  # single-token setup; to split later, add a second entry with
+  # "scopes":["read"] and hand the agent that one instead — no chart change.
+  #
+  # NEVER send this as a query parameter. Traefik's JSON access log records
+  # RequestPath including the query string, and those logs ship to Grafana
+  # Cloud, so a key in a URL is a key in someone else's log store. Use
+  # `Authorization: Bearer <key>` or `X-API-Key`.
+  #
+  # If this is empty or unparseable the pod exits at startup rather than
+  # serving an unauthenticated cluster API, so a mistake here is a CrashLoop.
+  apiKeys: '{"hatch":{"key":"REPLACE_ME","scopes":["read","act"]}}'
+
+  # ---------------------------------------------------------------------
+  # 2. Grafana Cloud, for history: PromQL, LogQL and alert state.
+  # Leave empty and keep grafana.enabled=false to skip — everything else works
+  # without it, and the query routes 503 with a message saying why.
+  #
+  # THIS IS A THIRD, NEW TOKEN. Specifically it is NOT either of the two that
+  # already exist:
+  #   * op://homelab/infra-alloy         glc_ access policy, logs:write +
+  #                                      metrics:write. It CANNOT run a query.
+  #   * op://homelab/infra-grafana-dashboards
+  #                                      glsa_ service account, role ADMIN. It
+  #                                      can rewrite every dashboard and alert
+  #                                      rule in the stack. Do not put it in
+  #                                      the cluster behind an HTTP endpoint.
+  #
+  # Make this one:
+  #   1. https://maroonmulberry1632.grafana.net
+  #   2. Administration -> Users and access -> Service accounts -> Add
+  #   3. Name it `hatch-readonly`, role **Viewer**
+  #   4. Add service account token -> copy the glsa_... (shown once)
+  #
+  # A Viewer token 403s on GET /api/datasources. That is expected: hatch
+  # resolves datasource UIDs from /api/frontend/settings instead. Do not
+  # "fix" the 403 by promoting this to Admin.
+  grafanaToken: "REPLACE_ME"

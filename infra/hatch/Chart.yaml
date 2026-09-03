@@ -1,0 +1,9 @@
+apiVersion: v2
+name: hatch
+description: "Read-mostly REST/JSON cluster API for an external AI agent on the tailnet — health, logs, Grafana Cloud queries, and a deny-listed set of remediations"
+type: application
+version: 0.1.0
+# appVersion tracks the image tag in values.yaml (image.tag).
+appVersion: "v1"
+maintainers:
+  - name: zachd

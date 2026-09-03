@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hatch.fullname" . }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hatch.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll when the API keys or the Grafana token change. Without this a
+        # rotated key sits in the Secret while the pods keep accepting the old
+        # one until something unrelated restarts them.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "hatch.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy (tier 2). For hatch this is not
+        # debug output — the audit trail IS this log stream, so losing it would
+        # mean losing the record of every action and every denial.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "hatch.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Not stylistic. The Service is named `hatch`, so Kubernetes would inject
+      # HATCH_PORT=tcp://10.43.x.y:8080 into every container and shadow the
+      # config var of the same name. carson hit exactly this.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Strictly greater than the preStop sleep below, or the kubelet
+      # hard-kills during the sleep and the hook accomplishes nothing.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if gt (int .Values.replicaCount) 1 }}
+      # DoNotSchedule rather than a preferred podAntiAffinity: a monitoring API
+      # that goes down with one node is not much of a monitoring API, and a
+      # hint the scheduler may ignore makes "currently spread" an accident of
+      # scheduling order. matchLabelKeys confines the skew calculation to one
+      # pod-template-hash so a rollout spreads against its own ReplicaSet
+      # rather than the outgoing one, which would otherwise stall it.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "hatch.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      volumes:
+        # readOnlyRootFilesystem, so the one writable path is explicit.
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: hatch
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            {{- include "hatch.env" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while uvicorn is shutting down. Native sleep action — the root
+          # filesystem is read-only and there is no shell in the image.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.lifecycle.preStopSleepSeconds }}
+          # Both probes hit /healthz, which touches NOTHING external. A deep
+          # check here would let a slow API server kill the pod whose job is to
+          # tell you the API server is slow. GET /v1/ready is the deep one.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
