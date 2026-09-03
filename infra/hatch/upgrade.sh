@@ -33,19 +33,50 @@ kubectl -n "$NAMESPACE" rollout status deploy/"$RELEASE" --timeout=180s
 
 # Assert the negative space. The whole design rests on hatch NOT holding these,
 # and a rendering mistake in rbac.yaml would be silent otherwise.
+#
+# Subresources go through SubjectAccessReview, NOT `kubectl auth can-i`. can-i
+# parses `nodes/proxy` as resource=nodes NAME=proxy, so it answers "yes" for
+# anyone who can get any node — which is every read this chart needs. Using it
+# here would fail every deploy on a permission hatch does not actually hold.
 echo "==> RBAC check"
 SA="system:serviceaccount:${NAMESPACE}:${RELEASE}"
 rbac_fail=0
-for probe in "get secrets" "create pods/exec" "get nodes/proxy" "create pods"; do
-  # shellcheck disable=SC2086  # deliberate word splitting: verb + resource
-  if kubectl auth can-i $probe --all-namespaces --as="$SA" >/dev/null 2>&1; then
-    echo "    FAIL: ${RELEASE} can '${probe}' — it must not"
+
+# verb|resource|subresource|expected
+while IFS='|' read -r verb res sub expect; do
+  [[ -n "$verb" ]] || continue
+  allowed=$(kubectl create -o jsonpath='{.status.allowed}' -f - <<YAML 2>/dev/null
+apiVersion: authorization.k8s.io/v1
+kind: SubjectAccessReview
+spec:
+  user: ${SA}
+  resourceAttributes:
+    verb: ${verb}
+    resource: ${res}
+    subresource: "${sub}"
+YAML
+)
+  label="${verb} ${res}${sub:+/$sub}"
+  if [[ "$allowed" != "$expect" ]]; then
+    echo "    FAIL: ${label} -> allowed=${allowed:-unknown}, expected ${expect}"
     rbac_fail=1
   else
-    echo "    ok: cannot ${probe}"
+    echo "    ok: ${label} allowed=${allowed}"
   fi
-done
-[[ $rbac_fail -eq 0 ]] || { echo "FAIL: RBAC is wider than intended"; exit 1; }
+done <<'PROBES'
+get|secrets||false
+get|configmaps||false
+create|pods|exec|false
+create|pods|portforward|false
+get|nodes|proxy|false
+get|nodes|stats|false
+create|pods||false
+get|pods|log|true
+list|pods||true
+list|nodes||true
+PROBES
+
+[[ $rbac_fail -eq 0 ]] || { echo "FAIL: RBAC is not what the chart intends"; exit 1; }
 
 ACTIONS="$(helm get values "$RELEASE" -n "$NAMESPACE" --all -o json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["actions"]["enabled"])' 2>/dev/null || echo unknown)"
