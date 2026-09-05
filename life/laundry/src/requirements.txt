@@ -6,4 +6,4 @@
 # any charting library — the dashboard's trace is an inline SVG polyline drawn
 # from the JSON, which is a dozen lines and no supply chain.
 fastapi==0.141.1
-uvicorn==0.52.1
+uvicorn==0.52.4
