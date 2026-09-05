@@ -249,9 +249,22 @@ alloy:
 
         // Slower than the 60s used elsewhere. These probes leave the house and
         // land on Cloudflare's edge and a $6 VPS; there is no value in asking
-        // sixteen times a minute what changes on the order of minutes, and a
-        // 2-minute interval halves both the series churn and the noise floor.
-        scrape_interval = "120s"
+        // sixteen times a minute what changes on the order of minutes.
+        //
+        // Widened from 120s to 240s. These probes hairpin out to Cloudflare and
+        // back rather than hitting Traefik in-cluster, so every one of them is a
+        // billed request on the diemer.codes / talaria.deals / rachelfreeman.art
+        // / kelsey.green zones. At 120s across fifteen targets they were ~45% of
+        // all Cloudflare traffic to diemer.codes — more than every human visitor
+        // and every bot combined.
+        //
+        // 240s and NOT 300s, deliberately. Prometheus' lookback delta is 5m, so
+        // at a 300s interval every sample is already 5m old when the next one
+        // lands and normal scrape jitter tips instant queries into no-data. The
+        // "Public hostname unreachable" alert in infra/grafana-dashboards has
+        // noDataState=NoData, so that would page on all fifteen targets for no
+        // reason. 240s keeps a full minute of margin inside the window.
+        scrape_interval = "240s"
         scrape_timeout  = "30s"
       }
 
