@@ -35,7 +35,7 @@ SESSION_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 # that the image feeds to a QEMU command line, so "reject anything unrecognised"
 # is the only safe posture; escaping would be a losing game.
 BOOT_MODES = {"uefi", "legacy", "secure", "windows", "windows_legacy", "windows_secure"}
-DISK_TYPES = {"ide", "sata", "usb", "nvme", "blk", "scsi", "virtio-blk", "virtio-scsi", "auto"}
+DISK_TYPES = {"ide", "sata", "usb", "nvme", "blk", "scsi", "virtio-blk", "virtio-scsi", "auto", "none"}
 ARCHES = {"x86", "arm"}
 # Chipset. The image defaults to q35, which is a 2009 PCIe chipset: correct for
 # anything modern and a non-starter for guests older than it. Windows XP on q35
@@ -194,6 +194,11 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # never runs, because it expects floppy geometry and to be booted as
         # A:. This routes it to -fda instead.
         "floppy": bool(raw.get("floppy", False)),
+        # Whether the guest gets a USB controller at all. Visopsys stalls its
+        # hardware scan on the emulated tablet ("USB touchscreen Error ...
+        # No transfer event received") before failing to identify its boot
+        # device. None means leave the image's default alone.
+        "usb": raw.get("usb"),
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -342,6 +347,8 @@ def build_session_pod(
         # This also detaches the data disk, which is why a floppy guest cannot
         # take save points — there is no qcow2 for savevm to write into.
         env.append({"name": "DISK_TYPE", "value": "none"})
+    if config.get("usb") is False:
+        env.append({"name": "USB", "value": "N"})
     if config.get("machine"):
         # Allow-listed above, so this cannot become arbitrary -machine text.
         env.append({"name": "MACHINE", "value": config["machine"]})
@@ -496,7 +503,13 @@ def build_session_pod(
                     'ls -lh "/boot/boot.$3"\n',
                     "sh",
                     iso_filename(slug, config.get("bootMedia", "iso")),
-                    "yes" if savepoints and config.get("flattenIso", True) else "no",
+                    # Flattening is NOT tied to save points. It started that
+                    # way because savevm was the motivation, but the effect —
+                    # a hybrid ISO attaching as a read-only CD-ROM instead of a
+                    # writable USB disk — is what makes a guest that looks for
+                    # a CD find one at all. MINIX hunted for a boot CD that,
+                    # being hybrid, had never been attached as one.
+                    "yes" if config.get("flattenIso", True) else "no",
                     config.get("bootMedia", "iso"),
                 ],
                 "securityContext": {

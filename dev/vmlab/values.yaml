@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v45"
+  tag: "v48"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -540,7 +540,13 @@ catalog:
     # Plain VGA. The image defaults to virtio-gpu, which Haiku has no driver
     # for: every boot stage completes and it then sits on its splash forever,
     # because app_server has no display it can drive.
-    vga: vga
+    vga: vmware
+    # Best known state, and still not a desktop. Flattened + a plain IDE
+    # CD-ROM gets every boot icon lit — i.e. the kernel finishes — and then it
+    # sits there. Unflattened, SeaBIOS will not boot the anyboot image at all
+    # ("No bootable device") on either q35 or i440fx. virtio, std VGA, Cirrus
+    # and VMware SVGA all hang identically, as do 1 and 2 cores, so the cause
+    # is something other than the display adapter or SMP.
     network: none
 
   - slug: freedos
@@ -601,10 +607,14 @@ catalog:
     cores: 1
     diskGib: 4
     machine: pc
+    # No data disk at all. MINIX assigns c0d0 to the first block device it finds,
+    # and with a disk present that was the disk - so its boot-CD probe looked at
+    # the wrong device and reported "No CD found". Removing the disk makes the CD
+    # c0d0. The cost is that MINIX cannot take save points: savevm needs a qcow2.
+    diskType: none
     mediaType: auto
-    diskType: virtio-blk
-    persist: true
-    savepoints: true
+    # Explicit, since dropping savepoints also drops the BIOS default they imply.
+    bootMode: legacy
     network: none
 
   - slug: visopsys
@@ -632,6 +642,10 @@ catalog:
     # imply — and a floppy under UEFI gets "BdsDxe: No bootable option or
     # device was found".
     bootMode: legacy
+    # No USB. The scan stalls on the emulated tablet ("USB touchscreen Error ...
+    # No transfer event received") immediately before it fails to identify the
+    # boot device.
+    usb: false
     network: none
 
   - slug: aros

@@ -597,3 +597,23 @@ def test_floppy_and_loadvm_compose():
                                  load_snapshot="after_boot")
     env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
     assert env["ARGUMENTS"] == "-fda /boot.img -loadvm after_boot"
+
+
+def test_usb_can_be_disabled():
+    """Visopsys stalls its hardware scan on the emulated USB tablet."""
+    cfg = spec.validate_config({"slug": "x", "usb": False})
+    pod = spec.build_session_pod(config=cfg, session_id="vm-x-1", release="vmlab",
+                                 boot_from_iso=False, ttl_seconds=600)
+    env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+    assert env["USB"] == "N"
+    # unset must leave the image's own default alone rather than forcing it on
+    plain = spec.build_session_pod(config=spec.validate_config({"slug": "x"}),
+                                   session_id="vm-x-1", release="vmlab",
+                                   boot_from_iso=False, ttl_seconds=600)
+    assert "USB" not in {e["name"] for e in plain["spec"]["containers"][0]["env"]}
+
+
+def test_disk_type_none_is_allowed():
+    """The only way to leave a guest with no data disk — which MINIX needs, so
+    that its boot CD becomes c0d0 instead of the disk."""
+    assert spec.validate_config({"slug": "x", "diskType": "none"})["diskType"] == "none"

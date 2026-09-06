@@ -291,25 +291,34 @@ def test_terminal_session_pods_are_reaped():
     assert "deletion_timestamp" in src  # don't re-delete what is already going
 
 
-def test_hybrid_iso_is_flattened_only_for_savepoint_guests():
-    """Zeroing the MBR signature on the PRIVATE copy is what lets a hybrid ISO
-    attach as a read-only CD-ROM, and therefore what lets savevm run with the
-    installer still inserted. Guests without save points keep the ISO verbatim."""
+def test_hybrid_iso_is_flattened_by_default_and_opt_out():
+    """Clearing the MBR signature on the private copy is what makes a hybrid
+    ISO attach as a read-only CD-ROM. It follows `flattenIso`, NOT `savepoints`
+    — it began as a savevm workaround, but a guest looking for a boot CD needs
+    it whether or not it can be snapshotted."""
     from vmlab import spec
 
-    sp = spec.build_session_pod(
+    on = spec.build_session_pod(
         config=spec.validate_config({"slug": "x", "savepoints": True, "persist": True}),
         session_id="vm-x-1", release="vmlab", boot_from_iso=True, ttl_seconds=600,
     )
-    args = sp["spec"]["initContainers"][0]["args"]
+    args = on["spec"]["initContainers"][0]["args"]
     assert "seek=510" in args[0], "expected the MBR signature to be cleared"
-    assert args[-2] == "yes"   # [-1] is now the media type
+    assert args[-2] == "yes"   # [-1] is the media type
 
-    plain = spec.build_session_pod(
-        config=spec.validate_config({"slug": "x"}),
+    # no save points, still flattened
+    nosp = spec.build_session_pod(
+        config=spec.validate_config({"slug": "x", "bootMode": "legacy"}),
         session_id="vm-x-1", release="vmlab", boot_from_iso=True, ttl_seconds=600,
     )
-    assert plain["spec"]["initContainers"][0]["args"][-2] == "no"
+    assert nosp["spec"]["initContainers"][0]["args"][-2] == "yes"
+
+    # explicit opt-out (Bazzite's isomd5sum, Haiku's anyboot MBR)
+    off = spec.build_session_pod(
+        config=spec.validate_config({"slug": "x", "flattenIso": False}),
+        session_id="vm-x-1", release="vmlab", boot_from_iso=True, ttl_seconds=600,
+    )
+    assert off["spec"]["initContainers"][0]["args"][-2] == "no"
 
 
 def test_flatten_never_touches_the_shared_cache():
@@ -409,3 +418,17 @@ def test_flatten_defaults_on_for_savepoint_guests():
         boot_from_iso=True, ttl_seconds=600,
     )
     assert pod["spec"]["initContainers"][0]["args"][-2] == "yes"
+
+
+def test_flatten_is_independent_of_savepoints():
+    """It began as a savevm workaround, but the real effect is that a hybrid
+    ISO attaches as a CD-ROM rather than a USB disk — which is what lets a
+    guest looking for a boot CD find one. MINIX has no save points and needs it."""
+    from vmlab import spec
+
+    cfg = spec.validate_config({"slug": "minix", "bootMode": "legacy"})
+    assert cfg["savepoints"] is False
+    args = spec.build_session_pod(config=cfg, session_id="vm-m-1", release="vmlab",
+                                  boot_from_iso=True, ttl_seconds=600
+                                  )["spec"]["initContainers"][0]["args"]
+    assert args[-2] == "yes"
