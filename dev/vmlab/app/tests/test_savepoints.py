@@ -303,13 +303,13 @@ def test_hybrid_iso_is_flattened_only_for_savepoint_guests():
     )
     args = sp["spec"]["initContainers"][0]["args"]
     assert "seek=510" in args[0], "expected the MBR signature to be cleared"
-    assert args[-1] == "yes"
+    assert args[-2] == "yes"   # [-1] is now the media type
 
     plain = spec.build_session_pod(
         config=spec.validate_config({"slug": "x"}),
         session_id="vm-x-1", release="vmlab", boot_from_iso=True, ttl_seconds=600,
     )
-    assert plain["spec"]["initContainers"][0]["args"][-1] == "no"
+    assert plain["spec"]["initContainers"][0]["args"][-2] == "no"
 
 
 def test_flatten_never_touches_the_shared_cache():
@@ -323,7 +323,9 @@ def test_flatten_never_touches_the_shared_cache():
     )["spec"]["initContainers"][0]["args"][0]
     for line in script.splitlines():
         if "dd of=" in line:
-            assert "/boot/boot.iso" in line and "/isos" not in line
+            # the staged copy keeps its real extension, so the path is
+            # "/boot/boot.$3" rather than a literal .iso
+            assert "/boot/boot." in line and "/isos" not in line
 
 
 @pytest.mark.parametrize("mode", ["uefi", "secure", "windows_secure"])
@@ -395,7 +397,7 @@ def test_flatten_can_be_declined_per_config():
         config=cfg, session_id="vm-x-1", release="vmlab",
         boot_from_iso=True, ttl_seconds=600,
     )
-    assert pod["spec"]["initContainers"][0]["args"][-1] == "no"
+    assert pod["spec"]["initContainers"][0]["args"][-2] == "no"
 
 
 def test_flatten_defaults_on_for_savepoint_guests():
@@ -406,4 +408,4 @@ def test_flatten_defaults_on_for_savepoint_guests():
         config=cfg, session_id="vm-x-1", release="vmlab",
         boot_from_iso=True, ttl_seconds=600,
     )
-    assert pod["spec"]["initContainers"][0]["args"][-1] == "yes"
+    assert pod["spec"]["initContainers"][0]["args"][-2] == "yes"

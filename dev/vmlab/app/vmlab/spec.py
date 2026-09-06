@@ -50,6 +50,12 @@ MACHINES = {"q35", "pc"}
 # Display adapter. The image defaults to virtio-gpu, which is right for modern
 # guests and useless to anything without a virtio driver — Haiku boots every
 # stage, finds no display app_server can drive, and sits on its splash forever.
+# What kind of image the guest boots. Not every interesting OS ships an ISO:
+# Visopsys publishes a 1.44MB floppy image, and Redox publishes both a livedisk
+# ISO and a raw harddrive image. install.sh keys on the EXTENSION, so a floppy
+# saved as "boot.iso" would be mis-detected — the staged file has to keep its
+# real type.
+BOOT_MEDIA = {"iso", "img", "raw", "qcow2"}
 VGA_TYPES = {"virtio", "vga", "std", "cirrus", "vmware", "qxl", "none"}
 MEDIA_TYPES = {"auto", "ide", "sata", "usb", "nvme", "scsi", "blk", "virtio-scsi", "virtio-blk"}
 
@@ -163,6 +169,10 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
     if vga and vga not in VGA_TYPES:
         raise ValidationError(f"unknown vga {vga!r}")
 
+    boot_media = (raw.get("bootMedia") or "iso").strip().lower()
+    if boot_media not in BOOT_MEDIA:
+        raise ValidationError(f"unknown bootMedia {boot_media!r}")
+
     return {
         "slug": slug,
         "name": name,
@@ -178,6 +188,7 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         "machine": machine,
         "mediaType": media_type,
         "vga": vga,
+        "bootMedia": boot_media,
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -200,9 +211,12 @@ def _sha256_ok(value: str) -> bool:
     return bool(re.fullmatch(r"[0-9a-f]{64}", value))
 
 
-def iso_filename(slug: str) -> str:
-    # slug is already SLUG_RE-validated, so this cannot traverse.
-    return f"{slug}.iso"
+def iso_filename(slug: str, media: str = "iso") -> str:
+    # slug is already SLUG_RE-validated, so this cannot traverse; media is
+    # allow-listed against BOOT_MEDIA.
+    if media not in BOOT_MEDIA:
+        media = "iso"
+    return f"{slug}.{media}"
 
 
 def disk_pvc_name(release: str, slug: str) -> str:
@@ -413,6 +427,7 @@ def build_session_pod(
         #
         # Safe precisely because this is a private per-session copy: the shared
         # cache keeps its real bytes, so nothing else ever sees a modified ISO.
+        media = config.get("bootMedia", "iso")
         volumes.append({"name": "bootiso", "emptyDir": {"sizeLimit": "16Gi"}})
         volumes.append(
             {
@@ -421,7 +436,14 @@ def build_session_pod(
             }
         )
         mounts.append(
-            {"name": "bootiso", "mountPath": settings.boot_iso_path, "subPath": "boot.iso"}
+            {
+                "name": "bootiso",
+                # findBootFile() scans / for boot.{iso,img,raw,qcow2} and
+                # detectType keys on the extension, so the staged file must
+                # carry its real one.
+                "mountPath": f"/boot.{media}",
+                "subPath": f"boot.{media}",
+            }
         )
         init_containers.append(
             {
@@ -439,21 +461,22 @@ def build_session_pod(
                     '  echo "ISO not staged yet: $1 — fetch it first" >&2\n'
                     '  exit 1\n'
                     'fi\n'
-                    'cp "$src" /boot/boot.iso\n'
+                    'cp "$src" "/boot/boot.$3"\n'
                     # Clear the MBR boot signature on the PRIVATE copy so that
                     # disk.sh stops treating it as a hybrid image. See the
                     # comment on `flatten_hybrid` below for why.
-                    'if [ "$flatten" = "yes" ]; then\n'
-                    '  sig=$(dd if=/boot/boot.iso bs=1 skip=510 count=2 2>/dev/null | od -An -tx1 | tr -d " \\n")\n'
+                    'if [ "$flatten" = "yes" ] && [ "$3" = "iso" ]; then\n'
+                    '  sig=$(dd if="/boot/boot.$3" bs=1 skip=510 count=2 2>/dev/null | od -An -tx1 | tr -d " \\n")\n'
                     '  if [ "$sig" != "0000" ]; then\n'
-                    '    printf "\\0\\0" | dd of=/boot/boot.iso bs=1 seek=510 count=2 conv=notrunc 2>/dev/null\n'
+                    '    printf "\\0\\0" | dd of="/boot/boot.$3" bs=1 seek=510 count=2 conv=notrunc 2>/dev/null\n'
                     '    echo "cleared hybrid MBR signature ($sig) on the private copy"\n'
                     '  fi\n'
                     'fi\n'
-                    'ls -lh /boot/boot.iso\n',
+                    'ls -lh "/boot/boot.$3"\n',
                     "sh",
-                    iso_filename(slug),
+                    iso_filename(slug, config.get("bootMedia", "iso")),
                     "yes" if savepoints and config.get("flattenIso", True) else "no",
+                    config.get("bootMedia", "iso"),
                 ],
                 "securityContext": {
                     "allowPrivilegeEscalation": False,
@@ -603,7 +626,7 @@ def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
         'tmp="$dest.part"\n'
         'work="/isos/.extract-$1"\n'
         'if [ -s "$dest" ]; then echo "already cached: $1"; exit 0; fi\n'
-        "apk add --no-cache curl unzip xz p7zip >/dev/null\n"
+        "apk add --no-cache curl unzip xz zstd p7zip >/dev/null\n"
         # Flush dirty pages while the download runs. Without this, a fast
         # mirror OOMKills the container regardless of how big its limit is:
         # observed on a 40MB/s archive.org fetch, which died at exactly 250MiB
@@ -640,6 +663,17 @@ def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
         # simply skipped. IGNORECASE is also a gawk extension busybox lacks, so
         # an HTTP/1.1 "Content-Length" header would never have matched at all.
         # tail -1 takes the final hop's header, since -L follows redirects.
+        # A server that answers an error with 200 + HTML would otherwise be
+        # cached as a disk image: an AROS mirror did exactly that, and the size
+        # check could not catch it because the size MATCHED the HTML. Checked
+        # before anything else looks at the bytes.
+        'ctype=$(curl -sIL -o /dev/null -w "%{content_type}" "$url" | tr "A-Z" "a-z")\n'
+        'case "$ctype" in\n'
+        '  *text/html*|*application/xhtml*)\n'
+        '    rm -f "$tmp"\n'
+        '    echo "server returned a web page, not an image (content-type: $ctype)" >&2\n'
+        "    exit 1 ;;\n"
+        "esac\n"
         'want_size=$(curl -sIL "$url" | tr -d "\\r" | grep -i "^content-length:" | tail -1 | cut -d" " -f2)\n'
         '[ -n "$want_size" ] || want_size=0\n'
         'got_size=$(stat -c %s "$tmp")\n'
@@ -669,6 +703,7 @@ def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
         '  1f8b*)      kind="gz" ;;\n'
         '  425a68*)    kind="bz2" ;;\n'
         '  fd377a585a*) kind="xz" ;;\n'
+        '  28b52ffd*)  kind="zst" ;;\n'
         '  377abcaf271c*) kind="7z" ;;\n'
         'esac\n'
         'if [ "$kind" != "raw" ]; then\n'
@@ -679,19 +714,21 @@ def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
         '  gz)  gunzip -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
         '  bz2) bunzip2 -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
         '  xz)  unxz -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
+        # Redox publishes .iso.zst / .img.zst.
+        '  zst) unzstd -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
         # Containers may hold several files; take the largest .iso/.img.
         '  zip|7z)\n'
         '    rm -rf "$work"; mkdir -p "$work"\n'
         '    if [ "$kind" = "zip" ]; then unzip -q -o "$tmp" -d "$work"; else 7z x -y -o"$work" "$tmp" >/dev/null; fi\n'
         '    inner=""\n'
-        '    for f in $(find "$work" -type f \\( -iname "*.iso" -o -iname "*.img" \\)); do\n'
+        '    for f in $(find "$work" -type f \\( -iname "*.iso" -o -iname "*.img" -o -iname "*.raw" -o -iname "*.qcow2" \\)); do\n'
         '      if [ -z "$inner" ] || [ "$(stat -c %s "$f")" -gt "$(stat -c %s "$inner")" ]; then\n'
         '        inner="$f"\n'
         "      fi\n"
         "    done\n"
         '    if [ -z "$inner" ]; then\n'
         '      rm -rf "$work" "$tmp"\n'
-        '      echo "archive contains no .iso or .img" >&2\n'
+        '      echo "archive contains no bootable image" >&2\n'
         "      exit 1\n"
         "    fi\n"
         '    echo "using $(basename "$inner")"\n'
@@ -740,7 +777,13 @@ def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
                             "command": ["/bin/sh", "-c"],
                             # Caller-influenced values travel as positional
                             # arguments, never interpolated into the script.
-                            "args": [script, "sh", iso_filename(config["slug"]), url, sha],
+                            "args": [
+                script,
+                "sh",
+                iso_filename(config["slug"], config.get("bootMedia", "iso")),
+                url,
+                sha,
+            ],
                             "securityContext": {
                                 "allowPrivilegeEscalation": False,
                                 "capabilities": {"drop": ["ALL"]},

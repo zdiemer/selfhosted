@@ -527,3 +527,48 @@ def test_vga_is_allow_listed_and_optional():
     env = {e["name"]: e["value"] for e in _pod(vga="vga")["spec"]["containers"][0]["env"]}
     assert env["VGA"] == "vga"
     assert "VGA" not in {e["name"] for e in _pod()["spec"]["containers"][0]["env"]}
+
+
+def test_boot_media_keeps_its_real_extension():
+    """install.sh keys on the extension, so a floppy image staged as boot.iso
+    would be mis-detected. Visopsys ships only a 1.44MB .img."""
+    cfg = spec.validate_config({"slug": "visopsys", "bootMedia": "img",
+                                "savepoints": True, "persist": True})
+    pod = spec.build_session_pod(config=cfg, session_id="vm-v-1", release="vmlab",
+                                 boot_from_iso=True, ttl_seconds=600)
+    mount = next(m for m in pod["spec"]["containers"][0]["volumeMounts"] if m["name"] == "bootiso")
+    assert mount["mountPath"] == "/boot.img" and mount["subPath"] == "boot.img"
+    assert spec.iso_filename("visopsys", "img") == "visopsys.img"
+
+
+def test_flatten_only_applies_to_isos():
+    """Zeroing offset 510 of a floppy image would corrupt its boot sector."""
+    cfg = spec.validate_config({"slug": "v", "bootMedia": "img",
+                                "savepoints": True, "persist": True})
+    script = spec.build_session_pod(config=cfg, session_id="vm-v-1", release="vmlab",
+                                    boot_from_iso=True, ttl_seconds=600
+                                    )["spec"]["initContainers"][0]["args"][0]
+    assert '[ "$3" = "iso" ]' in script
+
+
+def test_unknown_boot_media_rejected():
+    with pytest.raises(spec.ValidationError):
+        spec.validate_config({"slug": "x", "bootMedia": "vmdk"})
+
+
+def test_zstd_is_handled():
+    """Redox publishes .iso.zst / .img.zst."""
+    script = spec.build_fetch_job(config=_config(), job_name="f", release="vmlab"
+                                  )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "28b52ffd" in script and "unzstd" in script
+
+
+def test_fetch_job_refuses_an_html_error_page():
+    """A mirror that answers a missing file with 200 + HTML would otherwise be
+    cached as a disk image — and the size check cannot catch it, because the
+    size matches the HTML exactly. Observed with an AROS nightly mirror."""
+    script = spec.build_fetch_job(config=_config(), job_name="f", release="vmlab"
+                                  )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "text/html" in script and "not an image" in script
+    # must be judged before the size check, which would otherwise pass
+    assert script.index("ctype=") < script.index("want_size=")

@@ -200,11 +200,18 @@ def iso_present(slug: str) -> bool:
     Reading the volume is also what makes hand-staged media work: an ISO copied
     in with kubectl cp now simply appears, with no fake Job to go with it.
     """
-    path = os.path.join(ISO_MOUNT, spec.iso_filename(slug))
-    try:
-        return os.path.getsize(path) > 0
-    except OSError:
-        return False
+    # Globbed by extension rather than looked up from the config: a config
+    # read would put an API call behind every catalog poll, and would make this
+    # untestable without a cluster. The slug is SLUG_RE-validated, so the
+    # pattern cannot escape the directory.
+    for media in sorted(spec.BOOT_MEDIA):
+        path = os.path.join(ISO_MOUNT, spec.iso_filename(slug, media))
+        try:
+            if os.path.getsize(path) > 0:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def iso_status(slug: str) -> str:

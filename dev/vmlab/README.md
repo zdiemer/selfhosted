@@ -237,6 +237,27 @@ A save point QEMU no longer has is pruned. But output the parser cannot read is
 **not** treated as "none" — `list_snapshots` raises instead, because returning
 an empty list there once deleted a real save point and its screenshot.
 
+## Fetching, and what a "URL" turns out to mean
+
+The fetch Job unpacks by **magic bytes** — zip, gz, bz2, xz, zst, 7z — because
+these projects publish whatever they like: `.iso.gz` (9front), `.iso.bz2`
+(MINIX), `.7z` (KolibriOS), `.iso.zst` (Redox), `.zip` (FreeDOS, AROS,
+Visopsys), and archive.org URLs often carry no extension at all. Unpacking runs
+*after* the size and checksum checks, so integrity covers the fetched bytes.
+
+Not every OS ships an ISO, so `bootMedia` (iso/img/raw/qcow2) controls the
+staged file's extension — `install.sh` keys on it, and Visopsys's 1.44MB floppy
+saved as `boot.iso` would simply be mis-detected.
+
+Three guards, each added after something got through:
+
+- **Size** must match `Content-Length`; a CDN that ignored a Range header made
+  `curl -C -` append a retry and cache a 7.36GiB image as 10.98GiB.
+- **Content-type** must not be HTML. An AROS mirror answered a missing file
+  with `200` and a web page, which was cached as a 1.2KB "aros.iso" — the size
+  check could not catch it because the size *matched*.
+- **Checksum**, where the URL names an immutable artifact.
+
 ## Sandboxing
 
 Two independent levers, both used:

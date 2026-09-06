@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v35"
+  tag: "v38"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -170,8 +170,8 @@ quota:
   requestsCpu: "12"
   requestsMemory: 20Gi
   limitsMemory: 28Gi
-  pods: "24"
-  persistentVolumeClaims: "20"
+  pods: "32"
+  persistentVolumeClaims: "28"
 
 limitRange:
   enabled: true
@@ -603,6 +603,75 @@ catalog:
     machine: pc
     mediaType: auto
     diskType: auto
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: visopsys
+    name: Visopsys
+    note: >-
+      A complete graphical OS with a windowing system, written almost entirely
+      by one person since 1997. Ships as a 1.44MB floppy image.
+    iso: https://downloads.sourceforge.net/project/visopsys/visopsys-0.92-x86-floppy-img.zip
+    # A floppy, not a CD. install.sh keys on the extension, so the staged file
+    # has to stay .img or it is mis-detected.
+    bootMedia: img
+    memoryMib: 512
+    cores: 1
+    diskGib: 1
+    machine: pc
+    mediaType: auto
+    diskType: auto
+    vga: vga
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: aros
+    name: AROS
+    note: >-
+      An open-source reimplementation of AmigaOS 3.1 for x86 — the Amiga
+      desktop, on hardware Commodore never shipped.
+    # archive.org, not the AROS nightly mirror: that mirror answers a missing
+    # file with 200 + an HTML page, which was cached as a 1.2KB "aros.iso".
+    iso: https://archive.org/download/aros-20260820-pc-x-86-64-boot-iso/AROS-20260820-pc-x86_64-boot-iso.zip
+    memoryMib: 1024
+    cores: 1
+    diskGib: 4
+    machine: pc
+    mediaType: auto
+    vga: vga
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: redox
+    name: Redox OS
+    note: >-
+      A Unix-like microkernel OS written from scratch in Rust, with its own
+      Orbital desktop. Published zstd-compressed.
+    iso: https://static.redox-os.org/img/x86_64/redox_desktop_x86_64_2026-09-06_506_livedisk.iso.zst
+    memoryMib: 2048
+    cores: 2
+    diskGib: 4
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: dsl
+    name: Damn Small Linux 2024
+    note: >-
+      The 50MB desktop distro, revived in 2024 after a fifteen-year gap. Fits
+      on a business-card CD and still boots to a full desktop.
+    iso: https://archive.org/download/dsl_20240704/dsl.iso
+    memoryMib: 1024
+    cores: 1
+    diskGib: 4
+    machine: pc
+    mediaType: auto
+    # Same as Haiku: with the image's virtio-gpu default the kernel boots and
+    # sets a mode, then X shows nothing at all.
+    vga: vga
     persist: true
     savepoints: true
     network: none

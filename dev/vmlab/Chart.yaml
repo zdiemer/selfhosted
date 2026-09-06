@@ -4,4 +4,4 @@ description: A browser VM lab — pick an OS, it boots in a pod, you throw it aw
 type: application
 version: 0.1.0
 # Mirrors values.yaml image.tag; scripts/check-appversion-drift.sh enforces it.
-appVersion: "v35"
+appVersion: "v38"
