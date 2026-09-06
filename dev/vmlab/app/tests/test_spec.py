@@ -572,3 +572,28 @@ def test_fetch_job_refuses_an_html_error_page():
     assert "text/html" in script and "not an image" in script
     # must be judged before the size check, which would otherwise pass
     assert script.index("ctype=") < script.index("want_size=")
+
+
+def test_floppy_images_go_to_fda_and_are_not_also_a_disk():
+    """A 1.44MB floppy attached as a hard disk never runs its boot sector — it
+    expects floppy geometry and to be booted as A:. Visopsys ships only that."""
+    cfg = spec.validate_config({"slug": "visopsys", "bootMedia": "img", "floppy": True,
+                                "savepoints": True, "persist": True})
+    pod = spec.build_session_pod(config=cfg, session_id="vm-v-1", release="vmlab",
+                                 boot_from_iso=True, ttl_seconds=600)
+    env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+    assert env["ARGUMENTS"] == "-fda /boot.img"
+    # DISK_TYPE, not MEDIA_TYPE: install.sh routes a .img through the disk
+    # path, so MEDIA_TYPE is never consulted and QEMU opened the file twice,
+    # dying with 'Failed to get "write" lock'.
+    assert env["DISK_TYPE"] == "none"
+
+
+def test_floppy_and_loadvm_compose():
+    cfg = spec.validate_config({"slug": "v", "bootMedia": "img", "floppy": True,
+                                "savepoints": True, "persist": True})
+    pod = spec.build_session_pod(config=cfg, session_id="vm-v-1", release="vmlab",
+                                 boot_from_iso=True, ttl_seconds=600,
+                                 load_snapshot="after_boot")
+    env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+    assert env["ARGUMENTS"] == "-fda /boot.img -loadvm after_boot"

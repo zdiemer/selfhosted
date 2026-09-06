@@ -189,6 +189,11 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         "mediaType": media_type,
         "vga": vga,
         "bootMedia": boot_media,
+        # Some hobby OSes ship only a 1.44MB floppy image. Attached as a hard
+        # disk (which is what the image does with a .img) their boot sector
+        # never runs, because it expects floppy geometry and to be booted as
+        # A:. This routes it to -fda instead.
+        "floppy": bool(raw.get("floppy", False)),
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -329,6 +334,14 @@ def build_session_pod(
     ]
     if config.get("diskType"):
         env.append({"name": "DISK_TYPE", "value": config["diskType"]})
+    if config.get("floppy"):
+        # Suppress the image's own attach, or QEMU opens the file twice and
+        # dies with 'Failed to get "write" lock'. It must be DISK_TYPE, not
+        # MEDIA_TYPE: install.sh routes a .img through createDevice (the disk
+        # path) rather than addMedia, so MEDIA_TYPE is never consulted for one.
+        # This also detaches the data disk, which is why a floppy guest cannot
+        # take save points — there is no qcow2 for savevm to write into.
+        env.append({"name": "DISK_TYPE", "value": "none"})
     if config.get("machine"):
         # Allow-listed above, so this cannot become arbitrary -machine text.
         env.append({"name": "MACHINE", "value": config["machine"]})
@@ -369,8 +382,16 @@ def build_session_pod(
         # at all. A modern Windows guest would lose some paravirtual
         # acceleration, which is the trade for being able to resume it.
         env.append({"name": "HV", "value": "N"})
+    # ARGUMENTS is assembled here from validated flags only — never from
+    # caller-supplied text — because entry.sh expands it UNQUOTED into the qemu
+    # argv.
+    arguments: list[str] = []
+    if config.get("floppy") and boot_from_iso:
+        arguments.append(f"-fda /boot.{config.get('bootMedia', 'img')}")
     if load_snapshot:
-        env.append({"name": "ARGUMENTS", "value": f"-loadvm {load_snapshot}"})
+        arguments.append(f"-loadvm {load_snapshot}")
+    if arguments:
+        env.append({"name": "ARGUMENTS", "value": " ".join(arguments)})
     if not boot_from_iso:
         # "none", NOT "". Empty is the one value that does the opposite of what
         # it looks like: install.sh treats it as unset and falls back to

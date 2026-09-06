@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v38"
+  tag: "v45"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -602,7 +602,7 @@ catalog:
     diskGib: 4
     machine: pc
     mediaType: auto
-    diskType: auto
+    diskType: virtio-blk
     persist: true
     savepoints: true
     network: none
@@ -621,10 +621,17 @@ catalog:
     diskGib: 1
     machine: pc
     mediaType: auto
-    diskType: auto
     vga: vga
-    persist: true
-    savepoints: true
+    # Boot it as a floppy. Attached as a hard disk (the image's default for a
+    # .img) SeaBIOS reports "Booting from Hard Disk..." and hangs, because the
+    # boot sector expects floppy geometry and to be booted as A:.
+    floppy: true
+    # No save points: -fda is the only attach, so there is no qcow2 for
+    # savevm to write state into. A 1.4MB floppy boots in a second anyway.
+    # Explicit, because dropping savepoints also dropped the BIOS default they
+    # imply — and a floppy under UEFI gets "BdsDxe: No bootable option or
+    # device was found".
+    bootMode: legacy
     network: none
 
   - slug: aros
@@ -640,7 +647,7 @@ catalog:
     diskGib: 4
     machine: pc
     mediaType: auto
-    vga: vga
+    vga: cirrus
     persist: true
     savepoints: true
     network: none
@@ -671,7 +678,7 @@ catalog:
     mediaType: auto
     # Same as Haiku: with the image's virtio-gpu default the kernel boots and
     # sets a mode, then X shows nothing at all.
-    vga: vga
+    vga: cirrus
     persist: true
     savepoints: true
     network: none
