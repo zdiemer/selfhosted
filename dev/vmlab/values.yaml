@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v31"
+  tag: "v33"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -401,7 +401,13 @@ catalog:
     cores: 1
     diskGib: 8
     bootMode: windows_legacy
-    diskType: ide
+    # auto, not ide: the image's "ide" attaches the DATA DISK to an ich9-AHCI
+    # controller, and XP has no AHCI driver without an F6 driver floppy — Setup
+    # stops with "did not find any hard disk drives installed in your computer".
+    # auto emits a bare -drive, which on i440fx lands on the built-in PIIX IDE
+    # bus. mediaType follows diskType, so the CD lands there too.
+    diskType: auto
+    mediaType: auto
     # i440fx, not the image's default q35. q35 is a 2009 PCIe chipset that XP
     # has no drivers for; on it Setup dies with
     # "STOP: 0x000000A5 — The BIOS in this system is not fully ACPI compliant"
@@ -537,14 +543,16 @@ catalog:
       DOS, still maintained, still 2026. Boots in about a second and comes with
       a pile of period games. Ships as a zip, which the fetch job unpacks.
     iso: https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/FD14-LiveCD.zip
-    memoryMib: 512
+    # 512 was not enough: the LiveCD reports "Unable to load all FreeDOS
+    # packages -- (probably) Add more RAM!" and falls back to a cramped RAM disk.
+    memoryMib: 1024
     cores: 1
     diskGib: 2
     # Same legacy-IDE treatment as TempleOS: DOS talks to the hardware directly
     # and has no idea what an AHCI controller is.
     machine: pc
     mediaType: auto
-    diskType: ide
+    diskType: auto
     persist: true
     savepoints: true
     network: none
@@ -588,6 +596,7 @@ catalog:
     diskGib: 4
     machine: pc
     mediaType: auto
+    diskType: auto
     persist: true
     savepoints: true
     network: none

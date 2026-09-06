@@ -190,7 +190,11 @@ Absolute pointer events go to whichever mouse QEMU has **active**, which is the
 relative PS/2 device by default even when a USB tablet exists — so without a
 `mouse_set` the pointer silently never moves at all.
 
-**`click` is not reliable yet.** Selecting the absolute device fixed "the
+**`click` is not reliable yet, and some guests ignore synthetic input
+entirely.** Windows XP's OOBE ("Display Settings") accepts neither keys nor
+clicks over QMP, despite the same keyboard driving every earlier XP setup
+screen — so the last few dialogs of an XP install have to be done in the
+browser. Elsewhere: Selecting the absolute device fixed "the
 pointer never moves" but not "the click lands where asked", and calibrating it
 by locating the drawn cursor does not work: diffing two framebuffers picks up
 the old cursor being erased alongside the new one being drawn, so the position
