@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v48"
+  tag: "v50"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -547,6 +547,17 @@ catalog:
     # ("No bootable device") on either q35 or i440fx. virtio, std VGA, Cirrus
     # and VMware SVGA all hang identically, as do 1 and 2 cores, so the cause
     # is something other than the display adapter or SMP.
+    # Treated as a DISK IMAGE, not an ISO. An "anyboot" file is built to be
+    # written to a USB stick, so it already is a bootable disk: naming it .raw
+    # sends install.sh down createDevice, which attaches it as an ide-hd with the
+    # MBR intact, instead of the usb-storage SeaBIOS refused or the CD-ROM that
+    # loses the partition table.
+    bootMedia: raw
+    diskType: auto
+    # Boots to the desktop, but CANNOT take a save point: the anyboot image is
+    # attached writable, and savevm refuses any writable non-qcow2 device. A
+    # save point needs Haiku installed to its own disk first. It reaches the
+    # desktop from cold in well under a minute, so this matters less here.
     network: none
 
   - slug: freedos
@@ -611,10 +622,20 @@ catalog:
     # and with a disk present that was the disk - so its boot-CD probe looked at
     # the wrong device and reported "No CD found". Removing the disk makes the CD
     # c0d0. The cost is that MINIX cannot take save points: savevm needs a qcow2.
-    diskType: none
+    diskType: auto
     mediaType: auto
     # Explicit, since dropping savepoints also drops the BIOS default they imply.
     bootMode: legacy
+    # Its ISO is hybrid, so it is equally a disk image. Booting it as a disk
+    # avoids the live-CD probe that wanted a specific IDE channel.
+    # DOES NOT BOOT, and the reason is now specific rather than a guess. Its
+    # ISO is El Torito only: as a CD its live script probes a fixed IDE
+    # topology (disk on the primary channel, CD on the secondary) that
+    # MEDIA_TYPE cannot express - it picks a controller KIND, never a channel.
+    # As a raw disk SeaBIOS finds "NetBSD MBR boot / Error No active
+    # partition", because the hybrid MBR has no bootable flag. It needs a
+    # pre-installed disk image, and minix3.org publishes none.
+    bootMedia: iso
     network: none
 
   - slug: visopsys

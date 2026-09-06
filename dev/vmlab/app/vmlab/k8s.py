@@ -617,10 +617,11 @@ def _explain_save_failure(message: str, slug: str) -> str:
     lowered = message.lower()
     if "does not support snapshots" in lowered or "not support snapshot" in lowered:
         return (
-            f"{message}. The installer ISO is attached and this image is a hybrid "
-            f"ISO, which QEMU attaches as a writable disk — save points cannot "
-            f"include one. Finish installing, then stop and relaunch {slug} "
-            f"without the installer, and saving will work."
+            f"{message}. Boot media is attached and QEMU has it open for "
+            f"writing, which savevm will not include — either a hybrid ISO, or "
+            f"a raw disk image booted directly. Install {slug} to its own disk, "
+            f"then stop and relaunch it without the boot media, and saving "
+            f"will work."
         )
     return message
 

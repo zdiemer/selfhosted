@@ -185,7 +185,7 @@ def test_hybrid_iso_save_failure_explains_the_fix():
         "could not save: Error: Device 'boot' is writable but does not support snapshots",
         "bazzite",
     )
-    assert "hybrid" in msg and "without the installer" in msg
+    assert "hybrid" in msg and "without the boot media" in msg
 
 
 def test_unrelated_save_failures_are_passed_through_verbatim():
