@@ -199,6 +199,12 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # No transfer event received") before failing to identify its boot
         # device. None means leave the image's default alone.
         "usb": raw.get("usb"),
+        # Attach the boot CD the way QEMU's own -cdrom does: IDE1 master, with
+        # the data disk left on IDE0 master. MINIX's documented invocation is
+        # "-cdrom minix.iso -hda minix.img -boot d", and its live script probes
+        # exactly that layout; MEDIA_TYPE cannot express it because it selects a
+        # controller KIND and never a channel.
+        "legacyCdrom": bool(raw.get("legacyCdrom", False)),
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -339,6 +345,12 @@ def build_session_pod(
     ]
     if config.get("diskType"):
         env.append({"name": "DISK_TYPE", "value": config["diskType"]})
+    if config.get("legacyCdrom"):
+        # Suppress the image's own attach of the boot media so it is not opened
+        # twice. This only works because the staged copy is flattened: the
+        # hybrid check in disk.sh bypasses MEDIA_TYPE entirely and would force a
+        # usb-disk regardless.
+        env.append({"name": "MEDIA_TYPE", "value": "none"})
     if config.get("floppy"):
         # Suppress the image's own attach, or QEMU opens the file twice and
         # dies with 'Failed to get "write" lock'. It must be DISK_TYPE, not
@@ -393,6 +405,11 @@ def build_session_pod(
     # caller-supplied text — because entry.sh expands it UNQUOTED into the qemu
     # argv.
     arguments: list[str] = []
+    if config.get("legacyCdrom") and boot_from_iso:
+        media = config.get("bootMedia", "iso")
+        # index=2 is IDE1 master, which is what -cdrom means on x86; -boot d
+        # then prefers it over the disk on IDE0.
+        arguments.append(f"-drive file=/boot.{media},index=2,media=cdrom -boot d")
     if config.get("floppy") and boot_from_iso:
         arguments.append(f"-fda /boot.{config.get('bootMedia', 'img')}")
     if load_snapshot:

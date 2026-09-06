@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v50"
+  tag: "v52"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -628,37 +628,37 @@ catalog:
     bootMode: legacy
     # Its ISO is hybrid, so it is equally a disk image. Booting it as a disk
     # avoids the live-CD probe that wanted a specific IDE channel.
-    # DOES NOT BOOT, and the reason is now specific rather than a guess. Its
-    # ISO is El Torito only: as a CD its live script probes a fixed IDE
-    # topology (disk on the primary channel, CD on the secondary) that
-    # MEDIA_TYPE cannot express - it picks a controller KIND, never a channel.
-    # As a raw disk SeaBIOS finds "NetBSD MBR boot / Error No active
     # partition", because the hybrid MBR has no bootable flag. It needs a
-    # pre-installed disk image, and minix3.org publishes none.
     bootMedia: iso
+    # MINIX documents exactly one working invocation:
+    #   qemu-system-x86_64 -cdrom minix.iso -hda minix.img -boot d
+    # -cdrom means IDE1 master and -hda means IDE0 master, and its live script
+    # probes that layout. MEDIA_TYPE picks a controller kind, never a channel,
+    # so this is the only way to reproduce it. Note also that MINIX's AHCI path
+    # is a known upstream bug (Stichting-MINIX-Research-Foundation/minix#224):
+    # the "Trying /dev/c1d4 / No CD found" seen here is that bug, not a
+    # misconfiguration.
+    legacyCdrom: true
+    # REMAINING BLOCKER, now exact. With the CD at IDE1 master MINIX finds it
+    # and reads /dev/c0d2p1 - a PARTITION of the hybrid MBR. flattenIso zeroes
+    # that MBR, so p1 no longer exists ("Undefined error: 0" instead of the
+    # earlier "not configured"). Leaving it unflattened is not an option
+    # either: disk.sh's hybrid check bypasses MEDIA_TYPE entirely and force-
+    # attaches the image as a writable usb-disk, which would then be opened
+    # twice. The two requirements are mutually exclusive inside this image.
     network: none
 
   - slug: visopsys
     name: Visopsys
     note: >-
       A complete graphical OS with a windowing system, written almost entirely
-      by one person since 1997. Ships as a 1.44MB floppy image.
-    iso: https://downloads.sourceforge.net/project/visopsys/visopsys-0.92-x86-floppy-img.zip
-    # A floppy, not a CD. install.sh keys on the extension, so the staged file
-    # has to stay .img or it is mis-detected.
-    bootMedia: img
+    iso: https://downloads.sourceforge.net/project/visopsys/visopsys-0.92-x86-iso.zip
     memoryMib: 512
     cores: 1
     diskGib: 1
     machine: pc
     mediaType: auto
     vga: vga
-    # Boot it as a floppy. Attached as a hard disk (the image's default for a
-    # .img) SeaBIOS reports "Booting from Hard Disk..." and hangs, because the
-    # boot sector expects floppy geometry and to be booted as A:.
-    floppy: true
-    # No save points: -fda is the only attach, so there is no qcow2 for
-    # savevm to write state into. A 1.4MB floppy boots in a second anyway.
     # Explicit, because dropping savepoints also dropped the BIOS default they
     # imply — and a floppy under UEFI gets "BdsDxe: No bootable option or
     # device was found".
@@ -667,6 +667,12 @@ catalog:
     # No transfer event received") immediately before it fails to identify the
     # boot device.
     usb: false
+    # The CD image, not the floppy. Booted as a virtual floppy under SeaBIOS
+    # Visopsys hits read errors on fd0 and then "The boot device could not be
+    # identified" - a documented failure on its own forums. SourceForge does
+    # publish an ISO; it is simply not linked from the download page.
+    persist: true
+    savepoints: true
     network: none
 
   - slug: aros
