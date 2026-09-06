@@ -1,0 +1,641 @@
+# vmlab — a browser VM picker for short-lived guests.
+#
+# WHAT THIS IS. dev/win11 is a pet: a 128Gi iSCSI zvol, a persistent vTPM,
+# SecureBoot, an unattended answer file and a hand-uploaded 12Gi ISO, reached
+# over RDP through dev/guacamole. That is the right shape for a Windows desktop
+# you keep. It is the wrong shape for "I want to look at TempleOS for ten
+# minutes." This chart is the other half: cattle. Pick an OS in a browser, it
+# boots in an ordinary pod, you close the tab and it is gone.
+#
+# WHY NOT KUBEVIRT, given the cluster already runs it:
+#   - x86 only. defaultArchitecture is amd64 and there is one qemu binary per
+#     virt-launcher, so RISC OS (ARM) is simply not expressible.
+#   - useEmulation is unset in the live KubeVirt CR, so every guest needs real
+#     KVM. Fine here, but it removes the escape hatch.
+#   - every guest costs a CDI DataVolume, image-sized scratch, a block PVC and
+#     an NFS vTPM volume. All cost, no benefit, for a ten-minute guest.
+#   - its wins (live migration, snapshots, hotplug) are pet wins.
+#
+# THE FACT THAT MAKES THIS WORK. virt-handler advertises devices.kubevirt.io/kvm
+# as a plain node-level extended resource, not something namespaced to KubeVirt.
+# Any ordinary pod may request it. Verified on zachd-ubuntu-5: a pod with
+# drop:[ALL], allowPrivilegeEscalation:false and *every capability set empty*
+# gets crw-rw---- root:993 /dev/kvm. So a VM here needs no privileged mode, no
+# hostPath, and no /dev mount. Requesting the resource is also most of the node
+# filter — it excludes the control-plane workstation and the cordoned laptops.
+#
+# The engine is qemux/qemu: QEMU plus a noVNC web viewer on :8006, configured
+# entirely by environment. A config is a name and an ISO.
+
+replicaCount: 1
+
+image:
+  # The in-cluster registry (infra/registry), not GHCR, and not because GHCR
+  # would not work. This image has no reason to exist on the public internet:
+  # it is a control plane for creating pods in this one namespace, and every
+  # node can pull from here anonymously, so publishing it publicly would buy
+  # nothing and widen what is visible. dev/claude-workspace and
+  # dev/happy-server take the same route; infra/hatch uses GHCR because it is
+  # the thing you want pullable when the cluster itself is unhealthy.
+  repository: registry.zachd.duckdns.org/zdiemer/vmlab
+  tag: "v31"
+  # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
+  # refuses to push over a tag that already exists, which is what makes a
+  # cached layer safe to trust on a node that cannot reach GHCR.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+service:
+  port: 8080
+
+# ---------------------------------------------------------------------------
+# Ingress — ONE host, and no per-VM Ingress or per-VM DNS.
+#
+# This is possible because of how noVNC builds its own URLs, which was measured
+# rather than assumed: every asset in the page is referenced relatively, and
+# app/ui.js sets path='websockify' then resolves it with
+# `new URL(path, location.href)`. A page served at /vm/<sid>/ therefore asks for
+# /vm/<sid>/websockify with no rewriting anywhere. Proved end to end through a
+# path-stripping proxy: page 200, app/ui.js 200, and the websocket upgrade
+# returned 101 Switching Protocols followed by the RFB handshake bytes.
+#
+# One host means one wildcard cert and, more importantly, ONE auth check that
+# every session sits behind.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: traefik
+  host: vmlab.zachd.duckdns.org
+
+  # MUST STAY EMPTY. Publishing this would put "create a pod with /dev/kvm" on
+  # the public internet. It would also move callers out of CrowdSec's
+  # clientTrustedIPs (100.64.0.0/10).
+  cloudflareHosts: []
+
+  tls:
+    enabled: true
+
+auth:
+  forwardAuth:
+    # ON, unlike dev/guacamole, and the difference is not stylistic.
+    #
+    # Guacamole is a gateway to VMs that already exist and has its own login
+    # behind it. This is a thing that CREATES pods that hold /dev/kvm — which is
+    # remote-code-execution-shaped, and is exactly the grant
+    # infra/hatch/templates/rbac.yaml refuses in so many words: "a hatch that
+    # could create a pod could create one with any image and any
+    # serviceAccountName." Tailnet-only is not a sufficient answer to that,
+    # because the tailnet includes laptops that roam and sleep.
+    #
+    # The cost is close to zero: Authelia's session cookie is shared across
+    # *.zachd.duckdns.org, so in practice this is a click-through. It also makes
+    # the Ingress satisfy infra/ingress-policy rule 4 rather than trip its warn.
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+# ---------------------------------------------------------------------------
+# The ISO cache. The piece of this design that is not obvious.
+#
+# THE PROBLEM. qemux/qemu's BOOT variable takes a URL and the container
+# downloads it at startup. That contradicts the sandbox twice over: Red Star OS
+# must have zero egress but would need internet to fetch itself, and every
+# launch would re-download several GB.
+#
+# So fetching is separated from running. A fetch Job — the only thing here with
+# internet egress — writes the ISO once into this RWX volume. Session pods never
+# touch the network.
+#
+# TWO THINGS THE SOURCE FORCED, both found by reading it rather than guessing:
+#
+#   1. BOOT CANNOT BE A PATH. install.sh hard-rejects anything that is not
+#      http(s):// with exit 64. The actual hook is findBootFile(), the FIRST
+#      statement in the dispatch, which scans / for boot.iso|img|raw|qcow2 and
+#      short-circuits before BOOT is ever read. So the ISO is mounted at
+#      /boot.iso and BOOT is left unset.
+#
+#   2. THE MOUNT CANNOT BE READ-ONLY. disk.sh reads the MBR signature
+#      (`head -c 512 | tail -c 2`) and force-attaches any *hybrid* ISO as a
+#      writable usb-storage disk, bypassing MEDIA_TYPE entirely; only
+#      non-hybrid ISOs take the readonly=on,media=cdrom path. Alpine and Bazzite
+#      are hybrid, Windows XP and TempleOS are not — so a read-only mount works
+#      for half the catalog and fails the other half with "Could not open
+#      /boot.iso: Read-only file system".
+#
+# Hence: an initContainer stages a PRIVATE COPY out of this cache into an
+# emptyDir. That fixes both, and has a security dividend — the VM container
+# never mounts the shared cache at all, so a guest has no handle on the ISOs
+# every other guest boots from.
+# ---------------------------------------------------------------------------
+isos:
+  enabled: true
+  size: 60Gi
+  storageClass: truenas-nfs
+  # Plain alpine + curl. Nothing here needs a first-party image.
+  fetchImage: alpine:3.22
+  # A fetch that hangs on a dead mirror should die, not occupy the namespace
+  # quota forever. Four hours rather than one because the ceiling has to fit
+  # the worst legitimate case, not the typical one: Bazzite is 7.9GB, and its
+  # mirror was measured at anywhere between 64MB/s and 2MB/s within the same
+  # hour — at the low end that is 66 minutes of honest work that a 1h deadline
+  # would have killed as if it had hung.
+  fetchTimeoutSeconds: 14400
+  # 256Mi was not enough: see the sync loop in spec.build_fetch_job. The limit
+  # is headroom for writeback bursts, not the fix — the fix is that dirty pages
+  # get flushed rather than accumulated.
+  fetchResources:
+    requests: {cpu: "100m", memory: "128Mi"}
+    limits: {memory: "512Mi"}
+
+# ---------------------------------------------------------------------------
+# The quota IS the blast radius.
+#
+# The UI can create pods, so the honest bound on "what happens if this is
+# wrong" is not the app's validation — it is what the API server will refuse.
+# Extended resources are quota-able, so requests.devices.kubevirt.io/kvm is a
+# literal ceiling on concurrent VMs that no bug in the app can exceed.
+#
+# The memory numbers are measured, not guessed. Free memory at the time of
+# writing: ~9.9Gi on zachd-ubuntu-5 and ~8.8Gi on -4, and memory is the binding
+# constraint cluster-wide. 16Gi of requests across the namespace is already
+# more than any single node can host, which is the point — the scheduler
+# spreads them and the quota stops the tail.
+# ---------------------------------------------------------------------------
+quota:
+  enabled: true
+  maxConcurrentVms: 6
+  requestsCpu: "12"
+  requestsMemory: 20Gi
+  limitsMemory: 28Gi
+  pods: "24"
+  persistentVolumeClaims: "20"
+
+limitRange:
+  enabled: true
+  defaultMemory: 2Gi
+  defaultMemoryRequest: 2Gi
+  # MUST exceed vm.maxMemoryMib + vm.resources.overheadMemoryMib, because the
+  # pod's limit is the guest's RAM *plus* the emulator's own footprint. Setting
+  # this to the guest ceiling (8Gi) instead looks right and is not: a max-size
+  # guest asks for 8192+512 = 8704Mi and the API server refuses it with
+  # "maximum memory usage per Container is 8Gi, but limit is 8704Mi" — which
+  # reads like a cluster problem rather than an arithmetic one. Bazzite is the
+  # config that sits exactly on this line.
+  maxMemory: 9Gi   # >= vm.maxMemoryMib + overheadMemoryMib (8192 + 768 = 8960Mi)
+  defaultCpu: "2"
+  defaultCpuRequest: 500m
+  maxCpu: "8"
+
+# ---------------------------------------------------------------------------
+# VM defaults. Everything here is a SERVER-SIDE constant — the browser may not
+# set any of it. See app/vmlab/k8s.py: the request supplies a name, an ISO, RAM,
+# cores, disk size and a network profile, all validated and clamped; the image,
+# securityContext, serviceAccountName, volumes and affinity are fixed in code.
+# That distinction is the whole difference between "create a pod" and "run any
+# image as any identity".
+# ---------------------------------------------------------------------------
+vm:
+  image: qemux/qemu
+  # RISC OS and anything else non-x86. Same env contract, TCG instead of KVM.
+  imageArm: qemux/qemu-arm
+  # One tag for both images — they are released together, and a version skew
+  # between them would mean two different env contracts to reason about.
+  # renovate: datasource=docker depName=qemux/qemu
+  tag: "7.50"
+  imagePullPolicy: IfNotPresent
+
+  # Hard ceiling, enforced by the kubelet rather than by the app.
+  defaultTtlSeconds: 14400
+  maxTtlSeconds: 86400
+  # Culled by the reaper when nothing has held the console open this long.
+  idleTimeoutSeconds: 1800
+  # A crashed guest's pod is kept this long so its boot log survives. Reaping
+  # terminal pods on sight (the first version) meant a guest that failed to
+  # boot disappeared along with the only evidence of why.
+  terminalGraceSeconds: 1800
+
+  maxCores: 8
+  maxMemoryMib: 8192
+  maxDiskGib: 128
+
+  # zachd-ubuntu-laptop-2 advertises kvm=1k and carries NO taint — only the
+  # label device-type=laptop — so requesting the KVM resource does not exclude
+  # it. It has ~2.9Gi free and it sleeps and roams. NotIn also matches nodes
+  # where the label is absent, so the other five KVM nodes still qualify.
+  excludeNodeLabels:
+    - key: device-type
+      values: ["laptop"]
+  # Soft, not required: -1 hosts win11 and sits at ~0.4 CPU free, but it should
+  # still be usable if -4 and -5 fill up.
+  preferNodes: ["zachd-ubuntu-5", "zachd-ubuntu-4"]
+
+  # Where a `persist: true` config's disk lives. Named explicitly rather than
+  # falling through to the cluster default, because the fall-through IS
+  # local-path and that has consequences worth stating: the disk is node-local,
+  # so the guest is pinned to whichever node it first landed on, and its size
+  # counts against that node's disk rather than against TrueNAS. Good for VM
+  # disk performance, and the reason to know about it is that the namespace
+  # quota caps the NUMBER of PVCs (8) but not their size — eight 128Gi disks
+  # would be 1Ti of somebody's root filesystem.
+  persistStorageClass: local-path
+
+  resources:
+    # A floor, not the whole ask: the app adds the guest's RAM to the request so
+    # the scheduler sees the real footprint.
+    cpuRequest: "500m"
+    # 768, not 512, and the number is derived rather than picked. qemux/qemu
+    # refuses to honour RAM_SIZE when `wanted + RAM_SPARE > available`, where
+    # RAM_SPARE is 500MB (~477Mi) — it silently allocates less instead. That is
+    # merely wasteful for an ordinary guest, but it BREAKS save points: a
+    # restore must have exactly the RAM the snapshot was taken with, and a
+    # guest saved at 1024M would not reload after being quietly given 962M.
+    overheadMemoryMib: 768
+
+# ---------------------------------------------------------------------------
+# Save points — freeze a guest and come back to it exactly as it was.
+#
+# HOW IT WORKS. A save point is a QEMU internal snapshot: `savevm` writes RAM,
+# device state and a disk snapshot INTO the guest's qcow2 image. Loading passes
+# `-loadvm <name>` at boot, so the guest resumes mid-desktop rather than
+# booting. That is the difference between this and "a disk image of an
+# installed system": you get back the open windows, not the login screen.
+#
+# WHAT IT REQUIRES, and why each is enforced rather than documented:
+#   - qcow2. savevm stores state inside the disk image and raw has nowhere to
+#     put it. Set automatically per config; not toggleable at launch, because
+#     switching format on an existing disk would not convert it.
+#   - persist: true. An emptyDir disk dies with the pod, taking every save
+#     point with it. validate_config ANDs the two so the UI cannot offer a save
+#     point that would evaporate.
+#   - a reachable QEMU monitor. qemux/qemu's own QMP variable opens one on a
+#     TCP port, which the vmlab pod talks to. No sidecar, no shared volume.
+#
+# THE SECURITY CONSEQUENCE, stated plainly: a reachable QMP port is total
+# control of that VM. So session pods now ALWAYS get an ingress policy — the
+# `full` profile included, where previously there was none at all. See the note
+# in templates/networkpolicy.yaml.
+#
+# Screenshots are pulled over VNC by the vmlab pod and written to a volume
+# session pods never mount. QEMU could write a PNG itself, but only to a path
+# inside the guest's pod, which would put shared writable storage back into a
+# design that deliberately has none.
+# ---------------------------------------------------------------------------
+savepoints:
+  enabled: true
+  size: 5Gi
+  storageClass: truenas-nfs
+  # Rendered into `-qmp <port>`. Never exposed beyond the vmlab pod.
+  qmpPort: 4444
+
+# ---------------------------------------------------------------------------
+# Network profiles. NetworkPolicy is genuinely enforced here — kube-router's
+# controller runs in-process in the k3s agent (no --disable-network-policy) and
+# it was verified live: a probe pod reached the internet before being labelled
+# and was blocked immediately after.
+#
+# TWO INDEPENDENT LEVERS, and both are used:
+#   - NETWORK= inside the container decides whether the guest has a NIC at all.
+#     NETWORK=N means QEMU builds no network device, so the guest is air-gapped
+#     regardless of any policy. It also needs ZERO capabilities.
+#   - NetworkPolicy decides what the *pod* may reach, which is what contains the
+#     container itself (and QEMU, the actual isolation boundary).
+#
+# `internet` needs SETGID+SETUID, and only those: NETWORK=slirp starts dnsmasq,
+# which drops group to `dip`. Measured — no NET_ADMIN, no /dev/net/tun, no
+# privileged. User-mode slirp also means the guest cannot see L2 or ARP.
+# ---------------------------------------------------------------------------
+networkProfiles:
+  none:
+    qemuNetwork: "N"
+    capabilities: []
+    policy: deny
+  internet:
+    qemuNetwork: "slirp"
+    capabilities: ["SETGID", "SETUID"]
+    policy: internet
+  full:
+    qemuNetwork: "slirp"
+    capabilities: ["SETGID", "SETUID"]
+    policy: none
+
+# Everything an `internet` guest must not reach. Note 100.64.0.0/10: that is the
+# tailnet's CGNAT range, and the six charts in this repo that hand-roll
+# "0.0.0.0/0 except RFC1918" all omit it, so those pods can currently reach
+# every tailnet peer. Fixing them is a separate change; this chart excludes it.
+egressExcept:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  - 169.254.0.0/16
+  - 100.64.0.0/10
+
+networkPolicy:
+  # The UI's own ingress policy. Off by default for the same reason as
+  # infra/hatch: a wrong netpol fails looking exactly like an application bug.
+  # The VM profile policies above are NOT gated on this — they are the sandbox.
+  uiEnabled: false
+
+# ---------------------------------------------------------------------------
+# The seed catalog. Helm owns this ConfigMap and the UI renders it read-only.
+# Configs created in the browser live in a SECOND, untemplated ConfigMap
+# (vmlab-catalog-user, resource-policy: keep) so that `helm upgrade` cannot
+# delete them. One ConfigMap would reproduce the values.local.yaml clobber that
+# silently ate the Signal bot's config.
+#
+# `iso` is a direct URL. `sha256` is optional but checked when set.
+# ---------------------------------------------------------------------------
+catalog:
+  - slug: alpine
+    name: Alpine Linux
+    note: Small, fast, and boots to a login in seconds. The smoke test.
+    iso: https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso
+    sha256: adf9ecc5b8ec865721dd875222b9b55f250ed594c69ebf1326451595878ce051
+    memoryMib: 1024
+    cores: 2
+    diskGib: 4
+    # legacy, not uefi: a UEFI guest gets a writable pflash variable store
+    # that savevm refuses to snapshot. BIOS is the price of save points.
+    bootMode: legacy
+    # Boots to a login prompt in seconds — the save point is the shell,
+    # not an install. Hybrid ISO, so the staged copy is flattened.
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: templeos
+    name: TempleOS
+    note: >-
+      Ring-0, single address space, 640x480, no networking by design.
+      Terry Davis's cathedral.
+    iso: https://templeos.org/Downloads/TempleOS.ISO
+    sha256: 5d0fc944e5d89c155c0fc17c148646715bc1db6fa5750c0b913772cfec19ba26
+    memoryMib: 1024
+    cores: 1
+    diskGib: 2
+    bootMode: legacy
+    diskType: ide
+    # Boots straight into its own desktop; nothing to install.
+    persist: true
+    savepoints: true
+    # i440fx with a plain IDE CD-ROM. TempleOS probes the legacy IDE ports
+    # (0x1F0/0x170) directly; the image's ide/sata settings both give an
+    # ich9-AHCI controller instead, and TempleOS faults into its debugger
+    # with "CD/DVD I/O Port Base?" when it finds nothing there.
+    machine: pc
+    mediaType: auto
+    network: none
+
+  - slug: winxp
+    name: Windows XP
+    note: Needs BIOS and IDE — no virtio drivers exist for it.
+    # The Internet Archive's copy of the original MSDN volume-licence SP3
+    # image. Chosen over the several "pre-activated" repacks on the same site
+    # because it is unmodified: eight independent uploads of this file all
+    # carry sha1 66ac289ae27724c5ae17139227cbe78c01eefe40, which a repack
+    # would not. Setup will ask for a key; supply your own.
+    iso: https://archive.org/download/en_windows_xp_professional_with_service_pack_3_x86_cd_vl_x14-73974_202104/en_windows_xp_professional_with_service_pack_3_x86_cd_vl_x14-73974.iso
+    memoryMib: 1024
+    cores: 1
+    diskGib: 8
+    bootMode: windows_legacy
+    diskType: ide
+    # i440fx, not the image's default q35. q35 is a 2009 PCIe chipset that XP
+    # has no drivers for; on it Setup dies with
+    # "STOP: 0x000000A5 — The BIOS in this system is not fully ACPI compliant"
+    # before it draws a single screen. Confirmed by save-point screenshot.
+    machine: pc
+    persist: true
+    # The whole point of save points, on the guest that needs them most:
+    # installing XP is a 40-minute click-through you should only do once.
+    savepoints: true
+    # NOT NEGOTIABLE. An unpatched XP with internet access is measured in
+    # minutes to compromise, and it would be compromised on this cluster's
+    # network.
+    network: none
+
+  - slug: redstar
+    name: Red Star OS 3.0
+    note: >-
+      North Korea's desktop distribution. Ships file-watermarking and
+      anti-tamper components — this one stays air-gapped.
+    # Red Star OS 3.0 Desktop (English), 2.61GB, from the Internet Archive.
+    # Widely mirrored and extensively studied by security researchers; there is
+    # no vendor to obtain it from.
+    iso: https://archive.org/download/redstar_desktop3.0_en/redstar_desktop3.0_en.iso
+    sha256: bd02695d679d74e38060efb0d00c37e16e0527142793aa147f24267c3470ca0a
+    memoryMib: 2048
+    cores: 1
+    diskGib: 8
+    bootMode: legacy
+    diskType: ide
+    # Hard requirement, not a default. The ISO cache is what makes an
+    # air-gapped guest possible at all.
+    # Installing this takes a while and you only want to do it once. A plain
+    # (non-hybrid) ISO, so the installer attaches read-only and savevm works
+    # even mid-install — unlike Bazzite, whose hybrid ISO blocks it.
+    persist: true
+    savepoints: true
+    # Same treatment as TempleOS: SeaBIOS hangs at "Booting from DVD/CD"
+    # with the CD on an ich9-AHCI controller, which is what diskType ide/sata
+    # both produce. A plain IDE CD-ROM on i440fx boots it.
+    machine: pc
+    mediaType: auto
+    network: none
+
+  - slug: hannahmontana
+    name: Hannah Montana Linux
+    note: Kubuntu 8.04 in a purple wig. Roughly 18 years of unpatched CVEs.
+    iso: https://archive.org/download/hannah_montana_linux_x86_basic_edition_202402/hannah_montana_linux_x86_basic_edition.iso
+    sha256: 9f9efd4c401e5274b9bca6809cc88b0cfd880a7ae4f5d9c2aa432d7a33e217be
+    memoryMib: 1024
+    cores: 1
+    diskGib: 8
+    bootMode: legacy
+    diskType: ide
+    # A live CD, which is the nicest case for save points: boot it once,
+    # save the running desktop, and every later Load lands straight on it
+    # instead of sitting through the live boot. Non-hybrid ISO, so saving
+    # works with the CD still inserted.
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: reactos
+    name: ReactOS
+    note: >-
+      An open-source re-implementation of Windows NT — looks and feels like
+      Windows 2000/XP and runs some of its software. Ships as a zip, which the
+      fetch job unwraps.
+    iso: https://github.com/reactos/reactos/releases/download/0.4.16-release/ReactOS-0.4.16-i386.zip
+    sha256: 6f15ca6e1edf5527b8489958d16c54f0da0e7948c305d7c89e74687c6cbf6855
+    memoryMib: 1024
+    cores: 1
+    diskGib: 8
+    bootMode: legacy
+    diskType: ide
+    # Short keyboard-driven installer, then a real desktop.
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: bazzite
+    name: Bazzite
+    note: >-
+      Modern Fedora atomic. The one that strains the cluster — a ~6GB ISO and
+      8Gi of RAM is near the measured per-node ceiling, and rendering is
+      llvmpipe, so expect it to be sluggish.
+    # 7.9GB — by far the largest thing in the cache, and the config that sits
+    # exactly on the LimitRange ceiling (8192 guest + 512 overhead = 8704Mi).
+    iso: https://download.bazzite.gg/bazzite-stable-amd64.iso
+    # Deliberately NOT pinned, unlike the others. This URL is a rolling
+    # "stable" pointer that upstream moves on every release, so a checksum here
+    # would turn each new Bazzite into a failed fetch that looks like
+    # corruption. The archive.org entries are pinned precisely because their
+    # URLs name an immutable item.
+    memoryMib: 8192
+    cores: 4
+    diskGib: 64
+    # legacy, not uefi: a UEFI guest gets a writable pflash variable store
+    # that savevm refuses to snapshot. BIOS is the price of save points.
+    bootMode: legacy
+    persist: true
+    savepoints: true
+    # Do NOT clear the MBR signature on this one. Fedora-family media carry an
+    # implanted isomd5sum over the whole image and verify it at boot; altering
+    # sector 0 makes that check FAIL and dracut halts the boot outright
+    # (observed). The cost is that Bazzite's ISO stays hybrid and therefore
+    # writable, so savevm refuses while it is attached — Bazzite has to be
+    # installed to its disk before it can take a save point.
+    flattenIso: false
+    network: internet
+
+  - slug: haiku
+    name: Haiku
+    note: >-
+      The open-source resurrection of BeOS — a real, coherent desktop from a
+      lineage that died in 2001. Boots straight to it from the ISO.
+    iso: https://mirror.aarnet.edu.au/pub/haiku/r1beta5/haiku-r1beta5-x86_64-anyboot.iso
+    memoryMib: 2048
+    cores: 2
+    diskGib: 16
+    persist: true
+    savepoints: true
+    # Haiku ships an "anyboot" image, which is bootable as a CD *and* as a USB
+    # disk — and it locates its boot volume through the MBR partition table.
+    # Clearing the MBR signature therefore makes it panic with "did not find
+    # any boot partitions". Like Bazzite, it keeps its real bytes and so must
+    # be installed to disk before it can take a save point.
+    flattenIso: false
+    network: none
+
+  - slug: freedos
+    name: FreeDOS
+    note: >-
+      DOS, still maintained, still 2026. Boots in about a second and comes with
+      a pile of period games. Ships as a zip, which the fetch job unpacks.
+    iso: https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/FD14-LiveCD.zip
+    memoryMib: 512
+    cores: 1
+    diskGib: 2
+    # Same legacy-IDE treatment as TempleOS: DOS talks to the hardware directly
+    # and has no idea what an AHCI controller is.
+    machine: pc
+    mediaType: auto
+    diskType: ide
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: kolibrios
+    name: KolibriOS
+    note: >-
+      A complete graphical OS written in assembly that fits on a floppy and
+      boots in well under a second. Worth seeing once just for the speed.
+    iso: https://builds.kolibrios.org/en_US/latest-iso.7z
+    memoryMib: 256
+    cores: 1
+    diskGib: 1
+    machine: pc
+    mediaType: auto
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: 9front
+    name: 9front (Plan 9)
+    note: >-
+      Bell Labs' successor to Unix, still maintained. Everything is a file
+      server, the window system is rio, and nothing works the way you expect.
+    iso: https://9front.org/iso/9front-11952.386.iso.gz
+    memoryMib: 2048
+    cores: 1
+    diskGib: 8
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: minix
+    name: MINIX 3
+    note: >-
+      Tanenbaum's microkernel teaching OS — the system Linus was trying to
+      improve on when he wrote Linux. Ships bzip2-compressed.
+    iso: https://www.minix3.org/iso/minix_R3.3.0-588a35b.iso.bz2
+    memoryMib: 1024
+    cores: 1
+    diskGib: 4
+    machine: pc
+    mediaType: auto
+    persist: true
+    savepoints: true
+    network: none
+
+  - slug: riscos
+    name: RISC OS 5
+    note: >-
+      ARM under TCG emulation, so no KVM and slow. Best-effort: it likely needs
+      hand-tuned qemuArgs rather than a plain ISO.
+    iso: ""
+    arch: arm
+    memoryMib: 1024
+    cores: 1
+    diskGib: 4
+    network: none
+
+# ---------------------------------------------------------------------------
+# UI pod plumbing.
+# ---------------------------------------------------------------------------
+# preStop must be strictly less than terminationGracePeriodSeconds or the
+# kubelet hard-kills during the sleep — scripts/ci-lint-availability.sh checks
+# exactly this.
+lifecycle:
+  preStopSleepSeconds: 3
+terminationGracePeriodSeconds: 30
+
+probes:
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 3
+    periodSeconds: 10
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 20
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+
+log:
+  level: INFO

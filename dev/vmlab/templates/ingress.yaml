@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+  annotations:
+    {{- /*
+      These two plus ingressClassName are required by infra/ingress-policy's
+      ValidatingAdmissionPolicy — the API server rejects the Ingress without
+      them. router.tls also picks up the default wildcard certificate from
+      infra/traefik's TLSStore, which is what serves *.zachd.duckdns.org; no
+      certresolver is named because DuckDNS can only answer DNS-01 at the
+      account subdomain.
+    */}}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.auth.forwardAuth.enabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "vmlab.fullname" . }}-forwardauth@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          {{- /*
+            ONE path prefix for everything, including /vm/<sid>/ and its
+            websocket. Traefik proxies websockets on a normal route with no
+            extra annotation, and noVNC resolves its socket relative to
+            location.href, so no per-session route is needed.
+          */}}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vmlab.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

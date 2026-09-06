@@ -1,0 +1,20 @@
+# vmlab needs NO secrets.
+#
+# There is no database, no API key and no bearer token: the only credential in
+# front of this is Authelia's session cookie, which Authelia owns. So there is
+# no op:// item for this chart and no values.local.tpl.yaml — upgrade.sh calls
+# sv_load only for the shape every other chart here has, and is happy when it
+# finds nothing to inject.
+#
+# Things you might legitimately override locally:
+#
+# quota:
+#   maxConcurrentVms: 2        # while the cluster is busy
+#
+# vm:
+#   preferNodes: ["zachd-ubuntu-5"]
+#
+# NOTE: helm REPLACES lists rather than merging them. Overriding `catalog` here
+# replaces the whole curated list, it does not add to it — same trap as
+# dev/guacamole's `connections`. To add one VM, use the "+ New VM" button
+# instead; those live in a separate ConfigMap that helm never touches.

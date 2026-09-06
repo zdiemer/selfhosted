@@ -1,0 +1,19 @@
+{{/*
+The curated catalog, owned by Helm and rendered read-only in the UI.
+
+Its counterpart, <fullname>-catalog-user, is NOT templated anywhere in this
+chart — the app creates it on first write. That asymmetry is deliberate: if both
+lived here, the next `helm upgrade` would delete every config added from the
+browser, which is precisely the clobber that ate values.local.yaml and took the
+Signal bot down with it. Two ConfigMaps make that failure structurally
+impossible rather than merely unlikely.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vmlab.fullname" . }}-catalog-seed
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+data:
+  catalog.json: |
+    {{ .Values.catalog | toJson }}

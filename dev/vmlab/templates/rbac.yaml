@@ -1,0 +1,123 @@
+{{- if .Values.rbac.create }}
+{{/*
+A NAMESPACED Role. Never a ClusterRole, and that is the central security
+decision in this chart.
+
+infra/hatch/templates/rbac.yaml refuses pod-create RBAC outright, and states
+why: "a hatch that could create a pod could create one with any image and any
+serviceAccountName." That objection is correct, and it applies here — except
+this service's entire purpose is creating pods, so it cannot be dodged. It is
+answered in three layers instead:
+
+  1. SCOPE. This Role is bound in ONE namespace, which contains nothing but the
+     lab. There is no cluster-scoped grant of any kind, so the worst case is
+     bounded by what that namespace can hold.
+  2. QUOTA. templates/quota.yaml caps requests.devices.kubevirt.io/kvm, pods,
+     cpu and memory. That ceiling is enforced by the API server, so it holds
+     even if every line of application code is wrong.
+  3. SHAPE. The pod spec is assembled server-side from values.yaml (see
+     app/vmlab/k8s.py). The request contributes a name, an ISO, RAM, cores,
+     disk size and a network profile — all validated and clamped. It never
+     contributes an image, a securityContext, a serviceAccountName, a volume or
+     a nodeSelector.
+
+DELIBERATELY NOT GRANTED, each for a specific reason:
+
+  secrets (any verb)      the namespace holds none, and a service that creates
+                          pods plus reads secrets can mount any of them.
+  pods/exec, pods/attach,
+  pods/portforward        console access goes through the app's own proxy to
+                          :8006. These would be a general-purpose shell into
+                          every guest, and into the UI pod itself.
+  serviceaccounts         creating one, then running a pod as it, is the
+                          escalation this whole file exists to prevent.
+  roles, rolebindings     no self-escalation.
+  anything cluster-scoped no nodes, no namespaces, no PVs, no CRDs. Node
+                          placement is expressed as affinity in a pod spec the
+                          app writes, which needs no node read at all.
+  deployments, statefulsets  a session is a Pod on purpose. A controller would
+                          outlive its TTL by recreating the pod it was culled
+                          for.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+---
+{{/*
+The identity session pods run as. It is bound to NOTHING — no Role, no
+ClusterRole — and pods mount it with automountServiceAccountToken: false. It
+exists so that "which identity is this guest" has a name other than `default`,
+whose token a future chart might make meaningful.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vmlab.vmServiceAccountName" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+rules:
+  # Session lifecycle. `delete` is the stop button and the reaper; `create` is
+  # the launch button. No patch/update: a session pod is immutable once made,
+  # so a spec change means a new session, which is also what the user means.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # The boot log is the whole diagnostic surface for "why did this guest not
+  # start" — QEMU's failure lands on stdout and nowhere else.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # ISO fetches. Bounded to Jobs, which self-delete via ttlSecondsAfterFinished.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Reading the two catalog ConfigMaps. list/watch cannot carry resourceNames,
+  # so this rule is namespace-wide by necessity — which is acceptable only
+  # because the namespace holds no ConfigMap that is not the catalog.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Writing them is narrowed to the ONE the UI owns. The seed ConfigMap is
+  # Helm's, and is absent from this list so that a bug cannot rewrite the
+  # curated catalog into something else.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "vmlab.fullname" . }}-catalog-user"]
+    verbs: ["update", "patch", "delete"]
+  # `create` cannot be narrowed by resourceName (the object does not exist yet),
+  # so it is separate and visible rather than folded into the rule above.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  # Per-config disks for `persist: true`. No delete: dropping a persisted
+  # install should be a deliberate kubectl, not a mis-click in a browser.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vmlab.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vmlab.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
