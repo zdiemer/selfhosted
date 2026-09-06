@@ -47,6 +47,10 @@ MACHINES = {"q35", "pc"}
 # that pre-AHCI guests probe for. "auto" is the plain `media=cdrom` form that
 # lands on the machine's built-in IDE bus. TempleOS faults into its debugger
 # without it.
+# Display adapter. The image defaults to virtio-gpu, which is right for modern
+# guests and useless to anything without a virtio driver — Haiku boots every
+# stage, finds no display app_server can drive, and sits on its splash forever.
+VGA_TYPES = {"virtio", "vga", "std", "cirrus", "vmware", "qxl", "none"}
 MEDIA_TYPES = {"auto", "ide", "sata", "usb", "nvme", "scsi", "blk", "virtio-scsi", "virtio-blk"}
 
 MAX_NAME_LEN = 60
@@ -155,6 +159,10 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
     if media_type and media_type not in MEDIA_TYPES:
         raise ValidationError(f"unknown mediaType {media_type!r}")
 
+    vga = (raw.get("vga") or "").strip().lower()
+    if vga and vga not in VGA_TYPES:
+        raise ValidationError(f"unknown vga {vga!r}")
+
     return {
         "slug": slug,
         "name": name,
@@ -169,6 +177,7 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         "arch": arch,
         "machine": machine,
         "mediaType": media_type,
+        "vga": vga,
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -311,6 +320,8 @@ def build_session_pod(
         env.append({"name": "MACHINE", "value": config["machine"]})
     if config.get("mediaType"):
         env.append({"name": "MEDIA_TYPE", "value": config["mediaType"]})
+    if config.get("vga"):
+        env.append({"name": "VGA", "value": config["vga"]})
     if savepoints:
         # qcow2 is not a preference: savevm stores VM state INSIDE the disk
         # image, and raw has nowhere to put it. Changing this on an existing

@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v33"
+  tag: "v35"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -529,12 +529,18 @@ catalog:
     diskGib: 16
     persist: true
     savepoints: true
-    # Haiku ships an "anyboot" image, which is bootable as a CD *and* as a USB
-    # disk — and it locates its boot volume through the MBR partition table.
-    # Clearing the MBR signature therefore makes it panic with "did not find
-    # any boot partitions". Like Bazzite, it keeps its real bytes and so must
-    # be installed to disk before it can take a save point.
-    flattenIso: false
+    # Haiku ships an "anyboot" image: bootable as a CD *and* as a USB disk.
+    # Left unflattened it takes the writable usb-disk path and SeaBIOS cannot
+    # boot it at all ("No bootable device"); flattened, it becomes a CD-ROM and
+    # boots — but on an ich9-AHCI controller its loader probes the AHCI ports,
+    # finds nothing, and panics with "did not find any boot partitions". So it
+    # needs the same plain PIIX IDE CD-ROM as TempleOS and Red Star.
+    machine: pc
+    mediaType: auto
+    # Plain VGA. The image defaults to virtio-gpu, which Haiku has no driver
+    # for: every boot stage completes and it then sits on its splash forever,
+    # because app_server has no display it can drive.
+    vga: vga
     network: none
 
   - slug: freedos

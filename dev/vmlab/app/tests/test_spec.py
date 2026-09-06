@@ -518,3 +518,12 @@ def test_config_omitting_optional_fields_is_launchable():
     )
     env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
     assert env["BOOT_MODE"] == "legacy"
+
+
+def test_vga_is_allow_listed_and_optional():
+    with pytest.raises(spec.ValidationError):
+        spec.validate_config({"slug": "x", "vga": "vga -netdev user,id=n0"})
+    assert spec.validate_config({"slug": "x", "vga": "vga"})["vga"] == "vga"
+    env = {e["name"]: e["value"] for e in _pod(vga="vga")["spec"]["containers"][0]["env"]}
+    assert env["VGA"] == "vga"
+    assert "VGA" not in {e["name"] for e in _pod()["spec"]["containers"][0]["env"]}
