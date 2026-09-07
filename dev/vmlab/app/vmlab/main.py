@@ -140,10 +140,11 @@ def api_catalog() -> dict:
                 "iso_status": k8s.iso_status(cfg["slug"]) if cfg.get("iso") else "absent",
                 "hasIsoUrl": bool(cfg.get("iso")),
                 # Whether a launch has to wait for the ISO cache at all. False
-                # for the RPCEmu engine, whose image already contains RISC OS —
-                # without this the tile would offer "Download ISO" forever for a
-                # config that has nothing to download.
-                "needsIso": cfg.get("engine", "qemu") == "qemu",
+                # only for RPCEmu, whose image already contains RISC OS — without
+                # this its tile would offer "Download ISO" forever for a config
+                # with nothing to download. 86Box carries BIOS ROMs but not an
+                # operating system, so it needs one like every QEMU guest does.
+                "needsIso": cfg.get("engine", "qemu") != "rpcemu",
                 "session": sessions.get(cfg["slug"]),
                 # Two distinct things that were briefly one: whether this config
                 # CAN take save points (a bool from values.yaml) and which ones

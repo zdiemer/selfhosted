@@ -117,9 +117,19 @@ def list_configs() -> list[dict]:
     entry — create_config refuses a duplicate slug — so the merge needs no
     precedence rule, which is one less thing to get wrong."""
     out = []
+    seen: set[str] = set()
     for cfg in _seed_configs():
-        out.append(_normalise(cfg, "seed"))
-    seen = {c["slug"] for c in out}
+        entry = _normalise(cfg, "seed")
+        # A slug is the identity of a disk PVC and of a cache filename, so two
+        # seed entries sharing one are two tiles fighting over one machine —
+        # and the symptom is a guest that silently launches somebody else's
+        # config. Caught here because nothing else was catching it: a duplicate
+        # freedos went in unnoticed and rendered twice.
+        if entry["slug"] in seen:
+            entry = dict(entry, broken=f"duplicate slug {entry['slug']!r} in values.yaml")
+            entry["slug"] = f"{entry['slug']}-dup{len(out)}"
+        seen.add(entry["slug"])
+        out.append(entry)
     for cfg in _user_configs():
         if cfg.get("slug") in seen:
             continue

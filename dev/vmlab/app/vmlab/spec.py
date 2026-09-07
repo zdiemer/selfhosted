@@ -45,7 +45,51 @@ ARCHES = {"x86", "arm"}
 # because RISC OS runs on no QEMU machine type at all (values.yaml records the
 # investigation), and it is an ALLOW-LIST rather than a free-form image name for
 # the same reason every other field here is one.
-ENGINES = {"qemu", "rpcemu"}
+ENGINES = {"qemu", "rpcemu", "86box"}
+
+# 86Box emulates specific machines, and every one of these strings ends up in a
+# config file it parses. They are allow-lists rather than free text for the same
+# reason the rest of this module is: a config can come from the browser, and
+# "whatever you type goes into the emulator's machine description" is not a
+# boundary. Adding one is a one-line change here plus a catalog entry - the
+# names are 86Box's own internal_name values, from its machine, CPU, video and
+# sound tables.
+#
+# Curated, not exhaustive: 86Box carries 471 machines, and a list of 471 that
+# nobody has booted is worth less than a short one that works. Each is here
+# because a guest in the catalog runs on it.
+BOX86_MACHINES = {
+    # [i440BX] ASUS P2B-LS - the Pentium II board of the late 90s, and what a
+    # Windows 98 or Windows 2000 install expects to find.
+    "p2bls",
+    # [i430TX] ASUS TX97 - Socket 7, the Windows 95/98 era proper.
+    "tx97",
+    # [i430VX] Shuttle HOT-557 - earlier Socket 7, for Windows 95 and DOS.
+    "430vx",
+    # [SiS 496] ASUS PVI-486SP3 - a PCI 486, which is the machine OS/2 Warp and
+    # late DOS were actually sold for.
+    "486sp3c",
+}
+BOX86_CPUS = {
+    "i486dx", "i486dx2", "pentium_p54c", "pentium_p55c",
+    "pentiumpro", "pentium2_klamath", "pentium2_deschutes",
+}
+# 2D cards only. 86Box emulates a Voodoo, but it emulates it on the CPU, and a
+# guest doing software 3D on an emulated 486 is a slideshow twice over.
+BOX86_GFX = {
+    "virge375_pci",     # S3 ViRGE/DX - PCI, well supported by 9x and OS/2
+    "trio64_onboard_pci",
+    "et4000ax",         # ISA Tseng, for the 486 and DOS
+    "cl_gd5430_isa",
+}
+BOX86_SOUND = {
+    "sb16",             # the Sound Blaster everything from 1993 on knows
+    "sbpro2",
+    "none",
+}
+# What 86Box calls the drive; 35_2hd is the 1.44MB 3.5" drive every one of
+# these machines shipped with.
+BOX86_FDD = {"35_2hd", "35_2ed", "525_2hd", "none"}
 # Chipset. The image defaults to q35, which is a 2009 PCIe chipset: correct for
 # anything modern and a non-starter for guests older than it. Windows XP on q35
 # bluescreens with STOP 0x000000A5 before Setup even begins.
@@ -94,6 +138,16 @@ def _require_int(raw: Any, field: str, low: int, high: int, default: int) -> int
     # property of the cluster, not a mistake by the caller, and the LimitRange
     # would reject the pod anyway. Being told "you got 8Gi" beats a 400.
     return _clamp(value, low, high)
+
+
+def _allow(raw: Any, allowed: set[str], field: str, default: str) -> str:
+    """One of a fixed set, or the default. Never the caller's string."""
+    value = (str(raw).strip().lower() if raw else "") or default
+    if value not in allowed:
+        raise ValidationError(
+            f"unknown {field} {value!r}; expected one of " + ", ".join(sorted(allowed))
+        )
+    return value
 
 
 def validate_iso_url(url: str) -> str:
@@ -242,6 +296,17 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # offer a save point that would evaporate on stop.
         "savepoints": wants_savepoints,
         "engine": engine,
+        # The 86Box machine description. Validated here even when the engine is
+        # something else, so a config that switches engine later cannot carry an
+        # unchecked string across with it.
+        "box86Machine": _allow(raw.get("box86Machine"), BOX86_MACHINES, "box86Machine", "p2bls"),
+        "box86Cpu": _allow(raw.get("box86Cpu"), BOX86_CPUS, "box86Cpu", "pentium2_deschutes"),
+        # 86Box wants a speed in Hz, and refuses one its CPU table does not
+        # offer for the chosen family - so this is clamped, not free.
+        "box86CpuHz": _require_int(raw.get("box86CpuHz"), "box86CpuHz", 16_000_000, 600_000_000, 350_000_000),
+        "box86Gfx": _allow(raw.get("box86Gfx"), BOX86_GFX, "box86Gfx", "virge375_pci"),
+        "box86Sound": _allow(raw.get("box86Sound"), BOX86_SOUND, "box86Sound", "sb16"),
+        "box86Fdd": _allow(raw.get("box86Fdd"), BOX86_FDD, "box86Fdd", "35_2hd"),
         # Whether the staged copy may have its MBR signature cleared. Defaults
         # on for save-point guests (it is what lets a hybrid ISO attach
         # read-only, and therefore what lets savevm run with the CD in), but it
@@ -490,6 +555,178 @@ def _build_rpcemu_pod(
     }
 
 
+def _build_86box_pod(
+    *,
+    config: dict,
+    session_id: str,
+    release: str,
+    ttl: int,
+    memory_mib: int,
+    cores: int,
+    disk_gib: int,
+    profile: dict,
+    boot_from_iso: bool,
+) -> dict:
+    """One 86Box session: a specific PC from the 1990s, emulated in software.
+
+    Sits between the other two engines. Like RPCEmu it is a Qt application
+    behind Xvfb with no KVM, no QMP and therefore no save points; unlike RPCEmu
+    it takes an ISO, because the guest operating system is the thing you supply
+    and the image carries only the BIOS ROMs.
+
+    The machine description reaches the emulator as env, and every field of it
+    came through the allow-lists above. The container never sees a string the
+    browser chose.
+    """
+    slug = config["slug"]
+
+    volumes: list[dict] = []
+    mounts: list[dict] = [{"name": "work", "mountPath": "/86box"}]
+    init_containers: list[dict] = []
+
+    if config.get("persist"):
+        volumes.append(
+            {
+                "name": "work",
+                "persistentVolumeClaim": {"claimName": disk_pvc_name(release, slug)},
+            }
+        )
+    else:
+        # The emulated hard disk lives here, so the volume has to fit it with
+        # room for the config and the NVR alongside.
+        volumes.append({"name": "work", "emptyDir": {"sizeLimit": f"{disk_gib + 2}Gi"}})
+
+    iso_path = ""
+    if boot_from_iso:
+        # A private copy, like the QEMU path, and for the same reason: a guest
+        # gets no handle on the shared cache other guests boot from. No
+        # flattening here - 86Box attaches this to an emulated ATAPI drive and
+        # reads it as a CD, so a hybrid MBR is simply never looked at.
+        iso_path = "/media/boot.iso"
+        volumes.append({"name": "media", "emptyDir": {"sizeLimit": "16Gi"}})
+        volumes.append(
+            {
+                "name": "isos",
+                "persistentVolumeClaim": {"claimName": settings.iso_pvc, "readOnly": True},
+            }
+        )
+        mounts.append({"name": "media", "mountPath": "/media"})
+        init_containers.append(
+            {
+                "name": "stage-iso",
+                "image": settings.fetch_image,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["/bin/sh", "-c"],
+                # The filename comes from an already-validated slug and is passed
+                # as $1 rather than interpolated into the script.
+                "args": [
+                    "set -eu\n"
+                    'if [ ! -s "/isos/$1" ]; then\n'
+                    '  echo "ISO not staged yet: $1 - fetch it first" >&2\n'
+                    "  exit 1\n"
+                    "fi\n"
+                    'cp "/isos/$1" /media/boot.iso\n'
+                    "ls -lh /media/boot.iso\n",
+                    "sh",
+                    iso_filename(slug, config.get("bootMedia", "iso")),
+                ],
+                "securityContext": {
+                    "allowPrivilegeEscalation": False,
+                    "runAsNonRoot": True,
+                    "runAsUser": 10001,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "64Mi"},
+                    "limits": {"cpu": "1", "memory": "256Mi"},
+                },
+                "volumeMounts": [
+                    {"name": "isos", "mountPath": "/isos", "readOnly": True},
+                    {"name": "media", "mountPath": "/media"},
+                ],
+            }
+        )
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": session_id,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "app.kubernetes.io/component": "session",
+                "vmlab.zachd/config": slug,
+                "vmlab.zachd/session": session_id,
+                "vmlab.zachd/network": config["network"],
+                "vmlab.zachd/savepoints": "false",
+                "vmlab.zachd/engine": "86box",
+            },
+            "annotations": {
+                "vmlab.zachd/display-name": config["name"],
+                "vmlab.zachd/boot-from-iso": "true" if boot_from_iso else "false",
+            },
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": ttl,
+            "serviceAccountName": settings.vm_service_account,
+            "automountServiceAccountToken": False,
+            "enableServiceLinks": False,
+            "terminationGracePeriodSeconds": 15,
+            **_affinity(),
+            "initContainers": init_containers,
+            "containers": [
+                {
+                    "name": "box86",
+                    "image": f"{settings.box86_image}:{settings.box86_tag}",
+                    "imagePullPolicy": settings.vm_pull_policy,
+                    "env": [
+                        {"name": "BOX_WORK", "value": "/86box"},
+                        {"name": "BOX_MACHINE", "value": config["box86Machine"]},
+                        {"name": "BOX_CPU_FAMILY", "value": config["box86Cpu"]},
+                        {"name": "BOX_CPU_SPEED", "value": str(config["box86CpuHz"])},
+                        # 86Box counts memory in KB, and these chipsets top out
+                        # well below what a pod could be given - a 430VX cannot
+                        # address more than 128MB no matter what is asked for.
+                        {"name": "BOX_MEM_KB", "value": str(min(memory_mib, 256) * 1024)},
+                        {"name": "BOX_GFXCARD", "value": config["box86Gfx"]},
+                        {"name": "BOX_SNDCARD", "value": config["box86Sound"]},
+                        {"name": "BOX_FDD_TYPE", "value": config["box86Fdd"]},
+                        {"name": "BOX_DISK_MB", "value": str(disk_gib * 1024)},
+                        {"name": "BOX_ISO", "value": iso_path},
+                    ],
+                    "ports": [{"name": "http", "containerPort": 8006}],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "runAsNonRoot": True,
+                        "runAsUser": 10001,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "resources": {
+                        "requests": {
+                            "cpu": settings.cpu_request,
+                            # The guest's RAM is trivial next to the emulator's
+                            # own footprint here: a 1997 machine had 64MB and
+                            # 86Box's recompiler, Qt and the framebuffer want
+                            # more than the guest does.
+                            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+                        },
+                        "limits": {
+                            # The recompiler is single-threaded; the limit still
+                            # tracks the config so the quota accounts honestly.
+                            "cpu": str(cores),
+                            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+                        },
+                    },
+                    "volumeMounts": mounts,
+                }
+            ],
+            "volumes": volumes,
+        },
+    }
+
+
 def build_session_pod(
     *,
     config: dict,
@@ -522,6 +759,19 @@ def build_session_pod(
     # assembling a QEMU command line, and none of it means anything to RPCEmu —
     # threading an `if` through it would put the two engines' security posture
     # in one place where a change meant for one silently altered the other.
+    if config.get("engine") == "86box":
+        return _build_86box_pod(
+            config=config,
+            session_id=session_id,
+            release=release,
+            ttl=ttl,
+            memory_mib=memory_mib,
+            cores=cores,
+            disk_gib=disk_gib,
+            profile=profile,
+            boot_from_iso=boot_from_iso,
+        )
+
     if config.get("engine") == "rpcemu":
         return _build_rpcemu_pod(
             config=config,

@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v66"
+  tag: "v69"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -214,6 +214,13 @@ vm:
   # moves, not when the UI does.
   rpcemuImage: registry.zachd.duckdns.org/zdiemer/vmlab-rpcemu
   rpcemuTag: "0.9.5-ro530-13"
+
+  # The third engine: 86Box, which emulates period PC hardware rather than
+  # virtualising a modern machine. Carries its own ROM set, so it needs no
+  # network; unlike RPCEmu it DOES take an ISO, because the guest OS is the
+  # thing you supply. Built by build-86box.sh.
+  box86Image: registry.zachd.duckdns.org/zdiemer/vmlab-86box
+  box86Tag: "6.0-5"
 
   # Hard ceiling, enforced by the kubelet rather than by the app.
   defaultTtlSeconds: 14400
@@ -764,6 +771,110 @@ catalog:
     # for aarch64 virt, and Alpine has the driver.
     vga: virtio
     network: none
+
+  # -------------------------------------------------------------------------
+  # 86Box guests. A different engine again: not a virtualiser handing the guest
+  # a modern machine, but an emulator of a SPECIFIC 1990s PC - chipset, BIOS,
+  # period video card, a Sound Blaster at 220h, and a CPU that is not thousands
+  # of times too fast for software written when a 350MHz Pentium II was new.
+  #
+  # That is the whole reason it is here. Windows 98 under QEMU is a coin flip;
+  # on an emulated ASUS P2B-LS it is a machine Microsoft shipped drivers for.
+  #
+  # The image carries the BIOS ROMs (86Box's own set, matched to the emulator
+  # version) but NOT any operating system - so unlike the RPCEmu engine, these
+  # take an ISO like every QEMU guest.
+  #
+  # ONE MANUAL STEP, ONCE PER GUEST. A 1990s BIOS boots A: then C:, and nothing
+  # else - so a fresh machine with a blank disk stops at "DISK BOOT FAILURE"
+  # with the installer sitting in a CD drive it was never going to look at. In
+  # the console: press DEL during POST, BIOS FEATURES SETUP, set Boot Sequence
+  # to CDROM,C,A with PgDn, ESC, F10, Y. It sticks - these configs are
+  # persist:true and the CMOS lives in the volume's nvr/ with everything else.
+  #
+  # Not scripted, and that is a decision rather than an omission. It was driven
+  # end to end over RFB on the 430VX board and it works, but the recipe is
+  # per-BIOS: the 440BX board's menu has Boot Sequence in a different position,
+  # its list cycles differently, and its cursor wraps - so a keystroke count
+  # verified on one board silently changes the wrong setting on another. A
+  # thirty-second manual step beats a script that quietly misconfigures a
+  # machine and leaves the evidence in a saved CMOS.
+  # -------------------------------------------------------------------------
+
+  - slug: freedos-86box
+    name: FreeDOS (86Box)
+    note: >-
+      The same FreeDOS as the QEMU tile above, on hardware DOS was written for: a
+      Socket 7 board, a Tseng ET4000 and a Sound Blaster 16 at the address every
+      game of the era expects. Side by side, the two are the clearest statement
+      of what this engine is for. First boot stops at DISK BOOT FAILURE until
+      you set the BIOS boot order to CDROM - see the note above this entry.
+    # The one 86Box guest whose media is freely redistributable, which makes it
+    # the one that proves the engine end to end.
+    iso: https://download.freedos.org/1.4/FD14-LiveCD.zip
+    engine: 86box
+    box86Machine: "430vx"
+    box86Cpu: pentium_p54c
+    box86CpuHz: 133000000
+    box86Gfx: et4000ax
+    box86Sound: sb16
+    # A period machine, sized like one. 64MB was generous in 1996 and DOS
+    # cannot use most of it anyway; the pod's own footprint dwarfs it.
+    memoryMib: 512
+    cores: 1
+    diskGib: 2
+    persist: true
+    network: none
+
+  - slug: win98
+    name: Windows 98 SE
+    note: >-
+      An emulated ASUS P2B-LS: 440BX, Pentium II, S3 ViRGE/DX and a Sound
+      Blaster 16 - a machine Windows 98 shipped drivers for. Needs installation
+      media you own; set `iso` once you have staged it, then set the BIOS boot
+      order to CDROM on the first boot.
+    # DELIBERATELY EMPTY. Windows 98 is not redistributable and this repository
+    # will not point at a copy of it. Put your own URL here, or stage the file
+    # directly with `kubectl cp` into the ISO cache as vmlab-isos:/win98.iso -
+    # iso_present() reads the directory, so a hand-staged image simply appears.
+    iso: ""
+    engine: 86box
+    box86Machine: p2bls
+    box86Cpu: pentium2_deschutes
+    box86CpuHz: 350000000
+    box86Gfx: virge375_pci
+    box86Sound: sb16
+    memoryMib: 768
+    cores: 1
+    diskGib: 4
+    # An installed Windows is the point; without this every launch would be a
+    # fresh setup. The installer is attached only while the disk is new.
+    persist: true
+    # 98 unpatched on the open internet is the same argument as Windows XP, and
+    # gets the same answer.
+    network: none
+
+  - slug: os2warp
+    name: OS/2 Warp 4
+    note: >-
+      IBM's Workplace Shell, on the PCI 486 it was sold for. Famously fussy
+      about hardware, which is exactly what an emulator of specific hardware is
+      good at. Needs installation media you own.
+    # Also deliberately empty, for the same reason as win98. OS/2 Warp is IBM's
+    # and not redistributable; ArcaOS is its supported commercial successor.
+    iso: ""
+    engine: 86box
+    box86Machine: "486sp3c"
+    box86Cpu: i486dx2
+    box86CpuHz: 66000000
+    box86Gfx: cl_gd5430_isa
+    box86Sound: sb16
+    memoryMib: 512
+    cores: 1
+    diskGib: 2
+    persist: true
+    network: none
+
 
   - slug: riscos
     name: RISC OS 5

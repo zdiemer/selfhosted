@@ -506,6 +506,80 @@ first boot because buildkit shares one network namespace across builds, so every
 cancelled attempt left an `Xvfb` and an `x11vnc` behind and the next build hung
 on its own ghosts for twenty minutes. In the pod the namespace is the pod's own.
 
+## A third engine: 86Box, for PCs that no longer exist
+
+QEMU is a virtualiser. It hands the guest a modern-ish machine and, with KVM,
+the host's own CPU — exactly right for Bazzite and exactly wrong for a 1997
+operating system, which expects a specific chipset, a Sound Blaster at 220h, a
+period video card and a processor that is not thousands of times too fast.
+Windows 98 under QEMU is a coin flip. Under 86Box it is a Pentium II on an ASUS
+P2B-LS, which is a machine it shipped drivers for.
+
+`engine: 86box` dispatches to `_build_86box_pod`. It sits between the other two:
+like RPCEmu it is a Qt application behind Xvfb with no KVM, no QMP and so no
+save points; unlike RPCEmu it takes an ISO, because the image carries BIOS ROMs
+and not an operating system. The wrapper is deliberately the same one RPCEmu
+uses — Xvfb, x11vnc, noVNC on :8006 — so `proxy.py` never learns there are three
+engines. 86Box has a VNC renderer of its own and it is **not** used: off by
+default upstream, reported uncompileable, and barely tested by its own account.
+
+### The machine description is an allow-list
+
+`BOX86_MACHINES`, `BOX86_CPUS`, `BOX86_GFX`, `BOX86_SOUND` and `BOX86_FDD` are
+86Box's own `internal_name` values, and every one of them is written into a
+config file an emulator parses. A config can come from the browser, so "whatever
+you type goes into the machine description" is not a boundary. The lists are
+curated rather than exhaustive — 86Box carries 471 machines, and 471 nobody has
+booted is worth less than four that work.
+
+Two details found by reading back the config 86Box rewrites on load, which is
+the fastest way to learn what it actually accepted:
+
+- **`cdrom_01_parameters = 1, atapi`**, not `ide`. `hdd_string_to_bus()` takes
+  both, but a CD-ROM given `ide` is not attached as one: 86Box quietly deletes
+  the channel key and the BIOS reports `Sec. Master: None`, which looks exactly
+  like a missing image. The first field is an audio flag, not a drive number.
+- **Memory and CPU speed are normalised by the emulator.** A 430VX cannot
+  address more than 128MB whatever the pod is given, and `133000000` comes back
+  as `133333333`. `_build_86box_pod` caps memory at 256MB before it asks.
+
+### One manual step, once per guest
+
+A 1990s BIOS boots A: then C:, and nothing else. A fresh machine with a blank
+disk therefore stops at `DISK BOOT FAILURE` with the installer sitting in a CD
+drive it was never going to look at. In the console: **DEL** during POST →
+*BIOS FEATURES SETUP* → *Boot Sequence* → **PgDn** to `CDROM,C,A` → **ESC** →
+**F10** → **Y**. It sticks, because these configs are `persist: true` and the
+CMOS lives in the volume's `nvr/`.
+
+This is not scripted, and that is a decision. It was driven end to end over RFB
+on the 430VX board and it works — but the recipe is per-BIOS. The 440BX board
+puts Boot Sequence at a different index, cycles a different list, and wraps its
+cursor, so a keystroke count verified on one board silently changes the wrong
+setting on another. A thirty-second manual step beats a script that
+misconfigures a machine and leaves the evidence in a saved CMOS.
+
+What *is* scripted is the `Press F1` halt a blank CMOS produces, because that
+one is unambiguous and safe: `first-boot-keys.py` sends F1 once, only on the
+boot after a fresh NVR.
+
+### Media
+
+FreeDOS is here because its media is freely redistributable, which makes it the
+guest that proves the engine end to end — it boots the LiveCD, initialises the
+CD driver and comes up on an emulated 1996 Socket 7 machine.
+
+**Windows 98 and OS/2 Warp are not redistributable, and this repository does not
+point at copies of them.** Both have full catalog entries — period-correct board,
+CPU, video and sound — with `iso: ""`. Supply a URL you are entitled to use, or
+stage the file directly:
+
+```sh
+kubectl -n vmlab cp win98.iso <a-pod>:/isos/win98.iso   # any pod mounting vmlab-isos
+```
+
+`iso_present()` reads the directory, so a hand-staged image simply appears.
+
 ## Notes on individual guests
 
 | OS | why it needs what it needs |

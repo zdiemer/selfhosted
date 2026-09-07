@@ -726,3 +726,107 @@ def test_rpcemu_ram_lands_on_a_real_risc_pc_size(memory_mib, expected):
     # A Risc PC takes powers of two up to 256MB and reports anything else as the
     # next one down, so the pod's memory is mapped rather than passed through.
     assert spec._rpcemu_ram(memory_mib) == expected
+
+
+# ---------------------------------------------------------------------------
+# The 86Box engine.
+#
+# Same shape of test as the RPCEmu block: containment, and the allow-lists,
+# which matter more here than anywhere else in this module. Every one of these
+# strings is written into a config file an emulator parses, and a config can
+# come from the browser.
+# ---------------------------------------------------------------------------
+
+
+def _box_config(**over):
+    cfg = {"slug": "win98", "name": "Windows 98", "engine": "86box",
+           "memoryMib": 768, "cores": 1, "diskGib": 4, "network": "none"}
+    cfg.update(over)
+    return spec.validate_config(cfg)
+
+
+def test_86box_machine_description_is_allow_listed():
+    for field, bad in (
+        ("box86Machine", "; rm -rf /"),
+        ("box86Cpu", "pentium9"),
+        ("box86Gfx", "rtx4090"),
+        ("box86Sound", "hda"),
+        ("box86Fdd", "8_inch"),
+    ):
+        with pytest.raises(spec.ValidationError):
+            _box_config(**{field: bad})
+
+
+def test_86box_defaults_are_a_real_machine():
+    cfg = _box_config()
+    assert cfg["box86Machine"] in spec.BOX86_MACHINES
+    assert cfg["box86Cpu"] in spec.BOX86_CPUS
+    assert cfg["box86Gfx"] in spec.BOX86_GFX
+
+
+def test_86box_cpu_speed_stays_inside_the_era():
+    # _require_int's asymmetry, which is deliberate and documented there: under
+    # the floor is a mistake and raises, over the ceiling is clamped. Both
+    # matter here — nothing outside the range may reach the config file, because
+    # 86Box will not build a machine at a clock its CPU table does not offer.
+    with pytest.raises(spec.ValidationError):
+        _box_config(box86CpuHz=1)
+    assert _box_config(box86CpuHz=999_000_000_000)["box86CpuHz"] == 600_000_000
+    assert _box_config(box86CpuHz=350_000_000)["box86CpuHz"] == 350_000_000
+
+
+def test_86box_pod_is_unprivileged_and_takes_no_kvm():
+    pod = spec.build_session_pod(
+        config=_box_config(), session_id="vm-win98-abc", release="vmlab",
+        boot_from_iso=True, ttl_seconds=3600,
+    )
+    container = pod["spec"]["containers"][0]
+    sc = container["securityContext"]
+    assert sc["capabilities"] == {"drop": ["ALL"]}
+    assert sc["runAsNonRoot"] is True and sc["runAsUser"] == 10001
+    assert "devices.kubevirt.io/kvm" not in container["resources"]["limits"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
+    assert pod["metadata"]["labels"]["vmlab.zachd/network"] == "none"
+    assert pod["metadata"]["labels"]["vmlab.zachd/savepoints"] == "false"
+
+
+def test_86box_stages_a_private_copy_of_the_iso():
+    # Never the shared cache: a guest must have no handle on the media other
+    # guests boot from.
+    pod = spec.build_session_pod(
+        config=_box_config(), session_id="vm-win98-abc", release="vmlab",
+        boot_from_iso=True, ttl_seconds=3600,
+    )
+    init = pod["spec"]["initContainers"][0]
+    assert init["name"] == "stage-iso"
+    iso_mount = [m for m in init["volumeMounts"] if m["name"] == "isos"][0]
+    assert iso_mount["readOnly"] is True
+    # The emulator container sees only the private copy.
+    box_mounts = {m["name"] for m in pod["spec"]["containers"][0]["volumeMounts"]}
+    assert "isos" not in box_mounts
+    assert box_mounts == {"work", "media"}
+
+
+def test_86box_without_media_attaches_no_cd():
+    pod = spec.build_session_pod(
+        config=_box_config(), session_id="vm-win98-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    assert pod["spec"]["initContainers"] == []
+    env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+    assert env["BOX_ISO"] == ""
+
+
+def test_86box_memory_is_capped_at_what_a_period_chipset_can_address():
+    # A 430VX cannot see more than 128MB whatever the pod is given; passing the
+    # pod's full allocation through would be a config the machine cannot honour.
+    pod = spec.build_session_pod(
+        config=_box_config(memoryMib=4096), session_id="vm-win98-abc",
+        release="vmlab", boot_from_iso=False, ttl_seconds=3600,
+    )
+    env = {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+    assert int(env["BOX_MEM_KB"]) == 256 * 1024
+
+
+def test_86box_cannot_ask_for_save_points_either():
+    assert _box_config(persist=True, savepoints=True)["savepoints"] is False

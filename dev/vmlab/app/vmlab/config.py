@@ -70,6 +70,11 @@ class Settings:
         "VMLAB_RPCEMU_IMAGE", "registry.zachd.duckdns.org/zdiemer/vmlab-rpcemu"
     )
     rpcemu_tag: str = os.environ.get("VMLAB_RPCEMU_TAG", "0.9.5-ro530-13")
+    # The 86Box engine, versioned on the emulator plus its ROM set.
+    box86_image: str = os.environ.get(
+        "VMLAB_86BOX_IMAGE", "registry.zachd.duckdns.org/zdiemer/vmlab-86box"
+    )
+    box86_tag: str = os.environ.get("VMLAB_86BOX_TAG", "6.0-5")
     vm_pull_policy: str = os.environ.get("VMLAB_VM_PULL_POLICY", "IfNotPresent")
 
     default_ttl_seconds: int = _int("VMLAB_DEFAULT_TTL_SECONDS", 14400)
