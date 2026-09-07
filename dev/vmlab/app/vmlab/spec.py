@@ -205,6 +205,11 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # exactly that layout; MEDIA_TYPE cannot express it because it selects a
         # controller KIND and never a channel.
         "legacyCdrom": bool(raw.get("legacyCdrom", False)),
+        # Sound. Off by default, and deliberately so: adding an intel-hda
+        # device CHANGES THE MACHINE, which invalidates any save point taken
+        # without it. Turning it on for a config that already has save points
+        # is a real decision, and the fingerprint below will say so.
+        "audio": bool(raw.get("audio", False)),
         "network": network,
         "persist": bool(raw.get("persist", False)),
         # Save points need somewhere for the qcow2 internal snapshot to live,
@@ -221,6 +226,38 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # disk before their first save point.
         "flattenIso": bool(raw.get("flattenIso", True)),
     }
+
+
+# Every field that changes the emulated machine. A save point restores register
+# and device state onto whatever QEMU builds now, so if any of these differ the
+# restore fails — historically with a bare QEMU error that named none of this.
+HARDWARE_FIELDS = (
+    "arch", "machine", "vga", "mediaType", "diskType", "bootMedia", "bootMode",
+    "memoryMib", "cores", "diskGib", "network", "floppy", "legacyCdrom",
+    "usb", "audio", "savepoints",
+)
+
+
+def hardware_fingerprint(config: dict) -> str:
+    """Identify the machine a save point was taken on.
+
+    Not a checksum of the config: only the fields that reach QEMU's command
+    line are included, so renaming a guest or editing its note does not
+    invalidate anything, while changing its chipset or its RAM does.
+    """
+    import hashlib
+
+    parts = [f"{k}={config.get(k)!r}" for k in HARDWARE_FIELDS]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def hardware_diff(config: dict, other: dict) -> list[str]:
+    """Which hardware fields differ, for an error message worth reading."""
+    return [
+        f"{k}: {other.get(k)!r} -> {config.get(k)!r}"
+        for k in HARDWARE_FIELDS
+        if config.get(k) != other.get(k)
+    ]
 
 
 def _sha256_ok(value: str) -> bool:
@@ -359,6 +396,8 @@ def build_session_pod(
         # This also detaches the data disk, which is why a floppy guest cannot
         # take save points — there is no qcow2 for savevm to write into.
         env.append({"name": "DISK_TYPE", "value": "none"})
+    if config.get("audio"):
+        env.append({"name": "AUDIO", "value": "Y"})
     if config.get("usb") is False:
         env.append({"name": "USB", "value": "N"})
     if config.get("machine"):

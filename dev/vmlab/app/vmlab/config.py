@@ -72,6 +72,10 @@ class Settings:
     # still holds pod quota and its disk, so this is a debugging window rather
     # than an archive.
     terminal_grace_seconds: int = _int("VMLAB_TERMINAL_GRACE_SECONDS", 1800)
+    # How often running guests are re-photographed for the catalog. Every
+    # pass opens a VNC connection per guest, so this trades freshness against
+    # noise on the console the user may be actively using.
+    live_thumbnail_seconds: int = _int("VMLAB_LIVE_THUMBNAIL_SECONDS", 30)
 
     max_cores: int = _int("VMLAB_MAX_CORES", 8)
     max_memory_mib: int = _int("VMLAB_MAX_MEMORY_MIB", 8192)

@@ -378,6 +378,19 @@ def launch(
         entry = remembered.get(load_snapshot)
         if entry is None:
             raise spec.ValidationError(f"no save point named {load_snapshot!r}")
+        # Refuse a save point taken on a different machine, and say what
+        # changed. Without this the restore fails inside QEMU with a message
+        # that names none of the config — which is exactly how two stale save
+        # points went unnoticed until they were loaded.
+        recorded = entry.get("hardware")
+        current = spec.hardware_fingerprint(cfg)
+        if recorded and recorded != current:
+            changed = spec.hardware_diff(cfg, entry.get("hardwareFields") or {})
+            raise spec.ValidationError(
+                f"save point {load_snapshot!r} was taken on different hardware and "
+                f"cannot be restored: " + "; ".join(changed or ["configuration changed"])
+                + ". Delete it, or revert the config."
+            )
         boot_from_iso = bool(entry.get("bootFromIso", False))
 
     if boot_from_iso is None:
@@ -599,6 +612,8 @@ def create_savepoint(slug: str, name: str) -> dict:
     entry = snapshots.record(
         slug, name, png=thumb, full_png=full_png, width=width, height=height,
         boot_from_iso=bool(session.get("bootFromIso")),
+        hardware=spec.hardware_fingerprint(cfg),
+        hardware_fields={k: cfg.get(k) for k in spec.HARDWARE_FIELDS},
     )
     logger.info("saved %s/%s", slug, name)
     return entry
@@ -650,3 +665,47 @@ def savepoint_screenshot(slug: str, name: str, *, full: bool = False) -> str | N
     # missing full-size copy should fall back rather than 404.
     fallback = snapshots.screenshot_path(slug, name, full=not full)
     return fallback if os.path.exists(fallback) else None
+
+
+# ---------------------------------------------------------------------------
+# Live thumbnails
+# ---------------------------------------------------------------------------
+
+
+def capture_live(slug: str) -> bool:
+    """Snapshot a running guest for the catalog tile.
+
+    Best-effort by design: a guest that is mid-boot, mid-save or simply not
+    answering yet should leave the previous picture in place rather than blank
+    the tile or log an error.
+    """
+    if not snapshots.enabled():
+        return False
+    session = _running_session(slug)
+    if session is None:
+        return False
+    try:
+        rgb, w, h = screenshot.capture_raw(session["podIP"], timeout=10)
+        png = screenshot.thumbnail(rgb, w, h, max_width=320)
+    except (screenshot.ScreenshotError, OSError):
+        return False
+    snapshots.write_live(slug, png)
+    return True
+
+
+def refresh_live_thumbnails() -> int:
+    done = 0
+    for session in list_sessions():
+        if session["phase"] != "Running":
+            continue
+        try:
+            if capture_live(session["slug"]):
+                done += 1
+        except Exception:
+            logger.debug("live thumbnail failed for %s", session["slug"], exc_info=True)
+    return done
+
+
+def live_thumbnail(slug: str) -> str | None:
+    path = snapshots.live_path(slug)
+    return path if snapshots.enabled() and os.path.exists(path) else None

@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v52"
+  tag: "v57"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -216,6 +216,8 @@ vm:
   # terminal pods on sight (the first version) meant a guest that failed to
   # boot disappeared along with the only evidence of why.
   terminalGraceSeconds: 1800
+  # How often a running guest is re-photographed for its catalog tile.
+  liveThumbnailSeconds: 30
 
   maxCores: 8
   maxMemoryMib: 8192
@@ -449,6 +451,7 @@ catalog:
     # both produce. A plain IDE CD-ROM on i440fx boots it.
     machine: pc
     mediaType: auto
+    audio: true
     network: none
 
   - slug: hannahmontana
@@ -516,6 +519,7 @@ catalog:
     # writable, so savevm refuses while it is attached — Bazzite has to be
     # installed to its disk before it can take a save point.
     flattenIso: false
+    audio: true
     network: internet
 
   - slug: haiku
@@ -558,6 +562,10 @@ catalog:
     # attached writable, and savevm refuses any writable non-qcow2 device. A
     # save point needs Haiku installed to its own disk first. It reaches the
     # desktop from cold in well under a minute, so this matters less here.
+    # Sound on. This adds an intel-hda device, which CHANGES THE MACHINE —
+    # enabling it on a guest that already has save points invalidates them,
+    # which is why it is set only where none exist yet.
+    audio: true
     network: none
 
   - slug: freedos
@@ -578,6 +586,7 @@ catalog:
     diskType: auto
     persist: true
     savepoints: true
+    audio: true
     network: none
 
   - slug: kolibrios
@@ -646,6 +655,7 @@ catalog:
     # either: disk.sh's hybrid check bypasses MEDIA_TYPE entirely and force-
     # attaches the image as a writable usb-disk, which would then be opened
     # twice. The two requirements are mutually exclusive inside this image.
+    audio: true
     network: none
 
   - slug: visopsys
@@ -673,6 +683,7 @@ catalog:
     # publish an ISO; it is simply not linked from the download page.
     persist: true
     savepoints: true
+    audio: true
     network: none
 
   - slug: aros
@@ -722,6 +733,28 @@ catalog:
     vga: cirrus
     persist: true
     savepoints: true
+    network: none
+
+  - slug: alpine-arm
+    name: Alpine (ARM64)
+    note: >-
+      The same Alpine, on a different processor architecture entirely. No KVM
+      here — every instruction is translated, so it is slow on purpose.
+    iso: https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-virt-3.21.0-aarch64.iso
+    # qemux/qemu-arm is qemu-system-aarch64, so this runs under TCG on an x86
+    # host. spec.py deliberately withholds devices.kubevirt.io/kvm for arm: it
+    # would be meaningless AND would consume one of the quota's concurrency
+    # slots from a guest that could actually use it.
+    arch: arm
+    memoryMib: 1024
+    cores: 1
+    diskGib: 4
+    # No save points: aarch64 boots via UEFI, whose variable store is a
+    # writable pflash device savevm refuses. Same rule as the x86 UEFI guests.
+    # The ARM image defaults to a ramfb display this QEMU build rejects
+    # outright ("unknown vga type: ramfb"). virtio-gpu is the normal choice
+    # for aarch64 virt, and Alpine has the driver.
+    vga: virtio
     network: none
 
   - slug: riscos

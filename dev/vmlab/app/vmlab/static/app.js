@@ -44,10 +44,22 @@ function card(cfg) {
   }
   el.append(badges);
 
-  const note = document.createElement("p");
-  note.className = "note";
-  note.textContent = cfg.note || "";
-  el.append(note);
+  // A running guest shows what it looks like right now, refreshed server-side;
+  // a stopped one shows its note.
+  if (cfg.session && cfg.hasLiveTile) {
+    const live = document.createElement("img");
+    live.className = "live";
+    live.alt = `${cfg.name} live screen`;
+    live.src = `/api/live/${cfg.slug}/screenshot.png?t=${Date.now()}`;
+    live.title = "click to open the console";
+    live.onclick = () => openConsole(cfg.session, cfg.name || cfg.slug, cfg.savepointsEnabled);
+    el.append(live);
+  } else {
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent = cfg.note || "";
+    el.append(note);
+  }
 
   const actions = document.createElement("div");
   actions.className = "actions";

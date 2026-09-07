@@ -432,3 +432,36 @@ def test_flatten_is_independent_of_savepoints():
                                   boot_from_iso=True, ttl_seconds=600
                                   )["spec"]["initContainers"][0]["args"]
     assert args[-2] == "yes"
+
+
+def test_hardware_fingerprint_ignores_cosmetics_but_not_devices():
+    """A save point restores device state onto whatever QEMU builds now, so the
+    fingerprint must track the machine and nothing else — renaming a guest must
+    not invalidate its save points, changing its chipset must."""
+    from vmlab import spec
+
+    base = spec.validate_config({"slug": "x"})
+    cosmetic = spec.validate_config({"slug": "x", "name": "Renamed", "note": "hello"})
+    assert spec.hardware_fingerprint(base) == spec.hardware_fingerprint(cosmetic)
+
+    for field, value in (("machine", "pc"), ("vga", "cirrus"), ("memoryMib", 4096),
+                         ("cores", 4), ("audio", True), ("usb", False)):
+        changed = spec.validate_config({"slug": "x", field: value})
+        assert spec.hardware_fingerprint(base) != spec.hardware_fingerprint(changed), field
+
+
+def test_hardware_diff_names_what_changed():
+    from vmlab import spec
+
+    a = spec.validate_config({"slug": "x"})
+    b = spec.validate_config({"slug": "x", "audio": True})
+    assert spec.hardware_diff(b, a) == ["audio: False -> True"]
+
+
+def test_live_tile_cannot_collide_with_a_save_point():
+    """NAME_RE forbids a leading dot, so `.live.png` is unreachable as a name."""
+    from vmlab import snapshots
+
+    assert snapshots.live_path("x").endswith("/.live.png")
+    with pytest.raises(snapshots.SnapshotError):
+        snapshots.validate_name(".live")

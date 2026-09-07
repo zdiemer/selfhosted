@@ -189,3 +189,16 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; ma
 .shot-actions { display: flex; gap: 4px; margin-top: 5px; }
 .btn.tiny { padding: 3px 7px; font-size: 11px; border-radius: 5px; }
 .note.dim { font-size: 12px; opacity: .75; }
+
+/* Live tile for a running guest */
+.live {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  object-position: top left;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: #000;
+  cursor: pointer;
+  display: block;
+}

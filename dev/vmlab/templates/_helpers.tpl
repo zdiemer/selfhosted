@@ -91,6 +91,8 @@ what a VM may be.
   value: {{ .Values.quota.maxConcurrentVms | quote }}
 - name: VMLAB_TERMINAL_GRACE_SECONDS
   value: {{ .Values.vm.terminalGraceSeconds | quote }}
+- name: VMLAB_LIVE_THUMBNAIL_SECONDS
+  value: {{ .Values.vm.liveThumbnailSeconds | quote }}
 - name: VMLAB_SNAPSHOT_MOUNT
   value: "/snapshots"
 - name: VMLAB_QMP_PORT

@@ -111,6 +111,8 @@ def record(
     width: int = 0,
     height: int = 0,
     boot_from_iso: bool = False,
+    hardware: str = "",
+    hardware_fields: dict | None = None,
 ) -> dict:
     entry = {
         "name": name,
@@ -121,6 +123,10 @@ def record(
         # Restoring needs the same device topology as the save. Without this a
         # save point taken from a live CD cannot be loaded at all.
         "bootFromIso": bool(boot_from_iso),
+        # The machine this was taken on. -loadvm restores device state onto
+        # whatever QEMU builds NOW, so a config edited since is not loadable.
+        "hardware": hardware,
+        "hardwareFields": hardware_fields or {},
     }
     if png:
         _atomic_write(screenshot_path(slug, name), png)
@@ -181,3 +187,18 @@ def listing(slug: str, *, live: list[dict] | None = None) -> list[dict]:
 
 def count(slug: str) -> int:
     return len(_read_manifest(slug))
+
+
+# ---------------------------------------------------------------------------
+# Live tiles
+# ---------------------------------------------------------------------------
+
+
+def live_path(slug: str) -> str:
+    """Kept apart from the save points, under a name no save point can take:
+    NAME_RE forbids a leading dot, so `.live` cannot collide with one."""
+    return os.path.join(_dir(slug), ".live.png")
+
+
+def write_live(slug: str, png: bytes) -> None:
+    _atomic_write(live_path(slug), png)

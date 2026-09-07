@@ -59,6 +59,23 @@ async def _reaper() -> None:
             logger.exception("reaper iteration failed")
 
 
+async def _live_thumbnails() -> None:
+    """Keep the catalog tiles showing what each running guest looks like now.
+
+    Separate from the reaper rather than folded into it: a screenshot involves
+    a socket to every running guest, and it must not be able to delay the cull
+    that enforces TTLs.
+    """
+    while True:
+        try:
+            await asyncio.sleep(settings.live_thumbnail_seconds)
+            await asyncio.to_thread(k8s.refresh_live_thumbnails)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("live thumbnail pass failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _setup_logging()
@@ -70,12 +87,13 @@ async def lifespan(app: FastAPI):
         settings.idle_timeout_seconds,
         ",".join(sorted(settings.network_profiles)),
     )
-    task = asyncio.create_task(_reaper())
+    tasks = [asyncio.create_task(_reaper()), asyncio.create_task(_live_thumbnails())]
     try:
         yield
     finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await proxy.aclose()
 
 
@@ -128,6 +146,7 @@ def api_catalog() -> dict:
                 # the UI's "can I show a Save button" test silently undefined.
                 "savepointsEnabled": bool(cfg.get("savepoints")),
                 "savepoints": k8s.list_savepoints(cfg["slug"]),
+                "hasLiveTile": k8s.live_thumbnail(cfg["slug"]) is not None,
             }
         )
     return {
@@ -231,6 +250,16 @@ def api_create_savepoint(slug: str, body: dict = Body(...)) -> dict:
 def api_delete_savepoint(slug: str, name: str) -> JSONResponse:
     k8s.delete_savepoint(slug, name)
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/live/{slug}/screenshot.png")
+def api_live_screenshot(slug: str):
+    path = k8s.live_thumbnail(slug)
+    if path is None:
+        return JSONResponse({"error": "no live tile"}, status_code=404)
+    # No caching: the whole point is that it changes.
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/savepoints/{slug}/{name}/screenshot.png")

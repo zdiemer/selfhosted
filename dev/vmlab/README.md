@@ -229,6 +229,38 @@ Hannah Montana is the nicest case: a live CD, so one save point of the running
 desktop means every later Load lands straight on it. When a save does hit this,
 the error explains the fix rather than repeating QEMU's wording.
 
+### A save point belongs to a machine
+
+`-loadvm` restores register and device state onto whatever QEMU builds *now*,
+so a config edited since is not loadable. Every save point records a
+`hardware` fingerprint — a hash of only the fields that reach QEMU's command
+line, so renaming a guest costs nothing while changing its chipset, RAM,
+display adapter or sound is caught:
+
+```
+save point 'fp_test' was taken on different hardware and cannot be restored:
+audio: False -> True. Delete it, or revert the config.
+```
+
+Before this, two save points went stale unnoticed and were found only when
+loading them produced a QEMU error naming none of the config. Save points
+predating the field still load, so it is additive.
+
+### Live tiles
+
+A running guest's catalog tile shows what it looks like *now* — captured over
+VNC every `vm.liveThumbnailSeconds` by a loop deliberately kept separate from
+the reaper, so a slow screenshot can never delay the cull that enforces TTLs.
+Stored as `.live.png`, a name `NAME_RE` forbids, so it cannot collide with a
+save point.
+
+### Sound
+
+`audio: true` adds an intel-hda device and streams it over the same page — the
+image ships an audio relay and the viewer has an `/audio` websocket, which the
+console proxy already forwards. It is off by default because adding the device
+*changes the machine*, and would invalidate any save point taken without it.
+
 ### Reconciliation
 
 QEMU is authoritative while a VM runs; the manifest on the snapshots volume is
