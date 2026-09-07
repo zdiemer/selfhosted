@@ -617,3 +617,112 @@ def test_disk_type_none_is_allowed():
     """The only way to leave a guest with no data disk — which MINIX needs, so
     that its boot CD becomes c0d0 instead of the disk."""
     assert spec.validate_config({"slug": "x", "diskType": "none"})["diskType"] == "none"
+
+
+# ---------------------------------------------------------------------------
+# The RPCEmu engine.
+#
+# These are boundary tests, not feature tests. The point of a second engine is
+# that it gets the same containment as the first while sharing none of the
+# command-line machinery, so what is asserted here is mostly what the pod must
+# NOT have.
+# ---------------------------------------------------------------------------
+
+
+def _rpcemu_config(**over):
+    cfg = {"slug": "riscos", "name": "RISC OS", "engine": "rpcemu",
+           "memoryMib": 512, "cores": 1, "diskGib": 1, "network": "none"}
+    cfg.update(over)
+    return spec.validate_config(cfg)
+
+
+def test_engine_defaults_to_qemu_and_rejects_anything_else():
+    assert spec.validate_config({"slug": "a", "network": "none"})["engine"] == "qemu"
+    with pytest.raises(spec.ValidationError):
+        spec.validate_config({"slug": "a", "network": "none", "engine": "virtualbox"})
+
+
+def test_rpcemu_cannot_ask_for_save_points():
+    # Not "it fails later" — it cannot be requested. RPCEmu has no monitor to
+    # drive savevm over, so a config asking for one would break at the button.
+    cfg = _rpcemu_config(persist=True, savepoints=True)
+    assert cfg["savepoints"] is False
+
+
+def test_rpcemu_pod_is_unprivileged_and_holds_no_credential():
+    pod = spec.build_session_pod(
+        config=_rpcemu_config(), session_id="vm-riscos-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    container = pod["spec"]["containers"][0]
+    sc = container["securityContext"]
+    assert sc["capabilities"] == {"drop": ["ALL"]}
+    assert sc["allowPrivilegeEscalation"] is False
+    # The one guest that does not need root inside its own container.
+    assert sc["runAsNonRoot"] is True and sc["runAsUser"] == 10001
+    assert pod["spec"]["automountServiceAccountToken"] is False
+    assert pod["spec"]["serviceAccountName"] == settings.vm_service_account
+
+
+def test_rpcemu_pod_takes_no_kvm_slot():
+    # It is a translated 32-bit ARM machine; KVM would be meaningless, and
+    # requesting it would spend one of the quota's concurrency slots on a guest
+    # that cannot use it.
+    pod = spec.build_session_pod(
+        config=_rpcemu_config(), session_id="vm-riscos-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    limits = pod["spec"]["containers"][0]["resources"]["limits"]
+    assert "devices.kubevirt.io/kvm" not in limits
+
+
+def test_rpcemu_pod_is_policed_like_every_other_session():
+    pod = spec.build_session_pod(
+        config=_rpcemu_config(), session_id="vm-riscos-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    labels = pod["metadata"]["labels"]
+    # The label the sandbox NetworkPolicies select on. An unlabelled pod is an
+    # unpoliced one, which is the failure this asserts against.
+    assert labels["vmlab.zachd/network"] == "none"
+    assert labels["app.kubernetes.io/component"] == "session"
+    assert labels["vmlab.zachd/savepoints"] == "false"
+    assert pod["spec"]["restartPolicy"] == "Never"
+    assert pod["spec"]["activeDeadlineSeconds"] == 3600
+
+
+def test_rpcemu_pod_never_mounts_tmp():
+    # Xvfb will not create /tmp/.X11-unix as a non-root user, nor use one it
+    # does not own, so the image ships it root-owned — and an emptyDir over
+    # /tmp would shadow it and take the display with it.
+    pod = spec.build_session_pod(
+        config=_rpcemu_config(), session_id="vm-riscos-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    paths = {m["mountPath"] for m in pod["spec"]["containers"][0]["volumeMounts"]}
+    assert paths == {"/rpcemu"}
+
+
+def test_rpcemu_persistence_uses_the_disk_pvc():
+    ephemeral = spec.build_session_pod(
+        config=_rpcemu_config(), session_id="vm-riscos-abc", release="vmlab",
+        boot_from_iso=False, ttl_seconds=3600,
+    )
+    assert "emptyDir" in ephemeral["spec"]["volumes"][0]
+
+    kept = spec.build_session_pod(
+        config=_rpcemu_config(persist=True), session_id="vm-riscos-abc",
+        release="vmlab", boot_from_iso=False, ttl_seconds=3600,
+    )
+    assert kept["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"] == \
+        spec.disk_pvc_name("vmlab", "riscos")
+
+
+@pytest.mark.parametrize(
+    "memory_mib,expected",
+    [(512, 256), (256, 128), (200, 64), (144, 16), (128, 16)],
+)
+def test_rpcemu_ram_lands_on_a_real_risc_pc_size(memory_mib, expected):
+    # A Risc PC takes powers of two up to 256MB and reports anything else as the
+    # next one down, so the pod's memory is mapped rather than passed through.
+    assert spec._rpcemu_ram(memory_mib) == expected

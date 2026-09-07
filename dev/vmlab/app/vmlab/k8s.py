@@ -393,6 +393,12 @@ def launch(
             )
         boot_from_iso = bool(entry.get("bootFromIso", False))
 
+    # RPCEmu carries its own OS in its image; there is no ISO to attach and no
+    # cache entry to wait for. Settled before the block below so a persist:true
+    # RISC OS is not treated as a fresh disk wanting an installer.
+    if cfg.get("engine") == "rpcemu":
+        boot_from_iso = False
+
     if boot_from_iso is None:
         # For an ephemeral config there is nothing but the ISO to boot. For a
         # persisted one, attach the installer only while the disk is new —

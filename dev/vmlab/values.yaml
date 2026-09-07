@@ -38,7 +38,7 @@ image:
   # dev/happy-server take the same route; infra/hatch uses GHCR because it is
   # the thing you want pullable when the cluster itself is unhealthy.
   repository: registry.zachd.duckdns.org/zdiemer/vmlab
-  tag: "v57"
+  tag: "v66"
   # IfNotPresent with immutable tags, same trade as infra/hatch: build.sh
   # refuses to push over a tag that already exists, which is what makes a
   # cached layer safe to trust on a node that cannot reach GHCR.
@@ -206,6 +206,14 @@ vm:
   # renovate: datasource=docker depName=qemux/qemu
   tag: "7.50"
   imagePullPolicy: IfNotPresent
+
+  # The second engine. Not qemu at all: RPCEmu emulating an Acorn Risc PC, which
+  # is the only thing that runs RISC OS — see the riscos entry in the catalog
+  # below for why no QEMU machine type will. Built by build-rpcemu.sh, and
+  # versioned on its own schedule: it moves when RPCEmu or the RISC OS release
+  # moves, not when the UI does.
+  rpcemuImage: registry.zachd.duckdns.org/zdiemer/vmlab-rpcemu
+  rpcemuTag: "0.9.5-ro530-13"
 
   # Hard ceiling, enforced by the kubelet rather than by the app.
   defaultTtlSeconds: 14400
@@ -757,46 +765,66 @@ catalog:
     vga: virtio
     network: none
 
-  # RISC OS is deliberately absent, and this is the record of why so that it is
-  # not attempted a third time.
+  - slug: riscos
+    name: RISC OS 5
+    note: >-
+      Acorn's operating system, still developed, running on an emulated Risc PC.
+      Cooperative multitasking, a three-button mouse model and an icon bar — a
+      genuinely different lineage from everything else here.
+    # The only guest in the lab that is not QEMU. RPCEmu emulates an Acorn Risc
+    # PC, which is hardware RISC OS has a HAL for, and the engine image carries
+    # the ROM and boot disc with it — so there is no ISO to fetch and no network
+    # needed to start.
+    engine: rpcemu
+    # 128MB for RISC OS plus the emulator's own footprint; _rpcemu_ram() maps
+    # this onto the powers of two a Risc PC's memory controller can actually be
+    # built with. A machine that shipped with 8MB is not short of room here.
+    memoryMib: 512
+    cores: 1
+    # Ignored by this engine (there is no QEMU disk), but validate_config still
+    # wants a number and the UI still shows one.
+    diskGib: 1
+    # Off, and not merely policed off: RPCEmu's networking wants a tap device
+    # and NET_ADMIN, which this lab does not hold, so the emulator is configured
+    # without it at all.
+    network: none
+    # RISC OS keeps its whole world — !Boot, Choices, anything saved — on the
+    # HostFS volume, so persisting it is what makes this a machine rather than a
+    # demo. Save points are a QEMU feature and validate_config refuses them for
+    # this engine; persistence is the thing that was actually wanted from them.
+    persist: true
+
+  # Why this is RPCEmu and not QEMU, so that it is not re-litigated.
   #
-  # It was the one guest on the original wish list never delivered. The obvious
-  # route is Pi emulation: qemu-system-aarch64 in this image carries raspi0,
-  # raspi1ap, raspi2b, raspi3ap and raspi3b — verified with `-M help` — which is
-  # genuine 32-bit ARM. Reaching them needed a patched qemux image, because
-  # upstream applies virt-only options to whatever machine you name (gic-version
-  # and msi on the machine line, AAVMF pflash, a tianocore fw_cfg, and PCI
-  # rng/balloon/xhci devices). That patch chain was built and it worked: QEMU
-  # started cleanly on raspi2b with the official RISCOSPi 5.30 SD image on the
-  # SD controller. The screen stayed black.
+  # RISC OS was the one guest on the original wish list that would not run, and
+  # the obvious route looked good for a long time: qemu-system-aarch64 carries
+  # raspi0, raspi1ap, raspi2b, raspi3ap and raspi3b - verified with `-M help` -
+  # which is genuine 32-bit ARM. Reaching them needed a patched qemux image,
+  # because upstream applies virt-only options to whatever machine you name
+  # (gic-version and msi on the machine line, AAVMF pflash, a tianocore fw_cfg,
+  # and PCI rng/balloon/xhci devices). That patch chain worked: QEMU started
+  # clean on raspi2b with the official RISCOSPi 5.30 SD image on the SD
+  # controller. The screen stayed black, and stayed black for a documented
+  # reason rather than a knob left unturned:
   #
-  # That is the documented outcome rather than a knob left unturned:
-  #
-  #   - QEMU's raspi machines do not run the VideoCore bootloader at all. There
-  #     is no bootcode.bin or start.elf, and the FAT boot partition is never
-  #     read; QEMU stands in for the GPU by loading -kernel at the address the
-  #     real firmware would have used. An SD image on its own executes zeros.
+  #   - QEMU's raspi machines never run the VideoCore bootloader. There is no
+  #     bootcode.bin or start.elf, and the FAT boot partition is not read at
+  #     all; QEMU stands in for the GPU by loading -kernel at the address the
+  #     real firmware would have used. An SD image alone executes zeros.
   #     https://www.qemu.org/docs/master/system/arm/raspi.html
   #   - Supplying -kernel RISCOS.IMG does not rescue it. RISC OS's own
-  #     developers have been at this since 2016 and report exactly what we saw:
-  #     a black screen under aarch64, and under qemu-system-arm a hang in the
-  #     HAL because QEMU never answers the mailbox "enable USB power" command.
-  #     It needs a patched hw/arm/raspi.c (load address 0, faked mailbox reply)
-  #     and even then reaches only interrupt setup.
-  #     https://www.riscosopen.org/forum/forums/9/topics/18863
-  #   - There is no versatilepb RISC OS build, and never was. The QEMU RiscPC
-  #     machine was abandoned in 2007 having never booted RISC OS or ARM Linux,
-  #     and was never merged.
+  #     developers have chased this since 2016 and report what we saw: a black
+  #     screen under aarch64, and under qemu-system-arm a hang in the HAL
+  #     because QEMU never answers the mailbox "enable USB power" command. It
+  #     needs a patched hw/arm/raspi.c and even then reaches only interrupt
+  #     setup. https://www.riscosopen.org/forum/forums/9/topics/18863
+  #   - There is no versatilepb RISC OS build and never was, and the QEMU RiscPC
+  #     machine was abandoned in 2007 having never booted anything.
   #
-  # So no QEMU machine type boots RISC OS, and the raspi support was reverted
-  # along with it: without VideoCore firmware a raspi guest cannot boot from its
-  # SD card, which is the only thing this lab knows how to hand it. alpine-arm
-  # above still exercises the ARM image on `virt`, where all of this is fine.
-  #
-  # The real path is a different emulator — RPCEmu or RISC OS Pyromaniac behind
-  # Xvfb + x11vnc in an image of its own. That is a second engine alongside
-  # qemux rather than another catalog entry, so it is left as a deliberate
-  # choice to make rather than a TODO pretending to be one.
+  # So the raspi support was reverted and a second engine added instead. RPCEmu
+  # is a Qt desktop application rather than a headless VMM, which is why its
+  # image is Xvfb + x11vnc + noVNC around it - and why it lands on the same
+  # :8006 the qemux images use, so proxy.py never learns there are two engines.
 
 # ---------------------------------------------------------------------------
 # UI pod plumbing.

@@ -443,6 +443,69 @@ The avoidance was also unnecessary: session pods never mount this volume at all
 read-only costs nothing. Jobs are still consulted, but only for "is one on its
 way", which is what they are actually good for.
 
+## A second engine, for RISC OS
+
+Every other guest here is `qemux/qemu`: one image, one ISO, a machine assembled
+from validated flags. RISC OS is not, because **no QEMU machine type boots it**.
+
+The obvious route looked good for a long time. `qemu-system-aarch64` carries
+every Raspberry Pi machine — `raspi0`, `raspi1ap`, `raspi2b`, `raspi3ap`,
+`raspi3b`, confirmed with `-M help` — which is real 32-bit ARM. Getting there
+needed a patched qemux image, because upstream applies `virt`-only options to
+whatever machine you name: `gic-version` and `msi` on the machine line, AAVMF
+pflash, a tianocore `fw_cfg`, and PCI rng/balloon/xhci devices. That patch chain
+worked, and QEMU came up clean on `raspi2b` with the official RISCOSPi 5.30 SD
+image on the SD controller. The screen stayed black — because QEMU's raspi
+machines never run the VideoCore bootloader, so the FAT boot partition is not
+read at all, and `-kernel` does not rescue it either. RISC OS's own developers
+have been at this since 2016 with the same result. `values.yaml` keeps the
+citations; the raspi support was reverted.
+
+So `engine: rpcemu` selects a different emulator entirely — RPCEmu, emulating
+an Acorn Risc PC, which is hardware RISC OS has a HAL for. `spec.py` dispatches
+to `_build_rpcemu_pod` rather than threading conditionals through the QEMU path,
+and the two share nothing but containment: same no-permission service account
+with no token, same dropped capabilities, same network label the sandbox
+policies select on, same kubelet-enforced deadline. It is the one guest that
+also runs as an unprivileged user, because unlike the qemux images this one was
+built not to need root.
+
+What it gives up, and why:
+
+| | |
+|---|---|
+| No ISO | The engine image carries the ROM and boot disc as a matched pair, so `needsIso` is false and the tile launches straight away. |
+| No `/dev/kvm` | It is a 32-bit ARM machine translated on an x86 host. Asking would also spend a concurrency slot from the quota. |
+| No save points | Those are QEMU internal qcow2 snapshots driven over QMP. `validate_config` refuses them for this engine rather than letting the button fail. |
+| `persist: true` instead | RISC OS keeps everything on HostFS, so a PVC is what makes it a machine rather than a demo. |
+
+### Three things the image has to get right
+
+Each of these was found by watching it fail, and each is commented where it
+lives:
+
+1. **Filetypes.** RISC OS has no filename extensions — a file's type is a number
+   the filesystem holds beside it, and it is what makes a module loadable. ROOL's
+   zip carries it in an Acorn extra field that Linux `unzip` discards. Extract
+   HardDisc4 with plain `unzip` and RISC OS boots as far as `!Boot` and then
+   fails every `RMEnsure` in it, because every module arrived as a text file.
+   `unzip-riscos.py` restores them as the `,xxx` suffixes HostFS reads back.
+2. **The CMOS.** A Risc PC keeps its boot filesystem in battery-backed CMOS, and
+   the one RPCEmu ships is set to ADFS — a disc that does not exist here — so a
+   fresh machine stops at the supervisor `*` prompt. `entrypoint.sh` types the
+   manual's two `*configure` commands on the boot after a fresh seed, then
+   restarts the emulator, because a Risc PC reads its CMOS at reset and nowhere
+   else. It costs about a minute, once.
+3. **How to type them.** `xdotool` sends nothing useful: with no window manager
+   there is no focused window for XTEST events to reach. `configure-cmos.py`
+   goes in over RFB instead, moving the pointer first — which is what hands the
+   emulator focus — and the keys follow it.
+
+This was originally done at image build time, and it worked. It was moved to
+first boot because buildkit shares one network namespace across builds, so every
+cancelled attempt left an `Xvfb` and an `x11vnc` behind and the next build hung
+on its own ghosts for twenty minutes. In the pod the namespace is the pod's own.
+
 ## Notes on individual guests
 
 | OS | why it needs what it needs |

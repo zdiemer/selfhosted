@@ -37,6 +37,15 @@ SESSION_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 BOOT_MODES = {"uefi", "legacy", "secure", "windows", "windows_legacy", "windows_secure"}
 DISK_TYPES = {"ide", "sata", "usb", "nvme", "blk", "scsi", "virtio-blk", "virtio-scsi", "auto", "none"}
 ARCHES = {"x86", "arm"}
+
+# Which emulator runs the guest. "qemu" is everything else in this lab — one
+# image, one ISO, a machine assembled from the validated flags below. "rpcemu"
+# is an Acorn Risc PC and nothing else: it takes no ISO, no bootMode, no disk
+# type and no machine, because it emulates one fixed computer. It exists
+# because RISC OS runs on no QEMU machine type at all (values.yaml records the
+# investigation), and it is an ALLOW-LIST rather than a free-form image name for
+# the same reason every other field here is one.
+ENGINES = {"qemu", "rpcemu"}
 # Chipset. The image defaults to q35, which is a 2009 PCIe chipset: correct for
 # anything modern and a non-starter for guests older than it. Windows XP on q35
 # bluescreens with STOP 0x000000A5 before Setup even begins.
@@ -123,7 +132,22 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
             + ", ".join(sorted(settings.network_profiles))
         )
 
-    wants_savepoints = bool(raw.get("savepoints")) and bool(raw.get("persist"))
+    engine = (raw.get("engine") or "qemu").strip().lower()
+    if engine not in ENGINES:
+        raise ValidationError(
+            f"unknown engine {engine!r}; expected one of " + ", ".join(sorted(ENGINES))
+        )
+
+    # Save points are a QEMU feature — an internal qcow2 snapshot driven over
+    # QMP. RPCEmu has no equivalent and no monitor, so rather than let a config
+    # ask for one and fail at the button, it cannot be asked for here. What it
+    # does have is `persist`, which keeps the RISC OS filesystem across launches
+    # and is the thing anyone actually wanted from a save point on this guest.
+    wants_savepoints = (
+        engine == "qemu"
+        and bool(raw.get("savepoints"))
+        and bool(raw.get("persist"))
+    )
     requested_boot_mode = (raw.get("bootMode") or "").strip().lower()
     # Default to the firmware that actually works for what was asked for. An
     # unspecified save-point guest gets BIOS rather than an error about a
@@ -216,7 +240,8 @@ def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dic
         # and an emptyDir disappears with the pod — so they imply persistence
         # rather than being independent of it. Stated here so the UI cannot
         # offer a save point that would evaporate on stop.
-        "savepoints": bool(raw.get("savepoints", False)) and bool(raw.get("persist", False)),
+        "savepoints": wants_savepoints,
+        "engine": engine,
         # Whether the staged copy may have its MBR signature cleared. Defaults
         # on for save-point guests (it is what lets a hybrid ISO attach
         # read-only, and therefore what lets savevm run with the CD in), but it
@@ -328,6 +353,143 @@ def _affinity() -> dict:
     return {"affinity": {"nodeAffinity": affinity}} if affinity else {}
 
 
+# RPCEmu's guest RAM, in MB. The Risc PC's memory controller takes powers of
+# two up to 256MB and RISC OS reports anything else as the next one down, so
+# the pod's memoryMib is mapped onto what the machine can actually have rather
+# than passed through to be silently rounded.
+RPCEMU_RAM_STEPS = (16, 32, 64, 128, 256)
+
+
+def _rpcemu_ram(memory_mib: int) -> int:
+    usable = max(0, memory_mib - 128)  # leave room for Xvfb, x11vnc and Qt
+    return max(s for s in RPCEMU_RAM_STEPS if s <= usable) if usable >= 16 else 16
+
+
+def _build_rpcemu_pod(
+    *,
+    config: dict,
+    session_id: str,
+    release: str,
+    ttl: int,
+    memory_mib: int,
+    cores: int,
+    profile: dict,
+) -> dict:
+    """One RISC OS session: an Acorn Risc PC, emulated by RPCEmu.
+
+    Deliberately narrower than the QEMU path rather than a peer of it. There is
+    no ISO, because the engine image carries the ROM and the boot disc as a
+    matched pair; no /dev/kvm, because this is a 32-bit ARM machine translated
+    on an x86 host and always will be; no QMP, and so no save points. What it
+    does share is every part that matters for containment: the same
+    no-permission service account with no token, the same dropped capabilities,
+    the same network label the sandbox policies select on, and the same
+    kubelet-enforced deadline.
+
+    It is also the one guest here that runs as an unprivileged user. The qemux
+    images need root inside their own container; this image was built not to.
+    """
+    slug = config["slug"]
+
+    # /rpcemu holds the RISC OS filesystem the guest writes to — its !Boot, its
+    # Choices, anything saved. Persisted it is a PVC and RISC OS remembers;
+    # ephemeral it dies with the pod, which is the default for a lab.
+    if config.get("persist"):
+        work_volume = {
+            "name": "work",
+            "persistentVolumeClaim": {"claimName": disk_pvc_name(release, slug)},
+        }
+    else:
+        work_volume = {"name": "work", "emptyDir": {"sizeLimit": "2Gi"}}
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": session_id,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "app.kubernetes.io/component": "session",
+                "vmlab.zachd/config": slug,
+                "vmlab.zachd/session": session_id,
+                "vmlab.zachd/network": config["network"],
+                # No monitor port to open. Stated rather than omitted so the
+                # policy selector matches the same way it does for every other
+                # guest that cannot be snapshotted.
+                "vmlab.zachd/savepoints": "false",
+                "vmlab.zachd/engine": "rpcemu",
+            },
+            "annotations": {
+                "vmlab.zachd/display-name": config["name"],
+                "vmlab.zachd/boot-from-iso": "false",
+            },
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": ttl,
+            "serviceAccountName": settings.vm_service_account,
+            "automountServiceAccountToken": False,
+            "enableServiceLinks": False,
+            "terminationGracePeriodSeconds": 15,
+            **_affinity(),
+            "containers": [
+                {
+                    "name": "rpcemu",
+                    "image": f"{settings.rpcemu_image}:{settings.rpcemu_tag}",
+                    "imagePullPolicy": settings.vm_pull_policy,
+                    "env": [
+                        {"name": "RPCEMU_WORK", "value": "/rpcemu"},
+                        {"name": "RPCEMU_MEM_SIZE", "value": str(_rpcemu_ram(memory_mib))},
+                        # A Risc PC's VRAM is 0, 1 or 2MB. 2 is what makes the
+                        # higher screen modes available, and there is no reason
+                        # to emulate a cheaper one.
+                        {"name": "RPCEMU_VRAM_SIZE", "value": "2"},
+                        # StrongARM, which is what RISC OS 5 targets. The
+                        # earlier ARM610/710 models exist in RPCEmu but the
+                        # IOMD 5.30 ROM expects an SA-110.
+                        {"name": "RPCEMU_MODEL", "value": "RPCSA"},
+                        {"name": "RPCEMU_SCREEN", "value": "1280x1024x16"},
+                    ],
+                    "ports": [{"name": "http", "containerPort": 8006}],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "runAsNonRoot": True,
+                        "runAsUser": 10001,
+                        # Genuinely empty, with nothing added back. The
+                        # capabilities the QEMU path grants for slirp have no
+                        # analogue here: RPCEmu's own networking wants a tap
+                        # device and NET_ADMIN, so it is simply switched off in
+                        # the emulator, and the profile's capability list is
+                        # ignored rather than honoured.
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "resources": {
+                        "requests": {
+                            "cpu": settings.cpu_request,
+                            "memory": f"{memory_mib}Mi",
+                        },
+                        "limits": {
+                            # The recompiler is single-threaded, so extra cores
+                            # buy nothing; the limit still tracks the config so
+                            # the quota accounts for it honestly.
+                            "cpu": str(cores),
+                            "memory": f"{memory_mib}Mi",
+                        },
+                    },
+                    # /tmp is deliberately NOT an emptyDir. Xvfb refuses to
+                    # create /tmp/.X11-unix as a non-root user and refuses to
+                    # use one it does not own, so the image ships it root-owned
+                    # and 1777 — which an emptyDir would shadow, taking the X
+                    # server (and therefore the display) with it.
+                    "volumeMounts": [{"name": "work", "mountPath": "/rpcemu"}],
+                }
+            ],
+            "volumes": [work_volume],
+        },
+    }
+
+
 def build_session_pod(
     *,
     config: dict,
@@ -354,6 +516,22 @@ def build_session_pod(
     memory_mib = _clamp(int(config["memoryMib"]), 128, settings.max_memory_mib)
     cores = _clamp(int(config["cores"]), 1, settings.max_cores)
     disk_gib = _clamp(int(config["diskGib"]), 1, settings.max_disk_gib)
+
+    # A different emulator is a different pod, not a pile of conditionals
+    # through the 300 lines below. Everything from here down is about
+    # assembling a QEMU command line, and none of it means anything to RPCEmu —
+    # threading an `if` through it would put the two engines' security posture
+    # in one place where a change meant for one silently altered the other.
+    if config.get("engine") == "rpcemu":
+        return _build_rpcemu_pod(
+            config=config,
+            session_id=session_id,
+            release=release,
+            ttl=ttl,
+            memory_mib=memory_mib,
+            cores=cores,
+            profile=profile,
+        )
 
     savepoints = bool(config.get("savepoints"))
     if load_snapshot is not None:

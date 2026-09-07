@@ -63,6 +63,13 @@ class Settings:
     vm_image: str = os.environ.get("VMLAB_VM_IMAGE", "qemux/qemu")
     vm_image_arm: str = os.environ.get("VMLAB_VM_IMAGE_ARM", "qemux/qemu-arm")
     vm_tag: str = os.environ.get("VMLAB_VM_TAG", "7.50")
+    # The RPCEmu engine, versioned separately: it tracks RPCEmu and the RISC OS
+    # release, which move on their own schedule and share no env contract with
+    # the qemux images above.
+    rpcemu_image: str = os.environ.get(
+        "VMLAB_RPCEMU_IMAGE", "registry.zachd.duckdns.org/zdiemer/vmlab-rpcemu"
+    )
+    rpcemu_tag: str = os.environ.get("VMLAB_RPCEMU_TAG", "0.9.5-ro530-13")
     vm_pull_policy: str = os.environ.get("VMLAB_VM_PULL_POLICY", "IfNotPresent")
 
     default_ttl_seconds: int = _int("VMLAB_DEFAULT_TTL_SECONDS", 14400)

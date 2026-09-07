@@ -77,6 +77,17 @@ function card(cfg) {
     stop.textContent = "Stop";
     stop.onclick = () => act(stop, () => api(`/api/sessions/${cfg.session.id}`, { method: "DELETE" }));
     actions.append(stop);
+  } else if (cfg.needsIso === false) {
+    // An engine that carries its own OS. Nothing to fetch, so nothing to gate
+    // the launch on — the RPCEmu tile would otherwise offer "Download ISO"
+    // forever for a config with nothing to download.
+    const launch = document.createElement("button");
+    launch.className = "btn";
+    launch.textContent = "Launch";
+    launch.disabled = state.running >= state.limits.maxConcurrent;
+    launch.onclick = () =>
+      act(launch, () => api("/api/sessions", { method: "POST", body: JSON.stringify({ slug: cfg.slug }) }));
+    actions.append(launch);
   } else if (!cfg.hasIsoUrl) {
     actions.append(badge("no ISO URL set — add one in values.yaml"));
   } else if (cfg.iso_status === "cached") {

@@ -73,6 +73,10 @@ what a VM may be.
   value: {{ .Values.vm.imageArm | quote }}
 - name: VMLAB_VM_TAG
   value: {{ .Values.vm.tag | quote }}
+- name: VMLAB_RPCEMU_IMAGE
+  value: {{ .Values.vm.rpcemuImage | quote }}
+- name: VMLAB_RPCEMU_TAG
+  value: {{ .Values.vm.rpcemuTag | quote }}
 - name: VMLAB_VM_PULL_POLICY
   value: {{ .Values.vm.imagePullPolicy | quote }}
 - name: VMLAB_DEFAULT_TTL_SECONDS
