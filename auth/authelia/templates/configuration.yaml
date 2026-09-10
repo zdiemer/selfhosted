@@ -23,6 +23,42 @@ stringData:
     server:
       address: "tcp://0.0.0.0:9091/"
 
+      # Authz endpoints — the paths Traefik's forwardAuth middlewares call.
+      #
+      # Declaring ANY endpoint here REPLACES all four of Authelia's built-ins
+      # wholesale: the validator seeds its defaults only when this map is empty
+      # (`if len(config.Server.Endpoints.Authz) == 0`), it does not merge. So
+      # `forward-auth` is re-declared below with exactly the strategies it would
+      # get by default. The other three built-ins (verify/Legacy, ext-authz,
+      # auth-request) are deliberately NOT restored — every Middleware in the
+      # cluster points at /api/authz/forward-auth and nothing else.
+      endpoints:
+        authz:
+          forward-auth:
+            implementation: 'ForwardAuth'
+            # Authelia's own ForwardAuth defaults, written out.
+            authn_strategies:
+              - name: 'HeaderAuthorization'
+                schemes: ['Basic']
+              - name: 'CookieSession'
+
+          # The same gate WITHOUT the HeaderAuthorization strategy, for apps
+          # that have their own login form and send their own
+          # `Authorization: Basic`.
+          #
+          # On the default endpoint that header is a trap: Authelia claims it as
+          # credentials for ITSELF, outranking a perfectly valid session cookie,
+          # compares the app's password against the Authelia password, and
+          # answers 401 before the app is ever reached — so the app never even
+          # logs a login attempt. Worse, each try counts against `regulation`
+          # below, so three attempts at an app's own login form ban the user
+          # from Authelia entirely. RomM's login does precisely this
+          # (games/romm, auth.forwardAuth.publicOnly).
+          forward-auth-session-only:
+            implementation: 'ForwardAuth'
+            authn_strategies:
+              - name: 'CookieSession'
+
     log:
       level: info
 

@@ -376,7 +376,15 @@ auth:
     autheliaService: authelia
     autheliaNamespace: auth
     autheliaPort: 9091
-    autheliaPath: /api/authz/forward-auth
+    # NOT the default /api/authz/forward-auth. RomM's login form authenticates
+    # with `Authorization: Basic <user:pass>`, and on the default endpoint
+    # Authelia claims that header as credentials for ITSELF — outranking the
+    # session cookie that just passed, comparing the RomM password against the
+    # Authelia one, and returning 401 without ever forwarding to RomM. Three of
+    # those and Authelia's regulation bans the user for 5m. This endpoint drops
+    # the HeaderAuthorization strategy and gates on the session cookie only, so
+    # the header reaches RomM untouched. Defined in auth/authelia.
+    autheliaPath: /api/authz/forward-auth-session-only
 
 resources:
   requests:
