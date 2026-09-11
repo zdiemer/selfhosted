@@ -49,7 +49,21 @@ DHT: nothing in it is authored here, it grows into the tens of GB, and rebuildin
 it by crawling again is both cheaper and fresher than restoring it. The only
 thing a rebuild loses is crawl history, which nothing depends on.
 
-50Gi to start. `truenas-iscsi`, not NFS — Postgres wants real fsync.
+150Gi. `truenas-iscsi`, not NFS — Postgres wants real fsync.
+
+Budget for this to keep growing: measured crawl rate is roughly **1.8Gi/day**
+(5.9M torrents in the first 23 days), and `torrent_files` is the bulk of it —
+27GB of the first 40GB. The original 50Gi filled in about a month. There is no
+retention policy, so 150Gi buys roughly two more months, not a permanent fix;
+the durable options are pruning old rows or not indexing per-file listings.
+`truenas-iscsi` expands in place and online, so growing it again is a one-liner:
+
+```bash
+kubectl -n media patch pvc bitmagnet-postgres \
+  -p '{"spec":{"resources":{"requests":{"storage":"250Gi"}}}}'
+```
+
+Set `persistence.postgres.size` to match afterwards.
 
 ## Egress
 

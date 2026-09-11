@@ -184,7 +184,7 @@ persistence:
   # and all repo checkouts under ~/code. Everything that matters survives
   # pod restarts and reschedules; nothing is node-pinned.
   home:
-    size: 20Gi
+    size: 40Gi
     # iSCSI, NOT nfs. This holds ~100k small files (node_modules, git objects),
     # and NFS pays a round-trip per file: copying it to truenas-nfs ran at
     # 349kB/s and would have taken hours. iSCSI presents a block device with a

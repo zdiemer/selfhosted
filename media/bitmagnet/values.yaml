@@ -54,9 +54,13 @@ postgres:
 
 persistence:
   postgres:
-    # The whole index lives here and grows roughly a few GB per month of
-    # crawling. Start at 50Gi; truenas-iscsi volumes can be expanded.
-    size: 50Gi
+    # The whole index lives here. Measured growth is far faster than the "few GB
+    # per month" this originally assumed: ~1.8Gi/day (5.9M torrents in the first
+    # 23 days), and torrent_files alone is 27GB of that. 50Gi filled in a month,
+    # so this is 150Gi — but note that only buys ~2 months at the current rate.
+    # There is no retention policy; the volume grows for as long as it crawls.
+    # truenas-iscsi expands in place, online, with no pod restart.
+    size: 150Gi
     # Block storage, not NFS — Postgres needs real fsync semantics.
     storageClass: truenas-iscsi
     accessMode: ReadWriteOnce
