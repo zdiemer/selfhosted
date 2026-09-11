@@ -17,21 +17,29 @@ unattend:
 # vm:
 #   runStrategy: Always
 
-# Make this VM a self-hosted GitHub Actions runner for a PRIVATE repo.
-# See README §A Windows Actions runner. Lives here rather than in values.yaml
-# because of GITHUB_TOKEN — everything in provision.env is readable from inside
-# the guest, so treat it like unattend.password above.
+# Make this VM a self-hosted GitHub Actions runner for one or more PRIVATE
+# repos. See README §A Windows Actions runner. Lives here rather than in
+# values.yaml because of GITHUB_TOKEN — everything in provision.env is readable
+# from inside the guest, so treat it like unattend.password above.
 #
 # provision:
 #   enabled: true
 #   scriptFile: provision/actions-runner.ps1
 #   env:
 #     GITHUB_OWNER: zdiemer
-#     GITHUB_REPO: romnas
-#     # Fine-grained PAT, "Only select repositories" = the repo above,
+#     # One repo, or several — a runner registers against a single scope and a
+#     # personal account has no org scope, so each repo gets its own agent and
+#     # its own service in the guest. All of them answer to RUNNER_LABELS.
+#     GITHUB_REPO: "romnas,vxp,zodemu"
+#     # Fine-grained PAT, "Only select repositories" = every repo above,
 #     # Repository permissions -> Administration: Read and write. That is all
 #     # runner registration needs. The same shape infra/actions-runner uses.
 #     GITHUB_TOKEN: "github_pat_CHANGE-ME"
+#     # Toolchains installed once, for the machine, because this guest is
+#     # persistent: msvc (VS Build Tools C++ workload — the linker and the
+#     # Windows SDK), rust (rustup, machine-wide CARGO_HOME), dotnet (the 8.0
+#     # SDK). Omit what this guest's repos do not build.
+#     PROVISION_TOOLCHAINS: "msvc,rust,dotnet"
 #     # What workflows put in `runs-on:`.
 #     RUNNER_LABELS: "win11"
 #     # Run the service as the account the answer file creates, not as

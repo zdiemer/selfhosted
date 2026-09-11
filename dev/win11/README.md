@@ -280,6 +280,15 @@ self-hosted GitHub Actions runner. Turn it on with the `provision` block in
 `values.local.yaml` (`values.local.yaml.example` has the whole thing), then
 `runs-on: win11` in the workflow.
 
+**One agent per repo.** A runner registers against exactly one scope, and a
+personal account has no org scope, so there is no way to make a single agent
+serve several repos. `GITHUB_REPO` therefore takes a list
+(`"romnas,vxp,zodemu"`) and the script installs one agent per entry — its own
+directory under `C:\actions-runner\<repo>` and its own service, since
+`config.cmd` names the service `actions.runner.<owner>-<repo>.<name>`. They
+share the machine and every toolchain on it, and all of them answer to
+`runs-on: win11`.
+
 **Why this is a VM and not a pod.** `infra/actions-runner` runs GitHub's Linux
 runner as pods — ephemeral, scale-to-zero, no state between jobs — and that is
 strictly the better model. It cannot do Windows. A Windows runner pod needs a
@@ -302,24 +311,76 @@ What the script does, and why each part is there:
 | wait for `api.github.com` | it runs seconds after the NIC appeared; DHCP has usually not finished, and every step after this is a web request |
 | install Git for Windows | **not optional** — `actions/checkout` silently falls back to a REST tarball without git, losing history, tags and submodules. `windows-latest` preinstalls it and workflows assume it |
 | download the runner | version resolved at run time, not pinned: GitHub refuses a runner more than a few releases behind at registration |
-| mint a registration token | `config.cmd` wants a registration token, not a PAT, and it expires in an hour — which is why the PAT has to be readable from inside the guest at all |
+| mint a registration token | `config.cmd` wants a registration token, not a PAT, and it expires in an hour — which is why the PAT has to be readable from inside the guest at all. Minted per repo |
 | `config.cmd --runasservice` | headless, survives reboot. `--replace` so a rebuilt guest reclaims its name instead of piling up offline runners |
 | Defender exclusion on `_work` | real-time scanning of a build tree is the largest single tax on Windows CI |
+| install the toolchains | `PROVISION_TOOLCHAINS`, below — a persistent box should own its compilers rather than download them per job |
 
-Re-running it is safe: a configured runner (`C:\actions-runner\.runner` exists)
-is left alone and only the service state is reconciled.
+Re-running it is safe: a configured runner (`C:\actions-runner\<repo>\.runner`
+exists, and the repo still knows about it) is left alone and only the service
+state is reconciled. `RUNNER_RECONFIGURE=1` forces re-registration.
+
+### Toolchains
+
+`windows-latest` ships with a compiler for everything; this guest ships with
+nothing. Installing one inside a job would mean paying a multi-GB download on
+every run — and for VS Build Tools, more time than a job should take — so the
+toolchains belong to the machine. `PROVISION_TOOLCHAINS` is a comma-separated
+opt-in:
+
+| value | what it installs | who needs it |
+|---|---|---|
+| `msvc` | VS Build Tools, C++ workload: `link.exe` and the Windows SDK | anything native; `rustc` finds it by itself through `vswhere`, so no step has to source vcvars |
+| `rust` | `rustup` + stable-msvc, with `CARGO_HOME`/`RUSTUP_HOME` under `C:\rust` (machine-wide, because the service account is not the account that installed it) | zodemu's release build |
+| `dotnet` | the .NET 8 SDK in `C:\Program Files\dotnet` | vxp's CI |
 
 ### Two things to set before it will work
 
-- The fine-grained PAT needs **this repo** in its "Only select repositories"
-  list, with Administration: Read and write. A PAT that cannot see the repo
-  fails at the registration-token call, which reads like a bad token.
+- The fine-grained PAT needs **every repo in `GITHUB_REPO`** in its "Only select
+  repositories" list, with Administration: Read and write. A PAT that cannot see
+  a repo fails at the registration-token call, which reads like a bad token.
 - `vm.runStrategy: Always`, so a CI host comes back after a node failure
   instead of staying down. The chart ships `Halted` for the install.
 
 Registration failures land in the transcript at `C:\Windows\Temp\provision.log`.
 Once it is up, the runner appears under the repo's Settings → Actions →
 Runners, and `Get-Service actions.runner.*` in the guest is the local check.
+
+### Changing it on a guest that already exists
+
+The script runs automatically only at first logon, and the sysprep CD is rebuilt
+from the Secret when the VM *starts*. So a change to the script or to
+`provision.env` reaches a running guest in three steps:
+
+```bash
+./upgrade.sh                          # new Secret
+virtctl restart win11 -n dev          # rebuilds the CD from it
+```
+
+then, in the guest (RDP, or `virtctl vnc win11 -n dev`), run the copy on the CD —
+it carries the interpolated `provision.env`, including the PAT, so nothing has to
+be retyped:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\provision.ps1
+```
+
+(`D:` is usually the sysprep CD; `Get-Volume | ? DriveType -eq CD-ROM` if not.)
+Everything already in place is skipped, so the cost of a re-run is the parts that
+changed.
+
+### The guest is not `windows-latest`
+
+Two differences that have already cost debugging time, beyond the toolchains
+above:
+
+- **No `pwsh`.** Windows 11 ships Windows PowerShell 5.1 only, so a step with
+  `shell: pwsh` is a hard failure, and an action that unpacks through
+  `@actions/tool-cache` can fail on 5.1's `Expand-Archive` (romnas hit this with
+  `setup-just`). Use `shell: powershell` and keep the script 5.1-compatible.
+- **No `gh`.** The hosted image preinstalls the GitHub CLI; this guest does not.
+  A JS action (`softprops/action-gh-release`) needs only the node the runner
+  brings with it, which is how zodemu publishes its release.
 
 ## Backups
 

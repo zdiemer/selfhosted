@@ -91,6 +91,17 @@ repos:
   # the hosted image's preinstalled-everything approach. Verified on
   # ghcr.io/actions/actions-runner:latest.
   - name: romnas
+  # Same split as romnas, for the same reason. vxp's CI matrix is .NET on three
+  # platforms: the Linux leg is a pod here, the Windows leg is the win11 guest,
+  # macOS stays on the meter. Nothing to install first -- actions/setup-dotnet
+  # fetches the SDK, and the projects set InvariantGlobalization, so the runner
+  # image's lack of ICU never comes up.
+  - name: vxp
+  #
+  # zodemu is deliberately absent even though it is private: its only workflow
+  # builds the Windows binary on a tag, so every job it has goes to the win11
+  # guest. A scale set here would be a listener pod holding a long poll for work
+  # that never arrives. Add it the day it grows a Linux job.
 
 namespaces:
   # The controller, and this chart.
