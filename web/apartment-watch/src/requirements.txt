@@ -6,7 +6,7 @@
 #
 # camoufox[geoip] pulls playwright and a ~50MB MaxMind database; the browser
 # itself is fetched separately in the Dockerfile (`python -m camoufox fetch`).
-camoufox[geoip]==0.5.4
+camoufox[geoip]==0.5.5
 httpx==0.28.1
 beautifulsoup4==4.15.0
 PyYAML==6.0.3
