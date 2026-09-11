@@ -12,7 +12,7 @@ replicaCount: 2
 
 image:
   repository: ghcr.io/zdiemer/hatch
-  tag: "v3"
+  tag: "v4"
   # IfNotPresent, unlike carson, and the reason is specific to this chart.
   # hatch is the thing you want running when something else is broken, so a
   # node reboot during an outage must not leave it unable to pull. That only
