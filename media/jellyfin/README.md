@@ -242,6 +242,46 @@ with `SegmentKeepSeconds` at its 720s default) bounds it to a rolling window
 and is the lever the values comment is pointing at. The trade-off is that
 seeking backwards past that window forces one of the restarts above.
 
+## Upgrading to 12.0
+
+Done 2026-09-11, `10.11.11` → `12.0` (Jellyfin skipped 10.12). Recorded
+because this is **one-way**: the schema migrations rewrite `jellyfin.db` in
+place, so `helm rollback` is not a recovery path — only a restore of the
+`jellyfin-config` PVC from restic is. Take a fresh k8up `Backup` immediately
+before, don't rely on the weekly `backup-media` schedule.
+
+The order that worked:
+
+1. One-off k8up `Backup` in `media`, wait for `Completed: Succeeded`.
+2. `rm -rf "/config/plugins/Intro Skipper_*"` — upstream wants repo plugins
+   gone before migrating.
+3. Bump `image.tag` + `appVersion`, run `upgrade.sh`. The migrations ran in
+   ~5s on a 6986-item library; total startup was 15s.
+4. Fix the settings the migration resets (below), restart.
+5. Reinstall Intro Skipper from the 12.0 line, restart.
+6. `POST /Library/Refresh` — a full scan is mandatory, it is what restores
+   auto-resolved alternate versions the migration drops.
+
+**The migration silently resets hardware transcoding.** `encoding.xml` came
+back with `HardwareAccelerationType: none` and `hevc` dropped from
+`HardwareDecodingCodecs`; `VaapiDevice` and `EnableHardwareEncoding` were
+preserved, so nothing looks wrong and no probe catches it — playback just
+quietly falls back to CPU. Diff `encoding.xml` against the pre-upgrade restic
+snapshot (`restic dump <snap> /data/jellyfin-config/config/encoding.xml`)
+rather than trusting the UI. Restored by hand here.
+
+`system.xml` also flips `EnableLegacyAuthorization` to `false`, which is
+upstream's intent, not a bug — but it is what breaks old third-party clients,
+along with the removal of the `/emby/*` and `/mediabrowser/*` routes and the
+`?api_key=` query parameter. API calls now need
+`Authorization: MediaBrowser Token="..."`. That is the knob to flip back if
+something on the LAN stops authenticating.
+
+Benign diffs, for the next person reading one: `EncoderPreset` nil → `auto`
+(same meaning) and a new `SubtitleExtractionTimeoutMinutes`. The
+`WebRootPath was not found: /wwwroot` warning at startup is also benign — the
+web UI serves fine.
+
 ## Library
 
 `/media/movies` and `/media/tv` on the NAS's existing `media` dataset. The
@@ -294,18 +334,29 @@ covers recaps and end credits, not just the title sequence. Since 10.10 it no
 longer patches the web UI, which is what used to make it break on every
 upgrade.
 
-Install (all runtime state, nothing to template):
+Install (all runtime state, nothing to template). **The plugin repository is
+dead** — `https://intro-skipper.org/manifest.json` now 308-redirects to the
+GitHub org page, so the Dashboard catalog cannot see the plugin at all. It is
+a manual install:
 
-1. Dashboard → Plugins → Repositories → add `https://intro-skipper.org/manifest.json`.
-   That endpoint serves a manifest matched to the requesting server's version.
-2. Catalog → Intro Skipper → install, then restart the pod.
-3. Dashboard → Scheduled Tasks → **Detect and Analyze Media Segments**.
-4. Per client, in its playback settings: *ask to skip* vs *auto skip*.
+1. Pick the release for the server's line from
+   [GitHub releases](https://github.com/intro-skipper/intro-skipper/releases) —
+   tags are `<server line>/v<version>`, e.g. `12.0/v12.0.4.0` for this server,
+   `10.11/v1.10.11.x` for the old one.
+2. Unzip `IntroSkipper.dll` into `/config/plugins/Intro Skipper_<version>/` in
+   the config PVC, alongside a `meta.json` carrying the plugin's stable guid
+   `c83d86bb-a1e0-4c35-a113-e2101cf4ee6b` and a `targetAbi` the server
+   satisfies. Copy the previous version's `meta.json` and edit it; it is the
+   only place that guid is written down now.
+3. Restart the pod and confirm `Loaded plugin: Intro Skipper <version>` in the
+   log — a bad `targetAbi` shows up as silence, not an error.
+4. Dashboard → Scheduled Tasks → **Detect and Analyze Media Segments**.
+5. Per client, in its playback settings: *ask to skip* vs *auto skip*.
 
 Three things to know before running it:
 
-- **The plugin build is pinned to the server version** — the current release
-  wants 10.11.11 or newer, and a mismatched build fails to load or crashes on
+- **The plugin build is pinned to the server version** — the release line has
+  to match the server line, and a mismatched build fails to load or crashes on
   startup. Renovate bumps `image.tag` here unattended, so a Jellyfin bump can
   silently strand the plugin; `renovate.json` labels those PRs
   `needs-plugin-check` for that reason. The ffmpeg requirement

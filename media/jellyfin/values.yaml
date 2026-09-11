@@ -1,6 +1,14 @@
 image:
   repository: docker.io/jellyfin/jellyfin
-  tag: "10.11.11"
+  # 12.0 (2026-09-08). Jellyfin skipped 10.12; this is a one-way migration —
+  # the DB changes cannot be rolled back, so `helm rollback` is NOT a recovery
+  # path, only a restore of the jellyfin-config PVC from restic. See
+  # README.md#upgrading-to-120.
+  #
+  # Floating minor tag on purpose: upstream published no 12.0.0, only `12.0`
+  # and a build-stamped `12.0.20260908-012347`. Pin the exact patch again as
+  # soon as 12.0.1 ships.
+  tag: "12.0"
   pullPolicy: IfNotPresent
 
 # The media library, mounted straight off the NAS's NFS export (created for
