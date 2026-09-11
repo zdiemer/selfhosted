@@ -6,7 +6,7 @@
 # ics.py, and icalendar/ics.py would be a dependency to track forever for it.
 # Also absent: an ORM. The schema is nine tables and the queries are hand-written.
 fastapi==0.141.1
-uvicorn==0.52.1
+uvicorn==0.52.4
 # Required by Starlette for `request.form()`. FastAPI does not depend on it,
 # and without it every HTML form post in the UI raises at runtime rather than
 # at import — so it is easy to omit and only notice in production.
