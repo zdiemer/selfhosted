@@ -103,11 +103,6 @@ alloy:
           module  = "http_edge"
         }
         target {
-          name    = "keepass"
-          address = "https://keepass.diemer.codes"
-          module  = "http_edge"
-        }
-        target {
           name    = "pdf"
           address = "https://pdf.diemer.codes"
           module  = "http_edge"
@@ -127,15 +122,22 @@ alloy:
           address = "https://old.diemer.codes"
           module  = "http_edge"
         }
-        // status, claude and happy USED TO BE PROBED HERE and deliberately are
-        // not any more: all three were delisted from the tunnel (their charts'
-        // `ingress.cloudflareHosts` are now empty) and are reachable over the
-        // tailnet only. Probing a hostname the tunnel no longer serves would
-        // fire a permanent, entirely correct "down" alert for a change that
-        // was the point — which is the fastest way to teach everyone to ignore
-        // this dashboard. See the tailnet-only block at the end for where each
-        // of the three went — only status is probed at all now, and the reason
-        // the other two are not is a deliberate call, not an omission.
+        // status, claude, happy and keepass USED TO BE PROBED HERE and
+        // deliberately are not any more: all four were delisted from the tunnel
+        // (their charts' `ingress.cloudflareHosts` are now empty) and are
+        // reachable over the tailnet only. Probing a hostname the tunnel no
+        // longer serves would fire a permanent, entirely correct "down" alert
+        // for a change that was the point — which is the fastest way to teach
+        // everyone to ignore this dashboard. See the tailnet-only block at the
+        // end for where each of the four went — only status and keepass are
+        // probed at all now, and the reason the other two are not is a
+        // deliberate call, not an omission.
+        //
+        // keepass is the one that proved the cost of NOT doing this bookkeeping:
+        // KeeWeb went tailnet-only on 2026-08-13 and its target was left here,
+        // so `probe_success{instance="keepass"}` sat at 0 and the "Public
+        // hostname unreachable" alert fired continuously for 29 days against a
+        // service that was healthy the whole time.
         //
         // homes (web/apartment-watch) was dropped for the same reason on
         // 2026-08-13, though it is not coming back: the chart was deprecated
@@ -201,10 +203,10 @@ alloy:
         }
 
         // ---- Tailnet-only services -----------------------------------------
-        // status, claude and happy left the tunnel, so there is no public
-        // address left to probe. Only ONE of the three is probed here, and the
-        // reason the other two are not is worth writing down, because the
-        // obvious fix is a security regression.
+        // status, claude, happy and keepass left the tunnel, so there is no
+        // public address left to probe. Only TWO of the four are probed here,
+        // and the reason the other two are not is worth writing down, because
+        // the obvious fix is a security regression.
         //
         // WHAT AN INTERNAL PROBE COSTS. An edge probe asserts "the whole public
         // path works", end to end. A Service probe asserts only "the app is up
@@ -219,6 +221,22 @@ alloy:
         target {
           name    = "status"
           address = "http://cluster-status.infra.svc.cluster.local:80"
+          module  = "http_edge"
+        }
+        // keepass is the same straight swap as cluster-status: auth/keepass
+        // ships no NetworkPolicy, so probing the KeeWeb Service costs nothing
+        // and opens nothing. It answers 301 (redirect to the app), which
+        // http_edge already accepts.
+        //
+        // KEEWEB, NOT WEBDAV, and that is the whole point. keepass-webdav is
+        // the endpoint actually holding the .kdbx behind static HTTP Basic; the
+        // reason the vault went tailnet-only was to stop leaving that one
+        // password between the internet and the file. A monitoring probe has no
+        // business on it. KeeWeb is a static browser app — "is it serving" is
+        // the entire question, and 200/301 answers it.
+        target {
+          name    = "keepass"
+          address = "http://keepass-keeweb.auth.svc.cluster.local:80"
           module  = "http_edge"
         }
         // claude and happy are DELIBERATELY NOT PROBED, and this is not an
