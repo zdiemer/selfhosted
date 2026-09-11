@@ -47,7 +47,14 @@ networkPolicy:
 resources:
   requests:
     cpu: 100m
-    memory: 1Gi
+    # Half the limit, not a token 1Gi. The request is the only number the
+    # scheduler sees, so a 1Gi request let it pack ollama (10Gi) plus the rest
+    # of the namespace onto the same 32Gi node while buildkitd was free to grow
+    # to 16Gi. On 2026-09-11 that overcommit took ubuntu-4 down for 19 minutes:
+    # memory ran out with no swap, reclaim thrashed the page cache instead of
+    # OOM-killing anything, and the kubelet starved. Requesting 8Gi keeps the
+    # node's committed total honest.
+    memory: 8Gi
   limits:
     # Sized for the worst known build (rachelfreeman) with headroom; the pinned
     # node has 32Gi. No CPU limit on purpose — builds should use every core.
