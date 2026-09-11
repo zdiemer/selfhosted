@@ -1,9 +1,9 @@
 image:
   # Built from the slopus/happy monorepo's Dockerfile.server by build.sh
-  # (there is no upstream-published server image), pushed to a PUBLIC GHCR
-  # package so every node can pull it anonymously — see
+  # (there is no upstream-published server image), pushed to the in-cluster
+  # registry (infra/registry) so every node can pull it — see
   # minecraft/claude-bridge/build.sh for why we never side-load images.
-  repository: "ghcr.io/zdiemer/happy-server"
+  repository: "registry.zachd.duckdns.org/zdiemer/happy-server"
   # v1 = monorepo tag cli-1.1.10 (the HAPPY_REF pin in build.sh). Bump both
   # together, deliberately.
   tag: "v1"
@@ -27,18 +27,18 @@ image:
   # the build that is known to work rather than the newest one.
   #
   # HOW TO BUMP: ./build.sh, then read the digest it pushed —
-  #   crane digest ghcr.io/zdiemer/happy-server:v1
+  #   crane digest registry.zachd.duckdns.org/zdiemer/happy-server:v1
   # or after deploying once with the digest cleared:
   #   kubectl -n happy get pod -l app.kubernetes.io/name=happy-server \
   #     -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
   # Set it here and re-run upgrade.sh. Clearing this falls back to the tag,
   # which is the old behaviour and is fine for a deliberate one-off.
-  digest: "sha256:a94573a2b70df8ad40adde4d0fcb0adc2778f33529c6c27970a9d6f4d58539b3"
+  digest: "sha256:c3eb7c8c2d7e1b3b65bce799cd85d450843582950ce57e007167593a5c0602f7"
 
   # IfNotPresent, not Always — with a digest, `Always` is pure cost. A digest
   # names exactly one immutable blob, so re-checking the registry on every
   # restart can only ever return the layer already on the node, at the price of
-  # a network round trip in the startup path and a hard dependency on GHCR being
+  # a network round trip in the startup path and a hard dependency on the registry being
   # up in order for a pod to reschedule. Restore `Always` only if the digest
   # above is cleared.
   pullPolicy: IfNotPresent

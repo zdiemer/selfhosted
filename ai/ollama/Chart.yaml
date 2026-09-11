@@ -1,0 +1,13 @@
+apiVersion: v2
+name: ollama
+description: Ollama — local LLM inference for the cluster. CPU-only (no GPU exists in this fleet), pinned to the one node with the memory headroom for it. Serves the Ollama API and its OpenAI-compatible /v1 endpoints behind Traefik basic auth on ollama.zachd.duckdns.org.
+type: application
+version: 0.1.0
+# appVersion tracks the ollama image tag in values.yaml (image.tag).
+# renovate: image=docker.io/ollama/ollama
+appVersion: "0.32.15"
+home: https://ollama.com
+sources:
+  - https://github.com/ollama/ollama
+maintainers:
+  - name: zachd

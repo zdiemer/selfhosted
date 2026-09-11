@@ -25,7 +25,6 @@ wildcard cert, same as everything else.
 ```sh
 # 1. Image (upstream ships no server image; we build from the monorepo)
 ./build.sh
-# First push only: set ghcr.io/zdiemer/happy-server package → Public.
 
 # 2. Local values: master secret + ingress off
 cp values.local.yaml.example values.local.yaml
@@ -85,7 +84,7 @@ the wildcard SAN cert and DuckDNS record already cover it. If a
   move, so with `pullPolicy: Always` every restart — a drain, an eviction, an
   OOM kill — silently pulled whatever had last been pushed, and nothing recorded
   which build was serving. Read the new digest with
-  `crane digest ghcr.io/zdiemer/happy-server:v1`. The CLI pin in
+  `crane digest registry.zachd.duckdns.org/zdiemer/happy-server:v1`. The CLI pin in
   the claude-workspace Dockerfile should track roughly the same release —
   wildly mismatched client/server versions are the first thing to suspect
   after an upgrade.

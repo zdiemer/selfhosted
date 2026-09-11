@@ -23,14 +23,31 @@ export interface ChatState {
    * !effort. Unset means "follow the chart default". */
   model?: string;
   effort?: string;
+  /** How closely this chat's live status message follows a run — a
+   * config.VERBOSITY_MS level name, set with !verbose. Unset means the chart
+   * default. Per chat rather than per run because it is a property of how you
+   * read this thread, not of the question you just asked. */
+  verbosity?: string;
   /** A run was started and has not finished. Survives on the PVC precisely so
    * the *next* process can see it: a true here after a boot means the pod went
    * down mid-run, which is what the restart notice reports. */
   inFlight?: boolean;
-  /** A ScheduleWakeup the model armed and the gateway now owes it (wakeup.ts).
-   * On the PVC for the same reason the session id is: a redeploy must postpone
-   * a wake-up, not erase it. */
-  wakeup?: { at: number; prompt: string };
+  /** A ScheduleWakeup the model armed and the gateway now owes it (wakeup.ts,
+   * where this shape is PendingWakeup — duplicated here because importing it
+   * would be a cycle). On the PVC for the same reason the session id is: a
+   * redeploy must postpone a wake-up, not erase it. */
+  wakeup?: {
+    at: number;
+    prompt: string;
+    run?: {
+      cwd?: string;
+      session?: string;
+      fresh?: boolean;
+      model?: string;
+      effort?: string;
+    };
+    schedName?: string;
+  };
   updatedAt: string;
 }
 
@@ -115,6 +132,28 @@ export function switchSession(
   delete sessions[name]; // it is the live one now, not a parked one
   updateChat(chatKey, { session: name, sessionId: target, sessions });
   return { resumed: Boolean(target) };
+}
+
+/** The id a run pinned to session slot `slot` should resume: the live id if
+ * that slot is the chat's current session, else the parked one. Undefined
+ * means the slot has never run — start fresh. */
+export function resumeIdForSlot(
+  chat: ChatState,
+  slot: string,
+): string | undefined {
+  return sessionName(chat) === slot ? chat.sessionId : chat.sessions?.[slot];
+}
+
+/** Where a pinned run's new session id lands: the live pointer when its slot
+ * is current, the parked map otherwise — never the OTHER thread's pointer,
+ * which is the whole point of pinning. */
+export function sessionPatchForSlot(
+  chat: ChatState,
+  slot: string,
+  id: string,
+): Partial<ChatState> {
+  if (sessionName(chat) === slot) return { sessionId: id };
+  return { sessions: { ...(chat.sessions ?? {}), [slot]: id } };
 }
 
 /** Every session this chat holds, current first. */

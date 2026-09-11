@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "registry.fullname" . }}
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  replicas: 1
+  # Recreate: one RWO blob store, and on truenas-iscsi RWO is single-node
+  # *attach* — a surge pod elsewhere would block on FailedAttachVolume and
+  # wedge the rollout rather than fail it. The gap is a few seconds during
+  # which a pull 503s and containerd retries; a push in flight fails and is
+  # re-run.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "registry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: registry
+  template:
+    metadata:
+      annotations:
+        # Config only. The htpasswd Secret is deliberately NOT checksummed:
+        # bcrypt salts afresh on every render, so its hash changes on every
+        # deploy and would Recreate the registry each time for nothing.
+        # distribution re-reads the htpasswd file when its mtime changes, so a
+        # rotated password takes effect through the Secret volume alone.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-config.yaml") . | sha256sum }}
+      labels:
+        {{- include "registry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: registry
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      enableServiceLinks: false
+      # Platform: if this pod cannot be scheduled, no first-party image can be
+      # pulled fresh anywhere, which is one rung below "the ingress is down".
+      priorityClassName: platform-core
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: registry
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "/etc/distribution/config.yml"]
+          env:
+            # Signs the upload-session state passed back to clients. Derived
+            # from the credential rather than left to distribution's random
+            # per-start value, so a restart mid-push does not invalidate the
+            # upload it was in the middle of.
+            - name: REGISTRY_HTTP_SECRET
+              value: {{ sha256sum (printf "%s/%s" .Values.registry.host (include "registry.password" .)) | quote }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/distribution/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: auth
+              mountPath: /etc/registry/auth
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /var/lib/registry
+            {{- end }}
+          # `/` is the one path htpasswd does not guard, and it is what
+          # distribution's health checker reports through: a failing storage
+          # driver turns it into a 503.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "registry.fullname" . }}-config
+        - name: auth
+          secret:
+            secretName: {{ include "registry.fullname" . }}-auth
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "registry.fullname" . }}-data
+        {{- end }}

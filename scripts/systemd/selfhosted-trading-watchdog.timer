@@ -1,0 +1,20 @@
+# Mon–Fri at 17:00 local (this machine runs Pacific): well after the 15:30 ET
+# pre-close run has pushed, so a healthy day is always fresh by the time this
+# looks. The script itself widens the threshold on Mondays for the weekend gap.
+#
+# OnCalendar + Persistent, NOT monotonic timers — see the war story in
+# selfhosted-secrets-check.timer for how OnBootSec+OnUnitActiveSec dies
+# silently on a user-manager restart.
+
+[Unit]
+Description=Check the trading agent's heartbeat on market-day evenings
+Documentation=file:%h/Code/selfhosted/scripts/systemd/README.md
+
+[Timer]
+OnCalendar=Mon..Fri 17:00
+AccuracySec=5min
+Persistent=true
+Unit=selfhosted-trading-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -23,3 +23,9 @@ spec:
       targetPort: bakery-web
       protocol: TCP
     {{- end }}
+    {{- if .Values.journal.enabled }}
+    - name: journal
+      port: {{ .Values.service.journalPort }}
+      targetPort: journal
+      protocol: TCP
+    {{- end }}

@@ -81,7 +81,7 @@ def main():
         # A silent no-op here means the chart changed shape and the probe went
         # back to 1s without anyone noticing. Fail the deploy instead.
         sys.exit(
-            "post-render.sh: no DaemonSet contained a '%s' livenessProbe to patch. "
+            "post-render.py: no DaemonSet contained a '%s' livenessProbe to patch. "
             "The chart's node template changed -- re-check whether this "
             "post-renderer is still needed, or still correct." % CONTAINER
         )

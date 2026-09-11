@@ -1,0 +1,18 @@
+# The shape of op://homelab/infra-registry/values.local.yaml. Not read by any
+# deploy path — upgrade.sh resolves the vault item through values.local.tpl.yaml
+# — but this is the only human-readable record of what that item holds and why.
+#
+# One password. It is the registry's entire access control: distribution's
+# htpasswd checks it on every request, pulls included, so every node's
+# containerd carries it (registries.yaml, written by the node-config DaemonSet)
+# and so does ~/.docker/config.json wherever build.sh runs. Rotating it here and
+# running upgrade.sh re-hashes the htpasswd, re-writes every node, and restarts
+# k3s on each one in turn; the docker config on the laptop and the workspace
+# PVC are the two copies that have to be updated by hand (README).
+#
+# Generate with `openssl rand -base64 32`.
+
+registry:
+  auth:
+    username: zdiemer
+    password: "..."

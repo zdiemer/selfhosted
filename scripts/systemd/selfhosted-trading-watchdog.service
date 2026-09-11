@@ -1,0 +1,33 @@
+# Dead-man's switch for the Robinhood trading agent: fail — and therefore
+# text, via OnFailure — when the trading-journal repo stops moving, which
+# means the scheduled runs in the claude-workspace pod stopped completing.
+# The what and why live in scripts/trading-watchdog.sh.
+#
+# Install (see also scripts/systemd/README.md):
+#     ln -sf ~/Code/selfhosted/scripts/systemd/selfhosted-trading-watchdog.{service,timer} ~/.config/systemd/user/
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now selfhosted-trading-watchdog.timer
+
+[Unit]
+Description=Check the trading agent's journal repo is still moving
+Documentation=file:%h/Code/selfhosted/scripts/trading-watchdog.sh
+After=network-online.target
+Wants=network-online.target
+OnFailure=selfhosted-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/Code/selfhosted/scripts/trading-watchdog.sh
+TimeoutStartSec=5min
+
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectSystem=strict
+# git-over-ssh reads ~/.ssh; the shallow clone it keeps is the one write.
+ProtectHome=read-only
+ReadWritePaths=%h/.cache
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

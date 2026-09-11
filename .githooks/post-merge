@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 # A pull moves the submodule pins in the index and leaves the worktrees behind.
 # Put them back — see scripts/submodules-refresh.sh for why that matters.
-exec "$(git rev-parse --show-toplevel)/scripts/submodules-refresh.sh" --quiet
+ROOT="$(git rev-parse --show-toplevel)"
+"$ROOT/scripts/submodules-refresh.sh" --quiet
+# The same operation can move scripts/secrets.sh, which the copy of it on
+# PATH cannot notice on its own. No-op when it already matches.
+"$ROOT/scripts/refresh-secrets-cli.sh" --quiet

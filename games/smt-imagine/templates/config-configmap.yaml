@@ -1,0 +1,79 @@
+{{/*
+The three server configs plus setup.xml, rendered the way the Debian package
+laid them out under /etc/comp_hack. Every <member> name is an objgen field —
+see server/<x>/schema/*config.xml in the source tree; an unknown name is
+silently ignored, so keep this in step with the schema rather than guessing.
+
+The SQLite3 FileDirectory is the database PVC. Lobby and world each open their
+own .db file there, exactly as the three systemd units on one Ubuntu host did,
+which is why the three servers share one pod.
+*/}}
+{{- $v := .Values }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}-config
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+data:
+  lobby.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <objgen>
+        <object>
+    {{- include "smt-imagine.serverConfig" (dict "root" . "log" "lobby") | nindent 4 }}
+            <member name="Port">{{ $v.ports.lobby }}</member>
+            <member name="SQLite3Config">
+                <object>
+                    <member name="FileDirectory">/var/lib/comp_hack/database/</member>
+                    <member name="AutoSchemaUpdate">true</member>
+                </object>
+            </member>
+            <member name="WebListeningPort">{{ $v.ports.web }}</member>
+            <member name="WebRoot">/var/lib/comp_hack/webroot</member>
+            <member name="ClientVersion">{{ $v.client.version }}</member>
+            <member name="RegistrationAccountEnabled">{{ $v.lobby.openRegistration }}</member>
+            <member name="CharacterTicketCost">0</member>
+            <member name="PlayOpeningMovie">{{ $v.lobby.playOpeningMovie }}</member>
+            <member name="AllowImport">false</member>
+        </object>
+    </objgen>
+  world.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <objgen>
+        <object>
+    {{- include "smt-imagine.serverConfig" (dict "root" . "log" "world") | nindent 4 }}
+            <member name="Port">{{ $v.ports.world }}</member>
+            <member name="ID">0</member>
+            <member name="Name">{{ $v.world.name }}</member>
+            <member name="LobbyIP">127.0.0.1</member>
+            <member name="LobbyPort">{{ $v.ports.lobby }}</member>
+            <member name="SQLite3Config">
+                <object>
+                    <member name="FileDirectory">/var/lib/comp_hack/database/</member>
+                    <member name="AutoSchemaUpdate">true</member>
+                </object>
+            </member>
+            <member name="WorldSharedConfig">
+                <object>
+                    <member name="GreetMessage">{{ $v.world.greeting }}</member>
+                    <member name="XPBonus">{{ $v.world.bonus.xp }}</member>
+                    <member name="ExpertiseBonus">{{ $v.world.bonus.expertise }}</member>
+                    <member name="DropRateBonus">{{ $v.world.bonus.dropRate }}</member>
+                    <member name="DeathPenaltyDisabled">{{ $v.world.deathPenaltyDisabled }}</member>
+                </object>
+            </member>
+        </object>
+    </objgen>
+  channel.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <objgen>
+        <object>
+    {{- include "smt-imagine.serverConfig" (dict "root" . "log" "channel") | nindent 4 }}
+            <member name="Port">{{ $v.ports.channel }}</member>
+            <member name="Name">{{ $v.channel.name }}</member>
+            <member name="WorldIP">127.0.0.1</member>
+            <member name="WorldPort">{{ $v.ports.world }}</member>
+            <member name="ExternalIP">{{ required "channel.externalIP is the address the game client connects to; set it to a node's tailnet or LAN IP" $v.channel.externalIP }}</member>
+            <member name="Timeout">{{ $v.channel.timeoutSeconds }}</member>
+        </object>
+    </objgen>

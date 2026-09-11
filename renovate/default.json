@@ -29,7 +29,8 @@
     {
       "description": "First-party images: build.sh/upgrade.sh own these, and sync-submodules.sh's pin-advance predicate depends on tag == deployed",
       "matchPackageNames": [
-        "ghcr.io/zdiemer/**"
+        "ghcr.io/zdiemer/**",
+        "registry.zachd.duckdns.org/zdiemer/**"
       ],
       "enabled": false
     },

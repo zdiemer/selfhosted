@@ -49,9 +49,8 @@ recent; both work under `happy` too).
 ## First install
 
 ```sh
-# 1. Image (once per Dockerfile change; needs docker login ghcr.io)
+# 1. Image (once per Dockerfile change; needs the registry credential, see infra/registry)
 ./build.sh
-# First push only: set ghcr.io/zdiemer/claude-workspace package → Public.
 
 # 2. Install with ingress off
 kubectl create namespace claude
@@ -59,9 +58,10 @@ helm install claude-workspace . -n claude -f values.yaml
 kubectl -n claude get pods -w
 
 # 3. Smoke test the ports
-kubectl -n claude port-forward svc/claude-workspace 7681:7681 5173:5173 3141:3141
+kubectl -n claude port-forward svc/claude-workspace 7681:7681 5173:5173 3141:3141 8088:8088
 #   http://localhost:7681/term → tmux prompt echoes keystrokes
 #   http://localhost:3141/healthz → bakery server "ok"
+#   http://localhost:8088/ → journal viewer's latest runs
 #   (bakery web on 5173 refuses a localhost Host header — allowedHosts is set
 #    to the ingress host — so verify it end-to-end after the ingress is up)
 
@@ -108,7 +108,7 @@ Three capabilities, three mechanisms:
   **cluster-admin** (`rbac.clusterAdmin`, see the ⚠️ in values.yaml). kubectl
   and helm pick up the in-cluster SA token automatically; there is no
   kubeconfig file anywhere.
-- **Build + push images to GHCR** — `buildctl` against the in-cluster rootless
+- **Build + push images to the in-cluster registry** — `buildctl` against the in-cluster rootless
   buildkitd ([`infra/buildkit`](../../infra/buildkit/)); every per-chart
   `build.sh` falls back from docker to buildctl automatically. Push auth comes
   from `~/.docker/config.json` on the PVC (setup below).
@@ -116,7 +116,7 @@ Three capabilities, three mechanisms:
   image (since v5). A one-time `gh auth login` (device flow) persists under
   `~/.config/gh` on the PVC, so Claude can scaffold and push new app repos
   (e.g. `finance/money`) without leaving the workspace. This is a **separate**
-  credential from the GHCR PAT below (that one is packages-only): `gh` needs a
+  credential from the registry password below: `gh` needs a
   token with `repo` + `read:org` scope.
 - **Node maintenance (`scripts/k3s/`)** — a `tailscaled` container (userspace
   networking, unprivileged) joins the pod to the tailnet so
@@ -136,19 +136,16 @@ internet and cluster-admin + root-on-every-node. Never disable
    `ssh` rules allow this node as a source for `root@` the k3s nodes** — a
    healthy `tailscale status` with a failing `tailscale ssh` means ACLs, not
    the pod. State persists on the PVC.
-2. **GHCR PAT** (classic PAT with `write:packages`; there is no docker CLI in
-   the pod, so write the auth file directly):
-
-   ```sh
-   read -rs GHCR_PAT
-   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' \
-     "$(printf 'zdiemer:%s' "$GHCR_PAT" | base64 -w0)" > ~/.docker/config.json
-   chmod 600 ~/.docker/config.json; unset GHCR_PAT
-   ```
+2. **Registry credential** for `registry.zachd.duckdns.org` in
+   `~/.docker/config.json` — the recipe is in
+   [`infra/registry/README.md`](../../infra/registry/README.md) ("Pushing from
+   somewhere new"); it reads the password from the vault, no typing. A GHCR
+   entry is only still needed for the two images that remain on GitHub
+   (rachel-freeman, whatnowgg).
 3. **GitHub CLI** (`gh`, for creating repos / pushing from the pod): run
    `gh auth login` (choose GitHub.com → HTTPS → login with a web browser) and
    authorize the device code. Use a token/login with `repo` + `read:org` scope
-   — the GHCR PAT above is packages-only and `gh` will reject it. Auth persists
+   — the registry password above is not a GitHub credential and `gh` will reject it. Auth persists
    on the PVC at `~/.config/gh`.
 4. **Repo**: clone this repo to `~/code/selfhosted`. The secrets it needs are
    no longer a manual step — see below.
@@ -298,6 +295,47 @@ artifacts, and metadata live under `bakery.dataDir`
 - Turn the whole surface off with `bakery.enabled: false` (drops both
   containers, the two service ports, the ingress host, and the netpol rule).
 
+## Journal surface
+
+`https://trading.zachd.duckdns.org` — a read-only web view of the trading
+agent's journal (`journal/` in this chart, baked to `/opt/journal-viewer`,
+served by one bun container).
+
+The trading agent runs on the gateway schedules below and, by design, says
+almost nothing: routine runs are silent and the only scheduled message is
+Friday's weekly report (`trading/CLAUDE.md`, "Reporting — one message a
+week"). Everything it *doesn't* send still gets written down. This is where
+you read it.
+
+- **Front page**: the last `journal.recent` runs (8 = a market day of hourly
+  runs plus yesterday's tail), newest first, each collapsible, the latest one
+  open. Nav has `positions.md`, `benchmark.md`, the mandate (`CLAUDE.md`), the
+  commit log, and each month's journal file.
+- **No copy, no cache.** It reads `journal.dir` — the agent's own working copy
+  on the shared `$HOME` PVC — on every request. The agent commits and pushes
+  each run, so the checkout is the freshest thing that exists; anything
+  mirrored from git would only ever be staler. `cache-control: no-store` for
+  the same reason: a cached page can be wrong about a position that just moved.
+- **`/log`** shells out to `git log` over that checkout. One commit per run, so
+  it is also the quickest answer to "did the 11:45 run actually happen?" — the
+  push is the agent's dead-man's-switch heartbeat.
+- **Read-only in the strong sense**: GET (and HEAD) only, no writes, no shell
+  but `git log`, read-only rootfs, and every `/f/<path>` resolved with
+  `realpath` back inside `journal.dir` — so `..`, an absolute path and a
+  symlink out of the checkout all fail the same way. It will serve any `.md`
+  under that directory; the nav is a menu, not the boundary.
+- **DuckDNS only — no Cloudflare host, deliberately.** This is a live view of a
+  brokerage account's positions and cash. `infra/duckdns` is in `mode:
+  tailnet`, so the host resolves to a 100.x address (no DNS record to add —
+  the wildcard already answers), and Authelia's forward-auth is the second
+  gate. Same two-gate reasoning as the `/term` host; see `ingress.cloudflareHosts`.
+- Turn it off with `journal.enabled: false` (drops the container, the service
+  port, the ingress host and the netpol rule).
+
+Point it at a different repo by setting `journal.dir` — nothing in the viewer
+is specific to trading beyond the defaults (a `journal/` directory of month
+files with one `##` heading per entry is what the front page splits on).
+
 ## Messaging surface
 
 Signal (primary) and WhatsApp (optional) drive headless `claude -p` runs in
@@ -376,7 +414,10 @@ context used to destroy the old thread · `!plan [on|off]` per-chat plan mode (`
 researches and proposes, never edits; bare `!plan` turns it on, and it clears
 `!auto`, which is the opposite instruction) ·
 `!model opus|sonnet|haiku|fable|<id>|default` · `!effort
-low|medium|high|xhigh|max|default` · `!bash <cmd>` shell command in the chat's
+low|medium|high|xhigh|max|default` ·
+`!verbose quiet|low|normal|high|live|default` how often the live status message
+redraws while a run is going (see below) ·
+`!bash <cmd>` shell command in the chat's
 cwd, no model in the loop · `!usage [days]` token totals ·
 `!stop` SIGTERM the running claude (and any `!bash`) · `!status` · `!help`.
 
@@ -400,8 +441,23 @@ pod (chat, tmux, Happy) and nothing you ran anywhere else.
 Runs default to **Opus 5 at medium effort** (`messaging.model` /
 `messaging.effort`); `!model` and `!effort` override per chat and persist in the
 state file. `!clear` is `!new` under a name that reads right in a chat — it
-drops the session pointer so the next message starts cold. The transcript itself
+drops the session pointer so the next message starts cold, and kills a live run
+and its pending wake-up with it. (It has to: a parked child would otherwise be
+handed the next message with the full old context, landing the clear one
+message late — on the reply that needed that context.) The transcript itself
 stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
+
+Long threads are kept resumable rather than left to die. A cold resume rebuilds
+the session jsonl's tail into the context window, and past ~1.4MB the rebuild —
+and the auto-compaction the CLI tries as a rescue — both come back `Prompt is
+too long`, permanently. A live child never notices (its in-context trimming
+isn't persisted), so the thread balloons for hours and dies on the first
+message after its process exits. The gateway now measures that tail after every
+turn (`messaging.transcript`): past `compactKB` it queues a quiet `/compact`
+turn (announced as `⚙ … compacting in the background`); past `capKB`, where
+even compaction no longer fits, it warns to wrap up. And if a resume still
+comes back `Prompt is too long`, the run is retried once from a fresh session
+instead of delivering a dead thread's error forever.
 
 Anything else is sent to claude. Replies are prefixed
 `[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k (Signal) / ~2.9k
@@ -454,15 +510,22 @@ While a run is going, three things say so, in increasing order of detail:
   ends on. That budget used to be stretched over the whole run by doubling the
   gap after every edit, which bought coverage by going stale — past the first
   minute you were reading a tool call from four minutes ago beside a clock that
-  had stopped. So the gap is now a real **cadence**, steady at
-  `messaging.progress.signalEditSeconds` (5s; WhatsApp keeps
-  `messaging.progress.editSeconds`, 3s) for as long as one message lasts, and
-  when the ninth edit is spent the status **rolls onto a new message**: the old
+  had stopped. So the gap is a real **cadence**, steady for as long as one
+  message lasts, and set by **verbosity**: `!verbose quiet|low|normal|high|live`
+  per chat (no status message at all / 3m / 1m / 15s / 5s), defaulting to
+  `messaging.progress.verbosity` (`normal`). A minute is the default because
+  this is a phone — the status says the run is alive and roughly where it is,
+  and the 5s this used to run at spent Signal's whole budget in under a minute
+  for a line nobody was watching that closely. `live` is that old behaviour if
+  you want it. `messaging.progress.minEditSeconds` (3s) and `signalMinEditSeconds`
+  (5s) are floors under whatever verbosity asks for, not cadences: WhatsApp is
+  an unofficial client and does not get a fast tick regardless.
+  When the ninth edit is spent the status **rolls onto a new message**: the old
   one is retired to `⏺ continued below`, a fresh one starts with a fresh
   ten-revision budget, and the elapsed clock and tool count carry over. Each
   successive message runs at twice the cadence of the last, so
-  `messaging.progress.maxMessages` (6) covers roughly the first three-quarters
-  of an hour — a minute of step-by-step detail, coarsening as the run goes, in
+  `messaging.progress.maxMessages` (6) at the one-minute default is several
+  hours — nine minutes of step-by-step detail, coarsening as the run goes, in
   six messages rather than eighty. WhatsApp targets the original key throughout,
   which is what that surface expects. Groups get no status message — the room
   did not ask to watch, and a group run only has `WebFetch`/`WebSearch` to show.
@@ -470,6 +533,49 @@ While a run is going, three things say so, in increasing order of detail:
   reply and labelled `⏺ answered — continuing below`; otherwise the work your
   answer just bought happens against a status that is both out of revisions and
   scrolled off the screen.
+
+### Schedules
+
+`messaging.schedules` (values.yaml) is a list of cron entries the **gateway**
+fires as headless runs — the durable way to run a recurring agent, and the
+successor to asking the model to keep a ScheduleWakeup chain alive. The
+difference is who owns the next occurrence: a wake-up chain dies the first
+time a run errors or forgets to re-arm (which is how the Robinhood trading
+agent sat dead in a tmux session for three weeks), while a cron entry is
+config — every boot re-arms it, and `!status` lists what is armed and when it
+next fires.
+
+Each entry names a five-field cron (evaluated in its `timezone`), a `cwd`,
+a named `session` slot, and a `prompt`; optional `model`/`effort` override
+the chat defaults, and `fresh: true` starts a new session per firing (the
+files in the cwd are then the agent's durable memory — its CLAUDE.md should
+say so). Firings are **pinned**: they resume their own slot and write their
+session ids back to it, never the thread the chat's `!use`/`!cwd` currently
+point at, and a ScheduleWakeup armed by a pinned run inherits the pin, so an
+intraday "check back in an hour" lands in the schedule's thread too. Replies
+go to the surface owner's 1:1 (the first allowed sender) with the usual
+banner — but only when the run asks for it: since v28 a firing's final text
+is delivered **only if it contains `[[notify]]` on a line of its own**, which
+is stripped before sending. Silence is the default and speaking is the opt-in,
+because the instruction alone did not hold — told in the preamble, its schedule
+prompt and its own CLAUDE.md to end quiet runs with no text, the trading agent
+still signed off every hourly run with "nothing that needs you", and on a phone
+that is indistinguishable from an alert. Unmarked text is dropped and logged
+(`schedule <name>: held back N chars`); a run that errored or was killed still
+speaks unmarked, since a failure that goes quiet is the worse bug. A schedule
+whose prompt has a *must-send* case (the Friday weekly) has to name the marker.
+Occurrences missed while
+the pod is down are skipped, not caught up: these are cadences, not promises,
+and a market-open run fired at 11pm because the pod was rescheduled is worse
+than no run.
+
+Pinned 1:1 runs (all 1:1 runs, in fact) also get the MCP servers registered
+for their cwd at **project scope** in `~/.claude.json` — `claude mcp add`
+from the directory is the registration, and stored MCP OAuth credentials
+match by server name + URL, so an HTTP OAuth server (the trading agent's
+brokerage MCP) authenticates identically headless. `--strict-mcp-config`
+still stands: project servers are merged in deliberately, the global block
+stays interactive-only, and the `gw` approval relay always wins its name.
 
 **Background work survives the answer.** A long job — a build, a migration, a
 test suite — can be started as a background task, and Claude Code wakes *itself*

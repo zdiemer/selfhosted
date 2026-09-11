@@ -89,6 +89,10 @@ messaging:
   enabled: true
   defaultCwd: /home/node/code/rachelfreeman
   codeRoot: /home/node/code
+  # Explicitly none: helm's profile layering replaces lists only when the
+  # overlay defines them, so without this the main profile's schedules (the
+  # trading agent's) would run on the delegated instance too.
+  schedules: []
   # `!cwd` refuses everything outside these, and the gateway refuses to start
   # if defaultCwd is not under one of them.
   cwdRoots:

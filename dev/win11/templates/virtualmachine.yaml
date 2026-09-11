@@ -133,6 +133,16 @@ spec:
               cdrom:
                 bus: sata
             {{- end }}
+            {{- if .Values.unattend.enabled }}
+            {{- /*
+              The answer file, as a CD. KubeVirt builds an ISO from the sysprep
+              Secret; Windows Setup finds autounattend.xml by scanning removable
+              media, so it needs no boot order and no drive letter of its own.
+            */}}
+            - name: sysprep
+              cdrom:
+                bus: sata
+            {{- end }}
             {{- if .Values.disks.virtio.enabled }}
             {{- /*
               No bootOrder — this is never booted, only read. Windows Setup
@@ -181,6 +191,12 @@ spec:
         - name: installer
           dataVolume:
             name: {{ $name }}-installer
+        {{- end }}
+        {{- if .Values.unattend.enabled }}
+        - name: sysprep
+          sysprep:
+            secret:
+              name: {{ $name }}-sysprep
         {{- end }}
         {{- if .Values.disks.virtio.enabled }}
         - name: virtio-drivers

@@ -64,7 +64,36 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 # surface (term, Happy, bakery, messaging) down until someone notices.
 REPO="$(awk '/^  repository:/{gsub(/["'"'"']/,"",$2); print $2; exit}' "$VALUES")"
 TAG="$(awk '/^  tag:/{gsub(/["'"'"']/,"",$2); print $2; exit}' "$VALUES")"
-if [[ "$REPO" == ghcr.io/* && -n "$TAG" ]] && command -v curl >/dev/null && command -v python3 >/dev/null; then
+if [[ "$REPO" == registry.zachd.duckdns.org/* && -n "$TAG" ]] && command -v curl >/dev/null && command -v python3 >/dev/null; then
+  echo "==> Verifying ${REPO}:${TAG} exists"
+  REG_HOST="${REPO%%/*}"
+  IMG_PATH="${REPO#*/}"
+  # The in-cluster registry (selfhosted/infra/registry): plain basic auth on
+  # every request, with the credential build.sh already has in the docker
+  # config. No token dance.
+  BASIC="$(python3 - "$HOME/.docker/config.json" "$REG_HOST" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        print(json.load(fh).get("auths", {}).get(sys.argv[2], {}).get("auth", ""))
+except Exception:
+    print("")
+PY
+)"
+  if [[ -z "$BASIC" ]]; then
+    echo "    skipped (no credential for ${REG_HOST} in ~/.docker/config.json — cannot verify)" >&2
+  else
+    CODE="$(curl -sL -o /dev/null -w '%{http_code}' -H "Authorization: Basic ${BASIC}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+            "https://${REG_HOST}/v2/${IMG_PATH}/manifests/${TAG}" || echo 000)"
+    if [[ "$CODE" != "200" ]]; then
+      echo "ERROR: ${REPO}:${TAG} is not in the registry (HTTP ${CODE})." >&2
+      echo "       Run build.sh first — deploying now would tear the pod down with nothing to replace it." >&2
+      exit 1
+    fi
+    echo "    ok"
+  fi
+elif [[ "$REPO" == ghcr.io/* && -n "$TAG" ]] && command -v curl >/dev/null && command -v python3 >/dev/null; then
   echo "==> Verifying ${REPO}:${TAG} exists"
   IMG_PATH="${REPO#ghcr.io/}"
   # Package is public, so an anonymous pull token suffices; reuse the GHCR PAT
@@ -120,13 +149,25 @@ STATUS="$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
 if [[ "$STATUS" == pending-* ]]; then
   echo "==> Release is ${STATUS} from an interrupted run; repairing"
   python3 - "$RELEASE" "$NAMESPACE" <<'PY'
-import base64, gzip, json, subprocess, sys
+import base64, gzip, json, subprocess, sys, tempfile
 
 release, namespace = sys.argv[1], sys.argv[2]
 
 def kubectl(*args, capture=True):
     return subprocess.run(["kubectl", "-n", namespace, *args],
                           capture_output=capture, text=True, check=True).stdout
+
+def patch_secret(name, patch):
+    # Through a file, never `-p <json>`: this chart's release payload is a few
+    # hundred KB of gzipped manifests, and as an argv it blows the kernel's
+    # exec limit (OSError E2BIG, "Argument list too long: kubectl") — which
+    # left the repair half-done, the stuck revision deleted and the previous
+    # one never restored.
+    with tempfile.NamedTemporaryFile("w", suffix=".json") as fh:
+        fh.write(patch)
+        fh.flush()
+        kubectl("patch", "secret", name, "--type", "merge",
+                "--patch-file", fh.name, capture=False)
 
 secrets = json.loads(kubectl(
     "get", "secrets", "-l", f"owner=helm,name={release}", "-o", "json"))["items"]
@@ -154,8 +195,7 @@ patch = json.dumps({
     "data": {"release": base64.b64encode(
         base64.b64encode(gzip.compress(json.dumps(payload).encode()))).decode()},
 })
-kubectl("patch", "secret", prev["metadata"]["name"], "--type", "merge", "-p", patch,
-        capture=False)
+patch_secret(prev["metadata"]["name"], patch)
 print(f"    revision {version} restored as the current one")
 PY
 fi

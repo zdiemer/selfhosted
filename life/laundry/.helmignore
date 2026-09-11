@@ -1,0 +1,15 @@
+.DS_Store
+.git
+.gitignore
+src/
+tests/
+firmware/
+# Local dev only — helm walks these and chokes on the interpreter binary.
+.venv/
+.piovenv/
+Dockerfile
+.dockerignore
+build.sh
+*.md
+values.local.yaml
+values.local.tpl.yaml

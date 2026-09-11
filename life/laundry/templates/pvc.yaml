@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "laundry.fullname" . }}-data
+  labels:
+    {{- include "laundry.labels" . | nindent 4 }}
+  annotations:
+    # The cycle log is the only evidence this thing works, and the open-cycle
+    # state on here is what lets a helm upgrade mid-wash still text you.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.data.accessMode }}
+  {{- /*
+    Gated with `with` so a blank value renders NO field. `storageClassName: ""`
+    means "no StorageClass at all" and leaves the PVC Pending forever.
+  */}}
+  {{- with .Values.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

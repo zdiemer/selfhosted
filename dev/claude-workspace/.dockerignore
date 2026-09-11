@@ -1,7 +1,8 @@
 # Keep the image build context lean: only the Dockerfile inputs matter.
-# gateway/ IS copied into the image — but its node_modules are installed at
-# build time, never shipped from the workstation.
+# gateway/ and journal/ ARE copied into the image — but their node_modules are
+# installed at build time, never shipped from the workstation.
 gateway/node_modules
+journal/node_modules
 templates
 *.yaml
 *.sh

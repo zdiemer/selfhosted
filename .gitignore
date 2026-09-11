@@ -42,12 +42,18 @@ secrets/
 # the trailing-slash form would make the next line dead.
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 
 # apartment-watch search stipulations — carries the alert phone number and a
 # personal shortlist of where to live. criteria.example.yaml is the tracked
 # template; the real one stays local, same shape as values.local.yaml.
 web/apartment-watch/criteria.yaml
 web/apartment-watch/.venv/
+life/laundry/.venv/
+# PlatformIO build output and the firmware's wifi/token header.
+life/laundry/firmware/.pio/
+life/laundry/firmware/.piovenv/
+life/laundry/firmware/include/config.h
 
 # Gradle build artifacts (claude-mod). The JAR is sideloaded via install.sh,
 # not checked in.

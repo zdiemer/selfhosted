@@ -1,0 +1,30 @@
+{{/*
+SMB-backed PV for the ROM library, read-only, via csi-driver-smb (installed
+once cluster-wide — see games/romm/README.md §Prerequisites). The volumeHandle
+is cluster-unique, so it carries the release name.
+*/}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "cloud-game.fullname" . }}-library
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    {{- toYaml .Values.smb.mountOptions | nindent 4 }}
+    - vers={{ .Values.smb.vers }}
+  csi:
+    driver: smb.csi.k8s.io
+    readOnly: true
+    volumeHandle: {{ include "cloud-game.fullname" . }}-library
+    volumeAttributes:
+      source: {{ printf "//%s/%s" (required "smb.host required" .Values.smb.host) (required "smb.share required" .Values.smb.share) | quote }}
+    nodeStageSecretRef:
+      name: {{ include "cloud-game.fullname" . }}-smb-creds
+      namespace: {{ .Release.Namespace }}

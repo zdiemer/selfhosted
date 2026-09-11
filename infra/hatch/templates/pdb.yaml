@@ -1,0 +1,18 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+{{/*
+Only above one replica. A minAvailable: 1 budget against a single replica can
+never be satisfied by evicting it, so the drain blocks forever — the failure
+that is strictly worse than the gap it was meant to prevent.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hatch.fullname" . }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "hatch.selectorLabels" . | nindent 6 }}
+{{- end }}

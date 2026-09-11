@@ -1,0 +1,43 @@
+{{/*
+Two claims, deliberately.
+
+database — the SQLite files, logs, and the web session state. Small, hot, and
+the only thing worth backing up: it IS the save game.
+
+data — the client-derived content the server reads but never writes: the
+client's BinaryData tree and the Map/Zone/Model QMP files (see README,
+"Staging client data"). Copyrighted client assets, so they are neither in git
+nor in the image; they are copied onto this claim once by stage-client.sh.
+Kept apart from the database so k8up can back up one and skip the other — a
+re-stageable 200MB is not worth nightly snapshots.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}-database
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.database.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.database.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "smt-imagine.fullname" . }}-data
+  labels:
+    {{- include "smt-imagine.labels" . | nindent 4 }}
+  annotations:
+    # Client assets re-copied by stage-client.sh; not worth a backup.
+    k8up.io/backup: "false"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.data.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}

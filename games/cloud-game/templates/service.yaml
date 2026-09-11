@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cloud-game.fullname" . }}
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "cloud-game.selectorLabels" . | nindent 4 }}
+---
+# The WebRTC media port. Published on every node IP by klipper-lb, the same way
+# minecraft/ exposes 25565 — see webrtc.* in values.yaml for why it can't ride
+# Traefik. Kept as a separate Service so the HTTP one stays ClusterIP and the
+# only LAN-reachable thing is the UDP port, which is useless without a signalled
+# session through the (Authelia-gated) coordinator.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cloud-game.fullname" . }}-webrtc
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.webrtc.serviceType }}
+  {{- if eq .Values.webrtc.serviceType "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.webrtc.externalTrafficPolicy }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.webrtc.singlePort }}
+      targetPort: webrtc
+      protocol: UDP
+      name: webrtc
+  selector:
+    {{- include "cloud-game.selectorLabels" . | nindent 4 }}

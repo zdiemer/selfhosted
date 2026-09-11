@@ -147,9 +147,8 @@ First time:
 
 ```bash
 git submodule update --init web/old-diemer-codes/site
-docker login ghcr.io -u zdiemer          # PAT with write:packages
+docker login registry.zachd.duckdns.org -u zdiemer          # PAT with write:packages
 ./build.sh
-# First push only: set the GHCR package visibility to Public, or all 7 nodes
 # get ImagePullBackOff with a 401.
 ./upgrade.sh
 ```
@@ -200,7 +199,7 @@ Dark background, photo behind, Fira Code text. White and unstyled ⇒ `site.css`
   archive.
 - **The image is the reproducibility guarantee.** The 2019 dep tree resolves from
   npm today, but two FontAwesome packages are already deprecated and
-  `node:16-bullseye` is EOL. Once built, the image lives on GHCR and never needs
+  `node:16-bullseye` is EOL. Once built, the image lives in the in-cluster registry and never needs
   rebuilding. If it ever must be, and Node 16 is gone, the escape hatch is Node
   20 **plus** `NODE_OPTIONS=--openssl-legacy-provider` — which works there, and
   only there.

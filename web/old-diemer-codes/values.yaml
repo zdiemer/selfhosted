@@ -5,7 +5,7 @@
 # are submodule'd back here. That repo is a deliberately untouched archive, so
 # here the chart + Dockerfile live in THIS repo and the app is the submodule
 # underneath, at site/. Everything else is the normal shape: build.sh pushes to
-# GHCR, upgrade.sh runs helm, Chart.yaml appVersion tracks image.tag.
+# the in-cluster registry, upgrade.sh runs helm, Chart.yaml appVersion tracks image.tag.
 #
 # The submodule has to sit inside the chart directory rather than somewhere
 # tidier: docker build cannot COPY from outside its context, and the context is
@@ -18,9 +18,9 @@
 #   git add .gitmodules web/old-diemer-codes/site && git commit   # record what shipped
 
 image:
-  # Built + pushed to GHCR by build.sh; the package is public so every node pulls
+  # Built + pushed to the in-cluster registry by build.sh, so every node pulls
   # it anonymously (the cluster is multi-node, so side-loading doesn't fit).
-  repository: ghcr.io/zdiemer/old-diemer-codes
+  repository: registry.zachd.duckdns.org/zdiemer/old-diemer-codes
   tag: "1.3.1"
   # IfNotPresent — so NEVER reuse a tag. Rebuilding over an existing tag will not
   # re-pull and the cluster will keep serving the old bytes.

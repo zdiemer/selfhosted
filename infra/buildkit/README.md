@@ -10,13 +10,13 @@ The workspace image bakes that address in as `BUILDKIT_HOST`, and every per-char
 
 ## How a build works
 
-`buildctl` streams the build context from the client's filesystem to buildkitd, which builds and **pushes directly to GHCR from inside the cluster**. Registry credentials are not stored here: the client forwards its own `~/.docker/config.json` auth per session (for the workspace, that file lives on its home PVC — see its README for the one-time PAT setup).
+`buildctl` streams the build context from the client's filesystem to buildkitd, which builds and **pushes directly to the registry from inside the cluster** — [`infra/registry`](../registry/) for first-party images, GHCR for the two that still live there. Registry credentials are not stored here: the client forwards its own `~/.docker/config.json` auth per session (for the workspace, that file lives on its home PVC — see its README for the one-time PAT setup).
 
 ## Security posture
 
 - **No mTLS on the listener** (upstream supports it). Anyone who can reach port 1234 can run builds and push with whatever credentials *they* forward. The gate is the NetworkPolicy: ingress only from the `claude` namespace (`networkPolicy.clientNamespace`), and the Service is ClusterIP-only. Single-user homelab tradeoff; if that ever changes, wire up upstream's mTLS example.
 - **The scary-looking securityContext** (seccomp/AppArmor `Unconfined`, no `allowPrivilegeEscalation: false`) is the standard rootless-buildkit-on-k8s recipe: rootlesskit creates a user namespace and execs setuid `newuidmap`/`newgidmap`, which the default profiles block. Everything runs as uid 1000; nothing grants root on the node.
-- Egress: DNS + HTTPS to public IPs only (pull bases, push to ghcr.io).
+- Egress: DNS, HTTPS to public IPs (pull bases, push to ghcr.io), and Traefik's `websecure` port — which is what `registry.zachd.duckdns.org` resolves to inside the cluster.
 
 ## Ubuntu 24.04 prerequisite
 

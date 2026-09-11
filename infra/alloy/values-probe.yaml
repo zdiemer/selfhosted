@@ -160,13 +160,30 @@ alloy:
           address = "https://talaria.deals"
           module  = "http_edge"
         }
+        // rachelfreeman.art is a public apex on the tunnel like the rest of
+        // this block, but unlike them it is not gated: `public-unauthenticated`
+        // with TLS terminating at the edge, so a healthy probe here is a plain
+        // 200, not an Authelia 302.
+        target {
+          name    = "rachelfreeman"
+          address = "https://rachelfreeman.art"
+          module  = "http_edge"
+        }
 
         // ---- Paths that BYPASS Traefik entirely ----------------------------
-        // These two are the reason this file earns its series budget. Both are
-        // served through the VPS relays over Tailscale, neither traverses
-        // Traefik, so neither appears in the access log, the rate limiter, or
-        // CrowdSec. Before this, nothing anywhere would have noticed either of
-        // them being down.
+        // These three are the reason this file earns its series budget. None of
+        // them traverses Traefik, so none appears in the access log, the rate
+        // limiter, or CrowdSec. Before this, nothing anywhere would have
+        // noticed any of them being down.
+        //
+        // jellyfin and minecraft bypass it one way — served through the VPS
+        // relays over Tailscale. kelsey.green bypasses it a different way: its
+        // hostname is published straight off its own tunnel connector
+        // (web/kelsey-green runs a dedicated cloudflared) to the Service, with
+        // no Ingress rule at all. It answers on the internet and appears
+        // nowhere in `kubectl get ingress`, which is exactly why nothing else
+        // in the cluster can see it — Traefik has never recorded a single
+        // request for it.
         target {
           name    = "jellyfin"
           address = "https://jellyfin.diemer.codes"
@@ -176,6 +193,11 @@ alloy:
           name    = "minecraft"
           address = "minecraft.diemer.codes:25565"
           module  = "tcp_connect"
+        }
+        target {
+          name    = "kelsey"
+          address = "https://kelsey.green"
+          module  = "http_edge"
         }
 
         // ---- Tailnet-only services -----------------------------------------
@@ -227,9 +249,22 @@ alloy:
 
         // Slower than the 60s used elsewhere. These probes leave the house and
         // land on Cloudflare's edge and a $6 VPS; there is no value in asking
-        // sixteen times a minute what changes on the order of minutes, and a
-        // 2-minute interval halves both the series churn and the noise floor.
-        scrape_interval = "120s"
+        // sixteen times a minute what changes on the order of minutes.
+        //
+        // Widened from 120s to 240s. These probes hairpin out to Cloudflare and
+        // back rather than hitting Traefik in-cluster, so every one of them is a
+        // billed request on the diemer.codes / talaria.deals / rachelfreeman.art
+        // / kelsey.green zones. At 120s across fifteen targets they were ~45% of
+        // all Cloudflare traffic to diemer.codes — more than every human visitor
+        // and every bot combined.
+        //
+        // 240s and NOT 300s, deliberately. Prometheus' lookback delta is 5m, so
+        // at a 300s interval every sample is already 5m old when the next one
+        // lands and normal scrape jitter tips instant queries into no-data. The
+        // "Public hostname unreachable" alert in infra/grafana-dashboards has
+        // noDataState=NoData, so that would page on all fifteen targets for no
+        // reason. 240s keeps a full minute of margin inside the window.
+        scrape_interval = "240s"
         scrape_timeout  = "30s"
       }
 
@@ -240,7 +275,7 @@ alloy:
         //
         // The blackbox exporter component sets `instance` to the component's
         // own name — literally "prometheus.exporter.blackbox.public" for all
-        // fourteen targets — and puts the target name in `job`, as
+        // fifteen targets — and puts the target name in `job`, as
         // "integrations/blackbox/<name>". So `probe_success{instance=...}` is
         // useless for telling hosts apart, which is the entire point of the
         // availability dashboard. Rewrite instance to the target name.
@@ -251,8 +286,8 @@ alloy:
           replacement   = "$1"
         }
 
-        // The full blackbox output is ~20 series per target; fourteen targets
-        // would be ~280 for information mostly nobody reads (probe_ip_protocol,
+        // The full blackbox output is ~20 series per target; fifteen targets
+        // would be ~300 for information mostly nobody reads (probe_ip_protocol,
         // probe_http_version, content length...). These six answer every panel
         // on the availability dashboard.
         rule {

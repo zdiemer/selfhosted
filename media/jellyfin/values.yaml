@@ -93,8 +93,12 @@ persistence:
   #
   # This is headroom, not a fix. Observed growth is ~10Gi per 12h of use
   # (interrupted transcode sessions leave their segments behind), so 40Gi
-  # buys days, not forever. The real levers are in the Jellyfin UI — the
-  # scheduled transcode-cleanup task and playback → transcode throttling.
+  # buys days, not forever. The real lever is in the Jellyfin UI: segment
+  # deletion (Dashboard → Playback) is currently OFF, so with throttling also
+  # off ffmpeg races ahead and every produced segment is kept until the
+  # session is reaped. Turning it on bounds /cache to a rolling window — at
+  # the cost of a transcode restart when seeking back past it. See
+  # README.md#transcode-cache-growth.
   #
   # Ceiling on the number: this is node-local disk on zachd-ubuntu-1, which
   # had ~54Gi free when this was raised. Going much past 40Gi trades a

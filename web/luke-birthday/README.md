@@ -74,8 +74,9 @@ serving the old bytes and nothing will report it.
 
 ## One-time setup outside git
 
-1. **GHCR package visibility** — the first `build.sh` push creates
-   `ghcr.io/zdiemer/luke-birthday` as a *private* package. Set it to Public, or
+1. **Registry credential** — `build.sh` pushes to the in-cluster registry
+   (`infra/registry`); the nodes already hold the pull credential, so nothing
+   to flip. Historic note: on GHCR the first push made a *private* package, or
    the nodes cannot pull it anonymously and the pods sit in `ImagePullBackOff`.
 2. **Cloudflare public hostname** — in Zero Trust → Networks → Tunnels → *the
    tunnel* → Public Hostnames, add `luke.diemer.codes` with origin

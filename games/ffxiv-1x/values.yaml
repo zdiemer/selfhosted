@@ -1,0 +1,80 @@
+# ffxiv-1x — FINAL FANTASY XIV 1.23b private server (Garlemald Server).
+#
+#   launcher ──HTTP 54993──▶ web    ─┐ one pod  ┌─ SQLite PVC (data)
+#   client   ──TCP 54994───▶ lobby  ─┤ localhost┤
+#   client   ──TCP 54992───▶ world  ─┼──────────┴─▶ map :1989 (pod-internal;
+#                                     │               the world proxies it)
+#                                     └ scripts/lua (in the image)
+#
+# The client reaches three ports via klipper-lb on the node IPs, like
+# games/smt-imagine and minecraft/. Tailnet only. There is no Ingress: the
+# launcher's login WebView posts to the plain web port and the lobby packet
+# that hands the client to the world embeds an IP, not a name.
+#
+# THE ONE NON-OBVIOUS LIMIT: the launcher writes the lobby host into a
+# 20-byte slot in ffxivgame.exe. "smt.zachd.duckdns.org" is 21 bytes; an
+# IPv4 address always fits. So players point the launcher at the tailnet IP
+# below, and `world.advertisedIP` is that same IP.
+
+image:
+  # Upstream ships no image; build.sh compiles the repo at upstreamRef with the
+  # Dockerfile here. Tag is "main-<short sha>". Bump both together.
+  repository: registry.zachd.duckdns.org/zdiemer/ffxiv-1x
+  tag: "main-70e54f3"
+  upstreamRef: "70e54f33fc4ea2473d6d82b46b6d0a4567fb2986"
+  pullPolicy: IfNotPresent
+
+ports:
+  web: 54993
+  lobby: 54994
+  world: 54992
+  # Pod-internal: the world dials the map and relays zone traffic.
+  map: 1989
+
+service:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+
+world:
+  # Shown at character select.
+  name: "Fernehalwes"
+  # Embedded in the lobby's character-select confirm packet; the client dials
+  # it for the world connection. Must be an IP the client can reach —
+  # infra/duckdns's tailnet node address, same as smt-imagine's channel.
+  advertisedIP: "100.84.179.82"
+
+web:
+  # Session token lifetime after a successful login.
+  sessionHours: 24
+
+map:
+  # Red-moon descent phase at zone-in (0 = largest) and the weather id.
+  # Visual knobs; upstream's defaults.
+  dalamudPhase: 0
+  weatherId: 1
+
+logging:
+  # RUST_LOG for every binary. Upstream's default is debug for its own crates;
+  # info keeps the PVC logs readable.
+  rustLog: "info,common=info,lobby_server=info,world_server=info,map_server=info"
+
+persistence:
+  # garlemald.db (+WAL) and the per-server logs. The db is the save game.
+  data:
+    size: 2Gi
+    storageClass: truenas-iscsi
+
+resources:
+  web:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  lobby:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  world:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  map:
+    # Holds every zone, actor, and the Lua VM.
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }

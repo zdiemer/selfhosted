@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VM Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>VM&nbsp;Lab</h1>
+    <div class="meta">
+      <span id="slots" class="slots"></span>
+      <button id="new-btn" class="btn">+ New VM</button>
+    </div>
+  </header>
+
+  <main id="grid" class="grid" aria-busy="true">
+    <p class="empty">Loading…</p>
+  </main>
+
+  <footer id="footer"></footer>
+
+  <!-- Console. A plain iframe: noVNC resolves its own assets and its websocket
+       relative to location.href, so /vm/<sid>/ needs no shim on this side. -->
+  <div id="console" class="console" hidden>
+    <div class="console-bar">
+      <span id="console-title"></span>
+      <span class="spacer"></span>
+      <button id="console-save" class="btn" hidden>Save point</button>
+      <button id="console-log" class="btn ghost">Boot log</button>
+      <button id="console-stop" class="btn danger">Stop</button>
+      <button id="console-close" class="btn ghost">Close</button>
+    </div>
+    <iframe id="console-frame" title="VM console"></iframe>
+    <pre id="console-logbox" hidden></pre>
+  </div>
+
+  <dialog id="new-dialog">
+    <form method="dialog" id="new-form">
+      <h2>New VM</h2>
+      <p class="hint">
+        The ISO is downloaded once by a fetch job and cached, so a guest with no
+        network can still boot it.
+      </p>
+      <label>Name <input name="name" required maxlength="60" placeholder="Windows 98"></label>
+      <label>Slug <input name="slug" required pattern="[a-z0-9][a-z0-9-]{0,30}" placeholder="win98"></label>
+      <label>ISO URL <input name="iso" type="url" placeholder="https://…/win98.iso"></label>
+      <label>SHA-256 <input name="sha256" pattern="[0-9a-fA-F]{64}" placeholder="optional"></label>
+      <div class="row">
+        <label>Memory (MiB) <input name="memoryMib" type="number" value="1024" min="128"></label>
+        <label>Cores <input name="cores" type="number" value="1" min="1"></label>
+        <label>Disk (GiB) <input name="diskGib" type="number" value="8" min="1"></label>
+      </div>
+      <div class="row">
+        <label>Firmware
+          <select name="bootMode">
+            <option value="uefi">UEFI</option>
+            <option value="legacy">BIOS (legacy)</option>
+            <option value="windows_legacy">Windows (BIOS)</option>
+            <option value="windows">Windows (UEFI)</option>
+            <option value="secure">UEFI + Secure Boot</option>
+          </select>
+        </label>
+        <label>Disk type
+          <select name="diskType">
+            <option value="">auto</option>
+            <option value="ide">IDE (old guests)</option>
+            <option value="sata">SATA</option>
+            <option value="nvme">NVMe</option>
+            <option value="scsi">virtio-scsi</option>
+          </select>
+        </label>
+        <label>Architecture
+          <select name="arch">
+            <option value="x86">x86-64 (KVM)</option>
+            <option value="arm">ARM (emulated, slow)</option>
+          </select>
+        </label>
+      </div>
+      <label>Network
+        <select name="network" id="network-select"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="persist"> Keep the disk between launches
+      </label>
+      <p class="err" id="new-err" hidden></p>
+      <menu>
+        <button value="cancel" class="btn ghost" type="submit">Cancel</button>
+        <button value="create" class="btn" id="new-submit" type="submit">Create</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

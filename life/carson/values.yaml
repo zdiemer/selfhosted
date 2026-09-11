@@ -1,0 +1,128 @@
+# carson — a Deployment (API + UI + calendar feed), a daily reminder CronJob,
+# a PVC holding one SQLite file, and two Ingresses. See README.md for why there
+# are two.
+
+image:
+  repository: ghcr.io/zdiemer/carson
+  tag: "v1"
+  # Static tags, so the node must re-pull to see a rebuilt v1. IfNotPresent
+  # would serve a stale layer forever.
+  pullPolicy: Always
+
+# Only needed if the GHCR package is private. The convention in this repo is a
+# public package — the cluster is multi-node and every node pulls anonymously.
+imageCredentials:
+  registry: ghcr.io
+  username: zdiemer
+  pat: ""
+
+imagePullSecrets: []
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 10m
+    # FastAPI + SQLite with ~30 contacts. This is mostly interpreter.
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# The reminder ladder
+# ---------------------------------------------------------------------------
+# T-21 / T-7 / T-1 / day-of, evaluated once daily. A CronJob rather than a
+# thread inside the Deployment on purpose: a background task that quietly died
+# in a long-lived pod is precisely the failure a reminder system must not have.
+# As a CronJob it either ran or it did not, and Kubernetes says which.
+reminders:
+  enabled: true
+  # 08:00 local. Early enough to act on, late enough not to wake anyone.
+  cron: "0 8 * * *"
+  # Without this the schedule is UTC and drifts an hour twice a year — which
+  # for a birthday reminder means arriving on the wrong day.
+  timeZone: America/Los_Angeles
+  # One SQLite writer, ever.
+  concurrencyPolicy: Forbid
+  # There is no catch-up by design (see src/reminders.py): a missed T-7 is
+  # gone, the T-1 still fires. So a retry is worth little and a stuck job is
+  # worth less.
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+
+sms:
+  # In-cluster, so this bypasses the ingress and Authelia entirely.
+  url: http://sms-relay.infra.svc.cluster.local:8000
+  # Recipient. Set in values.local.yaml — it is a phone number, not a config.
+  to: ""
+
+calendar:
+  # Shown as the calendar's name in Apple/Google once subscribed.
+  name: "Mr. Carson"
+
+# ---------------------------------------------------------------------------
+# Ingress — TWO of them, and the split is load-bearing
+# ---------------------------------------------------------------------------
+# Traefik applies middleware per ROUTER, not per path, so a single Ingress
+# cannot have Authelia on `/` and no Authelia on `/feed`. Hence:
+#
+#   ingress       `/`      -> Authelia forward-auth. The dashboard.
+#   feedIngress   `/feed`  -> NO auth. Apple Calendar and Google Calendar
+#                             cannot complete an interactive login; behind
+#                             Authelia they do not error, they just silently
+#                             stop refreshing. The unguessable token in the
+#                             path is what protects it.
+ingress:
+  enabled: true
+  className: traefik
+  host: carson.zachd.duckdns.org
+  # Served over the shared Cloudflare tunnel too. Add the hostname in the
+  # Cloudflare dashboard (Zero Trust -> Networks -> Tunnels -> Public
+  # Hostnames) pointing at https://traefik.kube-system.svc.cluster.local:443
+  # with No TLS Verify ON; that auto-creates the proxied DNS record.
+  #
+  # Empty by default: this holds every birthday and note about everyone you
+  # know. DuckDNS-only until deliberately widened.
+  cloudflareHosts: []
+  tls:
+    enabled: true
+
+feedIngress:
+  # Turning this off removes the calendar feed from the internet, which
+  # unsubscribes every device the next time it polls.
+  enabled: true
+  # Same host, different router. Kept separate so the auth split is visible in
+  # `kubectl get ingress` rather than buried in an annotation.
+  path: /feed
+
+auth:
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    # Authelia 4.38+ path.
+    autheliaPath: /api/authz/forward-auth
+
+persistence:
+  data:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    # "" => cluster default StorageClass. Must render as an ABSENT field, never
+    # as an empty string — storageClassName: "" means "no class at all" and
+    # leaves the PVC Pending forever. templates/pvc.yaml gates it with `with`.
+    storageClass: truenas-iscsi
+
+# Extra env for both the Deployment and the CronJob, e.g. CARSON_TODAY to aim a
+# smoke run at a date that actually has something on it.
+extraEnv: {}
+
+secrets:
+  # Both set in values.local.yaml — never here. See values.local.yaml.example.
+  smsApiKey: ""
+  feedToken: ""

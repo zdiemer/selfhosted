@@ -1,10 +1,10 @@
 image:
   # Custom image (Dockerfile in this dir): node + claude-code CLI + happy CLI
   # (mobile remote control via dev/happy-server) + bakery (bun) + ttyd + tmux
-  # + dev basics. Built by build.sh, pushed to a PUBLIC GHCR package so every
+  # + dev basics. Built by build.sh, pushed to the in-cluster registry so every
   # node can pull it anonymously — see minecraft/claude-bridge/build.sh for
   # why we never side-load images.
-  repository: "ghcr.io/zdiemer/claude-workspace"
+  repository: "registry.zachd.duckdns.org/zdiemer/claude-workspace"
   # v4: merges the happy swap with the bakery surface (built pod-side as an
   #     unpushed v3; that tag was later overwritten by the happy build — v4
   #     is the first tag containing both).
@@ -98,6 +98,59 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v31: the status message's redraw cadence is a per-chat verbosity setting
+  #      (!verbose quiet|low|normal|high|live) rather than a fixed 5s, and the
+  #      default is now a minute. Five seconds spent Signal's whole
+  #      ten-revision budget inside one minute — that is what made a long run
+  #      roll onto message after message — for a line that on a phone only
+  #      needs to say the run is alive. quiet sends no status message at all;
+  #      live is the old behaviour. messaging.progress.editSeconds /
+  #      signalEditSeconds become minEditSeconds / signalMinEditSeconds:
+  #      floors under whatever verbosity asks for, not cadences.
+  # v30: adds the journal surface — a read-only web view of the trading
+  #      journal checkout on the PVC, on its own duckdns host behind the same
+  #      Authelia middleware (journal/, values `journal:`, README "Journal
+  #      surface"). The agent reports to Signal once a week by design; this is
+  #      where the per-run detail it deliberately doesn't send can be read.
+  # v29: a scheduled run no longer sends a status message either. v28 held
+  #      back the text but left the "⏺ working…" ticker and its "✓ done"
+  #      receipt, so seven silent trading runs a day still lit the phone
+  #      seven times with nothing in them — the notification the silence
+  #      exists to avoid. Suppressed the same way a group or maintenance turn
+  #      suppresses it; a schedule with something to say still says it in the
+  #      reply.
+  # v28: a gateway schedule is silent unless it says otherwise. Its final text
+  #      is delivered only when the run puts [[notify]] on a line of its own;
+  #      everything else is dropped (and logged). The old rule sent anything
+  #      non-empty, and being told three times to end quiet runs with no text
+  #      — preamble, schedule prompt, CLAUDE.md — did not stop the trading
+  #      agent closing every hourly run with "nothing that needs you", which
+  #      is a phone notification reporting that there was nothing to notify
+  #      about (2026-09-01, seven of them). Errors and a killed run still
+  #      speak unmarked: a failure that goes quiet is the worse bug.
+  # v27: !clear kills the live run (and its wake-up) with the pointer — a
+  #      parked child used to be handed the next message with the full old
+  #      context, landing the clear one message late, on the reply that
+  #      needed it (the "Not a fan of any of those" cold start, 2026-08-24).
+  #      Transcript health: past messaging.transcript.compactKB the gateway
+  #      queues a quiet /compact turn; past capKB (where compaction itself no
+  #      longer fits) it warns to wrap up; and a resume that still comes back
+  #      "Prompt is too long" retries once from a fresh session instead of
+  #      delivering a dead thread's error forever.
+  # v26: recurring gateway-owned schedules (messaging.schedules): cron-fired
+  #      headless runs pinned to their own cwd + named session slot, so a
+  #      firing never lands in the thread the chat currently points at. The
+  #      gateway owns the timers (croner), so a redeploy re-arms them from
+  #      config — no model re-arming, no state to lose. 1:1 runs also gain the
+  #      MCP servers registered for their cwd at project scope in
+  #      ~/.claude.json (the trading agent's brokerage MCP), still under
+  #      --strict-mcp-config; a wake-up armed by a pinned run inherits the pin.
+  #      !status lists armed schedules. Motivating case: the Robinhood trading
+  #      agent, moved off a mortal tmux session on zachd-Ubuntu.
+  # v25: a turn that says nothing and answers nobody sends nothing. The CLI
+  #      resuming after a stale task notification ("continue from where you
+  #      left off") can end with no text; the phone got a bare banner reading
+  #      "(no result text)". Turns answering a real message still deliver.
   # v24: ScheduleWakeup wake-ups actually fire. The tool's timer lives in the
   #      claude child: alive (parked on background work) it fires itself, but
   #      a child with nothing else outstanding exits at end of turn and the
@@ -108,7 +161,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v24"
+  tag: "v31"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -122,6 +175,8 @@ service:
   # match bakery's own defaults (PI_WEB_PORT / vite --port).
   bakeryServerPort: 3141
   bakeryWebPort: 5173
+  # The journal viewer's own host (journal.host below), so no path-splitting.
+  journalPort: 8088
 
 persistence:
   # One PVC = the pod's entire $HOME (/home/node). Holds ~/.claude (OAuth
@@ -336,6 +391,33 @@ bakery:
   # PI_WEB_ALLOWED_MODELS, PI_WEB_FAKE_AGENT).
   extraEnv: {}
 
+journal:
+  # A read-only web view of the trading journal (journal/, baked at
+  # /opt/journal-viewer). The trading agent runs headless on the gateway
+  # schedules below and reports to Signal once a week; this is where the detail
+  # it deliberately doesn't send goes — the per-run entries, positions.md, the
+  # SPY benchmark, and the commit log that doubles as its heartbeat.
+  #
+  # It reads `dir` straight off the same $HOME PVC the agent writes, so there
+  # is nothing to sync and nothing to keep fresh. Read-only in the container
+  # too: it serves GET, resolves every path back inside `dir` (realpath, so a
+  # symlink can't leave it), and shells out to nothing but `git log`.
+  enabled: true
+  # DuckDNS only, and no cloudflareHosts equivalent — deliberately. This is a
+  # live view of a real brokerage account's positions and cash; infra/duckdns
+  # is in `mode: tailnet`, so this host resolves to a 100.x address and being
+  # on the tailnet is the first of the two gates. Authelia (the same
+  # forward-auth middleware as every other host on this chart) is the second.
+  host: trading.zachd.duckdns.org
+  # The checkout to serve. The agent's own working copy — see
+  # trading/CLAUDE.md, which is what the "mandate" nav entry renders.
+  dir: /home/node/code/trading
+  # Shown in the header and the <title>.
+  title: trading journal
+  # Entries on the front page. Seven hourly runs a market day, so eight covers
+  # today plus the tail of yesterday.
+  recent: 8
+
 messaging:
   # Signal/WhatsApp → headless `claude -p` in this pod's $HOME: the
   # low-bandwidth surface (airline free-messaging wifi passes Signal/WhatsApp
@@ -405,6 +487,16 @@ messaging:
     # bounds one park; this bounds the chain, so a run that starts a fresh
     # background task on every wake cannot loop on the subscription unasked.
     maxTurns: 10
+  # Transcript health. A cold resume rebuilds the session jsonl's tail (after
+  # its last compact boundary) into the context window; past ~1.4MB that
+  # rebuild — and the compaction that would rescue it — both come back as API
+  # 400 "Prompt is too long" and the thread is dead, which is how a chat that
+  # spent an evening reading rendered PNGs died on the first message after its
+  # process exited. Past compactKB the gateway queues a quiet `/compact` turn
+  # (0 disables); past capKB it can only warn to wrap up and !clear.
+  transcript:
+    compactKB: 1024
+    capKB: 1440
   # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
   # else round-trips "Claude wants: … reply 1/2/3". `!auto on` allows those
   # unprompted too — but a question or a plan still reaches the chat, because
@@ -416,6 +508,89 @@ messaging:
   # chat at runtime; these are the defaults every chat starts from.
   model: claude-opus-5
   effort: medium
+  # Recurring gateway-fired runs. The GATEWAY owns these timers (croner, in
+  # schedules.ts): they survive redeploys because they are config, and unlike a
+  # ScheduleWakeup chain nothing depends on the model re-arming itself — the
+  # failure mode that left the trading agent dead in a tmux session for three
+  # weeks. Each entry fires a headless run into the surface owner's 1:1 (the
+  # first allowed sender), pinned to its own cwd and named session slot so a
+  # firing never lands in — or writes its session id over — whatever thread
+  # the chat is currently pointed at. `fresh: true` starts a new session per
+  # firing (files in the cwd are the durable memory; the newest id still lands
+  # in the slot so `!use <session>` reaches it). Runs are "unprompted": one
+  # that ends with no text sends nothing, so a schedule is quiet unless it has
+  # something to say. Occurrences missed while the pod is down are skipped,
+  # not caught up. Cron is five-field, evaluated in `timezone`.
+  schedules:
+    # Hourly through the session, not twice a day: the account has margin
+    # enabled (2026-08-31) and can now round-trip intraday, so the tactical
+    # sleeve needs a look often enough to actually manage a same-day position.
+    # 9:45 skips the opening auction; the 15:30 run below is the last one.
+    # Medium effort here and high at the close — the intraday runs are mostly
+    # reconcile-and-check, the close run writes the weekly report.
+    - name: trading-hourly
+      cron: "45 9-14 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: medium
+      prompt: >-
+        Scheduled intraday trading run. Follow CLAUDE.md in this directory:
+        read positions.md and the latest journal, reconcile against the live
+        book, manage the tactical sleeve against its written levels, act
+        where the theses or new edge say to, journal and push. Send nothing
+        unless a failure or a big-move trigger fires — routine trades go in
+        Friday's weekly report, not to the phone. To send, put [[notify]] on
+        its own line in your final message; without it nothing is delivered,
+        so end a routine run with no text rather than a sign-off.
+    - name: trading-close
+      cron: "30 15 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: high
+      prompt: >-
+        Scheduled pre-close trading run. Follow CLAUDE.md in this directory:
+        manage the book before the 4pm bell (fills, invalidations, planned
+        exits, any same-day tactical position that must not carry overnight),
+        journal and push. Sending requires [[notify]] on its own line in your
+        final message — text without it is discarded. If today is Friday, the
+        weekly report always goes out, so it MUST carry that marker.
+        Otherwise send nothing unless a failure or big-move trigger fires.
+    # Crypto is the only instrument this account can trade when the equity
+    # market is shut (Robinhood does not offer 24-hour trading here), so it
+    # gets the overnight and weekend slots. Same cwd and session slot as the
+    # market-hours runs — one book, one journal, just a different lane open.
+    - name: trading-crypto-evening
+      cron: "0 20 * * 1-5"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: medium
+      prompt: >-
+        Evening crypto run. Follow CLAUDE.md in this directory. Equities and
+        options are closed — this run is for the crypto sleeve: check any
+        crypto position against its written stop, target and time stop, and
+        hunt for crypto swing setups worth taking overnight. Journal and push.
+        Send nothing unless a failure or big-move trigger fires, and to send
+        put [[notify]] on its own line — unmarked text is not delivered.
+    - name: trading-crypto-weekend
+      cron: "0 10,18 * * 6,0"
+      timezone: America/New_York
+      cwd: /home/node/code/trading
+      session: trading
+      fresh: true
+      effort: medium
+      prompt: >-
+        Weekend crypto run. Follow CLAUDE.md in this directory. The equity
+        market is closed all weekend, so crypto is the only lane open: manage
+        any crypto position against its written levels and hunt for setups —
+        a weekend run is not a formality. Journal and push. Send nothing
+        unless a failure or big-move trigger fires, and to send put [[notify]]
+        on its own line — unmarked text is not delivered.
   bash:
     # `!bash <cmd>` — a shell command straight from chat, no model in the loop.
     # For the cheap questions (`kubectl get pods`) where a whole claude run plus
@@ -474,24 +649,36 @@ messaging:
     # It is always a separate message from the reply — the reply is chunked
     # across up to four messages and can't be an edit target.
     enabled: true
-    # Redraw cadence for that message on WhatsApp. Not a cosmetic knob:
-    # WhatsApp is reached through an unofficial client (see "ban risk"), so a
-    # fast tick is not on the table. The last state always lands regardless.
-    editSeconds: 3
-    # Signal's redraw cadence, and a real cadence: steady for as long as one
-    # status message lasts. It used to be a FIRST gap that doubled per edit
-    # (5s, 10s, 20s …) to stretch nine revisions over the whole run, which
-    # bought coverage by going stale — past the first minute the message showed
-    # a tool call from four minutes ago beside a clock that had stopped.
-    signalEditSeconds: 5
+    # How closely that message follows the run, as a named level. Each chat can
+    # override this with `!verbose <level>`; this is what a chat that has never
+    # said gets.
+    #
+    #   quiet  — no status message at all, just the answer
+    #   low    — every 3m
+    #   normal — every 1m (default)
+    #   high   — every 15s
+    #   live   — every 5s, the old behaviour
+    #
+    # A minute because this is a phone: the status is there to say the run is
+    # alive and roughly where it is. Redrawing every five seconds bought
+    # nothing for that and spent Signal's ten-revisions-per-message budget in
+    # under a minute, which is what made long runs roll onto message after
+    # message.
+    verbosity: normal
+    # Floors, not cadences: the fastest each surface will redraw whatever the
+    # verbosity asks for. WhatsApp is reached through an unofficial client (see
+    # "ban risk"), so a fast tick is not on the table there. Every level above
+    # is already slower than both, so these only matter if you add a faster one.
+    minEditSeconds: 3
+    signalMinEditSeconds: 5
     # Status messages one run may spend. Signal caps a message at ten revisions
     # and silently drops the rest, so a run longer than that either continues
     # on a new message or stops reporting — and stopping is what read as hung.
-    # The status now rolls onto a fresh message when its ninth progress edit is
+    # The status rolls onto a fresh message when its ninth progress edit is
     # spent (the tenth retires the old one), and each message runs at twice the
-    # cadence of the last. Six at the 5s default covers about the first
-    # three-quarters of an hour: a minute of step-by-step detail, coarsening as
-    # the run goes, in six messages rather than eighty.
+    # cadence of the last. Six at the one-minute default is several hours of
+    # run: nine minutes of step-by-step detail, coarsening as the run goes, in
+    # six messages rather than eighty.
     maxMessages: 6
   reactions:
     # Emoji on the sender's own message: working → done/failed, with the queued
@@ -717,10 +904,20 @@ resources:
       cpu: 50m
       memory: 1536Mi
     limits:
-      # 4Gi to match `term`: the same claude-sized session, plus room for one
-      # build alongside it. Heavy image builds should still go to the in-cluster
-      # buildkitd (BUILDKIT_HOST) rather than run here.
-      memory: 4Gi
+      # Was 4Gi to match `term`; on 2026-08-22 a pytest-xdist run (a dozen
+      # python workers at ~250Mi each) on top of the session tipped it over,
+      # OOM-killing bun mid-conversation. 6Gi leaves room for one test suite.
+      # Heavy image builds should still go to the in-cluster buildkitd
+      # (BUILDKIT_HOST) rather than run here.
+      memory: 6Gi
+  # The journal viewer reads a few hundred KB of markdown per request and holds
+  # nothing between them — the only thing that grows is bun's own heap.
+  journal:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   # Native-image signal-cli daemon: no JVM heap ballooning, but give it room
   # for attachment buffers and the receive queue.
   signalCli:

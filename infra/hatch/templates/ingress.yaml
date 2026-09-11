@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hatch.fullname" . }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED AT THE EDGE, DELIBERATELY (infra/ingress-policy rule 4),
+    # same reasoning as infra/ntfy: the only client of this host is an API
+    # client that cannot complete an interactive Authelia login, so the gate is
+    # the application's own constant-time bearer check rather than forward-auth.
+    #
+    # Two layers sit in front of that check. The host is tailnet-only by DNS
+    # (infra/duckdns updater.mode: tailnet resolves *.zachd.duckdns.org to a
+    # CGNAT address), and cloudflareHosts is empty and must stay empty. A
+    # Traefik ipAllowList is NOT the third layer — klipper-lb SNATs every
+    # tailnet request through the svclb pod, so Traefik sees 10.42.x and an
+    # allow-list of 100.64.0.0/10 would reject everything. See values.yaml.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hatch.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  {{/* No certresolver: the cluster-wide wildcard from infra/traefik-certs. */}}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+  {{- end }}
+{{- end }}

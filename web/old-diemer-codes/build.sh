@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build the old.diemer.codes image and push it to GHCR. The cluster is multi-node
-# with no in-cluster registry, so we ship via ghcr.io (public package) rather than
-# side-loading into each node's containerd. Re-run after moving the site/ submodule
+# Build the old.diemer.codes image and push it to the in-cluster registry (infra/registry). The cluster is multi-node,
+# so we ship via the in-cluster registry (infra/registry) rather than side-loading
+# into each node's containerd. Re-run after moving the site/ submodule
 # pin or editing the Dockerfile / nginx.conf / overlay, then run upgrade.sh.
 #
-# Requires: docker login ghcr.io (PAT with write:packages) on a laptop, or —
+# Requires: docker login registry.zachd.duckdns.org on a laptop, or —
 # inside the claude-workspace pod, where there is no docker — buildctl + the
-# in-cluster buildkitd (infra/buildkit) + a GHCR PAT in ~/.docker/config.json
-# (see dev/claude-workspace/README.md, "Cluster powers").
+# in-cluster buildkitd (infra/buildkit) + the registry credential in ~/.docker/config.json
+# (see selfhosted/infra/registry/README.md).
 
 set -euo pipefail
 
@@ -45,10 +45,10 @@ if command -v docker >/dev/null; then
   docker push "${IMAGE}"
 elif command -v buildctl >/dev/null; then
   # Workspace-pod path: remote build on the in-cluster buildkitd, which pushes
-  # straight to GHCR. Auth is forwarded per-session from ~/.docker/config.json.
+  # straight to the registry. Auth is forwarded per-session from ~/.docker/config.json.
   [[ -f "${HOME}/.docker/config.json" ]] || {
-    echo "missing ~/.docker/config.json — create the GHCR PAT file first"
-    echo "(see dev/claude-workspace/README.md, Cluster powers)"; exit 1; }
+    echo "missing ~/.docker/config.json — add the registry credential first (selfhosted/infra/registry/README.md)"
+    echo "(see selfhosted/infra/registry/README.md)"; exit 1; }
 
   echo "==> Building + pushing ${IMAGE} (buildctl → ${BUILDKIT_HOST:-unset})"
   buildctl build \
@@ -58,7 +58,7 @@ elif command -v buildctl >/dev/null; then
     --output "type=image,\"name=${IMAGE}\",push=true"
 
   # The docker-run styled-check above can't run against a remote build (the
-  # image goes straight to GHCR, never lands here). The Dockerfile's own
+  # image goes straight to the registry, never lands here). The Dockerfile's own
   # assert still gates the build, but the belt-and-braces re-check is skipped.
   echo "NOTE: skipped the post-build site.css verification (remote build);"
   echo "      the Dockerfile's build-time assert is the only styling gate."
@@ -67,5 +67,3 @@ else
 fi
 
 echo "==> Done. Run upgrade.sh to roll the deployment onto the new image."
-echo "    (First push only: set the GHCR package visibility to Public so nodes"
-echo "     can pull it without an imagePullSecret.)"

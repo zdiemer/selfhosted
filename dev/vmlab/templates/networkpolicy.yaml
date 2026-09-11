@@ -1,0 +1,206 @@
+{{/*
+The sandbox.
+
+These are NOT gated behind networkPolicy.uiEnabled. The UI's own ingress policy
+is a hardening nicety and defaults off (a wrong netpol fails looking exactly
+like an app bug); these three are the thing that makes it defensible to boot a
+2008 Kubuntu and a DPRK desktop on a cluster that also runs the house.
+
+They select on the label vmlab.zachd/network, which app/vmlab/k8s.py stamps on
+every session pod from the validated profile name. A pod with no such label is
+matched by nothing here and is therefore unrestricted — which is why the app
+refuses to create a pod whose profile it does not recognise, rather than
+falling back to a default.
+
+Enforcement was verified rather than assumed: kube-router's controller runs
+in-process in the k3s agent, and a probe pod reached the internet (301) before
+being labelled and was blocked on internet, cluster API and a tailnet peer
+immediately after.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vmlab.fullname" . }}-vm-none
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      vmlab.zachd/network: none
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The console, and nothing else. An earlier version of this policy used
+    # `ingress: []` — which is genuinely airtight and also makes the guest
+    # unreachable, including by the proxy that is the only way to look at it.
+    # A lab you cannot open is not a safer lab.
+    #
+    # This grants no outward capability to the guest: it is inbound only, from
+    # one pod, to the console port. Egress stays empty below, so the guest
+    # still cannot originate anything.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vmlab.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8006
+        # The VNC display, for save-point screenshots. Same single source.
+        - protocol: TCP
+          port: 5900
+        - protocol: TCP
+          port: {{ .Values.savepoints.qmpPort }}
+  # Empty, not absent. `egress: []` with Egress in policyTypes denies
+  # everything; omitting the key entirely would deny nothing.
+  #
+  # This denies DNS too, on purpose. Belt and braces: these guests also run with
+  # NETWORK=N, so QEMU builds them no network device at all and the guest is
+  # air-gapped whether or not this policy exists. This contains the *container*.
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vmlab.fullname" . }}-vm-internet
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      vmlab.zachd/network: internet
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the UI may reach the console. There is no path to :8006 that does not
+    # pass through the proxy, and therefore through Authelia.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vmlab.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8006
+        - protocol: TCP
+          port: 5900
+        - protocol: TCP
+          port: {{ .Values.savepoints.qmpPort }}
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+      to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    # "The internet, and nothing that lives here."
+    #
+    # 100.64.0.0/10 is the entry the rest of the repo is missing. It is the
+    # tailnet's CGNAT range, and dev/claude-workspace, infra/egress-proxy,
+    # finance/money and three others all write this same block without it — so
+    # those pods can currently reach every tailnet peer. Worth fixing there
+    # separately; an untrusted guest is the one place it must not be missing.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.egressExcept }}
+              - {{ . | quote }}
+              {{- end }}
+---
+{{/*
+`full` now gets a policy, where previously it deliberately got none.
+
+The old reasoning — that an allow-everything policy is indistinguishable from no
+policy, and only creates somewhere to quietly add a rule — held while the only
+open port was a console the UI proxied. It stopped holding when save points put
+a QEMU MONITOR on the pod network: a reachable QMP port is total control of that
+VM, so "unrestricted" would have meant any pod in the cluster could drive it.
+
+`full` means unrestricted EGRESS. It never meant "anything may connect to this".
+policyTypes lists Ingress only, so egress stays untouched.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vmlab.fullname" . }}-vm-full-ingress
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      vmlab.zachd/network: full
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vmlab.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8006
+        - protocol: TCP
+          port: 5900
+        - protocol: TCP
+          port: {{ .Values.savepoints.qmpPort }}
+---
+{{/*
+The ISO fetch policy.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vmlab.fullname" . }}-iso-fetch
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  # The only thing in this namespace that is allowed to pull from the internet.
+  # Separating it from the guests is what lets an air-gapped guest boot an ISO
+  # that came off the internet.
+  podSelector:
+    matchLabels:
+      vmlab.zachd/role: iso-fetch
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+      to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    - ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 80}
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.egressExcept }}
+              - {{ . | quote }}
+              {{- end }}
+{{- if .Values.networkPolicy.uiEnabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vmlab.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+{{- end }}

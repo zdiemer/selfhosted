@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ollama.fullname" . }}
+  labels:
+    {{- include "ollama.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  # Recreate: one RWO iSCSI volume and a node pin — a surge pod would block on
+  # FailedAttachVolume rather than fail, and there is nowhere else for it to
+  # go anyway. The real cost is a model-reload gap on upgrade, which is fine.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ollama.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "ollama.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's own
+        # ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      enableServiceLinks: false
+      # Long enough for an in-flight generation to finish streaming; the
+      # server itself shuts down quickly and the blob store needs no flush.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        # The image runs as root by default; inference doesn't need it. HOME
+        # and OLLAMA_MODELS point into the PVC (below), which fsGroup keeps
+        # writable for this UID.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The puller is backgrounded and the server `exec`s — same PID-1
+          # dance as infra/ntfy's seeder: ollama stays PID 1 and receives
+          # SIGTERM directly, and the pod is Ready (and serving whatever is
+          # already on the PVC) while new models download.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              (
+                export OLLAMA_HOST=127.0.0.1:11434
+                until ollama --version >/dev/null 2>&1 && ollama list >/dev/null 2>&1; do sleep 2; done
+                {{- range .Values.ollama.models }}
+                echo "[pull] {{ . }}"
+                ollama pull "{{ . }}" && echo "[pull] {{ . }} done" || echo "[pull] {{ . }} FAILED"
+                {{- end }}
+                echo "[pull] done"
+              ) &
+              exec ollama serve
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            # Both point into the PVC. HOME matters because ollama derives its
+            # default paths from it and UID 1000 has no passwd entry here.
+            - name: HOME
+              value: /data
+            - name: OLLAMA_MODELS
+              value: /data/models
+            - name: OLLAMA_KEEP_ALIVE
+              value: {{ .Values.ollama.keepAlive | quote }}
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: {{ .Values.ollama.maxLoadedModels | quote }}
+            - name: OLLAMA_NUM_PARALLEL
+              value: {{ .Values.ollama.numParallel | quote }}
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: {{ .Values.ollama.contextLength | quote }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the app is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: http
+              containerPort: 11434
+          # /api/version answers before any model is loaded, which is what the
+          # probes should measure: the pod is useful (for /api/tags, pulls,
+          # and queued generates) as soon as the server is up. A generate-based
+          # probe would mark the pod dead during every long CPU decode.
+          startupProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 30
+            # CPU decode pegs every core for minutes at a time; give the probe
+            # slack before declaring the process dead under load.
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ollama.fullname" . }}-data
+        {{- end }}

@@ -16,8 +16,13 @@ RELEASE="${RELEASE:-win11}"
 NAMESPACE="${NAMESPACE:-dev}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
+# unattend.password lives in 1Password and is resolved into RAM for this run
+# only. sv_fd is a pipe readable exactly once, so each helm call gets its own.
+# See scripts/lib/secret-values.sh.
+. "${HERE}/../../scripts/lib/secret-values.sh"
+sv_load "$HERE" || exit 1
+
 VALUE_ARGS=(-f "$VALUES")
-[[ -f "${HERE}/values.local.yaml" ]] && VALUE_ARGS+=(-f "${HERE}/values.local.yaml")
 
 K="kubectl -n ${NAMESPACE}"
 
@@ -57,7 +62,7 @@ BEFORE_GEN="$($K get vm "$RELEASE" -o jsonpath='{.metadata.generation}' 2>/dev/n
 WAS_RUNNING="$($K get vmi "$RELEASE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
 
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
-helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" --cleanup-on-fail
+helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
 
 echo "==> DataVolumes"
 $K get dv -l app.kubernetes.io/instance="$RELEASE" 2>/dev/null || echo "    none"

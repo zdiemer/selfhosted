@@ -1,0 +1,167 @@
+{{- if .Values.rbac.create }}
+{{/*
+Two ClusterRoles, one ServiceAccount.
+
+Not two ServiceAccounts on two Deployments: real isolation would mean the read
+pod proxying to the act pod, doubling the moving parts of the thing whose job
+is to tell you when moving parts break. The split that earns its keep is that
+hatch-act is NOT RENDERED unless actions.enabled — so turning actions off is an
+authority change, and `kubectl auth can-i delete pods
+--as=system:serviceaccount:infra:hatch` gives the honest answer rather than the
+answer a feature flag would give.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "hatch.fullname" . }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+---
+{{/*
+DELIBERATELY NOT GRANTED ANYWHERE BELOW, and each for a specific reason:
+
+  secrets (any verb)      hatch reads no Secret it was not handed as env.
+  configmaps              a cluster-wide ConfigMap read in this homelab is a
+                          de-facto secret read.
+  pods/exec, pods/attach,
+  pods/portforward        the whole point of a fixed action list is that there
+                          is no general-purpose escape from it.
+  nodes/proxy,
+  nodes/stats             the grant infra/cluster-status/templates/rbac.yaml
+                          says in so many words "nothing else should borrow".
+                          Node CPU/RAM/disk/network reaches the agent through
+                          /v1/cluster/status instead, which is exactly what
+                          makes not holding this possible.
+  serviceaccounts, roles,
+  rolebindings, cluster*  no self-escalation.
+  nodes patch/update,
+  pods/eviction create    no cordon, no drain. This is the likeliest next ask
+                          and a much larger grant than any action below.
+  create, on anything     including pods: a hatch that could create a pod could
+                          create one with any image and any serviceAccountName.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hatch.fullname" . }}-read
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "pods", "events",
+                "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list"]
+  # The sensitive read. logs.denyNamespaces is enforced in application code,
+  # NOT here — RBAC cannot express "every namespace except two" without
+  # enumerating them, which is the allow-list model this chart did not take.
+  # Stated plainly so nobody mistakes the deny-list for an RBAC boundary.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # replicasets is not decoration: a pod's ownerReference points at a
+  # ReplicaSet, so without it "which Deployment owns this crashing pod" — the
+  # question behind every restart — cannot be answered.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hatch.fullname" . }}-read-{{ .Release.Namespace }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hatch.fullname" . }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hatch.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.actions.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hatch.fullname" . }}-act
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+rules:
+  # 1. Rollout restart — a strategic-merge patch of one pod-template
+  #    annotation and nothing else.
+  #
+  #    HONEST LIMIT: RBAC has no field-level scope, so this verb also permits
+  #    rewriting a reachable Deployment's image, env and serviceAccountName.
+  #    The narrowing lives in two places instead: k8s.py only ever sends that
+  #    one patch body, and rbac.act.mode: namespaced makes the API server
+  #    enforce WHERE. That is why namespaced is the default.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["patch"]
+  # 2. Delete a pod. No `create` — the controller makes the replacement.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  # 3. Scale via the /scale SUBRESOURCE, never the parent object. Setting
+  #    spec.replicas on the Deployment itself would need patch on the whole
+  #    object; this grants exactly the replica count and nothing else.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "patch"]
+{{- if eq .Values.rbac.act.mode "cluster" }}
+---
+{{/*
+mode: cluster — hatch may mutate anywhere actions.denyWorkloads /
+denyNamespaces do not stop it, which makes the guard in the pod the only thing
+between a bug and kube-system. Prefer `namespaced`.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hatch.fullname" . }}-act-{{ .Release.Namespace }}
+  labels:
+    {{- include "hatch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hatch.fullname" . }}-act
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hatch.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{/*
+mode: namespaced — one RoleBinding per allowed namespace, so the API server,
+not the application, decides where a mutation may land.
+*/}}
+{{- range .Values.rbac.act.allowNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hatch.fullname" $ }}-act
+  namespace: {{ . }}
+  labels:
+    {{- include "hatch.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hatch.fullname" $ }}-act
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hatch.fullname" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

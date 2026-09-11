@@ -1,0 +1,66 @@
+{{- if .Values.quota.enabled }}
+{{/*
+The real bound on "the UI can create pods".
+
+Application validation is a usability feature; this is the security control.
+Everything below is enforced by the API server, so it holds even if every line
+of app code is wrong, and it holds against a caller who has gotten past Authelia
+and is talking to the API directly.
+
+requests.devices.kubevirt.io/kvm is the interesting one: extended resources are
+quota-able, and every session pod requests exactly one, so this is a literal
+ceiling on concurrent VMs. It is also the only cap here that cannot be worked
+around by asking for smaller VMs.
+
+NOTE the interaction with LimitRange below: a ResourceQuota that constrains
+requests.cpu/memory REQUIRES every pod in the namespace to declare them, or
+creation fails outright. The LimitRange supplies defaults so that a fetch Job
+(or anything else that lands here) does not have to.
+*/}}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.devices.kubevirt.io/kvm: {{ .Values.quota.maxConcurrentVms | quote }}
+    requests.cpu: {{ .Values.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.quota.requestsMemory | quote }}
+    limits.memory: {{ .Values.quota.limitsMemory | quote }}
+    pods: {{ .Values.quota.pods | quote }}
+    persistentvolumeclaims: {{ .Values.quota.persistentVolumeClaims | quote }}
+{{- end }}
+{{- if .Values.limitRange.enabled }}
+---
+{{/*
+Two jobs, and the second is the one that matters.
+
+  1. Defaults, so that any pod landing here without resources still satisfies
+     the ResourceQuota above rather than being rejected.
+  2. A per-container CEILING. Without `max`, a single config asking for 200Gi
+     of RAM would not violate the namespace quota until it tried to schedule,
+     and would then sit Pending forever looking like a cluster problem rather
+     than a bad config. The app clamps to vm.maxMemoryMib as well; this is the
+     copy of that rule the app cannot bypass.
+*/}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: {{ .Values.limitRange.defaultCpu | quote }}
+        memory: {{ .Values.limitRange.defaultMemory | quote }}
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultCpuRequest | quote }}
+        memory: {{ .Values.limitRange.defaultMemoryRequest | quote }}
+      max:
+        cpu: {{ .Values.limitRange.maxCpu | quote }}
+        memory: {{ .Values.limitRange.maxMemory | quote }}
+{{- end }}

@@ -1,0 +1,32 @@
+{{/*
+The three ports the launcher/client dial, on every node IP via klipper-lb:
+
+  web   54993  the launcher's login WebView (HTTP); returns a session token
+  lobby 54994  character list; hands the client the world address
+  world 54992  the game session; relays zone traffic to the map server
+
+The map server is never exposed — the world proxies it.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ffxiv-1x.fullname" . }}
+  labels:
+    {{- include "ffxiv-1x.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if eq .Values.service.type "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  ports:
+    - name: web
+      port: {{ .Values.ports.web }}
+      targetPort: web
+    - name: lobby
+      port: {{ .Values.ports.lobby }}
+      targetPort: lobby
+    - name: world
+      port: {{ .Values.ports.world }}
+      targetPort: world
+  selector:
+    {{- include "ffxiv-1x.selectorLabels" . | nindent 4 }}

@@ -79,12 +79,32 @@ spec:
         paths:
           {{- include "claude-workspace.bakeryPaths" $ | nindent 10 }}
     {{- end }}
+    {{- /*
+      Journal viewer: one host, everything under /. Same wildcard cert and same
+      Authelia middleware as the hosts above, and duckdns-only for the same
+      reason the /term host is — see values `journal.host`.
+    */}}
+    {{- if .Values.journal.enabled }}
+    - host: {{ .Values.journal.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "claude-workspace.fullname" . }}
+                port:
+                  number: {{ .Values.service.journalPort }}
+    {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
         {{- if .Values.bakery.enabled }}
         - {{ .Values.bakery.host }}
+        {{- end }}
+        {{- if .Values.journal.enabled }}
+        - {{ .Values.journal.host }}
         {{- end }}
   {{- end }}
 {{- end }}

@@ -1,0 +1,13 @@
+.DS_Store
+.git
+.gitignore
+# The app source is baked into the image, not shipped in the chart package.
+app/
+Dockerfile
+.dockerignore
+build.sh
+*.md
+.pytest_cache/
+__pycache__/
+values.local.yaml
+values.local.tpl.yaml

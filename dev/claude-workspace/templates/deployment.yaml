@@ -443,6 +443,65 @@ spec:
           resources:
             {{- toYaml .Values.resources.bakeryWeb | nindent 12 }}
         {{- end }}
+        {{- if .Values.journal.enabled }}
+        # Journal viewer: a read-only HTTP view of the trading journal checkout
+        # on the shared $HOME PVC (values `journal.dir`). Its own duckdns host,
+        # so no path-splitting and no base-path handling. Serves GET only and
+        # never writes, so it takes the read-only rootfs like the other
+        # surfaces; $HOME is mounted because the checkout lives under it (and
+        # `git log` wants a HOME to resolve config against).
+        - name: journal-viewer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          command: ["bash", "-lc", "cd /opt/journal-viewer && exec bun run src/main.ts"]
+          env:
+            - name: HOME
+              value: /home/node
+            - name: JV_DIR
+              value: {{ .Values.journal.dir | quote }}
+            - name: JV_PORT
+              value: {{ .Values.service.journalPort | quote }}
+            - name: JV_TITLE
+              value: {{ .Values.journal.title | quote }}
+            - name: JV_RECENT
+              value: {{ .Values.journal.recent | quote }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while the container is shutting down.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: journal
+              containerPort: {{ .Values.service.journalPort }}
+          # /healthz answers without touching the checkout, so a journal
+          # directory that is missing or mid-`git pull` doesn't restart the
+          # container — a broken page is a better signal than a crash loop.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: journal
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: journal
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.journal | nindent 12 }}
+        {{- end }}
         {{- if .Values.messaging.enabled }}
         # Messaging gateway: Signal/WhatsApp → headless `claude -p` in this
         # same $HOME (subscription creds + session jsonls on the PVC, so chat
@@ -492,12 +551,28 @@ spec:
               value: {{ .Values.messaging.background.waitSeconds | default 1800 | quote }}
             - name: GW_BACKGROUND_MAX_TURNS
               value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
+            # Transcript health thresholds (see values.yaml): auto-compact
+            # past compactKB (0 disables), warn past capKB.
+            {{- with .Values.messaging.transcript }}
+            # No `| default`: it would turn an explicit 0 ("don't compact")
+            # into the fallback. An empty value falls back in config.ts.
+            - name: GW_COMPACT_KB
+              value: {{ .compactKB | quote }}
+            - name: GW_TRANSCRIPT_CAP_KB
+              value: {{ .capKB | quote }}
+            {{- end }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}
             - name: GW_MODEL
               value: {{ .Values.messaging.model | quote }}
             - name: GW_EFFORT
               value: {{ .Values.messaging.effort | quote }}
+            {{- with .Values.messaging.schedules }}
+            # Recurring gateway-fired runs, as JSON — a list of structured
+            # entries has no comma-separated encoding worth inventing.
+            - name: GW_SCHEDULES
+              value: {{ toJson . | quote }}
+            {{- end }}
             - name: GW_BASH_ENABLED
               value: {{ .Values.messaging.bash.enabled | quote }}
             - name: GW_BASH_TIMEOUT_SECONDS
@@ -524,10 +599,12 @@ spec:
               value: {{ .Values.messaging.attachments.maxMB | quote }}
             - name: GW_PROGRESS_ENABLED
               value: {{ .Values.messaging.progress.enabled | quote }}
-            - name: GW_PROGRESS_EDIT_SECONDS
-              value: {{ .Values.messaging.progress.editSeconds | quote }}
-            - name: GW_PROGRESS_SIGNAL_EDIT_SECONDS
-              value: {{ .Values.messaging.progress.signalEditSeconds | quote }}
+            - name: GW_PROGRESS_VERBOSITY
+              value: {{ .Values.messaging.progress.verbosity | default "normal" | quote }}
+            - name: GW_PROGRESS_MIN_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.minEditSeconds | default 3 | quote }}
+            - name: GW_PROGRESS_SIGNAL_MIN_EDIT_SECONDS
+              value: {{ .Values.messaging.progress.signalMinEditSeconds | default 5 | quote }}
             - name: GW_PROGRESS_MAX_MESSAGES
               value: {{ .Values.messaging.progress.maxMessages | default 6 | quote }}
             - name: GW_REACTIONS_ENABLED

@@ -1,6 +1,8 @@
 # Helm stores the packaged chart inside its release Secret (hard 1MiB cap).
-# The gateway app ships in the image, not the chart — keep all of it out.
+# The gateway and journal apps ship in the image, not the chart — keep all of
+# both out (node_modules alone would be most of the budget).
 gateway/
+journal/
 Dockerfile
 build.sh
 upgrade.sh

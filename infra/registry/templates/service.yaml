@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "registry.fullname" . }}
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  type: {{ .Values.service.type }}
+  # Pinned — every node's registries.yaml names this address. See values.yaml.
+  clusterIP: {{ .Values.service.clusterIP }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "registry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: registry

@@ -1,0 +1,14 @@
+# Chart material never belongs in the image.
+templates/
+Chart.yaml
+values.yaml
+values.local.yaml
+values.local.tpl.yaml
+values.local.yaml.example
+.helmignore
+*.sh
+*.md
+# Tests and local artefacts.
+app/tests/
+.pytest_cache/
+**/__pycache__/

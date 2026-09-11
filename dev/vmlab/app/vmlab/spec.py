@@ -1,0 +1,1346 @@
+"""Validation, and the server-side construction of a session pod.
+
+THIS FILE IS THE SECURITY BOUNDARY. Read it as such.
+
+A request may contribute exactly six things — a slug, an ISO URL, memory, cores,
+disk size and a network profile name — and every one of them is validated
+against an allow-list or clamped to a ceiling from the chart. A request never
+contributes an image, a command, a securityContext, a serviceAccountName, a
+volume, a mount path, a node selector or a label. Those are assembled here from
+`settings`, which comes from the Deployment's env block.
+
+That distinction is the whole difference between "this service can create a pod"
+and "this service can run any image as any identity", which is the objection
+infra/hatch/templates/rbac.yaml raises against exactly this kind of grant.
+
+If you are adding a knob, the question to ask is not "is this value safe" but
+"is every value of this type safe", because the caller picks the value.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+
+from vmlab.config import settings
+
+# Mirrors savepoints.qmpPort in values.yaml; the Deployment passes it through.
+QMP_PORT = int(os.environ.get("VMLAB_QMP_PORT", "4444"))
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+SESSION_RE = re.compile(r"^[a-z0-9-]{1,63}$")
+
+# Allow-lists, not sanitisers. Each of these lands in an environment variable
+# that the image feeds to a QEMU command line, so "reject anything unrecognised"
+# is the only safe posture; escaping would be a losing game.
+BOOT_MODES = {"uefi", "legacy", "secure", "windows", "windows_legacy", "windows_secure"}
+DISK_TYPES = {"ide", "sata", "usb", "nvme", "blk", "scsi", "virtio-blk", "virtio-scsi", "auto", "none"}
+ARCHES = {"x86", "arm"}
+
+# Which emulator runs the guest. "qemu" is everything else in this lab — one
+# image, one ISO, a machine assembled from the validated flags below. "rpcemu"
+# is an Acorn Risc PC and nothing else: it takes no ISO, no bootMode, no disk
+# type and no machine, because it emulates one fixed computer. It exists
+# because RISC OS runs on no QEMU machine type at all (values.yaml records the
+# investigation), and it is an ALLOW-LIST rather than a free-form image name for
+# the same reason every other field here is one.
+ENGINES = {"qemu", "rpcemu", "86box"}
+
+# 86Box emulates specific machines, and every one of these strings ends up in a
+# config file it parses. They are allow-lists rather than free text for the same
+# reason the rest of this module is: a config can come from the browser, and
+# "whatever you type goes into the emulator's machine description" is not a
+# boundary. Adding one is a one-line change here plus a catalog entry - the
+# names are 86Box's own internal_name values, from its machine, CPU, video and
+# sound tables.
+#
+# Curated, not exhaustive: 86Box carries 471 machines, and a list of 471 that
+# nobody has booted is worth less than a short one that works. Each is here
+# because a guest in the catalog runs on it.
+BOX86_MACHINES = {
+    # [i440BX] ASUS P2B-LS - the Pentium II board of the late 90s, and what a
+    # Windows 98 or Windows 2000 install expects to find.
+    "p2bls",
+    # [i430TX] ASUS TX97 - Socket 7, the Windows 95/98 era proper.
+    "tx97",
+    # [i430VX] Shuttle HOT-557 - earlier Socket 7, for Windows 95 and DOS.
+    "430vx",
+    # [SiS 496] ASUS PVI-486SP3 - a PCI 486, which is the machine OS/2 Warp and
+    # late DOS were actually sold for.
+    "486sp3c",
+}
+BOX86_CPUS = {
+    "i486dx", "i486dx2", "pentium_p54c", "pentium_p55c",
+    "pentiumpro", "pentium2_klamath", "pentium2_deschutes",
+}
+# 2D cards only. 86Box emulates a Voodoo, but it emulates it on the CPU, and a
+# guest doing software 3D on an emulated 486 is a slideshow twice over.
+BOX86_GFX = {
+    "virge375_pci",     # S3 ViRGE/DX - PCI, well supported by 9x and OS/2
+    "trio64_onboard_pci",
+    "et4000ax",         # ISA Tseng, for the 486 and DOS
+    "cl_gd5430_isa",
+}
+BOX86_SOUND = {
+    "sb16",             # the Sound Blaster everything from 1993 on knows
+    "sbpro2",
+    "none",
+}
+# What 86Box calls the drive; 35_2hd is the 1.44MB 3.5" drive every one of
+# these machines shipped with.
+BOX86_FDD = {"35_2hd", "35_2ed", "525_2hd", "none"}
+# Chipset. The image defaults to q35, which is a 2009 PCIe chipset: correct for
+# anything modern and a non-starter for guests older than it. Windows XP on q35
+# bluescreens with STOP 0x000000A5 before Setup even begins.
+MACHINES = {"q35", "pc"}
+# How removable media is attached, separately from the data disk. The image
+# derives this from DISK_TYPE, and both its "ide" and "sata" settings produce an
+# ich9-AHCI controller — which is NOT the legacy PIIX IDE at ports 0x1F0/0x170
+# that pre-AHCI guests probe for. "auto" is the plain `media=cdrom` form that
+# lands on the machine's built-in IDE bus. TempleOS faults into its debugger
+# without it.
+# Display adapter. The image defaults to virtio-gpu, which is right for modern
+# guests and useless to anything without a virtio driver — Haiku boots every
+# stage, finds no display app_server can drive, and sits on its splash forever.
+# What kind of image the guest boots. Not every interesting OS ships an ISO:
+# Visopsys publishes a 1.44MB floppy image, and Redox publishes both a livedisk
+# ISO and a raw harddrive image. install.sh keys on the EXTENSION, so a floppy
+# saved as "boot.iso" would be mis-detected — the staged file has to keep its
+# real type.
+BOOT_MEDIA = {"iso", "img", "raw", "qcow2"}
+VGA_TYPES = {"virtio", "vga", "std", "cirrus", "vmware", "qxl", "none"}
+MEDIA_TYPES = {"auto", "ide", "sata", "usb", "nvme", "scsi", "blk", "virtio-scsi", "virtio-blk"}
+
+MAX_NAME_LEN = 60
+MAX_NOTE_LEN = 400
+MAX_URL_LEN = 2048
+
+
+class ValidationError(ValueError):
+    """Rejected input. Surfaces as a 400 with this message."""
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
+
+
+def _require_int(raw: Any, field: str, low: int, high: int, default: int) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{field} must be a whole number")
+    if value < low:
+        raise ValidationError(f"{field} must be at least {low}")
+    # Over the ceiling is clamped rather than rejected: the ceiling is a
+    # property of the cluster, not a mistake by the caller, and the LimitRange
+    # would reject the pod anyway. Being told "you got 8Gi" beats a 400.
+    return _clamp(value, low, high)
+
+
+def _allow(raw: Any, allowed: set[str], field: str, default: str) -> str:
+    """One of a fixed set, or the default. Never the caller's string."""
+    value = (str(raw).strip().lower() if raw else "") or default
+    if value not in allowed:
+        raise ValidationError(
+            f"unknown {field} {value!r}; expected one of " + ", ".join(sorted(allowed))
+        )
+    return value
+
+
+def validate_iso_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if len(url) > MAX_URL_LEN:
+        raise ValidationError("ISO URL is too long")
+    if not url.startswith(("http://", "https://")):
+        raise ValidationError("ISO URL must be http:// or https://")
+    # Whitespace in a URL reaches a shell in the fetch Job. The Job passes it as
+    # a quoted argv element, but a URL containing whitespace is malformed
+    # regardless, so refusing is both safer and more honest than accepting it.
+    if any(c.isspace() for c in url):
+        raise ValidationError("ISO URL must not contain whitespace")
+    return url
+
+
+def validate_config(raw: dict, *, existing_slugs: set[str] | None = None) -> dict:
+    """Normalise one catalog entry. Raises ValidationError on anything unknown."""
+    slug = (raw.get("slug") or "").strip().lower()
+    if not SLUG_RE.match(slug):
+        raise ValidationError(
+            "slug must be 1-31 characters of lowercase letters, digits or hyphens"
+        )
+    if existing_slugs and slug in existing_slugs:
+        raise ValidationError(f"a config named {slug!r} already exists")
+
+    name = (raw.get("name") or slug).strip()[:MAX_NAME_LEN]
+    note = (raw.get("note") or "").strip()[:MAX_NOTE_LEN]
+
+    network = (raw.get("network") or "none").strip()
+    if network not in settings.network_profiles:
+        raise ValidationError(
+            f"unknown network profile {network!r}; expected one of "
+            + ", ".join(sorted(settings.network_profiles))
+        )
+
+    engine = (raw.get("engine") or "qemu").strip().lower()
+    if engine not in ENGINES:
+        raise ValidationError(
+            f"unknown engine {engine!r}; expected one of " + ", ".join(sorted(ENGINES))
+        )
+
+    # Save points are a QEMU feature — an internal qcow2 snapshot driven over
+    # QMP. RPCEmu has no equivalent and no monitor, so rather than let a config
+    # ask for one and fail at the button, it cannot be asked for here. What it
+    # does have is `persist`, which keeps the RISC OS filesystem across launches
+    # and is the thing anyone actually wanted from a save point on this guest.
+    wants_savepoints = (
+        engine == "qemu"
+        and bool(raw.get("savepoints"))
+        and bool(raw.get("persist"))
+    )
+    requested_boot_mode = (raw.get("bootMode") or "").strip().lower()
+    # Default to the firmware that actually works for what was asked for. An
+    # unspecified save-point guest gets BIOS rather than an error about a
+    # setting the caller never chose; an EXPLICIT uefi request still fails
+    # loudly below, because silently overriding a stated choice would be worse.
+    boot_mode = requested_boot_mode or ("legacy" if wants_savepoints else "uefi")
+    if boot_mode not in BOOT_MODES:
+        raise ValidationError(f"unknown bootMode {boot_mode!r}")
+
+    disk_type = (raw.get("diskType") or "").strip().lower()
+    if disk_type and disk_type not in DISK_TYPES:
+        raise ValidationError(f"unknown diskType {disk_type!r}")
+
+    arch = (raw.get("arch") or "x86").strip().lower()
+    if arch not in ARCHES:
+        raise ValidationError(f"unknown arch {arch!r}")
+
+    # UEFI and save points are mutually exclusive, and the reason is structural
+    # rather than a missing feature: qemux/qemu backs the UEFI variable store
+    # with a WRITABLE raw pflash drive, and savevm refuses whenever any writable
+    # non-qcow2 device is attached ("Device 'pflash1' is writable but does not
+    # support snapshots"). SeaBIOS has no such device, which is exactly why the
+    # legacy guests could be saved and the UEFI ones could not.
+    #
+    # Refused at validation rather than at save time: discovering this after a
+    # 40-minute install would be a genuinely bad experience.
+    if wants_savepoints and boot_mode in {"uefi", "secure", "windows_secure"}:
+        raise ValidationError(
+            f"save points need a BIOS guest: bootMode {boot_mode!r} adds a writable "
+            "UEFI variable store that QEMU cannot snapshot. Use 'legacy' "
+            "(or 'windows_legacy')."
+        )
+
+    machine = (raw.get("machine") or "").strip().lower()
+    if machine and machine not in MACHINES:
+        raise ValidationError(f"unknown machine {machine!r}")
+
+    media_type = (raw.get("mediaType") or "").strip().lower()
+    if media_type and media_type not in MEDIA_TYPES:
+        raise ValidationError(f"unknown mediaType {media_type!r}")
+
+    vga = (raw.get("vga") or "").strip().lower()
+    if vga and vga not in VGA_TYPES:
+        raise ValidationError(f"unknown vga {vga!r}")
+
+    boot_media = (raw.get("bootMedia") or "iso").strip().lower()
+    if boot_media not in BOOT_MEDIA:
+        raise ValidationError(f"unknown bootMedia {boot_media!r}")
+
+    return {
+        "slug": slug,
+        "name": name,
+        "note": note,
+        "iso": validate_iso_url(raw.get("iso", "")),
+        "sha256": (raw.get("sha256") or "").strip().lower(),
+        "memoryMib": _require_int(raw.get("memoryMib"), "memory", 128, settings.max_memory_mib, 1024),
+        "cores": _require_int(raw.get("cores"), "cores", 1, settings.max_cores, 1),
+        "diskGib": _require_int(raw.get("diskGib"), "disk", 1, settings.max_disk_gib, 8),
+        "bootMode": boot_mode,
+        "diskType": disk_type,
+        "arch": arch,
+        "machine": machine,
+        "mediaType": media_type,
+        "vga": vga,
+        "bootMedia": boot_media,
+        # Some hobby OSes ship only a 1.44MB floppy image. Attached as a hard
+        # disk (which is what the image does with a .img) their boot sector
+        # never runs, because it expects floppy geometry and to be booted as
+        # A:. This routes it to -fda instead.
+        "floppy": bool(raw.get("floppy", False)),
+        # Whether the guest gets a USB controller at all. Visopsys stalls its
+        # hardware scan on the emulated tablet ("USB touchscreen Error ...
+        # No transfer event received") before failing to identify its boot
+        # device. None means leave the image's default alone.
+        "usb": raw.get("usb"),
+        # Attach the boot CD the way QEMU's own -cdrom does: IDE1 master, with
+        # the data disk left on IDE0 master. MINIX's documented invocation is
+        # "-cdrom minix.iso -hda minix.img -boot d", and its live script probes
+        # exactly that layout; MEDIA_TYPE cannot express it because it selects a
+        # controller KIND and never a channel.
+        "legacyCdrom": bool(raw.get("legacyCdrom", False)),
+        # Sound. Off by default, and deliberately so: adding an intel-hda
+        # device CHANGES THE MACHINE, which invalidates any save point taken
+        # without it. Turning it on for a config that already has save points
+        # is a real decision, and the fingerprint below will say so.
+        "audio": bool(raw.get("audio", False)),
+        "network": network,
+        "persist": bool(raw.get("persist", False)),
+        # Save points need somewhere for the qcow2 internal snapshot to live,
+        # and an emptyDir disappears with the pod — so they imply persistence
+        # rather than being independent of it. Stated here so the UI cannot
+        # offer a save point that would evaporate on stop.
+        "savepoints": wants_savepoints,
+        "engine": engine,
+        # The 86Box machine description. Validated here even when the engine is
+        # something else, so a config that switches engine later cannot carry an
+        # unchecked string across with it.
+        "box86Machine": _allow(raw.get("box86Machine"), BOX86_MACHINES, "box86Machine", "p2bls"),
+        "box86Cpu": _allow(raw.get("box86Cpu"), BOX86_CPUS, "box86Cpu", "pentium2_deschutes"),
+        # 86Box wants a speed in Hz, and refuses one its CPU table does not
+        # offer for the chosen family - so this is clamped, not free.
+        "box86CpuHz": _require_int(raw.get("box86CpuHz"), "box86CpuHz", 16_000_000, 600_000_000, 350_000_000),
+        "box86Gfx": _allow(raw.get("box86Gfx"), BOX86_GFX, "box86Gfx", "virge375_pci"),
+        "box86Sound": _allow(raw.get("box86Sound"), BOX86_SOUND, "box86Sound", "sb16"),
+        "box86Fdd": _allow(raw.get("box86Fdd"), BOX86_FDD, "box86Fdd", "35_2hd"),
+        # Whether the staged copy may have its MBR signature cleared. Defaults
+        # on for save-point guests (it is what lets a hybrid ISO attach
+        # read-only, and therefore what lets savevm run with the CD in), but it
+        # MODIFIES sector 0 — which breaks any ISO carrying an implanted
+        # whole-image checksum. Fedora-family media (Bazzite) run isomd5sum at
+        # boot and HALT when it fails, so they must opt out and be installed to
+        # disk before their first save point.
+        "flattenIso": bool(raw.get("flattenIso", True)),
+    }
+
+
+# Every field that changes the emulated machine. A save point restores register
+# and device state onto whatever QEMU builds now, so if any of these differ the
+# restore fails — historically with a bare QEMU error that named none of this.
+HARDWARE_FIELDS = (
+    "arch", "machine", "vga", "mediaType", "diskType", "bootMedia", "bootMode",
+    "memoryMib", "cores", "diskGib", "network", "floppy", "legacyCdrom",
+    "usb", "audio", "savepoints",
+)
+
+
+def hardware_fingerprint(config: dict) -> str:
+    """Identify the machine a save point was taken on.
+
+    Not a checksum of the config: only the fields that reach QEMU's command
+    line are included, so renaming a guest or editing its note does not
+    invalidate anything, while changing its chipset or its RAM does.
+    """
+    import hashlib
+
+    parts = [f"{k}={config.get(k)!r}" for k in HARDWARE_FIELDS]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def hardware_diff(config: dict, other: dict) -> list[str]:
+    """Which hardware fields differ, for an error message worth reading."""
+    return [
+        f"{k}: {other.get(k)!r} -> {config.get(k)!r}"
+        for k in HARDWARE_FIELDS
+        if config.get(k) != other.get(k)
+    ]
+
+
+def _sha256_ok(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def iso_filename(slug: str, media: str = "iso") -> str:
+    # slug is already SLUG_RE-validated, so this cannot traverse; media is
+    # allow-listed against BOOT_MEDIA.
+    if media not in BOOT_MEDIA:
+        media = "iso"
+    return f"{slug}.{media}"
+
+
+def disk_pvc_name(release: str, slug: str) -> str:
+    return f"{release}-disk-{slug}"[:63]
+
+
+# ---------------------------------------------------------------------------
+# Pod construction
+# ---------------------------------------------------------------------------
+
+
+def _affinity() -> dict:
+    """Node placement, expressed without ever reading a Node.
+
+    Requesting devices.kubevirt.io/kvm already excludes the control-plane
+    workstation and the cordoned laptops, because they advertise none. It does
+    NOT exclude zachd-ubuntu-laptop-2, which advertises kvm=1k and carries no
+    taint — only the label device-type=laptop. It has ~2.9Gi free and it sleeps
+    and roams, so it needs an explicit term.
+
+    NotIn also matches nodes where the key is absent, which is what keeps the
+    other five KVM nodes eligible.
+    """
+    required = [
+        {"key": rule["key"], "operator": "NotIn", "values": list(rule["values"])}
+        for rule in settings.exclude_node_labels
+        if rule.get("key") and rule.get("values")
+    ]
+    affinity: dict[str, Any] = {}
+    if required:
+        affinity["requiredDuringSchedulingIgnoredDuringExecution"] = {
+            "nodeSelectorTerms": [{"matchExpressions": required}]
+        }
+    if settings.prefer_nodes:
+        # Soft: zachd-ubuntu-1 hosts win11 and has ~0.4 CPU free, but it should
+        # still be usable once -4 and -5 fill up. A required term here would
+        # turn "the lab is busy" into "the lab is broken".
+        affinity["preferredDuringSchedulingIgnoredDuringExecution"] = [
+            {
+                "weight": 100,
+                "preference": {
+                    "matchExpressions": [
+                        {
+                            "key": "kubernetes.io/hostname",
+                            "operator": "In",
+                            "values": list(settings.prefer_nodes),
+                        }
+                    ]
+                },
+            }
+        ]
+    # Nested under `affinity`, not spread bare into the pod spec: `spec.affinity
+    # .nodeAffinity` is the only place the API server reads it from, and a
+    # stray `spec.nodeAffinity` is silently dropped rather than rejected — so
+    # the guests would have quietly scheduled anywhere.
+    return {"affinity": {"nodeAffinity": affinity}} if affinity else {}
+
+
+# RPCEmu's guest RAM, in MB. The Risc PC's memory controller takes powers of
+# two up to 256MB and RISC OS reports anything else as the next one down, so
+# the pod's memoryMib is mapped onto what the machine can actually have rather
+# than passed through to be silently rounded.
+RPCEMU_RAM_STEPS = (16, 32, 64, 128, 256)
+
+
+def _rpcemu_ram(memory_mib: int) -> int:
+    usable = max(0, memory_mib - 128)  # leave room for Xvfb, x11vnc and Qt
+    return max(s for s in RPCEMU_RAM_STEPS if s <= usable) if usable >= 16 else 16
+
+
+def _build_rpcemu_pod(
+    *,
+    config: dict,
+    session_id: str,
+    release: str,
+    ttl: int,
+    memory_mib: int,
+    cores: int,
+    profile: dict,
+) -> dict:
+    """One RISC OS session: an Acorn Risc PC, emulated by RPCEmu.
+
+    Deliberately narrower than the QEMU path rather than a peer of it. There is
+    no ISO, because the engine image carries the ROM and the boot disc as a
+    matched pair; no /dev/kvm, because this is a 32-bit ARM machine translated
+    on an x86 host and always will be; no QMP, and so no save points. What it
+    does share is every part that matters for containment: the same
+    no-permission service account with no token, the same dropped capabilities,
+    the same network label the sandbox policies select on, and the same
+    kubelet-enforced deadline.
+
+    It is also the one guest here that runs as an unprivileged user. The qemux
+    images need root inside their own container; this image was built not to.
+    """
+    slug = config["slug"]
+
+    # /rpcemu holds the RISC OS filesystem the guest writes to — its !Boot, its
+    # Choices, anything saved. Persisted it is a PVC and RISC OS remembers;
+    # ephemeral it dies with the pod, which is the default for a lab.
+    if config.get("persist"):
+        work_volume = {
+            "name": "work",
+            "persistentVolumeClaim": {"claimName": disk_pvc_name(release, slug)},
+        }
+    else:
+        work_volume = {"name": "work", "emptyDir": {"sizeLimit": "2Gi"}}
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": session_id,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "app.kubernetes.io/component": "session",
+                "vmlab.zachd/config": slug,
+                "vmlab.zachd/session": session_id,
+                "vmlab.zachd/network": config["network"],
+                # No monitor port to open. Stated rather than omitted so the
+                # policy selector matches the same way it does for every other
+                # guest that cannot be snapshotted.
+                "vmlab.zachd/savepoints": "false",
+                "vmlab.zachd/engine": "rpcemu",
+            },
+            "annotations": {
+                "vmlab.zachd/display-name": config["name"],
+                "vmlab.zachd/boot-from-iso": "false",
+            },
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": ttl,
+            "serviceAccountName": settings.vm_service_account,
+            "automountServiceAccountToken": False,
+            "enableServiceLinks": False,
+            "terminationGracePeriodSeconds": 15,
+            **_affinity(),
+            "containers": [
+                {
+                    "name": "rpcemu",
+                    "image": f"{settings.rpcemu_image}:{settings.rpcemu_tag}",
+                    "imagePullPolicy": settings.vm_pull_policy,
+                    "env": [
+                        {"name": "RPCEMU_WORK", "value": "/rpcemu"},
+                        {"name": "RPCEMU_MEM_SIZE", "value": str(_rpcemu_ram(memory_mib))},
+                        # A Risc PC's VRAM is 0, 1 or 2MB. 2 is what makes the
+                        # higher screen modes available, and there is no reason
+                        # to emulate a cheaper one.
+                        {"name": "RPCEMU_VRAM_SIZE", "value": "2"},
+                        # StrongARM, which is what RISC OS 5 targets. The
+                        # earlier ARM610/710 models exist in RPCEmu but the
+                        # IOMD 5.30 ROM expects an SA-110.
+                        {"name": "RPCEMU_MODEL", "value": "RPCSA"},
+                        {"name": "RPCEMU_SCREEN", "value": "1280x1024x16"},
+                    ],
+                    "ports": [{"name": "http", "containerPort": 8006}],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "runAsNonRoot": True,
+                        "runAsUser": 10001,
+                        # Genuinely empty, with nothing added back. The
+                        # capabilities the QEMU path grants for slirp have no
+                        # analogue here: RPCEmu's own networking wants a tap
+                        # device and NET_ADMIN, so it is simply switched off in
+                        # the emulator, and the profile's capability list is
+                        # ignored rather than honoured.
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "resources": {
+                        "requests": {
+                            "cpu": settings.cpu_request,
+                            "memory": f"{memory_mib}Mi",
+                        },
+                        "limits": {
+                            # The recompiler is single-threaded, so extra cores
+                            # buy nothing; the limit still tracks the config so
+                            # the quota accounts for it honestly.
+                            "cpu": str(cores),
+                            "memory": f"{memory_mib}Mi",
+                        },
+                    },
+                    # /tmp is deliberately NOT an emptyDir. Xvfb refuses to
+                    # create /tmp/.X11-unix as a non-root user and refuses to
+                    # use one it does not own, so the image ships it root-owned
+                    # and 1777 — which an emptyDir would shadow, taking the X
+                    # server (and therefore the display) with it.
+                    "volumeMounts": [{"name": "work", "mountPath": "/rpcemu"}],
+                }
+            ],
+            "volumes": [work_volume],
+        },
+    }
+
+
+def _build_86box_pod(
+    *,
+    config: dict,
+    session_id: str,
+    release: str,
+    ttl: int,
+    memory_mib: int,
+    cores: int,
+    disk_gib: int,
+    profile: dict,
+    boot_from_iso: bool,
+) -> dict:
+    """One 86Box session: a specific PC from the 1990s, emulated in software.
+
+    Sits between the other two engines. Like RPCEmu it is a Qt application
+    behind Xvfb with no KVM, no QMP and therefore no save points; unlike RPCEmu
+    it takes an ISO, because the guest operating system is the thing you supply
+    and the image carries only the BIOS ROMs.
+
+    The machine description reaches the emulator as env, and every field of it
+    came through the allow-lists above. The container never sees a string the
+    browser chose.
+    """
+    slug = config["slug"]
+
+    volumes: list[dict] = []
+    mounts: list[dict] = [{"name": "work", "mountPath": "/86box"}]
+    init_containers: list[dict] = []
+
+    if config.get("persist"):
+        volumes.append(
+            {
+                "name": "work",
+                "persistentVolumeClaim": {"claimName": disk_pvc_name(release, slug)},
+            }
+        )
+    else:
+        # The emulated hard disk lives here, so the volume has to fit it with
+        # room for the config and the NVR alongside.
+        volumes.append({"name": "work", "emptyDir": {"sizeLimit": f"{disk_gib + 2}Gi"}})
+
+    iso_path = ""
+    if boot_from_iso:
+        # A private copy, like the QEMU path, and for the same reason: a guest
+        # gets no handle on the shared cache other guests boot from. No
+        # flattening here - 86Box attaches this to an emulated ATAPI drive and
+        # reads it as a CD, so a hybrid MBR is simply never looked at.
+        iso_path = "/media/boot.iso"
+        volumes.append({"name": "media", "emptyDir": {"sizeLimit": "16Gi"}})
+        volumes.append(
+            {
+                "name": "isos",
+                "persistentVolumeClaim": {"claimName": settings.iso_pvc, "readOnly": True},
+            }
+        )
+        mounts.append({"name": "media", "mountPath": "/media"})
+        init_containers.append(
+            {
+                "name": "stage-iso",
+                "image": settings.fetch_image,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["/bin/sh", "-c"],
+                # The filename comes from an already-validated slug and is passed
+                # as $1 rather than interpolated into the script.
+                "args": [
+                    "set -eu\n"
+                    'if [ ! -s "/isos/$1" ]; then\n'
+                    '  echo "ISO not staged yet: $1 - fetch it first" >&2\n'
+                    "  exit 1\n"
+                    "fi\n"
+                    'cp "/isos/$1" /media/boot.iso\n'
+                    "ls -lh /media/boot.iso\n",
+                    "sh",
+                    iso_filename(slug, config.get("bootMedia", "iso")),
+                ],
+                "securityContext": {
+                    "allowPrivilegeEscalation": False,
+                    "runAsNonRoot": True,
+                    "runAsUser": 10001,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "64Mi"},
+                    "limits": {"cpu": "1", "memory": "256Mi"},
+                },
+                "volumeMounts": [
+                    {"name": "isos", "mountPath": "/isos", "readOnly": True},
+                    {"name": "media", "mountPath": "/media"},
+                ],
+            }
+        )
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": session_id,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "app.kubernetes.io/component": "session",
+                "vmlab.zachd/config": slug,
+                "vmlab.zachd/session": session_id,
+                "vmlab.zachd/network": config["network"],
+                "vmlab.zachd/savepoints": "false",
+                "vmlab.zachd/engine": "86box",
+            },
+            "annotations": {
+                "vmlab.zachd/display-name": config["name"],
+                "vmlab.zachd/boot-from-iso": "true" if boot_from_iso else "false",
+            },
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": ttl,
+            "serviceAccountName": settings.vm_service_account,
+            "automountServiceAccountToken": False,
+            "enableServiceLinks": False,
+            "terminationGracePeriodSeconds": 15,
+            **_affinity(),
+            "initContainers": init_containers,
+            "containers": [
+                {
+                    "name": "box86",
+                    "image": f"{settings.box86_image}:{settings.box86_tag}",
+                    "imagePullPolicy": settings.vm_pull_policy,
+                    "env": [
+                        {"name": "BOX_WORK", "value": "/86box"},
+                        {"name": "BOX_MACHINE", "value": config["box86Machine"]},
+                        {"name": "BOX_CPU_FAMILY", "value": config["box86Cpu"]},
+                        {"name": "BOX_CPU_SPEED", "value": str(config["box86CpuHz"])},
+                        # 86Box counts memory in KB, and these chipsets top out
+                        # well below what a pod could be given - a 430VX cannot
+                        # address more than 128MB no matter what is asked for.
+                        {"name": "BOX_MEM_KB", "value": str(min(memory_mib, 256) * 1024)},
+                        {"name": "BOX_GFXCARD", "value": config["box86Gfx"]},
+                        {"name": "BOX_SNDCARD", "value": config["box86Sound"]},
+                        {"name": "BOX_FDD_TYPE", "value": config["box86Fdd"]},
+                        {"name": "BOX_DISK_MB", "value": str(disk_gib * 1024)},
+                        {"name": "BOX_ISO", "value": iso_path},
+                    ],
+                    "ports": [{"name": "http", "containerPort": 8006}],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "runAsNonRoot": True,
+                        "runAsUser": 10001,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "resources": {
+                        "requests": {
+                            "cpu": settings.cpu_request,
+                            # The guest's RAM is trivial next to the emulator's
+                            # own footprint here: a 1997 machine had 64MB and
+                            # 86Box's recompiler, Qt and the framebuffer want
+                            # more than the guest does.
+                            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+                        },
+                        "limits": {
+                            # The recompiler is single-threaded; the limit still
+                            # tracks the config so the quota accounts honestly.
+                            "cpu": str(cores),
+                            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+                        },
+                    },
+                    "volumeMounts": mounts,
+                }
+            ],
+            "volumes": volumes,
+        },
+    }
+
+
+def build_session_pod(
+    *,
+    config: dict,
+    session_id: str,
+    release: str,
+    boot_from_iso: bool,
+    ttl_seconds: int,
+    load_snapshot: str | None = None,
+) -> dict:
+    """Assemble the V1Pod for one session. Every field here is server-chosen."""
+    if not SESSION_RE.match(session_id):
+        raise ValidationError("invalid session id")
+
+    slug = config["slug"]
+    profile = settings.network_profiles.get(config["network"])
+    if profile is None:
+        # Unreachable via validate_config, but a config could have been written
+        # under an older chart that had a profile this one no longer defines.
+        # Refusing beats silently downgrading to an unlabelled — and therefore
+        # unpoliced — pod.
+        raise ValidationError(f"unknown network profile {config['network']!r}")
+
+    ttl = _clamp(int(ttl_seconds), 60, settings.max_ttl_seconds)
+    memory_mib = _clamp(int(config["memoryMib"]), 128, settings.max_memory_mib)
+    cores = _clamp(int(config["cores"]), 1, settings.max_cores)
+    disk_gib = _clamp(int(config["diskGib"]), 1, settings.max_disk_gib)
+
+    # A different emulator is a different pod, not a pile of conditionals
+    # through the 300 lines below. Everything from here down is about
+    # assembling a QEMU command line, and none of it means anything to RPCEmu —
+    # threading an `if` through it would put the two engines' security posture
+    # in one place where a change meant for one silently altered the other.
+    if config.get("engine") == "86box":
+        return _build_86box_pod(
+            config=config,
+            session_id=session_id,
+            release=release,
+            ttl=ttl,
+            memory_mib=memory_mib,
+            cores=cores,
+            disk_gib=disk_gib,
+            profile=profile,
+            boot_from_iso=boot_from_iso,
+        )
+
+    if config.get("engine") == "rpcemu":
+        return _build_rpcemu_pod(
+            config=config,
+            session_id=session_id,
+            release=release,
+            ttl=ttl,
+            memory_mib=memory_mib,
+            cores=cores,
+            profile=profile,
+        )
+
+    savepoints = bool(config.get("savepoints"))
+    if load_snapshot is not None:
+        if not savepoints:
+            raise ValidationError("this config does not use save points")
+        # NAME_RE, not a general sanitiser. This string ends up inside
+        # ARGUMENTS, which entry.sh expands UNQUOTED into the qemu argv
+        # (`exec "${cmd[@]}" ${ARGS:+ $ARGS}`), so a space or a semicolon here
+        # would be argument injection into the emulator's command line.
+        from vmlab.snapshots import validate_name
+
+        load_snapshot = validate_name(load_snapshot)
+
+    image_base = settings.vm_image_arm if config.get("arch") == "arm" else settings.vm_image
+    image = f"{image_base}:{settings.vm_tag}"
+
+    env = [
+        {"name": "RAM_SIZE", "value": f"{memory_mib}M"},
+        {"name": "CPU_CORES", "value": str(cores)},
+        {"name": "DISK_SIZE", "value": f"{disk_gib}G"},
+        # Which of the two independent network levers this is: NETWORK=N means
+        # QEMU builds the guest no NIC at all, so it is air-gapped regardless of
+        # NetworkPolicy. The policy contains the container around it.
+        {"name": "NETWORK", "value": profile["qemuNetwork"]},
+        {"name": "BOOT_MODE", "value": config["bootMode"]},
+    ]
+    if config.get("diskType"):
+        env.append({"name": "DISK_TYPE", "value": config["diskType"]})
+    if config.get("legacyCdrom"):
+        # Suppress the image's own attach of the boot media so it is not opened
+        # twice. This only works because the staged copy is flattened: the
+        # hybrid check in disk.sh bypasses MEDIA_TYPE entirely and would force a
+        # usb-disk regardless.
+        env.append({"name": "MEDIA_TYPE", "value": "none"})
+    if config.get("floppy"):
+        # Suppress the image's own attach, or QEMU opens the file twice and
+        # dies with 'Failed to get "write" lock'. It must be DISK_TYPE, not
+        # MEDIA_TYPE: install.sh routes a .img through createDevice (the disk
+        # path) rather than addMedia, so MEDIA_TYPE is never consulted for one.
+        # This also detaches the data disk, which is why a floppy guest cannot
+        # take save points — there is no qcow2 for savevm to write into.
+        env.append({"name": "DISK_TYPE", "value": "none"})
+    if config.get("audio"):
+        env.append({"name": "AUDIO", "value": "Y"})
+    if config.get("usb") is False:
+        env.append({"name": "USB", "value": "N"})
+    if config.get("machine"):
+        # Allow-listed above, so this cannot become arbitrary -machine text.
+        env.append({"name": "MACHINE", "value": config["machine"]})
+    if config.get("mediaType"):
+        env.append({"name": "MEDIA_TYPE", "value": config["mediaType"]})
+    if config.get("vga"):
+        env.append({"name": "VGA", "value": config["vga"]})
+    if savepoints:
+        # qcow2 is not a preference: savevm stores VM state INSIDE the disk
+        # image, and raw has nowhere to put it. Changing this on an existing
+        # raw disk would not convert it, so it is fixed per config rather than
+        # toggleable at launch.
+        env.append({"name": "DISK_FMT", "value": "qcow2"})
+        # qemux/qemu wires this straight to `-qmp`, defaulting a bare number to
+        # tcp. Reachable only from the vmlab pod — see the ingress policy that
+        # now covers every profile including `full`.
+        env.append({"name": "QMP", "value": str(QMP_PORT)})
+        # savevm serialises VM state, and refuses outright if any device is
+        # non-migratable: "State blocked by non-migratable CPU device (invtsc
+        # flag)". qemux/qemu adds +invtsc whenever the host TSC is stable —
+        # which every node here has — so save points are impossible without
+        # turning it back off. CPU_FLAGS is concatenated AFTER the image's own
+        # feature list, and QEMU takes the last setting for a flag, so this
+        # overrides rather than conflicts.
+        #
+        # The cost is real but small and confined to save-point guests: the
+        # guest loses an invariant TSC and falls back to a slower clocksource.
+        # A lab VM would rather resume than keep perfect time.
+        env.append({"name": "CPU_FLAGS", "value": "-invtsc"})
+        # Second non-migratable blocker, found the same way as the first:
+        # "'hv-passthrough' CPU flag prevents migration". qemux/qemu builds its
+        # Hyper-V enlightenments on hv_passthrough, which by construction
+        # mirrors whatever the host CPU offers and therefore cannot be
+        # serialised. HV=N drops the block entirely.
+        #
+        # Nearly free for the guest that needs save points most: Hyper-V
+        # enlightenments target Vista and later, so Windows XP cannot use them
+        # at all. A modern Windows guest would lose some paravirtual
+        # acceleration, which is the trade for being able to resume it.
+        env.append({"name": "HV", "value": "N"})
+    # ARGUMENTS is assembled here from validated flags only — never from
+    # caller-supplied text — because entry.sh expands it UNQUOTED into the qemu
+    # argv.
+    arguments: list[str] = []
+    if config.get("legacyCdrom") and boot_from_iso:
+        media = config.get("bootMedia", "iso")
+        # index=2 is IDE1 master, which is what -cdrom means on x86; -boot d
+        # then prefers it over the disk on IDE0.
+        arguments.append(f"-drive file=/boot.{media},index=2,media=cdrom -boot d")
+    if config.get("floppy") and boot_from_iso:
+        arguments.append(f"-fda /boot.{config.get('bootMedia', 'img')}")
+    if load_snapshot:
+        arguments.append(f"-loadvm {load_snapshot}")
+    if arguments:
+        env.append({"name": "ARGUMENTS", "value": " ".join(arguments)})
+    if not boot_from_iso:
+        # "none", NOT "". Empty is the one value that does the opposite of what
+        # it looks like: install.sh treats it as unset and falls back to
+        # `ENV BOOT="alpine"`, downloading Alpine and attaching it as a hybrid
+        # (writable) disk. Observed exactly that — a guest meant to resume from
+        # its own disk instead fetched Alpine, which then broke -loadvm with
+        # "Device 'boot' is writable but does not support snapshots".
+        #
+        # With "none": if the disk has data, install.sh short-circuits before
+        # the URL check and boots it. If the disk is EMPTY it errors out with
+        # exit 64 — a loud, accurate failure ("you asked to boot a disk with
+        # nothing on it") rather than a silent Alpine download.
+        env.append({"name": "BOOT", "value": "none"})
+
+    volumes: list[dict] = [
+        # nginx serves the console on :8006 and its error.log is www-data:adm
+        # 0640. Root without CAP_DAC_OVERRIDE cannot write it, and the container
+        # dies at server.sh line 14 before QEMU ever starts. Shadowing the
+        # directory is what lets the capability set stay empty.
+        {"name": "nginx-log", "emptyDir": {"sizeLimit": "16Mi"}},
+    ]
+    mounts: list[dict] = [{"name": "nginx-log", "mountPath": "/var/log/nginx"}]
+
+    if config.get("persist"):
+        volumes.append(
+            {
+                "name": "storage",
+                "persistentVolumeClaim": {"claimName": disk_pvc_name(release, slug)},
+            }
+        )
+    else:
+        volumes.append(
+            {"name": "storage", "emptyDir": {"sizeLimit": f"{disk_gib + 2}Gi"}}
+        )
+    mounts.append({"name": "storage", "mountPath": "/storage"})
+
+    init_containers: list[dict] = []
+    if boot_from_iso:
+        # The staged private copy. The VM container mounts THIS, never the
+        # shared cache — so a guest has no handle on the ISOs other guests boot
+        # from, and cannot corrupt them.
+        #
+        # A copy rather than a read-only mount because disk.sh force-attaches a
+        # hybrid ISO (MBR signature != 0000 — Alpine, Bazzite, most modern
+        # Linux) as a WRITABLE usb-storage disk, bypassing MEDIA_TYPE. QEMU then
+        # opens it read-write and a read-only mount fails outright.
+        #
+        # For save-point guests the copy is also FLATTENED: its two-byte MBR
+        # signature is zeroed. That is what lets a hybrid ISO be attached as a
+        # read-only CD-ROM, and therefore what lets savevm run at all while the
+        # ISO is inserted — savevm refuses whenever any writable non-qcow2
+        # device is present. Booting is unaffected because a cdrom device boots
+        # through El Torito (the ISO9660 boot catalog), not the MBR.
+        #
+        # Safe precisely because this is a private per-session copy: the shared
+        # cache keeps its real bytes, so nothing else ever sees a modified ISO.
+        media = config.get("bootMedia", "iso")
+        volumes.append({"name": "bootiso", "emptyDir": {"sizeLimit": "16Gi"}})
+        volumes.append(
+            {
+                "name": "isos",
+                "persistentVolumeClaim": {"claimName": settings.iso_pvc, "readOnly": True},
+            }
+        )
+        mounts.append(
+            {
+                "name": "bootiso",
+                # findBootFile() scans / for boot.{iso,img,raw,qcow2} and
+                # detectType keys on the extension, so the staged file must
+                # carry its real one.
+                "mountPath": f"/boot.{media}",
+                "subPath": f"boot.{media}",
+            }
+        )
+        init_containers.append(
+            {
+                "name": "stage-iso",
+                "image": settings.fetch_image,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["/bin/sh", "-c"],
+                # The filename is derived from an already-validated slug, and is
+                # passed as $1 rather than interpolated into the script body.
+                "args": [
+                    'set -eu\n'
+                    'src="/isos/$1"\n'
+                    'flatten="$2"\n'
+                    'if [ ! -s "$src" ]; then\n'
+                    '  echo "ISO not staged yet: $1 — fetch it first" >&2\n'
+                    '  exit 1\n'
+                    'fi\n'
+                    'cp "$src" "/boot/boot.$3"\n'
+                    # Clear the MBR boot signature on the PRIVATE copy so that
+                    # disk.sh stops treating it as a hybrid image. See the
+                    # comment on `flatten_hybrid` below for why.
+                    'if [ "$flatten" = "yes" ] && [ "$3" = "iso" ]; then\n'
+                    '  sig=$(dd if="/boot/boot.$3" bs=1 skip=510 count=2 2>/dev/null | od -An -tx1 | tr -d " \\n")\n'
+                    '  if [ "$sig" != "0000" ]; then\n'
+                    '    printf "\\0\\0" | dd of="/boot/boot.$3" bs=1 seek=510 count=2 conv=notrunc 2>/dev/null\n'
+                    '    echo "cleared hybrid MBR signature ($sig) on the private copy"\n'
+                    '  fi\n'
+                    'fi\n'
+                    'ls -lh "/boot/boot.$3"\n',
+                    "sh",
+                    iso_filename(slug, config.get("bootMedia", "iso")),
+                    # Flattening is NOT tied to save points. It started that
+                    # way because savevm was the motivation, but the effect —
+                    # a hybrid ISO attaching as a read-only CD-ROM instead of a
+                    # writable USB disk — is what makes a guest that looks for
+                    # a CD find one at all. MINIX hunted for a boot CD that,
+                    # being hybrid, had never been attached as one.
+                    "yes" if config.get("flattenIso", True) else "no",
+                    config.get("bootMedia", "iso"),
+                ],
+                "securityContext": {
+                    "allowPrivilegeEscalation": False,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "resources": {
+                    "requests": {"cpu": "100m", "memory": "64Mi"},
+                    "limits": {"memory": "128Mi"},
+                },
+                "volumeMounts": [
+                    {"name": "isos", "mountPath": "/isos", "readOnly": True},
+                    {"name": "bootiso", "mountPath": "/boot"},
+                ],
+            }
+        )
+
+    # SETGID+SETUID for the internet profile and nothing else: NETWORK=slirp
+    # starts dnsmasq, which drops group to `dip`. Measured, not assumed — no
+    # NET_ADMIN, no /dev/net/tun, no privileged. The `none` profile needs an
+    # entirely empty capability set.
+    capabilities: dict[str, Any] = {"drop": ["ALL"]}
+    added = [c for c in profile.get("capabilities", []) if c in {"SETGID", "SETUID"}]
+    if added:
+        capabilities["add"] = added
+
+    resources: dict[str, Any] = {
+        "requests": {
+            "cpu": settings.cpu_request,
+            # The guest's RAM plus the emulator's own footprint. Requesting only
+            # a token amount would let the scheduler overcommit a node into
+            # swapping, which for a VM host is indistinguishable from a hang.
+            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+        },
+        "limits": {
+            "cpu": str(cores),
+            "memory": f"{memory_mib + settings.overhead_memory_mib}Mi",
+        },
+    }
+    if config.get("arch") != "arm":
+        # The extended resource that yields /dev/kvm without privileged mode,
+        # and the thing ResourceQuota counts to cap concurrency. ARM guests run
+        # under TCG on an x86 host, so KVM would be meaningless for them — and
+        # asking for it would wrongly consume a slot from the concurrency cap.
+        resources["limits"]["devices.kubevirt.io/kvm"] = "1"
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": session_id,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "app.kubernetes.io/component": "session",
+                "vmlab.zachd/config": slug,
+                "vmlab.zachd/session": session_id,
+                # The label the sandbox policies select on. A pod that reached
+                # here with an unrecognised profile would be unlabelled and
+                # therefore unpoliced, which is why the lookup above raises
+                # instead of defaulting.
+                "vmlab.zachd/network": config["network"],
+                # Selects the policy that opens the monitor port. Absent on
+                # every other guest, so QMP is not merely closed by firewall
+                # but genuinely not listening.
+                "vmlab.zachd/savepoints": "true" if savepoints else "false",
+            },
+            "annotations": {
+                "vmlab.zachd/display-name": config["name"],
+                # Read back when saving: -loadvm restores VM state onto the
+                # devices QEMU currently has, so a snapshot taken with the CD
+                # inserted can only be restored with the CD inserted.
+                "vmlab.zachd/boot-from-iso": "true" if boot_from_iso else "false",
+            },
+        },
+        "spec": {
+            # Never Always: a guest that panics should stay dead and visible,
+            # not loop. Combined with activeDeadlineSeconds this is what makes
+            # a session genuinely short-lived.
+            "restartPolicy": "Never",
+            # The hard TTL, enforced by the kubelet rather than by the reaper.
+            # It survives the UI being down, restarted, or wrong.
+            "activeDeadlineSeconds": ttl,
+            "serviceAccountName": settings.vm_service_account,
+            "automountServiceAccountToken": False,
+            "enableServiceLinks": False,
+            "terminationGracePeriodSeconds": 15,
+            **_affinity(),
+            "initContainers": init_containers,
+            "containers": [
+                {
+                    "name": "qemu",
+                    "image": image,
+                    "imagePullPolicy": settings.vm_pull_policy,
+                    "env": env,
+                    "ports": (
+                        [{"name": "http", "containerPort": 8006}]
+                        + ([{"name": "qmp", "containerPort": QMP_PORT}] if savepoints else [])
+                    ),
+                    "securityContext": {
+                        # Root *inside its own container*, because the image's
+                        # entrypoint needs it. Not privileged, no host mounts, no
+                        # capabilities beyond the two slirp needs, and it holds
+                        # no credential. QEMU is the isolation boundary; this is
+                        # the fence around QEMU.
+                        "allowPrivilegeEscalation": False,
+                        "capabilities": capabilities,
+                    },
+                    "resources": resources,
+                    "volumeMounts": mounts,
+                }
+            ],
+            "volumes": volumes,
+        },
+    }
+
+
+def build_fetch_job(*, config: dict, job_name: str, release: str) -> dict:
+    """A Job that pulls one ISO into the shared cache.
+
+    The only thing in this namespace with internet egress. Keeping it separate
+    from the guests is what makes "air-gapped guest booting an ISO that came off
+    the internet" a coherent thing rather than a contradiction.
+    """
+    url = validate_iso_url(config.get("iso", ""))
+    if not url:
+        raise ValidationError(f"{config['slug']} has no ISO URL to fetch")
+
+    sha = (config.get("sha256") or "").strip().lower()
+    if sha and not _sha256_ok(sha):
+        raise ValidationError("sha256 must be 64 hex characters")
+
+    # Written to a .part file and moved into place only after the checksum
+    # passes, so an interrupted fetch can never be mistaken for a cached ISO.
+    #
+    # Archives are unwrapped here rather than at boot. A lot of archived OS
+    # media ships zipped (ReactOS releases, most archive.org uploads), and
+    # "provide a URL" stops being true if half of them need a manual step. The
+    # sniff is on the file's magic bytes, not the URL, because archive.org URLs
+    # routinely lack a useful extension. Detection is deliberately narrow: only
+    # a real PK zip is treated as an archive, and anything else is passed
+    # through untouched.
+    script = (
+        "set -eu\n"
+        'dest="/isos/$1"\n'
+        'url="$2"\n'
+        'want="$3"\n'
+        'tmp="$dest.part"\n'
+        'work="/isos/.extract-$1"\n'
+        'if [ -s "$dest" ]; then echo "already cached: $1"; exit 0; fi\n'
+        "apk add --no-cache curl unzip xz zstd p7zip >/dev/null\n"
+        # Flush dirty pages while the download runs. Without this, a fast
+        # mirror OOMKills the container regardless of how big its limit is:
+        # observed on a 40MB/s archive.org fetch, which died at exactly 250MiB
+        # written against a 256Mi cgroup, while a slower mirror of a LARGER
+        # file sat at 9Mi the whole way. The cost is writeback that would have
+        # happened anyway; the benefit is that the failure stops being a
+        # function of how fast the far end happens to be today.
+        '( while sleep 2; do sync "$tmp" 2>/dev/null || sync; done ) &\n'
+        'syncer=$!\n'
+        # NO -C -, and a stale partial is removed first. Resume looks like the
+        # obvious win on a 7.9GB image and is actively unsafe here: curl fixes
+        # the resume offset ONCE at startup, so its own --retry either truncates
+        # back to that offset (losing 6GB mid-transfer, observed) or, when a
+        # partial from an earlier Job exists, appends the retried bytes past
+        # where they belong. The latter is what turned a 7.36GiB image into a
+        # 10.98GiB one that cached as healthy. Restarting a big download is
+        # merely slow; caching a corrupt one is silent, so the trade is easy.
+        # --retry-all-errors is kept because a broken HTTP/2 stream is not in
+        # curl's default retry set.
+        'rm -f "$tmp"\n'
+        'curl -fL --retry 5 --retry-delay 5 --retry-all-errors -o "$tmp" "$url"\n'
+        'kill "$syncer" 2>/dev/null || true\n'
+        # Size check, and it is not belt-and-braces — it caught a real
+        # corruption. With -C - and --retry, a CDN that answers a Range request
+        # with the FULL body makes curl append it to the partial file: the
+        # 7.36GiB Bazzite image arrived as 10.98GiB and was cached as if fine.
+        # Nothing else here would have noticed, because a checksum is optional
+        # and most entries have none. A truncated download fails this the same
+        # way. On mismatch the partial is removed so the next attempt restarts
+        # clean rather than resuming corruption forever.
+        # grep/cut rather than awk, for two reasons that both made the awk
+        # version a silent no-op: awk printed 7907770368 as "7.90777e+09", and
+        # busybox `[ "7.90777e+09" -gt 0 ]` errors out, which inside an `if` is
+        # simply skipped. IGNORECASE is also a gawk extension busybox lacks, so
+        # an HTTP/1.1 "Content-Length" header would never have matched at all.
+        # tail -1 takes the final hop's header, since -L follows redirects.
+        # A server that answers an error with 200 + HTML would otherwise be
+        # cached as a disk image: an AROS mirror did exactly that, and the size
+        # check could not catch it because the size MATCHED the HTML. Checked
+        # before anything else looks at the bytes.
+        'ctype=$(curl -sIL -o /dev/null -w "%{content_type}" "$url" | tr "A-Z" "a-z")\n'
+        'case "$ctype" in\n'
+        '  *text/html*|*application/xhtml*)\n'
+        '    rm -f "$tmp"\n'
+        '    echo "server returned a web page, not an image (content-type: $ctype)" >&2\n'
+        "    exit 1 ;;\n"
+        "esac\n"
+        'want_size=$(curl -sIL "$url" | tr -d "\\r" | grep -i "^content-length:" | tail -1 | cut -d" " -f2)\n'
+        '[ -n "$want_size" ] || want_size=0\n'
+        'got_size=$(stat -c %s "$tmp")\n'
+        'if [ "$want_size" -gt 0 ] && [ "$got_size" -ne "$want_size" ]; then\n'
+        '  rm -f "$tmp"\n'
+        '  echo "size mismatch: got $got_size want $want_size (partial discarded)" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'if [ -n "$want" ]; then\n'
+        '  got=$(sha256sum "$tmp" | cut -d" " -f1)\n'
+        '  if [ "$got" != "$want" ]; then\n'
+        '    rm -f "$tmp"\n'
+        '    echo "checksum mismatch: got $got want $want" >&2\n'
+        "    exit 1\n"
+        "  fi\n"
+        "fi\n"
+        # Unwrap whatever the far end actually served. Detection is on magic
+        # bytes, not the URL, because the good sources for old operating
+        # systems name files however they like: 9front ships .iso.gz, MINIX
+        # .iso.bz2, KolibriOS .7z, FreeDOS .zip, and archive.org URLs routinely
+        # carry no extension at all. Anything unrecognised is passed through
+        # untouched rather than guessed at.
+        'magic=$(dd if="$tmp" bs=1 count=8 2>/dev/null | od -An -tx1 | tr -d " \\n")\n'
+        'kind="raw"\n'
+        'case "$magic" in\n'
+        '  504b*)      kind="zip" ;;\n'
+        '  1f8b*)      kind="gz" ;;\n'
+        '  425a68*)    kind="bz2" ;;\n'
+        '  fd377a585a*) kind="xz" ;;\n'
+        '  28b52ffd*)  kind="zst" ;;\n'
+        '  377abcaf271c*) kind="7z" ;;\n'
+        'esac\n'
+        'if [ "$kind" != "raw" ]; then\n'
+        '  echo "compressed image detected ($kind), unpacking..."\n'
+        'fi\n'
+        'case "$kind" in\n'
+        # Single-file compressors decompress straight to the image.
+        '  gz)  gunzip -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
+        '  bz2) bunzip2 -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
+        '  xz)  unxz -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
+        # Redox publishes .iso.zst / .img.zst.
+        '  zst) unzstd -c "$tmp" > "$dest.out" && mv "$dest.out" "$dest" && rm -f "$tmp" ;;\n'
+        # Containers may hold several files; take the largest .iso/.img.
+        '  zip|7z)\n'
+        '    rm -rf "$work"; mkdir -p "$work"\n'
+        '    if [ "$kind" = "zip" ]; then unzip -q -o "$tmp" -d "$work"; else 7z x -y -o"$work" "$tmp" >/dev/null; fi\n'
+        '    inner=""\n'
+        '    for f in $(find "$work" -type f \\( -iname "*.iso" -o -iname "*.img" -o -iname "*.raw" -o -iname "*.qcow2" \\)); do\n'
+        '      if [ -z "$inner" ] || [ "$(stat -c %s "$f")" -gt "$(stat -c %s "$inner")" ]; then\n'
+        '        inner="$f"\n'
+        "      fi\n"
+        "    done\n"
+        '    if [ -z "$inner" ]; then\n'
+        '      rm -rf "$work" "$tmp"\n'
+        '      echo "archive contains no bootable image" >&2\n'
+        "      exit 1\n"
+        "    fi\n"
+        '    echo "using $(basename "$inner")"\n'
+        '    mv "$inner" "$dest"; rm -rf "$work" "$tmp" ;;\n'
+        '  *)   mv "$tmp" "$dest" ;;\n'
+        "esac\n"
+        'ls -lh "$dest"\n'
+    )
+
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": job_name,
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "vmlab.zachd/role": "iso-fetch",
+                "vmlab.zachd/config": config["slug"],
+            },
+        },
+        "spec": {
+            "backoffLimit": 2,
+            "ttlSecondsAfterFinished": 600,
+            "activeDeadlineSeconds": settings.fetch_timeout_seconds,
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app.kubernetes.io/name": "vmlab",
+                        # Selected by the iso-fetch NetworkPolicy. Without this
+                        # label the Job is unpoliced; with it, it is the one
+                        # workload here permitted to leave the cluster.
+                        "vmlab.zachd/role": "iso-fetch",
+                        "vmlab.zachd/config": config["slug"],
+                    }
+                },
+                "spec": {
+                    "restartPolicy": "Never",
+                    "automountServiceAccountToken": False,
+                    "enableServiceLinks": False,
+                    "containers": [
+                        {
+                            "name": "fetch",
+                            "image": settings.fetch_image,
+                            "imagePullPolicy": "IfNotPresent",
+                            "command": ["/bin/sh", "-c"],
+                            # Caller-influenced values travel as positional
+                            # arguments, never interpolated into the script.
+                            "args": [
+                script,
+                "sh",
+                iso_filename(config["slug"], config.get("bootMedia", "iso")),
+                url,
+                sha,
+            ],
+                            "securityContext": {
+                                "allowPrivilegeEscalation": False,
+                                "capabilities": {"drop": ["ALL"]},
+                            },
+                            "resources": settings.fetch_resources,
+                            "volumeMounts": [{"name": "isos", "mountPath": "/isos"}],
+                        }
+                    ],
+                    "volumes": [
+                        {
+                            "name": "isos",
+                            "persistentVolumeClaim": {"claimName": settings.iso_pvc},
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+
+def build_disk_pvc(*, config: dict, release: str, storage_class: str | None = None) -> dict:
+    """The opt-in per-config disk for `persist: true`."""
+    spec: dict[str, Any] = {
+        "accessModes": ["ReadWriteOnce"],
+        "resources": {"requests": {"storage": f"{int(config['diskGib'])}Gi"}},
+    }
+    if storage_class:
+        spec["storageClassName"] = storage_class
+    return {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": disk_pvc_name(release, config["slug"]),
+            "labels": {
+                "app.kubernetes.io/name": "vmlab",
+                "app.kubernetes.io/instance": release,
+                "vmlab.zachd/config": config["slug"],
+            },
+            "annotations": {"k8up.io/backup": "false"},
+        },
+        "spec": spec,
+    }

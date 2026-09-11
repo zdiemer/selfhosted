@@ -13,6 +13,20 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** One of a fixed set, or the fallback. A typo in a chart value should cost the
+ * setting and say so, not take the gateway down or silently mean something. */
+function envEnum(name: string, allowed: string[], fallback: string): string {
+  const v = (process.env[name] ?? "").trim();
+  if (!v) return fallback;
+  if (!allowed.includes(v)) {
+    console.error(
+      `config: ${name}=${v} is not one of ${allowed.join("|")}; using ${fallback}`,
+    );
+    return fallback;
+  }
+  return v;
+}
+
 /** Like envInt, but 0 is a meaningful value ("off") rather than a typo. */
 function envIntOrZero(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -22,6 +36,73 @@ function envIntOrZero(name: string, fallback: number): number {
 }
 
 const home = process.env.HOME ?? os.homedir();
+
+/** One recurring gateway-fired run (values.yaml messaging.schedules). The
+ * gateway owns the timer, so unlike a ScheduleWakeup chain nothing depends on
+ * the model remembering to re-arm and nothing dies with a redeploy. */
+export interface ScheduleSpec {
+  name: string;
+  /** Five-field cron, evaluated in `timezone`. */
+  cron: string;
+  timezone?: string;
+  /** Which transport's owner 1:1 the run belongs to (reply, approvals,
+   * banner). The owner is the first configured allowed sender. */
+  surface?: "signal" | "whatsapp";
+  /** Working directory for the run; defaults to the chat's current cwd. */
+  cwd?: string;
+  /** Named session slot the run is pinned to. The run resumes THIS session
+   * (not whatever the chat currently points at) and its new session ids land
+   * back in the same slot — a schedule never hijacks the thread you are
+   * typing in. */
+  session?: string;
+  /** Start a fresh session every firing instead of resuming the slot. The
+   * newest id still lands in the slot, so `!use <session>` reaches it. */
+  fresh?: boolean;
+  prompt: string;
+  model?: string;
+  effort?: string;
+}
+
+/** Exported for tests. Invalid entries are dropped loudly rather than taking
+ * the gateway down: a bad schedule in values.yaml should cost that schedule,
+ * not the whole messaging surface. */
+export function parseSchedules(raw: string | undefined): ScheduleSpec[] {
+  if (!raw?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.error("config: GW_SCHEDULES is not valid JSON; ignoring");
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    console.error("config: GW_SCHEDULES must be a JSON array; ignoring");
+    return [];
+  }
+  const out: ScheduleSpec[] = [];
+  for (const entry of parsed) {
+    const s = entry as Partial<ScheduleSpec>;
+    if (
+      typeof s.name !== "string" ||
+      typeof s.cron !== "string" ||
+      typeof s.prompt !== "string" ||
+      !s.name.trim() ||
+      !s.cron.trim() ||
+      !s.prompt.trim()
+    ) {
+      console.error(
+        `config: schedule entry missing name/cron/prompt, dropped: ${JSON.stringify(entry)}`,
+      );
+      continue;
+    }
+    if (out.some((o) => o.name === s.name)) {
+      console.error(`config: duplicate schedule name ${s.name}, dropped`);
+      continue;
+    }
+    out.push(s as ScheduleSpec);
+  }
+  return out;
+}
 
 // Appended to Claude Code's own system prompt (--append-system-prompt), not a
 // replacement — the default one is what teaches it the tools it has.
@@ -42,6 +123,49 @@ You are running headless. There is no interactive terminal. A status message sho
 const DEFAULT_GROUP_SYSTEM_PROMPT = `This is a group chat. Everyone in the room reads your replies, but only the person who tagged you is asking — answer them, and don't address the room at large. Earlier messages from other people are given to you as context.
 
 You have no filesystem, shell, or cluster access in a group. Answer from the conversation, or look something up on the web. If something genuinely needs the workspace, say so and suggest they ask you directly.`;
+
+/**
+ * How closely the live status message follows a run, by name. The question a
+ * person actually has is "how much of this do I want to watch", not "how many
+ * seconds between edits", so the setting is named levels and the seconds are an
+ * implementation detail of each.
+ *
+ * `normal` is a minute because this is a phone, not a terminal: the status is
+ * there to say the run is alive and roughly where it is, and a message that
+ * rewrites itself every five seconds buys nothing for that and costs a
+ * notification-shaped flicker, a revision of Signal's ten-per-message budget,
+ * and (on WhatsApp) traffic on an unofficial client. `live` is the old
+ * five-second behaviour, kept for when you ARE watching.
+ *
+ * `quiet` is not "slow" — it is no status message at all, which is how this
+ * surface behaved before the live status existed: the answer, and nothing
+ * until the answer.
+ */
+export const VERBOSITY_MS: Record<string, number> = {
+  quiet: 0,
+  low: 180_000,
+  normal: 60_000,
+  high: 15_000,
+  live: 5_000,
+};
+
+export const VERBOSITY_LEVELS = Object.keys(VERBOSITY_MS);
+
+/** Redraw cadence for a level name, in ms; the instance default for an unset or
+ * unknown one. Zero means no status message (see `quiet`). */
+export function verbosityMs(level: string | undefined): number {
+  return VERBOSITY_MS[level ?? ""] ?? VERBOSITY_MS[config.progress.verbosity];
+}
+
+/** What a level means, in words — the reply to `!verbose` is the only place
+ * anyone finds out what these names buy. */
+export function describeVerbosity(level: string): string {
+  const ms = verbosityMs(level);
+  if (ms <= 0) return "no status message";
+  return ms < 60_000
+    ? `updates every ${Math.round(ms / 1000)}s`
+    : `updates every ${Math.round(ms / 60_000)}m`;
+}
 
 export const config = {
   home,
@@ -100,23 +224,25 @@ export const config = {
   // and nothing until the answer.
   progress: {
     enabled: (process.env.GW_PROGRESS_ENABLED ?? "true") === "true",
-    // Redraw cadence, and so also the minimum gap between edits. Baileys is an
-    // unofficial WhatsApp client (see the chart README on ban risk), so it
-    // keeps the conservative default; Signal talks to signal-cli over a local
-    // socket and sets its own, faster interval when it registers.
-    editIntervalMs: envInt("GW_PROGRESS_EDIT_SECONDS", 3) * 1000,
-    // Signal's cadence. The clock ticks on its own timer, so this is about how
-    // often a still-running status redraws — five seconds reads as alive
-    // without turning a long run into hundreds of revisions of one message.
-    signalIntervalMs: envInt("GW_PROGRESS_SIGNAL_EDIT_SECONDS", 5) * 1000,
+    // Instance default cadence, as a VERBOSITY_MS level name. `!verbose`
+    // overrides it per chat, and that override is what most people will use —
+    // this is what a chat that has never said anything about it gets.
+    verbosity: envEnum("GW_PROGRESS_VERBOSITY", VERBOSITY_LEVELS, "normal"),
+    // Floors, not cadences: the fastest a surface will redraw whatever the
+    // chosen verbosity asks for. Baileys is an unofficial WhatsApp client (see
+    // the chart README on ban risk), so it keeps the conservative default;
+    // Signal talks to signal-cli over a local socket and sets its own when it
+    // registers. Every level above is at or above both, so these only bite if
+    // someone adds a faster one.
+    minEditIntervalMs: envInt("GW_PROGRESS_MIN_EDIT_SECONDS", 3) * 1000,
+    signalMinIntervalMs: envInt("GW_PROGRESS_SIGNAL_MIN_EDIT_SECONDS", 5) * 1000,
     // Status messages one run may spend. Signal allows ten revisions of a
     // message and no more, so a long run has to continue on a new one or stop
     // reporting; this bounds how many times it may do that before it does
     // stop. Each message runs at twice the cadence of the last (status.ts
-    // gap()), so six of them at the 5s default cover roughly the first
-    // three-quarters of an hour: a minute of second-by-second detail at the
-    // start, coarsening as the run goes, and six messages in the thread rather
-    // than eighty.
+    // gap()), so six of them at the one-minute default reach several hours: a
+    // message a minute for the first nine, coarsening as the run goes, and a
+    // handful of messages in the thread rather than eighty.
     maxMessages: envInt("GW_PROGRESS_MAX_MESSAGES", 6),
   },
   // Reactions on the sender's own message: accepted → working → done/failed.
@@ -272,6 +398,25 @@ export const config = {
     // loop nobody asked for.
     maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
   },
+  // Transcript health (router.ts transcriptHealth). A cold resume has to
+  // rebuild the session's jsonl tail into the context window, and past
+  // roughly 1.4MB the rebuild — and the auto-compaction the CLI tries as a
+  // rescue — both come back as API 400 "Prompt is too long", killing the
+  // thread. A live child never notices (its in-context management is not
+  // persisted), which is how a chat balloons for hours and then dies on the
+  // first message after its process exits. So: compact well before the wall,
+  // and once past saving, say so while there is still time to wrap up.
+  transcript: {
+    // Where the gateway queues a quiet `/compact` turn. Measured on the tail
+    // a resume would rebuild (claude.ts resumableBytes), not the file — the
+    // file never shrinks, compaction just adds a boundary to rebuild from.
+    compactBytes: envIntOrZero("GW_COMPACT_KB", 1024) * 1024,
+    // Past this, the compaction request itself no longer fits and the thread
+    // cannot be rescued, only warned about. Between the two thresholds a
+    // compact is still worth attempting; zero for compactBytes disables the
+    // auto-compact and leaves only the warning.
+    capBytes: envInt("GW_TRANSCRIPT_CAP_KB", 1440) * 1024,
+  },
   // Read-only tools that never prompt; everything else goes through the
   // approval relay. Space-separated, claude --allowedTools syntax.
   allowedTools:
@@ -280,6 +425,9 @@ export const config = {
       "Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)",
   maxConcurrentClaude: envInt("GW_MAX_CONCURRENT", 2),
   queueDepth: envInt("GW_QUEUE_DEPTH", 5),
+  // Recurring gateway-fired runs (schedules.ts). JSON in the env because a
+  // list of structured entries has no comma-separated encoding worth having.
+  schedules: parseSchedules(process.env.GW_SCHEDULES),
 };
 
 export const approvalSocketPath = path.join(config.runtimeDir, "approve.sock");

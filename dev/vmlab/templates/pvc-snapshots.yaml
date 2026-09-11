@@ -1,0 +1,31 @@
+{{- if .Values.savepoints.enabled }}
+{{/*
+Screenshots and save-point metadata.
+
+NOT the save points themselves — those are internal qcow2 snapshots living on
+each guest's own disk, where QEMU owns them. This volume holds only what qcow2
+cannot: a picture, and a record that survives the VM being stopped, which is
+exactly when you want to look at the picture and decide what to load.
+
+Mounted ONLY by the vmlab pod. Session pods never see it, which is why the
+screenshot is pulled over VNC by the UI rather than written by QEMU into a
+shared path — the same principle that keeps guests off the ISO cache.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vmlab.fullname" . }}-snapshots
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    # Small, and genuinely worth keeping: a screenshot is the only thing that
+    # makes a save point identifiable months later.
+    k8up.io/backup: "true"
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: {{ .Values.savepoints.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.savepoints.size }}
+{{- end }}

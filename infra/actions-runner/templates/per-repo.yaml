@@ -1,0 +1,43 @@
+{{- if not .Values.render }}
+{{- /*
+One namespace per repo. ARC derives the names of a scale set's Role,
+RoleBinding and ServiceAccount from the runs-on label + namespace, so two
+scale sets both called "arc" in one namespace fight over them
+("exists and cannot be imported into the current release"). Upstream's own
+advice is a namespace per scale set. This chart lives in the controller's
+namespace and reaches into each one with what the scale set needs: the PAT
+Secret it registers with, and a no-permission ServiceAccount for runner pods.
+*/ -}}
+{{- range .Values.repos }}
+{{- $ns := printf "%s-%s" $.Values.namespaces.runnersPrefix .name }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "actions-runner.labels" $ | nindent 4 }}
+    actions-runner.zachd/repo: {{ .name }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: actions-runner-github
+  namespace: {{ $ns }}
+  labels:
+    {{- include "actions-runner.labels" $ | nindent 4 }}
+type: Opaque
+stringData:
+  github_token: {{ required "github.token required in values.local.yaml" $.Values.github.token | quote }}
+---
+# What runner pods run as. No permissions: a job must not see the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: actions-runner
+  namespace: {{ $ns }}
+  labels:
+    {{- include "actions-runner.labels" $ | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
+{{- end }}

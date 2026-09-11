@@ -35,10 +35,12 @@ export interface Transport {
    * only tracks the newest as editable, so it hands back the new timestamp;
    * WhatsApp keeps addressing the original key and returns nothing. */
   edit?(chatKey: string, target: MsgRef, text: string): Promise<MsgRef | void>;
-  /** How often the live status message may be redrawn on this surface, in ms.
-   * Absent means the shared default — a surface only sets this if its own rate
-   * limits differ, which on an unofficial client they very much do. */
-  editIntervalMs?: number;
+  /** The fastest the live status message may be redrawn on this surface, in
+   * ms. A floor, not a cadence: how often it actually redraws is the chat's
+   * verbosity (status.ts). Absent means the shared default — a surface only
+   * sets this if its own rate limits differ, which on an unofficial client
+   * they very much do. */
+  minEditIntervalMs?: number;
   /** A stable string identity for a ref, so an inbound reaction can be matched
    * against the outbound message it points at. The two arrive in different
    * shapes on both networks — Signal gives a target timestamp rather than the
@@ -232,7 +234,9 @@ export function canEdit(chatKey: string): boolean {
   return Boolean(transportFor(chatKey)?.edit);
 }
 
-/** Redraw cadence for this chat's surface. */
-export function editIntervalFor(chatKey: string): number {
-  return transportFor(chatKey)?.editIntervalMs ?? config.progress.editIntervalMs;
+/** The fastest this chat's surface will redraw a status message. */
+export function minEditIntervalFor(chatKey: string): number {
+  return (
+    transportFor(chatKey)?.minEditIntervalMs ?? config.progress.minEditIntervalMs
+  );
 }

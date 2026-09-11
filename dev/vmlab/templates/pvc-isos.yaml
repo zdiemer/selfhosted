@@ -1,0 +1,29 @@
+{{- if .Values.isos.enabled }}
+{{/*
+The ISO cache. RWX because a fetch Job and a session's staging initContainer can
+land on different nodes, and because two guests may stage at once.
+
+resource-policy: keep — the whole value of this volume is that a 6GB download
+happens once. `helm uninstall` dropping it would silently turn every future
+launch back into a download, and the ISOs for half this catalog are no longer
+trivially re-fetchable.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vmlab.fullname" . }}-isos
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    # k8up is opt-out in this cluster. These are re-downloadable install media,
+    # not data, and backing up 60Gi of ISOs would be the largest restic target
+    # here by a wide margin.
+    k8up.io/backup: "false"
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: {{ .Values.isos.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.isos.size }}
+{{- end }}

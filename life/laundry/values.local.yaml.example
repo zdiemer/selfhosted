@@ -1,0 +1,20 @@
+# Copy of what lives at op://homelab/life-laundry/values.local.yaml.
+# This file is an EXAMPLE — the real values are resolved from 1Password by
+# upgrade.sh via scripts/lib/secret-values.sh. Never commit real values here.
+secrets:
+  # Per-service key from sms-relay's SMS_RELAY_API_KEYS map. Add `laundry`
+  # there first, then paste the key it issues:
+  #   openssl rand -hex 32
+  smsApiKey: "REPLACE_ME"
+
+  # What the ESP32 presents on every POST. Must equal LAUNDRY_INGEST_TOKEN in
+  # the firmware's include/config.h. Generate with:
+  #   openssl rand -hex 32
+  # One token for both sensors: same two devices, same house, and rotating it
+  # means reflashing both regardless.
+  ingestToken: "REPLACE_ME"
+
+sms:
+  # Where "the washer is done" goes. E.164 or bare 10 digits — sms-relay
+  # normalizes via libphonenumber.
+  to: "REPLACE_ME"

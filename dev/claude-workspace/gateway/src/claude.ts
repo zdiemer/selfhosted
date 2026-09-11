@@ -3,7 +3,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
-import { type ChatState, getChat, updateChat } from "./state.ts";
+import {
+  type ChatState,
+  getChat,
+  resumeIdForSlot,
+  sessionPatchForSlot,
+  updateChat,
+} from "./state.ts";
+
+/** Per-run overrides for a schedule-fired run (schedules.ts): a pinned cwd
+ * and session slot, so a recurring job never runs in — or writes its session
+ * id over — whatever the chat happens to be pointed at. */
+export interface RunOverrides {
+  cwd?: string;
+  /** Named session slot to resume and to record new ids under. */
+  session?: string;
+  /** Start fresh each firing; the new id still lands in the slot. */
+  fresh?: boolean;
+  model?: string;
+  effort?: string;
+}
 
 export interface RunResult {
   text: string;
@@ -15,6 +34,10 @@ export interface RunResult {
    * not), so the gateway re-arms the timer on its side of the process boundary
    * (wakeup.ts). "stop" means the model ended its loop. */
   wakeup?: { at: number; prompt: string } | "stop";
+  /** The process ended without a result event — !stop, the timeout, a
+   * redeploy's SIGTERM, or a crash. No turn was reported for it, so the caller
+   * is the only one who can collapse the status and say something. */
+  aborted?: boolean;
 }
 
 /** A background task the CLI is still carrying — a `run_in_background` Bash,
@@ -141,14 +164,15 @@ export function assistantText(ev: StreamEvent): string {
 
 /** The result event's text is empty when the turn ended on a tool call
  * (a scheduled wake-up, a background handoff) — the words the model wrote
- * before that call are in an earlier assistant event, not in `result`. A
- * banner with no body is what the phone gets otherwise. */
+ * before that call are in an earlier assistant event, not in `result`.
+ * Empty when the turn said nothing at all; the router decides whether that
+ * deserves a message (it does not, for a wake nobody asked for). */
 export function pickResultText(
   result: string | undefined,
   lastAssistant: string,
 ): string {
   if (result?.trim()) return result;
-  return lastAssistant || "(no result text)";
+  return lastAssistant;
 }
 
 /**
@@ -306,7 +330,30 @@ function leaveWait(run: LiveRun): void {
 }
 
 // Each chat gets its own mcp config so approve-mcp knows which chat to ask.
-function mcpConfigPath(chatKey: string): string {
+/** MCP servers registered for `cwd` at PROJECT scope in ~/.claude.json.
+ *
+ * Headless runs pass --strict-mcp-config so the workspace's interactive
+ * config never leaks in wholesale; this is the deliberate exception. A server
+ * added with `claude mcp add` from a directory is a statement that runs IN
+ * that directory should have it — the trading agent's brokerage MCP being the
+ * motivating case — and its stored OAuth credential matches by server name +
+ * URL, so it authenticates identically here (verified against a live HTTP
+ * OAuth server). Project scope only: the global mcpServers block is where
+ * interactive-only servers live, and it stays out.
+ */
+function projectMcpServers(cwd: string): Record<string, unknown> {
+  try {
+    const raw = fs.readFileSync(path.join(config.home, ".claude.json"), "utf8");
+    const parsed = JSON.parse(raw) as {
+      projects?: Record<string, { mcpServers?: Record<string, unknown> }>;
+    };
+    return parsed.projects?.[path.resolve(cwd)]?.mcpServers ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function mcpConfigPath(chatKey: string, cwd?: string): string {
   const safe = chatKey.replace(/[^A-Za-z0-9]+/g, "-");
   const p = path.join(config.runtimeDir, `mcp-${safe}.json`);
   fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
@@ -314,6 +361,9 @@ function mcpConfigPath(chatKey: string): string {
     p,
     JSON.stringify({
       mcpServers: {
+        // Project servers first so the approval relay always wins the name
+        // "gw" — a project config must not be able to impersonate it.
+        ...(cwd ? projectMcpServers(cwd) : {}),
         gw: {
           command: "bun",
           args: [path.join(config.appDir, "src/approve-mcp.ts")],
@@ -331,9 +381,11 @@ export async function runClaude(
   message: string,
   contextPrefix = "",
   hooks: RunHooks = {},
+  run_?: RunOverrides,
 ): Promise<RunResult> {
   const chat: ChatState = getChat(chatKey);
   const group = isGroupChat(chatKey);
+  const cwd = run_?.cwd ?? chat.cwd;
   const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
   // stream-json both ways.
   //
@@ -356,8 +408,8 @@ export async function runClaude(
     "stream-json",
     "--verbose",
   ];
-  args.push("--model", chat.model ?? config.model);
-  args.push("--effort", chat.effort ?? config.effort);
+  args.push("--model", run_?.model ?? chat.model ?? config.model);
+  args.push("--effort", run_?.effort ?? chat.effort ?? config.effort);
   // Append rather than replace: Claude Code's own system prompt is what tells
   // it which tools exist. This only adds what it can't know — that the far end
   // is a phone, not a terminal.
@@ -365,7 +417,14 @@ export async function runClaude(
     ? `${config.systemPrompt}\n\n${config.groups.systemPrompt}`
     : config.systemPrompt;
   if (systemPrompt) args.push("--append-system-prompt", systemPrompt);
-  if (chat.sessionId) args.push("--resume", chat.sessionId);
+  // A pinned run resumes its own slot's session — or nothing, when the
+  // schedule wants a fresh one per firing — never the chat's live thread.
+  const resumeId = run_?.session
+    ? run_.fresh
+      ? undefined
+      : resumeIdForSlot(chat, run_.session)
+    : chat.sessionId;
+  if (resumeId) args.push("--resume", resumeId);
   if (group) {
     // Groups never get auto mode and never get an interactive prompt: the room
     // reads every reply, and only one member is even on the allowlist to
@@ -398,7 +457,9 @@ export async function runClaude(
       "--permission-prompt-tool",
       "mcp__gw__approve",
       "--mcp-config",
-      mcpConfigPath(chatKey),
+      // 1:1 runs also get the MCP servers registered for their cwd at project
+      // scope — see projectMcpServers. Groups stay relay-only above.
+      mcpConfigPath(chatKey, cwd),
       "--strict-mcp-config",
       "--allowedTools",
       // Still worth passing under auto: a read-only tool answered here never
@@ -419,7 +480,7 @@ export async function runClaude(
   try {
     return await new Promise<RunResult>((resolve) => {
       const child = spawn("claude", args, {
-        cwd: chat.cwd,
+        cwd,
         env: { ...process.env, HOME: config.home },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -498,7 +559,15 @@ export async function runClaude(
         // already on the PVC, we just have to remember its id.
         if (ev.session_id && ev.session_id !== sessionId) {
           sessionId = ev.session_id;
-          updateChat(chatKey, { sessionId });
+          // A pinned run's id goes to its slot; the chat's live pointer is
+          // someone else's thread. Re-fetch the chat: the user may have
+          // switched sessions since this run started.
+          if (run_?.session)
+            updateChat(
+              chatKey,
+              sessionPatchForSlot(getChat(chatKey), run_.session, sessionId),
+            );
+          else updateChat(chatKey, { sessionId });
         }
         if (ev.type === "system") {
           // The whole outstanding list, every time — assign, don't merge.
@@ -584,6 +653,7 @@ export async function runClaude(
             (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
           sessionId,
           isError: true,
+          aborted: true,
         };
         // Not before the last turn's reply has actually gone out: the caller
         // takes this as "the run is over" and starts draining the queue.
@@ -593,6 +663,27 @@ export async function runClaude(
   } finally {
     activeCount--;
     updateChat(chatKey, { inFlight: false });
+  }
+}
+
+/** Bytes of transcript a cold resume would have to rebuild into context: the
+ * session jsonl's tail after its last compact boundary. The file itself only
+ * ever grows — compaction appends a boundary rather than rewriting — so raw
+ * size overstates a compacted thread; the tail is what has to fit back into
+ * the window. 0 when the transcript doesn't exist yet. */
+export function resumableBytes(cwd: string, sessionId: string): number {
+  const p = path.join(
+    config.home,
+    ".claude/projects",
+    cwd.replace(/[/.]/g, "-"),
+    `${sessionId}.jsonl`,
+  );
+  try {
+    const text = fs.readFileSync(p, "utf8");
+    const boundary = text.lastIndexOf('"compact_boundary"');
+    return boundary < 0 ? text.length : text.length - boundary;
+  } catch {
+    return 0;
   }
 }
 

@@ -4,13 +4,22 @@ Helm chart that runs two complementary pods in the `auth` namespace:
 
 - **WebDAV** (`bytemark/webdav`) — file server that hosts your `.kdbx` and
   speaks the WebDAV protocol that every native KeePass client supports
-  (KeePassXC, KeePass2Android, Strongbox iOS). Public at
+  (KeePassXC, KeePass2Android, Strongbox iOS). At
   `webdav.zachd.duckdns.org` over HTTPS, gated by **static HTTP Basic auth**
-  with a credential set in `values.local.yaml`.
+  with a credential in 1Password (`op://homelab/auth-keepass`).
 - **KeeWeb** (`antelle/keeweb`) — browser-based KeePass UI for the "I'm on
-  a random computer and need a password" case. Public at
+  a random computer on the tailnet and need a password" case. At
   `keepass.zachd.duckdns.org`, gated by **Authelia forward-auth** (full
   OIDC + TOTP).
+
+**Neither host is on the public internet.** Both `*.zachd.duckdns.org` names
+resolve to a tailnet address, so reaching either one means being on the tailnet
+first. `keepass.diemer.codes` used to publish KeeWeb through the Cloudflare
+tunnel and was removed: Authelia in front of it was a real gate, but it made a
+browser anywhere in the world one password-plus-TOTP away from the password
+database. The vault is now behind a single boundary rather than two of
+differing strength. Anything below that reads as "public" means "reachable on
+the tailnet".
 
 The `.kdbx` file is encrypted by your KeePass master password regardless of
 which client opens it. The network-level auth in front of WebDAV is
@@ -45,8 +54,8 @@ key file on-device — do not pull it from this URL on a phone or
 desktop. The whole point of a key file is "lives somewhere different
 from the .kdbx," and an Authelia password is not that separation.
 
-To enable, base64-encode the key file and paste it into
-`values.local.yaml`:
+To enable, base64-encode the key file and put it in the 1Password item
+(`op://homelab/auth-keepass/values.local.yaml`, see [§3](#3-store-the-credential-in-1password)):
 
 ```yaml
 keeweb:
@@ -82,27 +91,24 @@ openssl rand -hex 24
 ```
 
 This is what your KeePassXC / KeePass2Android / Strongbox installs will
-use to authenticate to the WebDAV server. Save it somewhere safe —
-ideally in the KeePass database itself once it's set up.
+use to authenticate to the WebDAV server. It lives in 1Password, **not** in
+the `.kdbx` — storing it in the vault it unlocks means needing the vault to
+fetch the vault, and a laptop that has lost its local copy could not get one.
 
-### 3. Populate `values.local.yaml`
+### 3. Store the credential in 1Password
 
-```bash
-cp auth/keepass/values.local.yaml.example auth/keepass/values.local.yaml
-# Edit auth/keepass/values.local.yaml — fill in webdav.auth.username
-# and webdav.auth.password.
-```
-
-The file is gitignored (repo-root `**/values.local.yaml`).
+`values.local.yaml` is **not a file on disk** — `upgrade.sh` resolves
+`values.local.tpl.yaml` (`op://homelab/auth-keepass/values.local.yaml`) into
+memory for the life of the run via `scripts/lib/secret-values.sh`. Edit the
+item in the vault; `values.local.yaml.example` shows the shape.
 
 ---
 
 ## First install
 
 ```bash
-helm install keepass ./auth/keepass -n auth \
-  -f auth/keepass/values.yaml \
-  -f auth/keepass/values.local.yaml
+# Resolves the 1Password values into memory, then installs.
+RELEASE=keepass ./auth/keepass/upgrade.sh
 
 kubectl -n auth get pods -w
 ```
@@ -126,8 +132,9 @@ curl --user 'zachd:<webdav-password>' \
 `https://webdav.zachd.duckdns.org/passwords.kdbx`. KeePassXC will prompt
 for the WebDAV credentials.
 
-Both leave the file at `/var/lib/dav/data/passwords.kdbx` inside the pod
-(persisted on the PVC).
+Both leave the file at `/data/passwords.kdbx` inside the pod (persisted on
+the PVC). The path was `/var/lib/dav/data/` under the old bytemark image;
+hacdias serves the PVC root directly.
 
 ---
 
@@ -188,8 +195,8 @@ curl -I https://keepass.zachd.duckdns.org/
 
 The whole vault is one file: `passwords.kdbx` on the WebDAV PVC. Periodic
 copy is sufficient — the file is already master-password-encrypted. If
-you use a key file, back that up separately (it's in `values.local.yaml`
-as base64 and as a Kubernetes Secret named `keepass-keyfile`).
+you use a key file, back that up separately (it's base64 in the 1Password
+item and, once enabled, a Kubernetes Secret named `keepass-keyfile`).
 
 ```bash
 # Copy the .kdbx out via curl (uses the same WebDAV credentials)
@@ -198,12 +205,19 @@ curl --user 'zachd:<password>' \
   https://webdav.zachd.duckdns.org/passwords.kdbx
 ```
 
-Or pull it directly from the pod:
+`kubectl cp` and `kubectl exec` are **not** an option here, and no amount of
+flag-fiddling will make them one: `ghcr.io/hacdias/webdav` is built `FROM
+scratch`, so the container has no `ls`, no shell, and no `tar` for `cp` to
+pipe through. Every exec attempt fails with `executable file not found in
+$PATH`. curl over the WebDAV endpoint above is the way in; k8up (see below)
+is the way that runs without you.
+
+Automatic backups already cover this: the PVC is picked up by the weekly
+`backup-auth` k8up schedule (Fridays 02:00, `infra/k8up`), which snapshots
+`/data/keepass-webdav` into the restic repo. Verify a snapshot exists with:
 
 ```bash
-POD=$(kubectl -n auth get pod -l app.kubernetes.io/component=webdav -o name | head -1)
-kubectl -n auth cp "${POD#pod/}:/var/lib/dav/data/passwords.kdbx" \
-  "passwords-$(date -u +%Y%m%dT%H%M%SZ).kdbx"
+kubectl -n auth get snapshots | grep keepass-webdav
 ```
 
 ---

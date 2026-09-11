@@ -1,0 +1,349 @@
+image:
+  # Upstream publishes no container image, so build.sh compiles the upstream
+  # Dockerfile at `upstreamRef` (target `cloud-game`) and pushes it to the in-cluster registry as a
+  # public package. Pinned to a master COMMIT, not a release: the last tag
+  # (v3.1.1) is from 2023 and predates the GStreamer encoder, the vp8 default
+  # and the llvmpipe GL shim that this chart relies on. The image tag is
+  # "main-<short sha>" so a bump is visible in the pod spec.
+  repository: registry.zachd.duckdns.org/zdiemer/cloud-game
+  tag: "main-3c003f8"
+  upstreamRef: "3c003f8d580e8b41d8651e37fd401e02475f8ea2"
+  pullPolicy: IfNotPresent
+
+# Headless X server for the OpenGL cores (N64 is one). llvmpipe renders on the
+# CPU; Xvfb only has to exist so mupen64plus can create a GL context.
+xvfb:
+  # renovate: datasource=docker depName=kcollins/xvfb
+  image: kcollins/xvfb:latest
+  display: ":99"
+  # The framebuffer is never looked at — the core renders offscreen — so small.
+  screen: "320x240x16"
+
+service:
+  type: ClusterIP
+  port: 8000         # coordinator: web UI + user websocket
+
+# WebRTC media. Browsers connect STRAIGHT to the worker over UDP, not through
+# Traefik — a websocket signals, then audio/video/input flow peer-to-peer. So
+# this port must be reachable from wherever the players are, which rules out
+# the Cloudflare tunnel (HTTP only) and is why there is no cloudflareHosts list.
+webrtc:
+  # Pin every ICE connection to one UDP port instead of a random range, so a
+  # single Service port covers it. Exposed with klipper-lb on every node IP,
+  # exactly like minecraft/ does for 25565.
+  singlePort: 8443
+  # The IP the worker advertises in its ICE candidate. Inside the pod it only
+  # knows its 10.42.x.x address, which no browser can reach — override with an
+  # address players CAN hit. Only ONE address is allowed: upstream does
+  # SetNAT1To1IPs([]string{iceIpMap}) (pkg/network/webrtc/factory.go), not a list.
+  #
+  # THIS MUST BE A TAILNET ADDRESS, not a LAN one, and the reason is subtle.
+  # Browsers hide their real LAN IP behind an mDNS name (RFC 8828: a random
+  # "<uuid>.local" host candidate), and upstream hardcodes
+  # SetICEMulticastDNSMode(MulticastDNSModeDisabled), so pion throws every one
+  # of them away — "Remote mDNS candidate added, but mDNS is disabled". With no
+  # remote candidate the worker has NO candidate pairs and can never ping first.
+  #
+  # That leaves the browser to make the first move, which is fine — its check
+  # teaches the worker a peer-reflexive candidate and the connection forms — but
+  # ONLY if the browser can actually reach this address. retro.* resolves to a
+  # tailnet IP, so browsers gather tailnet candidates and their sockets are bound
+  # there; no peer advertises a subnet route for 192.168.4.0/22, so a LAN address
+  # here is unreachable from that socket and BOTH sides sit mute until ICE times
+  # out (the splash screen never turns into the game list).
+  #
+  # A tailnet address is reachable from LAN players (Tailscale has a direct path)
+  # and from anyone remote, and it makes the mDNS behaviour irrelevant.
+  iceIpMap: "100.84.179.82"   # zachd-ubuntu-1, same node retro.* resolves to
+  serviceType: LoadBalancer
+  externalTrafficPolicy: Cluster
+  # pion's own ICE log level: -1 trace, 0 debug, 6 nothing. Diagnosing a
+  # connection that dies at "connecting" is guesswork without this — 0 prints
+  # every candidate, why one was discarded, and the chosen pair.
+  logLevel: 6
+  # Handed to BOTH ends: the coordinator ships this list to the browser in its
+  # INIT message, and the worker gathers with it.
+  #
+  # The TURN entry is what makes ingress.cloudflareHosts usable. Media cannot
+  # cross the Cloudflare tunnel (cloudflared proxies HTTP origins; there is no
+  # inbound UDP path, and Cloudflare's UDP/TCP support needs WARP on the
+  # VIEWER's machine, which a browser tab cannot do). So internet players relay
+  # through coturn on the egress VPS instead.
+  #
+  # This does NOT slow local players down. A relay candidate is ADDITIVE and
+  # ICE ranks it last, so LAN/tailnet players keep the direct host candidate
+  # from iceIpMap above and only fall back to the relay if that fails. That is
+  # exactly why TURN is the right answer here and pointing iceIpMap at the VPS
+  # is not — iceIpMap is single-valued, so it would drag local players out to
+  # SFO3 too.
+  #
+  # coturn config lives in infra/egress-proxy/vps (TURN_RELAY=true).
+  iceServers:
+    - urls: "stun:stun.l.google.com:19302"
+    - urls: "turn:147.182.206.23:3478?transport=udp"
+      username: "cloudgame"
+      # No `credential` here on purpose — it comes from values.local.yaml as
+      # turn.credential, via the chart Secret. See templates/turn-credentials.yaml.
+      credentialSecret: true
+
+# TURN credential, resolved from 1Password into values.local.yaml at deploy
+# time (never committed). Referenced by the iceServers entry above.
+turn:
+  credential: ""
+
+# Worker-side switches, all CLOUD_GAME_* env vars (see upstream pkg/config/config.yaml).
+worker:
+  debug: false
+  # Save states are written here. Autosave every N seconds; 0 disables.
+  autosaveSec: 60
+  encoder:
+    # vp8 is cheapest on CPU; vp9 looks better at the same bitrate for more cores.
+    videoCodec: vp8
+
+coordinator:
+  debug: false
+
+# SMB share with the ROM library, mounted read-only — the same NAS share and
+# user RomM uses (games/romm). Credentials live in values.local.yaml.
+smb:
+  host: "192.168.4.36"
+  share: "games"
+  vers: "3.0"
+  mountOptions:
+    - dir_mode=0555
+    - file_mode=0444
+    - noserverino
+
+# cloud-game's library is one folder per CORE, named after the core key (nes,
+# snes, n64, gba, psx, mame, dos). The NAS is laid out per PLATFORM under Roms/.
+#
+# Ways to get a NAS folder under a core folder:
+#
+#   unzip: false — subPath-mount the NAS folder straight onto the core folder.
+#     Right for sets stored as bare files (PSX is .chd). A subPath mount cannot
+#     filter, so this shows EVERY file in the folder; add an `include` (below)
+#     to curate one of these instead.
+#   unzip: true  — the NAS set is one .zip per game, and cloud-game does NOT
+#     open zips for anything but the mame core (its extractor only serves core
+#     downloads; a "Mario Kart 64.zip" is invisible to mupen). An init container
+#     unzips the games matching `include` from the share onto the data PVC on
+#     each start, skipping ones already there, and that PVC folder is mounted
+#     as the core folder. Nothing on the share is touched.
+#
+# `include` works in both modes. With `unzip: false` the matching files are
+# COPIED onto the data PVC instead of extracted, and that folder is mounted as
+# the core folder — so raise persistence.data.size to suit (PSX .chd are
+# 100-500 MB each).
+#
+# Keep `include` curated: cloud-game lists every ROM it finds in one dropdown,
+# and the full N64 set alone is 447 games / 14 GB zipped, the PSX set 5,529
+# discs. Globs are shell patterns against the filename (No-Intro names). An
+# empty list means everything in the folder — you've been warned.
+library:
+  # HOW MANY PLAYERS A GAME CAN ACTUALLY HAVE: cloud-game runs ONE emulator
+  # instance and hands each person who opens the room link a controller port,
+  # so the ceiling is the console's port count, not the chart's. n64 gives 4,
+  # nes/snes/psx give 2 (a few titles below take more via an emulated multitap),
+  # and gba gives 1 — there is no link-cable emulation, so GBA is single-player
+  # no matter how many people join. Curated for couch multiplayer accordingly.
+  platforms:
+    # Four controller ports and the best party library of the five. This is the
+    # platform to reach for when people are actually in the room.
+    n64:
+      source: "Roms/Nintendo 64"
+      unzip: true
+      include:
+        - "Mario Kart 64 (USA)*"
+        - "Super Smash Bros. (USA)*"
+        - "Mario Party (USA)*"
+        - "Mario Party 2 (USA)*"
+        - "Mario Party 3 (USA)*"
+        - "GoldenEye 007 (USA)*"
+        - "Perfect Dark (USA)*"
+        - "Diddy Kong Racing (USA)*"
+        - "Star Fox 64 (USA)*"
+        - "Mario Tennis (USA)*"
+        - "Mario Golf (USA)*"
+        - "Bomberman 64 (USA)*"
+        - "F-Zero X (USA)*"
+        - "Wave Race 64 - Kawasaki Jet Ski (USA)*"
+        - "Pokemon Stadium 2 (USA)*"
+        - "WWF No Mercy (USA)*"
+        - "NFL Blitz (USA)*"
+        - "Micro Machines 64 Turbo (USA)*"
+        - "Super Mario 64 (USA)*"
+    # Two ports as standard. Super Bomberman 3 and NBA Jam TE go to 4 via the
+    # emulated multitap; Secret of Mana is 3-player co-op.
+    snes:
+      source: "Roms/SNES"
+      unzip: true
+      include:
+        - "Super Mario Kart (USA)*"
+        - "Super Bomberman 2 (USA)*"
+        - "Super Bomberman 3 (Europe)*"
+        - "Street Fighter II Turbo (USA)*"
+        - "Street Fighter Alpha 2 (USA)*"
+        - "Killer Instinct (USA)*"
+        - "Mortal Kombat II (USA)*"
+        - "NBA Jam - Tournament Edition (USA)*"
+        - "Kirby Super Star (USA)*"
+        - "Pocky & Rocky (USA)*"
+        - "Pocky & Rocky 2 (USA)*"
+        - "Secret of Mana (USA)*"
+        - "Zombies Ate My Neighbors (USA)*"
+        - "Contra III - The Alien Wars (USA)*"
+        - "Goof Troop (USA)*"
+        - "Legend of the Mystical Ninja, The (USA)*"
+        - "Teenage Mutant Ninja Turtles IV - Turtles in Time (USA)*"
+        - "Sunset Riders (USA)*"
+        - "Super Off Road (USA)*"
+        - "Micro Machines (USA)*"
+        # There is no standalone "Super Mario World (USA)" on the share — the
+        # only copy is inside the All-Stars compilation, which also carries
+        # SMB 1-3 and Lost Levels.
+        - "Super Mario All-Stars + Super Mario World (USA)*"
+    # Two ports; Gauntlet II takes 4 and Bomberman II 3. Note the 2-player
+    # simultaneous Tetris is the TENGEN one — Nintendo's is single-player only,
+    # kept because it is the famous one.
+    nes:
+      source: "Roms/NES"
+      unzip: true
+      include:
+        - "Contra (USA)*"
+        - "Bubble Bobble (USA)*"
+        - "Super Mario Bros. 3 (USA)*"
+        - "Tetris (USA) (Tengen)*"
+        - "Tetris (USA).*"
+        - "Gauntlet II (USA)*"
+        - "Bomberman II (USA)*"
+        - "Double Dragon II - The Revenge (USA)*"
+        - "Teenage Mutant Ninja Turtles II - The Arcade Game (USA)*"
+        - "Teenage Mutant Ninja Turtles III - The Manhattan Project (USA)*"
+        - "River City Ransom (USA)*"
+        - "Ice Climber (USA, Europe, Asia)*"
+        - "Balloon Fight (USA)*"
+        - "Jackal (USA)*"
+        - "Ivan 'Ironman' Stewart's Super Off Road (USA)*"
+        - "Super Spike V'Ball + Nintendo World Cup (USA)*"
+        - "Micro Machines (USA) (v1.1)*"
+    # .chd, so nothing to unzip — but the set is 5,529 discs, mostly Japanese
+    # demo discs and shovelware, which is unusable as a single dropdown. The
+    # `include` matches are COPIED onto the PVC — ~6 GB for the list below, so
+    # mind persistence.data.size when adding to it.
+    #
+    # Multi-disc games are deliberately absent: cloud-game has no disc-swap UI,
+    # so anything that spans discs (FF7, MGS, ...) is unfinishable here.
+    psx:
+      source: "Roms/PSX"
+      unzip: false
+      include:
+        - "CTR - Crash Team Racing (USA)*"
+        - "Crash Bash (USA)*"
+        - "Twisted Metal 2 (USA)*"
+        - "Twisted Metal 4 (USA)*"
+        - "Vigilante 8 - 2nd Offense (USA)*"
+        - "Micro Machines V3 (USA)*"
+        - "R4 - Ridge Racer Type 4 (USA)*"
+        - "Gran Turismo 2 (USA) (Arcade Mode)*"
+        - "Bomberman World (USA)*"
+        - "Bishi Bashi Special (Europe)*"
+        - "Worms World Party (USA)*"
+        - "Rampage - World Tour (USA)*"
+        - "Tekken 3 (USA)*"
+        - "Street Fighter Alpha 3 (USA)*"
+        - "Marvel vs. Capcom - Clash of Super Heroes (USA)*"
+        - "WWF SmackDown! 2 - Know Your Role (USA)*"
+        - "ISS Pro Evolution (USA)*"
+        # Single-player, but too good to leave off.
+        - "Crash Bandicoot (USA)*"
+        - "Crash Bandicoot 2 - Cortex Strikes Back (USA)*"
+        - "Spyro the Dragon (USA)*"
+        - "Castlevania - Symphony of the Night (USA)*"
+    # ONE controller port — cloud-game cannot emulate a link cable, so these are
+    # single-player only however many people join the room.
+    gba:
+      source: "Roms/Game Boy Advance"
+      unzip: true
+      include:
+        - "Pokemon - Emerald Version (USA*"
+        - "Mario Kart - Super Circuit (USA)*"
+
+# Utility image for the library staging init container. Needs sh, find, cp and
+# unzip; the cloud-game image has none of those.
+# renovate: datasource=docker depName=busybox
+stagerImage: busybox:1.37.0
+
+persistence:
+  data:
+    # Save states (emulator.storage), the auto-downloaded libretro cores, and
+    # the unzipped games. The curated lists above are a few hundred MB; raise
+    # this if you open an `include` up.
+    size: 20Gi
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+
+ingress:
+  enabled: true
+  className: traefik
+  host: retro.zachd.duckdns.org
+  # Public, Cloudflare-tunnelled host(s). ONLY the coordinator's HTTP + /ws go
+  # through the tunnel; media relays via the TURN server in webrtc.iceServers.
+  # Adding a host here without TURN configured gives a page that loads and then
+  # sits on the splash screen forever, because ICE has no reachable candidate.
+  #
+  # Each hostname also needs "No TLS Verify" ON in the Cloudflare tunnel's
+  # Public Hostname config, like every other service in this repo.
+  cloudflareHosts:
+    - retro.diemer.codes
+  tls:
+    # Only ingress.host is listed: the Cloudflare hosts terminate TLS at
+    # Cloudflare and reach Traefik on its default cert.
+    enabled: true
+
+# cloud-game has NO login of its own: anyone who reaches the coordinator can
+# pick a ROM and play, so every host needs a gate — but not the SAME gate.
+#
+# Authelia holds the tailnet host. The public (Cloudflare) host gets a single
+# shared password instead: these are friends, not accounts, and a CloudRetro
+# room is shared by design — everyone on the link drives a controller port on
+# one emulator. Per-guest identities would buy nothing and cost an Authelia
+# user each. That split is why there are two Ingresses (see templates/ingress.yaml).
+auth:
+  # Shared-password gate, applied to ingress.cloudflareHosts only. The password
+  # itself lives in values.local.yaml — rotate it there and re-run upgrade.sh.
+  basicAuth:
+    enabled: true
+    username: player
+    # Shown in the browser's password prompt, so make it say where they are.
+    realm: "retro.diemer.codes"
+    # password: comes from values.local.yaml (1Password), never committed.
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+resources:
+  coordinator:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  worker:
+    # One N64 session at 60fps with a software vp8 encode is ~2-3 cores. The
+    # 8/16-bit cores are nearly free. Requests reflect idle; the limit is what
+    # a full room gets.
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  xvfb:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi

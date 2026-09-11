@@ -1,0 +1,95 @@
+image:
+  repository: docker.io/library/registry
+  # renovate: image=docker.io/library/registry
+  tag: "3.1.1"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5000
+  # PINNED. This address is what every node's /etc/rancher/k3s/registries.yaml
+  # names as the mirror endpoint for `registry.host` (see nodeConfig below),
+  # because a node's containerd does not use cluster DNS and cannot resolve the
+  # Service name. Helm refuses to change a Service's clusterIP in place, and the
+  # nodes would all silently fall through to GitHub if it moved — so treat it
+  # as part of the contract, not a tunable.
+  clusterIP: 10.43.200.10
+
+registry:
+  # The name every image reference carries (`<host>/zdiemer/<app>:<tag>`) and
+  # the Ingress host. Pushes from a laptop or the workspace pod go here over
+  # HTTPS through Traefik; nodes never resolve it — the registries.yaml mirror
+  # short-circuits pulls to the ClusterIP over the LAN.
+  host: registry.zachd.duckdns.org
+
+  # One credential, used for both directions: containerd on every node pulls
+  # with it (registries.yaml `configs`), and ~/.docker/config.json pushes with
+  # it. Supplied from the vault (values.local.yaml → op://homelab/infra-registry);
+  # a release with an empty password refuses to render, because distribution
+  # with no htpasswd entries is a registry anyone on the LAN can push to.
+  auth:
+    username: zdiemer
+    password: ""
+
+  # `DELETE /v2/<name>/manifests/<digest>` is allowed, so a stale tag can be
+  # removed by hand. Blobs it referenced stay on disk until the garbage
+  # collector runs — see README "Reclaiming space".
+  deleteEnabled: true
+
+  # Free-form config.yml keys merged over the rendered config, for anything
+  # this chart doesn't model. https://distribution.github.io/distribution/about/configuration/
+  extraConfig: {}
+
+persistence:
+  # Every layer of every first-party image. talaria alone is three images; a
+  # rebuilt static tag (`sms-relay:v1`) leaves its old layers behind until GC.
+  # truenas-iscsi: RWO single-node attach, which pairs with the Recreate
+  # strategy — two registries on one filesystem would corrupt the blob store.
+  enabled: true
+  size: 50Gi
+  storageClass: truenas-iscsi
+  accessMode: ReadWriteOnce
+
+ingress:
+  enabled: true
+  className: traefik
+  host: registry.zachd.duckdns.org
+  # Not published on the Cloudflare tunnel: Cloudflare caps request bodies at
+  # 100MB on the free plan, and an image layer is routinely bigger.
+  cloudflareHosts: []
+  tls:
+    enabled: true
+
+# NOT behind Authelia forward-auth: every client is docker/buildkit/containerd,
+# none of which can complete an interactive login. distribution's own htpasswd
+# (basic auth on every request, including pulls) is the gate instead.
+
+# The node side of the contract. A privileged DaemonSet writes
+# /etc/rancher/k3s/registries.yaml on every node — mirror `registry.host` to
+# the ClusterIP above, plus the pull credential — and restarts k3s when, and
+# only when, the file changed. Nodes are restarted ONE AT A TIME, in name
+# order, so three control-plane restarts never overlap. A node that is off
+# today (the laptops) gets the file when it next joins, which is the reason
+# this is a DaemonSet and not a script run once.
+nodeConfig:
+  enabled: true
+  # kubectl + jq on alpine, for ordering the nodes. Deliberately from Docker
+  # Hub, not GHCR: this pod is the thing that makes the cluster survive GitHub
+  # being down, so it must not need GitHub to start.
+  image:
+    repository: docker.io/alpine/k8s
+    # renovate: image=docker.io/alpine/k8s
+    tag: "1.34.9"
+  # Seconds between one node's restart and the next node's turn.
+  stagger: 45
+  # Additional registries.yaml content merged verbatim (e.g. a second mirror).
+  extra: {}
+
+resources:
+  # A Go binary streaming blobs between disk and the network. Memory spikes
+  # only on a push of a large layer, and then briefly.
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 512Mi

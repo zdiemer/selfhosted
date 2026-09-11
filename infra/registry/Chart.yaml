@@ -1,0 +1,13 @@
+apiVersion: v2
+name: registry
+description: In-cluster OCI registry (CNCF distribution) for every first-party image, so a pod can reschedule while GitHub is down. Nodes pull over the LAN; builds push through the ingress.
+type: application
+version: 0.1.0
+# appVersion tracks the distribution image tag in values.yaml (image.tag).
+# renovate: image=docker.io/library/registry
+appVersion: "3.1.1"
+home: https://distribution.github.io/distribution/
+sources:
+  - https://github.com/distribution/distribution
+maintainers:
+  - name: zachd

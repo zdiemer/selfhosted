@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "carson.fullname" . }}
+  labels:
+    {{- include "carson.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- /*
+    Recreate, not RollingUpdate. Two pods would be two SQLite writers on one
+    RWO volume; the second would not even schedule, and the rollout would hang
+    looking like a broken image rather than a storage constraint.
+  */}}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "carson.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "carson.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the secret changes — the feed token and the SMS key
+        # are read at startup, so a rotated token would otherwise keep serving
+        # the old feed until something unrelated restarted it.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- /* One block only: two `imagePullSecrets:` keys is invalid YAML. */}}
+      {{- if or .Values.imagePullSecrets .Values.imageCredentials.pat }}
+      imagePullSecrets:
+        {{- with .Values.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.imageCredentials.pat }}
+        - name: {{ include "carson.fullname" . }}-ghcr
+        {{- end }}
+      {{- end }}
+      {{- /*
+        Kubernetes injects Docker-link-style env vars (CARSON_PORT,
+        CARSON_SERVICE_HOST, ...) for every Service in this namespace. The
+        Service is named `carson`, so CARSON_PORT lands as "tcp://IP:PORT" and
+        shadows the app's own config. Nothing here consumes those legacy vars.
+      */}}
+      enableServiceLinks: false
+      securityContext:
+        # SQLite in WAL mode writes -wal and -shm SIBLINGS of the database, so
+        # the process needs write access to the DIRECTORY, not just the file.
+        # fsGroup is what makes the mounted PVC group-writable by the image's
+        # unprivileged uid.
+        fsGroup: 10001
+      containers:
+        - name: carson
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            {{- include "carson.env" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "carson.fullname" . }}-data
+        {{- /* readOnlyRootFilesystem needs somewhere writable for tempfiles. */}}
+        - name: tmp
+          emptyDir: {}

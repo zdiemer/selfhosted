@@ -1,0 +1,35 @@
+{{/*
+config.yml for distribution, mounted over the image's default
+/etc/distribution/config.yml. Nothing secret goes in here — the htpasswd file
+is in the sibling Secret (templates/auth-htpasswd.yaml).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "registry.fullname" . }}-config
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    {{- $cfg := dict
+      "version" "0.1"
+      "log" (dict "level" "info" "fields" (dict "service" "registry"))
+      "storage" (dict
+        "filesystem" (dict "rootdirectory" "/var/lib/registry")
+        "delete" (dict "enabled" .Values.registry.deleteEnabled)
+        "maintenance" (dict "uploadpurging" (dict "enabled" true "age" "168h" "interval" "24h" "dryrun" false))
+      )
+      "http" (dict
+        "addr" (printf ":%d" (int .Values.service.port))
+        "headers" (dict "X-Content-Type-Options" (list "nosniff"))
+      )
+      "auth" (dict "htpasswd" (dict
+        "realm" .Values.registry.host
+        "path" "/etc/registry/auth/htpasswd"
+      ))
+      "health" (dict "storagedriver" (dict "enabled" true "interval" "10s" "threshold" 3))
+    }}
+    {{- range $k, $v := .Values.registry.extraConfig }}
+    {{- $_ := set $cfg $k $v }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

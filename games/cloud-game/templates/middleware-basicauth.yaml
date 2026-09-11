@@ -1,0 +1,39 @@
+{{/*
+Shared-password gate for the PUBLIC (Cloudflare) host.
+
+Authelia stays on the tailnet host. It is the wrong tool for the public one:
+these are friends, not accounts, and a CloudRetro room is shared by design —
+everyone who opens the link drives a controller port on the same emulator. A
+per-guest identity would buy nothing and cost an Authelia user each.
+
+The password lives in values.local.yaml (1Password) as plaintext and is hashed
+here. Consequence worth knowing: `htpasswd` salts randomly, so this Secret's
+contents change on every `helm upgrade` even when the password has not. That is
+cosmetic — any bcrypt hash of the same password validates, Traefik re-reads the
+Secret, and no pod restarts because nothing mounts it.
+*/}}
+{{- if .Values.auth.basicAuth.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "cloud-game.fullname" . }}-basicauth
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  users: {{ htpasswd .Values.auth.basicAuth.username (required "auth.basicAuth.password required in values.local.yaml" .Values.auth.basicAuth.password) | quote }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "cloud-game.fullname" . }}-basicauth
+  labels:
+    {{- include "cloud-game.labels" . | nindent 4 }}
+spec:
+  basicAuth:
+    secret: {{ include "cloud-game.fullname" . }}-basicauth
+    realm: {{ .Values.auth.basicAuth.realm | quote }}
+    # The coordinator has no concept of a user, so forwarding the header would
+    # only leak the shared credential to the app.
+    removeHeader: true
+{{- end }}

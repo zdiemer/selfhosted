@@ -1,0 +1,168 @@
+# laundry — a Deployment (dashboard + device ingest + metrics), a PVC holding
+# one SQLite file, a ClusterIP for the dashboard and a LoadBalancer for the
+# sensors. See README.md for the wiring and the mounting.
+
+image:
+  repository: ghcr.io/zdiemer/laundry
+  tag: "v1"
+  # Static tags, so the node must re-pull to see a rebuilt v1. IfNotPresent
+  # would serve a stale layer forever.
+  pullPolicy: Always
+
+# Only needed if the GHCR package is private. The convention in this repo is a
+# public package — the cluster is multi-node and every node pulls anonymously.
+imageCredentials:
+  registry: ghcr.io
+  username: zdiemer
+  pat: ""
+
+imagePullSecrets: []
+
+service:
+  # The dashboard + JSON API + /metrics. ClusterIP; reached only through the
+  # Traefik ingress, behind Authelia.
+  port: 8080
+  # The device plane, inside the pod. Published on the LAN by ingestService
+  # below. A separate listener rather than a path on :8080 so that the port
+  # exposed to the LAN carries exactly one route — POST /api/v1/samples — and
+  # not the dashboard or the cycle history. See src/api.py.
+  ingestPort: 8081
+
+# ---------------------------------------------------------------------------
+# How the ESP32 reaches the cluster
+# ---------------------------------------------------------------------------
+# A LoadBalancer, not an Ingress, and that is forced rather than chosen:
+# every *.zachd.duckdns.org name resolves to a TAILSCALE address and the
+# cluster advertises no subnet routes, so a device that cannot run tailscaled
+# cannot use any hostname this repo publishes. klipper-lb binds this port on
+# every node's LAN address and forwards to the pod wherever it is, so the
+# firmware points at a node IP without being pinned to that node.
+#
+# Same shape as games/ffxiv-1x and minecraft, and for the same reason: the
+# client needs an IP.
+ingestService:
+  enabled: true
+  type: LoadBalancer
+  port: 8420
+  # Restrict which LAN hosts may reach it, e.g. ["192.168.4.0/24"]. Empty means
+  # any host that can route to a node — which on this network is the same set,
+  # but tightening it costs nothing if the sensors get a static lease.
+  loadBalancerSourceRanges: []
+
+# ---------------------------------------------------------------------------
+# The machines
+# ---------------------------------------------------------------------------
+# Each `id` must match a SENSOR_n_DEVICE in the firmware's config.h. Every
+# number here is tunable with a `helm upgrade` — which is the entire reason the
+# thresholds live in the cluster and not on a board glued to an appliance.
+#
+# READ THE README BEFORE CHANGING quietSeconds. It is the one that decides
+# whether you get a text at the end of the load or in the middle of it.
+machines:
+  - id: washer
+    label: Washer
+    # Milli-g of vibration that counts as "moving". The sensor's own noise floor
+    # is ~3 mg, an idle machine reads ~2-5 mg, a running one tens to hundreds.
+    # Set it from the trace on the dashboard, not from this default.
+    thresholdMg: 20
+    # Vibration must persist this long before a cycle is real. Rejects the door
+    # slam and the load being dumped in.
+    startSeconds: 60
+    # Stillness must persist this long before the load is over. A washer's soak
+    # and drain pauses are genuine minutes of stillness IN THE MIDDLE of a
+    # cycle, and this has to be longer than the longest of them. Too low and
+    # you get a text half way through; too high and the text is merely late.
+    # Start high, lower it once the trace shows the real pauses.
+    quietSeconds: 420
+    # Shorter than this was never a load — a spin-only nudge, someone leaning
+    # on the lid. Recorded as a false start, never texted.
+    minRunSeconds: 600
+    # A gap longer than this makes the sensor untrustworthy rather than slow.
+    # Cycles stay open across it; see src/detect.py.
+    offlineSeconds: 120
+    # {label}, {duration}, {finished} and {device} are substituted.
+    message: "{label} is done — {duration} cycle, finished {finished}."
+
+  # The second unit. Uncommented when the second MPU-6050 arrives — the dryer
+  # is the easier of the two to detect (it tumbles continuously, so its pauses
+  # are shorter than a washer's soak) which is why quietSeconds is lower here.
+  # - id: dryer
+  #   label: Dryer
+  #   thresholdMg: 20
+  #   startSeconds: 60
+  #   quietSeconds: 240
+  #   minRunSeconds: 600
+  #   offlineSeconds: 120
+  #   message: "{label} is done — {duration} cycle, finished {finished}."
+
+sms:
+  # In-cluster, so this bypasses the ingress and Authelia entirely.
+  url: http://sms-relay.infra.svc.cluster.local:8000
+  # Recipient. Set in values.local.yaml — it is a phone number, not a config,
+  # and this repo is public.
+  to: ""
+
+# Local time for the "finished 3:42 PM" in the text. Without it the pod is UTC
+# and every message is off by the offset — which for a laundry text reads as
+# the machine having finished in the middle of the night.
+timeZone: America/Los_Angeles
+
+# Raw readings are kept only to draw the tuning trace. One row per machine per
+# 5 s window is ~35k rows/week/machine; the cycle log is kept forever and is
+# tiny.
+sampleRetentionDays: 7
+
+ingress:
+  # Bring the pod up internal-only first, confirm the sensors are reporting,
+  # then flip this on.
+  enabled: false
+  className: traefik
+  host: laundry.zachd.duckdns.org
+  # Deliberately empty. This is a house-occupancy side channel — the cycle log
+  # says when someone is home doing laundry — so it stays on DuckDNS behind
+  # Authelia rather than going out over the public Cloudflare tunnel.
+  cloudflareHosts: []
+  tls:
+    enabled: true
+
+auth:
+  # The dashboard has no login of its own, by design. Same arrangement as
+  # life/carson and docs/stirling-pdf.
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    # Authelia 4.38+ path.
+    autheliaPath: /api/authz/forward-auth
+
+persistence:
+  data:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    # "" => cluster default StorageClass. Must render as an ABSENT field, never
+    # as an empty string — storageClassName: "" means "no class at all" and
+    # leaves the PVC Pending forever. templates/pvc.yaml gates it with `with`.
+    storageClass: truenas-iscsi
+
+# Scraped by infra/alloy. laundry_vibration_mg over a full load is how the
+# thresholds above get chosen.
+metrics:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 10m
+    # FastAPI + SQLite, two samples every five seconds. Mostly interpreter.
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Extra env, e.g. LAUNDRY_DRY_RUN=1 to log the text instead of sending it.
+extraEnv: {}
+
+secrets:
+  # Both set in values.local.yaml — never here. See values.local.yaml.example.
+  smsApiKey: ""
+  ingestToken: ""

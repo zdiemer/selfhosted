@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# The local edit is the case the other hooks miss. post-merge/post-checkout/
+# post-rewrite all cover history arriving from somewhere else; nothing covered
+# "I just changed scripts/secrets.sh", which is exactly how the copy on PATH
+# ended up eighteen days behind. Output is gitignored (dist/secrets) and the
+# install is outside the tree, so this cannot dirty the commit it follows.
+exec "$(git rev-parse --show-toplevel)/scripts/refresh-secrets-cli.sh" --quiet

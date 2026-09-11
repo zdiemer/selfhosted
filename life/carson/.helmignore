@@ -1,0 +1,10 @@
+.DS_Store
+.git
+.gitignore
+src/
+Dockerfile
+.dockerignore
+build.sh
+*.md
+values.local.yaml
+values.local.tpl.yaml

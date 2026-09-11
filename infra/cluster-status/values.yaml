@@ -64,7 +64,7 @@ collector:
 
 web:
   # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
-  image: nginxinc/nginx-unprivileged:1.31.3-alpine
+  image: nginxinc/nginx-unprivileged:1.31.5-alpine
   # The unprivileged image listens high and runs as non-root out of the box,
   # which is what we want for anything serving HTTP, tailnet or not.
   port: 8080
@@ -403,6 +403,29 @@ catalog:
       category: Games
       namespace: discord
       service: smitele-bot-web
+    - name: Cloud Retro
+      category: Games
+      namespace: games
+      service: cloud-game
+      # Its index declares `<link rel="icon" href="data:,">` — deliberately no
+      # favicon — so the mark is seeded in brand/service-icons.
+      note: LAN/tailnet only (WebRTC)
+    - name: SMT Imagine
+      category: Games
+      namespace: games
+      service: smt-imagine
+      # The tile links the account manager (Ingress); the game itself is three
+      # raw TCP ports on the node IPs. COMP_hack serves no favicon, so the mark
+      # is seeded in brand/service-icons.
+      note: client → smt.zachd.duckdns.org:10666, tailnet only
+    - name: FFXIV 1.0
+      category: Games
+      namespace: games
+      service: ffxiv-1x
+      # No Ingress: the launcher posts to the plain web port and the lobby
+      # hands the client an IP. Garlemald serves no favicon; mark is seeded.
+      address: 100.84.179.82:54994
+      note: Garlemald Server (1.23b), tailnet only
 
     # ------------------------------------------------------------------- Home
     - name: money
@@ -501,6 +524,32 @@ catalog:
       namespace: claude-rachel
       service: rachel-workspace
       note: no ingress
+    - name: Windows 11
+      category: Dev
+      namespace: dev
+      service: guacamole
+      # The KubeVirt guest (dev/win11) is a VirtualMachine, not a workload this
+      # collector reads, so the tile's state is Guacamole's — the browser front
+      # door to it — which is also the thing a person clicks.
+      # Guacamole answers under /guacamole/, not /, so the ClusterIP root 404s
+      # and the icon has to be looked for one level down.
+      iconUrl: http://guacamole.dev.svc.cluster.local:8080/guacamole/
+      note: via Guacamole
+    - name: VM Lab
+      category: Dev
+      namespace: vmlab
+      service: vmlab
+      # The tile's health is the picker's, not any guest's. Session pods are
+      # created on demand and deleted when you close the tab, so "no VM running"
+      # is the normal state and must not read as an outage here.
+      note: short-lived VMs
+    - name: Ollama
+      category: Dev
+      namespace: ai
+      service: ollama
+      # Ollama serves no favicon — its `/` is a plain-text banner — so the mark
+      # is seeded in brand/service-icons.
+      note: local LLM API — basic auth, no UI
 
     # ------------------------------------------------------------------- Bots
     - name: Smite-le bot
@@ -559,6 +608,14 @@ catalog:
       namespace: buildkit
       service: buildkitd
       workload: buildkit
+    - name: Registry
+      category: Infrastructure
+      namespace: infra
+      service: registry
+      # distribution serves no favicon (its `/` is a bare 200), so the mark is
+      # seeded in brand/service-icons. Pulls never use the public host: every
+      # node mirrors it to the pinned ClusterIP (infra/registry README).
+      note: images; nodes pull over the LAN
     - name: Egress proxy
       category: Infrastructure
       namespace: infra

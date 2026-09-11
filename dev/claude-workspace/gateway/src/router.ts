@@ -17,11 +17,14 @@ import {
   isRunning,
   isWaiting,
   latestSessionId,
+  resumableBytes,
+  type RunOverrides,
   type RunResult,
   runClaude,
   stop,
   waitingOn,
 } from "./claude.ts";
+import { scheduleStatus, setScheduleRunner } from "./schedules.ts";
 import {
   groupRateAllows,
   groupRateResetMinutes,
@@ -29,7 +32,12 @@ import {
   recordGroupMessage,
   takeGroupContext,
 } from "./chat.ts";
-import { config, isWithinCwdRoots } from "./config.ts";
+import {
+  config,
+  describeVerbosity,
+  isWithinCwdRoots,
+  VERBOSITY_LEVELS,
+} from "./config.ts";
 import { isBashRunning, runBash, stopBash } from "./bash.ts";
 import {
   autoActive,
@@ -97,31 +105,120 @@ interface Queued {
   /** This entry is a scheduled wake-up firing, not something the person typed.
    * The run gets told so, and there is no inbound message to react to. */
   wakeup?: boolean;
+  /** Pinned cwd/session for a gateway-scheduled run — or a wake-up such a run
+   * armed. The run happens in this thread regardless of where the chat's
+   * `!use`/`!cwd` currently point. */
+  run?: RunOverrides;
+  /** Name of the gateway schedule behind this entry, for its preamble. */
+  schedName?: string;
+  /** Gateway maintenance (the auto-compact turn): no reaction, no status
+   * ticker, and the reply stays in unless it is an error. */
+  quiet?: boolean;
 }
 const queues = new Map<string, Queued[]>();
 let droppedLog = 0;
 
-// A wake-up firing is a message from the schedule, not from the person. It
-// enters the same per-chat queue an inbound message does — so it hands off to
-// a parked run exactly like a typed message would, queues behind a busy one,
-// and its reply goes out with the usual banner.
-setWakeupRunner((chatKey, prompt) => {
+function enqueueScheduled(chatKey: string, item: Queued): void {
   const queue = queues.get(chatKey) ?? [];
   if (queue.length >= config.queueDepth) {
     void sendTo(chatKey, "⚠ queue full — scheduled wake-up dropped");
     return;
   }
-  queue.push({ body: prompt, wakeup: true });
+  queue.push(item);
   queues.set(chatKey, queue);
   if (queue.length === 1 && (!isRunning(chatKey) || isWaiting(chatKey)))
     void drain(chatKey);
-});
+}
+
+// A wake-up firing is a message from the schedule, not from the person. It
+// enters the same per-chat queue an inbound message does — so it hands off to
+// a parked run exactly like a typed message would, queues behind a busy one,
+// and its reply goes out with the usual banner.
+setWakeupRunner((chatKey, wakeup) =>
+  enqueueScheduled(chatKey, {
+    body: wakeup.prompt,
+    wakeup: true,
+    run: wakeup.run,
+    schedName: wakeup.schedName,
+  }),
+);
+
+// A gateway schedule firing (values.yaml messaging.schedules). Same queue,
+// same quiet-on-empty delivery as a wake-up; what differs is that the timer
+// belongs to the gateway and the run is pinned to its own cwd and session.
+setScheduleRunner((spec, chatKey) =>
+  enqueueScheduled(chatKey, {
+    body: spec.prompt,
+    wakeup: true,
+    schedName: spec.name,
+    run: {
+      cwd: spec.cwd,
+      session: spec.session,
+      fresh: spec.fresh,
+      model: spec.model,
+      effort: spec.effort,
+    },
+  }),
+);
 
 /** What a wake-up run is told about why it is running. */
 const WAKEUP_PREAMBLE =
   "[Scheduled wake-up: this run was started by your own ScheduleWakeup call, " +
   "not by a new message from the user. The prompt below is the one you " +
   "scheduled.]";
+
+/** The marker a scheduled run writes to break its own silence. */
+const NOTIFY_MARKER_TEXT = "[[notify]]";
+const NOTIFY_MARKER = /^\s*\[\[notify\]\]\s*$/i;
+
+/** And what a gateway-scheduled run is told. The distinction matters: this
+ * run never armed anything and must not believe it owes the user an answer —
+ * a turn with nothing to report should end with no text at all.
+ *
+ * Silence is the default and speaking is the opt-in, because the instruction
+ * alone does not hold: the trading agent was told to end quiet runs with no
+ * text here, in its schedule prompt, and in its own CLAUDE.md, and still
+ * closed every hourly run with "nothing that needs you" — which is a phone
+ * notification saying there was no reason to send a phone notification. So
+ * the marker is what actually sends, and a turn that forgets it is silent. */
+function preambleFor(item: Queued): string {
+  if (!item.wakeup) return "";
+  if (!item.schedName) return WAKEUP_PREAMBLE;
+  return (
+    `[Scheduled run "${item.schedName}": started by the gateway's recurring ` +
+    "schedule, not by a message from the user. Your final text is NOT " +
+    "delivered by default — this run is silent unless it opts in. If " +
+    "something genuinely needs the user's attention, put " +
+    `${NOTIFY_MARKER_TEXT} on a line by itself in your final message and the ` +
+    "rest of that message is sent to their phone. Otherwise end your turn " +
+    "with no text. Do not write a sign-off, a summary of a routine run, or " +
+    "a note explaining that you are staying quiet: unmarked text is " +
+    "discarded, so it reaches nobody either way.]"
+  );
+}
+
+/**
+ * Split the marker off a scheduled run's reply.
+ *
+ * Same shape as the `[[send:]]` attachment marker: on its own line, taken out
+ * of the text before it goes out, so the person reads the message rather than
+ * the mechanism.
+ */
+export function takeNotifyMarker(text: string): {
+  notify: boolean;
+  text: string;
+} {
+  const kept: string[] = [];
+  let notify = false;
+  for (const line of text.split("\n")) {
+    if (NOTIFY_MARKER.test(line)) notify = true;
+    else kept.push(line);
+  }
+  return {
+    notify,
+    text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+  };
+}
 
 /** Reaction state machine on the sender's own message. Both networks replace a
  * previous reaction from the same account, so each call is the whole update. */
@@ -144,6 +241,23 @@ const statuses = new Map<string, Status>();
  * answers the build, not the phone, and there is nothing there to react to.
  */
 const deliveryRefs = new Map<string, MsgRef | undefined>();
+/** A person's message is waiting on the next turn's reply. Off for gateway
+ * wake-ups and the CLI's own resumptions, whose turns may say nothing. */
+const awaitingReply = new Map<string, boolean>();
+
+/** Chats whose NEXT turn is gateway maintenance (a quiet `/compact`), set at
+ * dispatch and consumed by onTurn. A set rather than a field on the run: a
+ * hand-off lands in a run whose onTurn closed over some earlier message's
+ * item, so the flag has to travel outside the closure. */
+const quietTurn = new Set<string>();
+
+/** Chats whose current run came from a gateway schedule, by schedule name.
+ * Its turns are silent unless they carry the notify marker. Set at dispatch
+ * and cleared when the run ends rather than consumed per-turn: a scheduled
+ * run that chains a ScheduleWakeup is still the schedule talking, and every
+ * turn of it owes the same silence. A person who messages mid-run is not
+ * caught by this — their turn is guarded by awaitingReply, not by this map. */
+const scheduledRuns = new Map<string, string>();
 
 export function activeStatus(chatKey: string): Status | undefined {
   return statuses.get(chatKey);
@@ -353,15 +467,25 @@ async function drain(chatKey: string): Promise<void> {
   // ending this one and killing the tasks with it.
   if (isWaiting(chatKey)) {
     const item = queue[0];
+    // A pinned run is never handed to a parked one: the parked run is some
+    // other thread's context (or last firing's session), and injecting a
+    // scheduled prompt there is exactly the cross-thread leak pinning exists
+    // to prevent. Wait the park out and try again.
+    if (item.run) {
+      setTimeout(() => void drain(chatKey), 60_000);
+      return;
+    }
     const handOffPreamble = [
-      item.wakeup ? WAKEUP_PREAMBLE : "",
+      preambleFor(item),
       attachmentPreamble(item.files ?? []),
     ]
       .filter(Boolean)
       .join("\n\n");
     if (handOff(chatKey, item.body || NO_CAPTION, handOffPreamble)) {
       queue.shift();
+      if (item.quiet) quietTurn.add(chatKey);
       deliveryRefs.set(chatKey, item.ref);
+      awaitingReply.set(chatKey, !item.wakeup && !item.quiet);
       react(chatKey, item.ref, config.reactions.working);
       // The parked run's onTurn below delivers this reply; there is no second
       // run to start and nothing here to await.
@@ -379,7 +503,8 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
-  const { body: message, ref, files, wakeup } = queue.shift()!;
+  const item = queue.shift()!;
+  const { body: message, ref, files, wakeup, run: runOverrides } = item;
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -387,12 +512,30 @@ async function drain(chatKey: string): Promise<void> {
     await sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again");
   }
   react(chatKey, ref, config.reactions.working);
+  if (item.quiet) quietTurn.add(chatKey);
   deliveryRefs.set(chatKey, ref);
+  awaitingReply.set(chatKey, !wakeup && !item.quiet);
+  if (item.schedName) scheduledRuns.set(chatKey, item.schedName);
+  else scheduledRuns.delete(chatKey);
   const group = isGroupChat(chatKey);
+  // What this run resumes, if anything. A "Prompt is too long" coming back on
+  // a resume means THAT thread can no longer be rebuilt — not that this
+  // message was too big — and is recoverable by starting over. Pinned runs
+  // manage their own slots and sit this out.
+  const resumingId = runOverrides ? undefined : getChat(chatKey).sessionId;
+  let retryFresh = false;
   // No status message in a group: the room did not ask to watch the bot's tool
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
-  // is very little to watch.
-  let status = group ? undefined : createStatus(chatKey);
+  // is very little to watch. None for maintenance either — a ticker would
+  // make the quiet turn loud.
+  //
+  // And none for a gateway schedule. Its text is held back unless it opts in
+  // with the notify marker, but the status message never was — so a silent
+  // hourly run still lit the phone with "⏺ working…" and then a "✓ done"
+  // receipt under it, which is the notification the silence exists to avoid.
+  // A schedule that has something to say says it in the reply.
+  let status =
+    group || item.quiet || item.schedName ? undefined : createStatus(chatKey);
   if (status) {
     statuses.set(chatKey, status);
     await status.begin();
@@ -401,13 +544,13 @@ async function drain(chatKey: string): Promise<void> {
     // The attachment preamble goes in front of the group context, so the
     // files are the first thing the run reads about.
     const preamble = [
-      wakeup ? WAKEUP_PREAMBLE : "",
+      preambleFor(item),
       attachmentPreamble(files ?? []),
       group ? takeGroupContext(chatKey) : "",
     ]
       .filter(Boolean)
       .join("\n\n");
-    await runClaude(chatKey, message || NO_CAPTION, preamble, {
+    const final = await runClaude(chatKey, message || NO_CAPTION, preamble, {
       onEvent: (ev) => {
         // A new turn on a run that already answered once — the CLI woke itself
         // for a finished background task, or was handed a second message. The
@@ -415,6 +558,7 @@ async function drain(chatKey: string): Promise<void> {
         // continuation needs a live one of its own, below the reply.
         if (
           !group &&
+          !quietTurn.has(chatKey) &&
           ev.type === "system" &&
           ev.subtype === "init" &&
           status &&
@@ -426,13 +570,43 @@ async function drain(chatKey: string): Promise<void> {
         }
         status?.onEvent(ev);
       },
-      onTurn: async (result, _turn, pending) => {
+      onTurn: async (result, turn, pending) => {
+        // A resumed thread answering "Prompt is too long" is dead: by the
+        // time this text comes back the CLI's own rescue (auto-compact,
+        // retry) has already failed, and nothing said to the thread can ever
+        // land again. Trade the history for a working chat — drop the
+        // pointer, say so, and run the message again from nothing (the
+        // unshift after the run). Once by construction: the retry resumes no
+        // session, so it cannot take this branch.
+        if (
+          resumingId &&
+          turn === 1 &&
+          result.isError &&
+          /prompt is too long/i.test(result.text)
+        ) {
+          retryFresh = true;
+          updateChat(chatKey, { sessionId: undefined });
+          await sendTo(
+            chatKey,
+            "⚠ this thread outgrew the context window and can't be resumed " +
+              `— starting it fresh (old transcript kept: ${resumingId.slice(0, 8)})`,
+          );
+          return;
+        }
         // The turn's own wake-up request, applied before its reply goes out so
         // "next check at …" in the text is true by the time it is read. Only
         // what THIS turn asked for (WakeupTracker.take) — arming is not
         // re-affirmed turn to turn, so a spent wake-up can't come back.
         if (result.wakeup === "stop") cancelWakeup(chatKey);
-        else if (result.wakeup) armWakeup(chatKey, result.wakeup);
+        // A pinned run's wake-up inherits the pin (resuming, not fresh — the
+        // follow-up continues the session that asked for it), so an intraday
+        // "check back in an hour" lands in the schedule's own thread.
+        else if (result.wakeup)
+          armWakeup(chatKey, {
+            ...result.wakeup,
+            run: runOverrides && { ...runOverrides, fresh: false },
+            schedName: item.schedName,
+          });
         // Collapse the status before the answer lands, so the thread reads
         // status-receipt-then-answer rather than answer-then-a-stale-"working…".
         // The receipt says what is still outstanding, which is the difference
@@ -441,7 +615,43 @@ async function drain(chatKey: string): Promise<void> {
           !result.isError,
           pending.length ? `⏳ ${describeTasks(pending)}` : "",
         );
-        await deliver(chatKey, result, group);
+        // Every turn grows the transcript — wake-ups and hand-offs to parked
+        // children most of all, since those are the runs that live for hours.
+        // Checked before the quiet-turn return below, so a compact that
+        // didn't help (or made things worse) is seen too.
+        if (!group && !runOverrides) transcriptHealth(chatKey);
+        // The maintenance turn's reply is bookkeeping, not conversation. Its
+        // receipt is the health notice already sent; only a failure speaks.
+        if (quietTurn.delete(chatKey) && !result.isError) return;
+        // A turn with no words and nobody waiting on it — the CLI resuming
+        // after a stale task notification ("continue from where you left
+        // off") and finding nothing to say — gets no message. A bare banner
+        // reading "(no result text)" is noise on a phone. A turn that answers
+        // a real message still goes out, so silence never eats a reply.
+        const unprompted = !awaitingReply.get(chatKey);
+        awaitingReply.set(chatKey, false);
+        if (!result.text && !result.isError && unprompted) return;
+        // A gateway schedule fires on a clock, not because anyone asked, so
+        // its text ships only when it says so with the marker. An error still
+        // speaks: a run that crashed cannot be trusted to have opted in, and
+        // the whole point of the schedule is that a failure is not silent.
+        const sched = scheduledRuns.get(chatKey);
+        let delivered = result;
+        if (sched && unprompted && !result.isError) {
+          const marked = takeNotifyMarker(result.text);
+          // Marker with nothing after it is silence too — "(no result text)"
+          // under a banner is the notification with the news taken out.
+          if (!marked.notify || !marked.text) {
+            if (result.text)
+              console.log(
+                `schedule ${sched}: held back ${result.text.length} chars ` +
+                  `from ${chatKey} (${marked.notify ? "marker, no text" : "unmarked"})`,
+              );
+            return;
+          }
+          delivered = { ...result, text: marked.text };
+        }
+        await deliver(chatKey, delivered, group, runOverrides);
         // If this turn parked the run and something is queued behind it, the
         // park is a chance to answer it — handleInbound only kicks drain for
         // the first message, so a second one that arrived during the last park
@@ -467,7 +677,19 @@ async function drain(chatKey: string): Promise<void> {
             " — it was stopped, not finished. Ask again to pick it back up.",
         );
       },
-    });
+    }, runOverrides);
+    // A run that died mid-turn never reached onTurn, so nothing above has
+    // collapsed its status. Left alone, the ticker keeps editing and rolling
+    // "working…" messages for a process that is gone — which is what made a
+    // !stop look like a run that wouldn't die.
+    if (status?.active) await status.finish(false, final.aborted ? "stopped" : "");
+    // And nothing has answered the message that started it. Say how it ended,
+    // so the thread doesn't just go quiet (the old "claude exited 143").
+    if (final.aborted) await deliver(chatKey, final, group, runOverrides);
+    // The dead-resume retry: the pointer is already cleared and the user
+    // told, so put the message back at the head and let the finally's drain
+    // run it again — this time with no session to resume.
+    if (retryFresh) queue.unshift(item);
   } catch (err) {
     await status?.replace(`⚠ gateway error`);
     // Whatever this run still owes a reaction to. Undefined once a turn has
@@ -477,8 +699,52 @@ async function drain(chatKey: string): Promise<void> {
   } finally {
     statuses.delete(chatKey);
     deliveryRefs.delete(chatKey);
+    scheduledRuns.delete(chatKey);
+    // A quiet flag whose turn never ran (child died first) must not survive
+    // to swallow some later, real reply.
+    quietTurn.delete(chatKey);
     if (queue.length) void drain(chatKey);
   }
+}
+
+// Transcript health: compact before a thread outgrows what a cold resume can
+// rebuild, and once it is past saving, say so while there is still time to
+// wrap up. The cooldown is in-memory rather than persisted — after a restart
+// the worst case is one repeated nudge.
+const nudgedAt = new Map<string, number>();
+const NUDGE_COOLDOWN_MS = 10 * 60_000;
+
+function transcriptHealth(chatKey: string): void {
+  const chat = getChat(chatKey);
+  if (!chat.sessionId) return;
+  const bytes = resumableBytes(chat.cwd, chat.sessionId);
+  const { compactBytes, capBytes } = config.transcript;
+  if (bytes < capBytes && (!compactBytes || bytes < compactBytes)) return;
+  const last = nudgedAt.get(chatKey) ?? 0;
+  if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
+  nudgedAt.set(chatKey, Date.now());
+  const mb = (bytes / 1048576).toFixed(1);
+  if (bytes >= capBytes) {
+    // Too big even for /compact — the compaction request itself would no
+    // longer fit. The thread keeps working while its child is alive; the
+    // first cold resume is what dies (and now recovers by starting over, see
+    // runQueued). Say so while wrapping up is still an option.
+    void sendTo(
+      chatKey,
+      `⚠ this thread's transcript (~${mb}MB) is past compacting — once the ` +
+        "current run ends it can't be resumed, and the next message will " +
+        "start fresh. Wrap up what matters now, or !clear at a good break.",
+    );
+    return;
+  }
+  // Still rescuable: a quiet /compact through the ordinary queue, so it hands
+  // off to a parked child (trimming the live thread, where the bloat actually
+  // accumulates) or spawns a short resume of its own.
+  void sendTo(
+    chatKey,
+    `⚙ thread transcript is ~${mb}MB — compacting in the background to keep it resumable`,
+  );
+  enqueueScheduled(chatKey, { body: "/compact", quiet: true });
 }
 
 /**
@@ -493,6 +759,7 @@ async function deliver(
   chatKey: string,
   result: RunResult,
   group: boolean,
+  run?: RunOverrides,
 ): Promise<void> {
   const ref = deliveryRefs.get(chatKey);
   if (ref !== undefined) {
@@ -511,20 +778,23 @@ async function deliver(
   // Only a 1:1 honours a send marker. In a group the members are not on the
   // personal allowlist and claude has no filesystem there anyway — but the
   // marker is parsed from text, and text is the one thing a room can steer.
+  const text = result.text || "(no result text)";
   const outbound =
     config.attachments.enabled && !group
-      ? extractSendMarkers(result.text)
-      : { text: result.text, files: [], problems: [] };
+      ? extractSendMarkers(text)
+      : { text, files: [], problems: [] };
 
   if (group) {
     await sendReply(chatKey, `${result.isError ? "⚠ " : ""}${outbound.text}`);
   } else {
     const chat = getChat(chatKey);
+    // A pinned run's banner names ITS thread — cwd, session slot, and the
+    // session id the run actually produced — not wherever the chat points.
     const prefix = replyPrefix(
-      chat.cwd,
-      chat.sessionId,
+      run?.cwd ?? chat.cwd,
+      run ? result.sessionId : chat.sessionId,
       chatMode(chatKey),
-      sessionName(chat),
+      run?.session ?? sessionName(chat),
     );
     await sendReply(
       chatKey,
@@ -621,12 +891,27 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           : "send your 6-digit code as its own message",
       );
     case "!new":
-    case "!clear":
+    case "!clear": {
       // Drops the session pointer, so the next message starts a run with no
       // history. The old transcript stays on the PVC under ~/.claude — this
       // forgets it, it doesn't delete it, and `!resume <id>` can still reach it.
+      //
+      // A live run dies with the pointer. Left alone, a parked child
+      // resurrects the thread — drain() hands the next message to it, full
+      // old context — and the clear lands one message late, on the reply that
+      // needed that context. A pending wake-up goes too: fired after a clear
+      // it would land in a fresh thread with nothing behind its prompt.
+      const killed = [
+        stop(chatKey) ? "stopped its run" : "",
+        cancelWakeup(chatKey) ? "cancelled its wake-up" : "",
+      ].filter(Boolean);
       updateChat(chatKey, { sessionId: undefined });
-      return sendTo(chatKey, "✓ history cleared — next message starts fresh");
+      return sendTo(
+        chatKey,
+        `✓ history cleared${killed.length ? ` (${killed.join(", ")})` : ""}` +
+          " — next message starts fresh",
+      );
+    }
     case "!model": {
       if (!arg)
         return sendTo(
@@ -657,6 +942,37 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         return sendTo(chatKey, `usage: !effort ${EFFORT_LEVELS.join("|")}`);
       updateChat(chatKey, { effort: arg });
       return sendTo(chatKey, `✓ effort ${arg}`);
+    }
+    case "!verbose":
+    case "!verbosity": {
+      // How much of the run you want to watch. Takes effect on the next
+      // message: the status message of a run already going was paced when it
+      // was sent, and re-pacing it mid-run would spend its edit budget faster
+      // than the message it is written on can afford.
+      const current = chat.verbosity ?? config.progress.verbosity;
+      const usage = `usage: !verbose ${VERBOSITY_LEVELS.join("|")}|default`;
+      if (!arg)
+        return sendTo(
+          chatKey,
+          `verbosity: ${current} — ${describeVerbosity(current)} ` +
+            `(default ${config.progress.verbosity})\n` +
+            usage,
+        );
+      if (arg === "default") {
+        updateChat(chatKey, { verbosity: undefined });
+        return sendTo(
+          chatKey,
+          `✓ verbosity back to default (${config.progress.verbosity} — ` +
+            `${describeVerbosity(config.progress.verbosity)})`,
+        );
+      }
+      if (!VERBOSITY_LEVELS.includes(arg)) return sendTo(chatKey, usage);
+      updateChat(chatKey, { verbosity: arg });
+      return sendTo(
+        chatKey,
+        `✓ verbosity ${arg} — ${describeVerbosity(arg)} ` +
+          `(applies to the next message)`,
+      );
     }
     case "!resume": {
       const id = arg || latestSessionId(chat.cwd);
@@ -813,9 +1129,17 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           ...(wake
             ? [`wake-up: in ${formatDuration(wake.at - Date.now())} (!stop cancels)`]
             : []),
+          ...scheduleStatus().map(
+            (s) =>
+              `schedule ${s.name}: ` +
+              (s.next ? `next in ${formatDuration(s.next.getTime() - Date.now())}` : "never"),
+          ),
           `cwd: ${chat.cwd}`,
           `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
           `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
+          `verbosity: ${chat.verbosity ?? config.progress.verbosity} (${describeVerbosity(
+            chat.verbosity ?? config.progress.verbosity,
+          )})`,
           isGroupChat(chatKey)
             ? `group: tools limited to ${config.groups.allowedTools}`
             : `mode: ${chatMode(chatKey) || "prompt on mutations"}`,
@@ -841,6 +1165,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
           "!auto takes a duration too: !auto 30m, !auto 2h\n" +
+          `!verbose ${VERBOSITY_LEVELS.join("|")} — how often the status ` +
+          "message redraws while a run is going (quiet sends none)\n" +
           "!more shows the rest of a reply that was cut short\n" +
           "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +

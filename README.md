@@ -1,7 +1,20 @@
+<div align="center">
+
+<img src="docs/banner.png" alt="selfhosted" width="100%">
+
+[![lint](https://img.shields.io/github/actions/workflow/status/zdiemer/selfhosted/lint.yml?style=flat-square&label=lint)](https://github.com/zdiemer/selfhosted/actions/workflows/lint.yml)
+![License](https://img.shields.io/github/license/zdiemer/selfhosted?style=flat-square)
+![k3s](https://img.shields.io/badge/k3s-9_nodes-FFC61C?style=flat-square&logo=k3s&logoColor=black)
+![Helm](https://img.shields.io/badge/Helm-53_charts-0F1689?style=flat-square&logo=helm&logoColor=white)
+![Traefik](https://img.shields.io/badge/Traefik-single_ingress-24A1C1?style=flat-square&logo=traefikproxy&logoColor=white)
+![Renovate](https://img.shields.io/badge/Renovate-enabled-1A1F6C?style=flat-square&logo=renovate&logoColor=white)
+
+</div>
+
 # selfhosted
 
 Helm charts and install scripts for the services running on my home k3s
-cluster (7 nodes: 3 control-plane, 4 workers). External exposure goes
+cluster (9 nodes: 3 control-plane, 6 workers). External exposure goes
 through [`infra/traefik/`](infra/traefik/) — the single ingress choke point,
 its ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard cert
 (no cert-manager involved), and its access log — with the DuckDNS side of
@@ -32,6 +45,22 @@ the recorded pins after every pull, checkout and rebase
 backwards or to a commit GitHub has never seen (`.githooks/pre-commit`). The
 pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
 
+## What that looks like
+
+<p align="center">
+  <img src="docs/shots/nodes.png" alt="kubectl get nodes" width="88%">
+</p>
+
+Every chart in this repo, deployed:
+
+<p align="center">
+  <img src="docs/shots/releases.png" alt="helm list -A" width="94%">
+</p>
+
+Real command output, not mockups —
+[`docs/capture/termshot.py`](docs/capture/termshot.py) runs the command, parses
+the ANSI it prints, and paints it into the window above.
+
 ## Projects
 
 | Folder | What it is | Docs |
@@ -41,7 +70,10 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
 | [`minecraft/claude-mod/`](minecraft/claude-mod/) | Tiny server-side Fabric mod that registers `/claude <prompt>` via Brigadier and prints a recognizable line for `claude-bridge` to pick up. Sideloaded into the PVC via `install.sh`. | [minecraft/claude-mod/README](minecraft/claude-mod/README.md) |
 | [`discord/vocard/`](discord/vocard/) | Vocard music bot + Lavalink + MongoDB — slash-command music player for voice channels. Bot-only (no dashboard). | [discord/vocard/README](discord/vocard/README.md) |
 | [`discord/smitele-bot/`](discord/smitele-bot/) → **submodule** | Smite-le — a Wordle-shaped Smite guessing game bot, plus the daily Hi-Rez match data collector that was previously a Windows Task Scheduler job. The corpus lives on an SMB share from the NAS (ReadWriteMany: the CronJob writes it, the bot reads it); the bot's own caches sit on a small PVC. Chart + source live in [zdiemer/smitele-bot](https://github.com/zdiemer/smitele-bot). | [zdiemer/smitele-bot README](https://github.com/zdiemer/smitele-bot#readme) |
+| [`games/cloud-game/`](games/cloud-game/) | CloudRetro — server-side libretro emulation (NES/SNES/GBA/N64/PS1) streamed to the browser over WebRTC; shared room links give each friend a controller. Curated ROMs unzipped from the NAS share. LAN/tailnet only (UDP). | [games/cloud-game/README](games/cloud-game/README.md) |
 | [`games/romm/`](games/romm/) | RomM — self-hosted ROM manager + in-browser EmulatorJS player, library mounted read-only over SMB from the NAS. | [games/romm/README](games/romm/README.md) |
+| [`games/smt-imagine/`](games/smt-imagine/) | Shin Megami Tensei IMAGINE — the 2007 MMO, shut down 2016, back as a solo server: COMP_hack 4.12.2 (lobby/world/channel in one pod, SQLite) built from the last surviving source tarball, since upstream's GitHub org is empty. Client data staged onto a PVC from a ReIMAGINE client, never in git. Three game ports on the node IPs like Minecraft; account manager behind Authelia at `smt.zachd.duckdns.org`. Tailnet only. | [games/smt-imagine/README](games/smt-imagine/README.md) |
+| [`games/ffxiv-1x/`](games/ffxiv-1x/) | FINAL FANTASY XIV 1.23b — the original 2010 game, erased by A Realm Reborn — as a private server: Garlemald Server (the Rust port of Project Meteor), four binaries on one SQLite file, built from upstream git at a pinned commit. Three game ports on the node IPs, no Ingress: the client needs an IP. 75 of 524 quests scripted upstream; `CONTENT.md` is the inventory. Tailnet only. | [games/ffxiv-1x/README](games/ffxiv-1x/README.md) |
 | [`games/gamedex/`](games/gamedex/) → **submodule** | Gamedex — searchable browser for the Games Master List spreadsheet, mirrored live from a Dropbox shared link. Faceted search, no auth, PII columns stripped. Chart + source live in [zdiemer/gamedex](https://github.com/zdiemer/gamedex); the pin here is the deployed commit. | [zdiemer/gamedex README](https://github.com/zdiemer/gamedex#readme) |
 | [`finance/money/`](finance/money/) → **submodule** | money — self-hosted personal finance dashboard: a Monte Carlo retirement/FI planning engine, interactive scenarios, and an auto-syncing monthly net-worth tracker (SimpleFIN + real home/vehicle valuations + collectibles). Gated behind Authelia at `money.zachd.duckdns.org`; single user, DuckDNS-only, personal numbers never committed to the (public) image. | [zdiemer/money README](https://github.com/zdiemer/money#readme) |
 | [`media/jellyfin/`](media/jellyfin/) | Jellyfin — media server for `/mnt/vault/media` (NFS, read-only), VAAPI transcode pinned to the one node with a GPU. Not behind Authelia (TV/phone apps need the raw API); LAN NodePort `:30096` for smart TVs. | [media/jellyfin/README](media/jellyfin/README.md) |
@@ -57,7 +89,9 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
 | [`web/talaria/`](web/talaria/) → **submodule** | talaria — auction watch platform (search, tracking, listing alerts): a Python backend, scrapers, and a frontend, with Postgres, Elasticsearch, Redis and Logstash in its own chart at `helm/talaria/`. The biggest thing on the cluster, and the only one whose secrets are sops-encrypted in-git rather than in a `values.local.yaml`. Chart + source live in [zdiemer/talaria](https://github.com/zdiemer/talaria). | [zdiemer/talaria README](https://github.com/zdiemer/talaria#readme) |
 | [`web/talaria-deals/`](web/talaria-deals/) | talaria.deals — a single Ingress publishing the sibling `talaria` project's existing service through the shared Cloudflare tunnel. Lives here rather than in talaria's chart because that chart is in another repo; additive, so talaria keeps answering on DuckDNS. | [web/talaria-deals/README](web/talaria-deals/README.md) |
 | [`web/apartment-watch/`](web/apartment-watch/) → **deprecated** | SF rental scraper → SMS, retired 2026-08-13 when the flat search it served ended. A CronJob scraped Craigslist and Dahlia (plain HTTP) plus Zumper/Apartments.com/Zillow (Camoufox, to clear Akamai and PerimeterX), filtered on rent/laundry/parking/neighborhood with a scored scam filter, texted new matches through `infra/sms-relay`, and served the run pages at `homes.diemer.codes`. Uninstalled from the cluster; the chart and source stay here as the worked example for `infra/egress-proxy`'s browser tier and for private-GHCR image pulls. | [web/apartment-watch/README](web/apartment-watch/README.md) |
-| [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/webdav/keepass/docs/pdf/games/romm) and `talaria.deals` through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. One tunnel, any number of zones. | [infra/cloudflared/README](infra/cloudflared/README.md) |
+| [`life/laundry/`](life/laundry/) | Laundry-done detector. An ESP32 + MPU-6050 stuck to the washer measures vibration and posts it every 5 s; the cluster runs the state machine and texts through `infra/sms-relay` when a load finishes. The device decides nothing on purpose — thresholds have to be tunable by `helm upgrade`, because by the time you know the right one the sensor is glued to the back of an appliance. Sensors reach the cluster over a LoadBalancer on the node IPs: every DuckDNS name here resolves to a Tailscale address and a microcontroller can't run tailscaled. Quiet is only ever counted from readings that arrived, so a dropped wifi link delays a text but can never fake one. | [life/laundry/README](life/laundry/README.md) |
+| [`infra/actions-runner/`](infra/actions-runner/) | Self-hosted GitHub Actions runners (ARC) for the private repos only — one scale set per repo, scale-to-zero, dind sidecar for image builds. `runs-on: arc`. Private repos are the only ones GitHub meters, and the only ones that should ever run on our hardware. | [infra/actions-runner/README](infra/actions-runner/README.md) |
+| [`infra/cloudflared/`](infra/cloudflared/) | Shared, domain-agnostic Cloudflare Tunnel connector. Publishes services on `diemer.codes` (auth/pdf/games/romm/old/smite) and `talaria.deals` through Traefik over an outbound-only tunnel; each app also keeps its DuckDNS ingress via an `ingress.cloudflareHosts` list. One tunnel, any number of zones. | [infra/cloudflared/README](infra/cloudflared/README.md) |
 | [`infra/traefik/`](infra/traefik/) | **Load-bearing for the whole cluster.** The Traefik config overlay: the `duckdns` ACME DNS-01 certresolver every ingress here names, the http→https redirect, the `Recreate` rollout, and JSON access logging. Doesn't install Traefik — k3s does — but every change is a cluster-wide ingress outage. Split out of `infra/duckdns`. | [infra/traefik/README](infra/traefik/README.md) |
 | [`infra/duckdns/`](infra/duckdns/) | **Load-bearing for the whole cluster.** Keeps `zachd.duckdns.org` pointed at the house (updater CronJob) and owns the DuckDNS token that Traefik's certresolver reads — copied into `kube-system` because a `secretKeyRef` can't cross namespaces. Moved out of the sibling `talaria` project. | [infra/duckdns/README](infra/duckdns/README.md) |
 | [`infra/alloy/`](infra/alloy/) | The telemetry pipeline. **Two releases from one directory:** a DaemonSet shipping logs (Traefik access log, cloudflared, Authelia, CrowdSec detections, the egress proxy, plus pods labelled from their own `ingress.enabled`) and nine Prometheus scrape jobs, and a one-replica Deployment running blackbox probes of the public hostnames. Values-only against the upstream chart; no PVC, so nothing is pinned to a node. Every target is filtered to the local node so each is handled exactly once — which is why the DaemonSet must tolerate every taint. | [infra/alloy/README](infra/alloy/README.md) |
@@ -66,6 +100,7 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
 | [`infra/kube-state-metrics/`](infra/kube-state-metrics/) | Kubernetes object state as metrics: CronJob last-success, backup freshness, PVC fill denominators, pod restarts, CrashLoop reasons. Unfiltered it is ~15–20k series against a 10k free tier, so the collector and metric allowlists are the whole design — `upgrade.sh` fails the deploy above 3k. | [infra/kube-state-metrics/README](infra/kube-state-metrics/README.md) |
 | [`infra/ingress-policy/`](infra/ingress-policy/) | **Load-bearing for the whole cluster.** A `ValidatingAdmissionPolicy` requiring every Ingress in every namespace to name `ingressClassName: traefik`, pin `router.entrypoints: websecure`, and either name a certresolver or declare that TLS ends at the Cloudflare edge. No pods — the API server evaluates it. Exists because tenants from other repos (whatnowgg, talaria, money) can't see this repo's conventions. Advisory (`Warn`) until the warnings go quiet. | [infra/ingress-policy/README](infra/ingress-policy/README.md) |
 | [`infra/cluster-status/`](infra/cluster-status/) | **Tailnet-only** dashboard at `status.zachd.duckdns.org`. Opens on a **catalog** of every service in the house as a grid of favicon tiles, each linking to its *public* address where it has one (Cloudflare tunnel or VPS relay) and its DuckDNS name where that is the only way in — favicons fetched by the collector from each ClusterIP, so a service behind Authelia still gets its own mark. Below it: nodes, CPU/RAM/disk broken down pods-vs-k3s-vs-system, pod tables, deployment health, warnings. A read-only collector sidecar writes JSON; nginx serves it as a static page, so traffic never touches the k8s API. Was public at `status.diemer.codes` until the page's *content* — node names, pod inventory, raw event text — was weighed rather than just its API safety. Ported from talaria's authed `/admin/cluster`. | [infra/cluster-status/README](infra/cluster-status/README.md) |
+| [`infra/hatch/`](infra/hatch/) | **Tailnet-only** REST/JSON cluster API at `hatch.zachd.duckdns.org`, for an external AI agent that has no kubeconfig and no vault session. The other half of the story `infra/cluster-status` tells: that one renders the cluster for a human, this one answers questions about it for a machine, and it proxies the same collector rather than scraping again — which is why it needs no `nodes/proxy`. Bearer key with `read`/`act` scopes, checked in constant time; pod logs and remediations are each bounded by a deny-list, and a refusal names the rule that matched rather than returning a bare 403. Actions (`rollout restart`, delete a pod, scale) ship **off**, and their RBAC is not rendered until they are on. Every mutation, denial and log read is one JSON line to Loki. No tailnet `ipAllowList`: klipper-lb SNATs the source before Traefik sees it, so the gate is DNS plus the key. | [infra/hatch/README](infra/hatch/README.md) |
 | [`infra/ntfy/`](infra/ntfy/) | ntfy — push notifications at `ntfy.zachd.duckdns.org`. The cheap tier next to `infra/sms-relay`: unlimited, structured (title/priority/tap-through/attachment), per-topic, for everything that doesn't need to arrive as a real text message. Deliberately **not** behind Authelia — every client is an API client — so the gate is ntfy's own deny-all ACL, with a write-only `alerts` publisher and an admin subscriber seeded from the vault on every start. | [infra/ntfy/README](infra/ntfy/README.md) |
 | [`infra/priority-classes/`](infra/priority-classes/) | **Load-bearing for the whole cluster.** The three cluster-wide scheduling priorities, including the `platform-app` globalDefault that every pod here inherits without naming it. Pure policy, no workload. Moved out of talaria. | [infra/priority-classes/README](infra/priority-classes/README.md) |
 | [`infra/renovate/`](infra/renovate/) | Self-hosted Renovate as a weekly CronJob — opens version-bump PRs across the zdiemer repos (helm values images, `CHART_VERSION` pins, Dockerfile `ARG`s, Chart.yaml `appVersion`, plus normal npm/pip/actions in the app repos). Shared behavior preset in [`renovate/default.json`](renovate/default.json). PRs propose, a human merges, `upgrade.sh` deploys. | [infra/renovate/README](infra/renovate/README.md) |
@@ -193,8 +228,9 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
   submodule so this repo still lists everything on the cluster. The app repo owns
   its chart *and* its source together — `Chart.yaml` `appVersion` tracks
   `values.yaml` `image.tag`, so a release is one commit in one place. It builds to
-  `ghcr.io/zdiemer/<name>` (public package: the cluster is multi-node, so every
-  node pulls anonymously) and ships `build.sh` + `upgrade.sh`.
+  `registry.zachd.duckdns.org/zdiemer/<name>` — the in-cluster registry,
+  [`infra/registry`](infra/registry/), so a pod can reschedule while GitHub is
+  down; every node holds the pull credential — and ships `build.sh` + `upgrade.sh`.
   [zdiemer/gamedex](https://github.com/zdiemer/gamedex) is the reference shape.
   Work in the app's own checkout and deploy from there — that checkout is the
   **source** for its `values.local.yaml`, and the submodule copy here is a
@@ -238,7 +274,7 @@ pins mean "what shipped", and only `scripts/sync-submodules.sh` moves them.
   underneath, rather than the other way round. The submodule has to sit inside the
   chart directory because `docker build` cannot COPY from outside its context —
   which also means npm only ever runs in the build, so the submodule worktree is
-  never dirtied. Everything else — GHCR, `build.sh`, `upgrade.sh`, appVersion
+  never dirtied. Everything else — the registry, `build.sh`, `upgrade.sh`, appVersion
   tracking `image.tag` — is the same shape.
 - **The lint checks run before the push, not just after it.**
   [`.github/workflows/lint.yml`](.github/workflows/lint.yml) has always run

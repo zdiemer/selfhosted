@@ -77,6 +77,20 @@ likelihood:
 
 ## Notes on the config
 
+**`WEBAPP_CONTEXT=ROOT` is load-bearing.** The image's entrypoint installs the
+war as `$CATALINA_BASE/webapps/${WEBAPP_CONTEXT:-guacamole}.war`, so out of the
+box the app lives at `/guacamole` and Tomcat serves its own 404 page at `/` —
+which is what this Ingress routes. Without the override the host answers every
+request with *"HTTP Status 404 – Not Found ... Apache Tomcat/9.0.106"*.
+
+The reason that is worth a paragraph is how well it hides. The probes must
+point at the same path the war is deployed to; when they pointed at
+`/guacamole/` while the Ingress served `/`, the pod reported 2/2 healthy, the
+rollout went green, and the site was broken the whole time. An external check
+does not catch it either if Authelia is in front — the forward-auth redirect
+answers 200 long before anything reaches Tomcat. Probe `/`, and verify against
+the pod directly.
+
 **`guacd` is a sidecar, not its own Deployment.** The web app reaches it over a
 plain unauthenticated TCP socket; keeping that inside the pod's network
 namespace means it is never reachable from the cluster network and needs no

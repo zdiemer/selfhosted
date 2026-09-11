@@ -1,0 +1,157 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if eq (int .Values.replicaCount) 1 }}
+  {{/*
+    Recreate, not RollingUpdate, and not for the usual volume reason — this pod
+    has no volume. During a rolling update two replicas answer the same host,
+    and a console websocket that lands on the outgoing pod dies mid-session for
+    no visible reason. Recreate makes a rollout one clean break that noVNC
+    reconnects from.
+
+    Session pods are entirely unaffected either way: they are independent Pods,
+    not children of this Deployment, so a UI rollout never disturbs a running
+    guest. That is the property that makes one replica acceptable here.
+  */}}
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "vmlab.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll when the curated catalog changes, so a newly seeded OS shows up
+        # without a manual restart.
+        checksum/catalog: {{ include (print $.Template.BasePath "/catalog-seed.yaml") . | sha256sum }}
+      labels:
+        {{- include "vmlab.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "vmlab.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # The Service is named `vmlab`, so Kubernetes would otherwise inject
+      # VMLAB_PORT=tcp://10.43.x.y:8080 and shadow the app's own config var
+      # namespace. infra/hatch hit exactly this.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if gt (int .Values.replicaCount) 1 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "vmlab.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.isos.enabled }}
+        # Read-only, and safe to hold: nothing a guest runs can write here.
+        # Session pods never mount this volume — an initContainer copies out of
+        # it and the guest only ever sees its own private copy.
+        - name: isos
+          persistentVolumeClaim:
+            claimName: {{ include "vmlab.fullname" . }}-isos
+            readOnly: true
+        {{- end }}
+        {{- if .Values.savepoints.enabled }}
+        # Read-WRITE, unlike the ISO cache, because this pod is the only writer:
+        # it pulls each screenshot over VNC and stores it here. No session pod
+        # mounts this, so a guest cannot reach another guest's save points.
+        - name: snapshots
+          persistentVolumeClaim:
+            claimName: {{ include "vmlab.fullname" . }}-snapshots
+        {{- end }}
+      containers:
+        - name: vmlab
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Note the contrast with the pods this creates: the UI runs non-root
+          # with a read-only root filesystem, because nothing about serving a
+          # page and calling the API server needs otherwise. Session pods run as
+          # root inside their own container because QEMU's wrapper needs to, and
+          # are contained by the quota, the netpol and the empty capability set
+          # instead.
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            {{- include "vmlab.env" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          # Endpoint removal races SIGTERM, so Traefik can still route here
+          # while uvicorn is shutting down. Native sleep action — the root
+          # filesystem is read-only and there is no shell in the image.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.lifecycle.preStopSleepSeconds }}
+          # /healthz touches nothing external. A probe that called the API
+          # server would let a slow API server kill the pod, and the reaper
+          # with it — leaving TTLs unenforced exactly when the cluster is
+          # already unhappy.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.isos.enabled }}
+            - name: isos
+              mountPath: /isos
+              readOnly: true
+            {{- end }}
+            {{- if .Values.savepoints.enabled }}
+            - name: snapshots
+              mountPath: /snapshots
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- if gt (int .Values.replicaCount) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vmlab.fullname" . }}
+  labels:
+    {{- include "vmlab.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "vmlab.selectorLabels" . | nindent 6 }}
+{{- end }}

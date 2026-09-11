@@ -1,0 +1,9 @@
+apiVersion: v2
+name: carson
+description: "Mr. Carson — personal CRM: contacts, important dates with a reminder ladder over SMS, a todo tracker, and a published calendar feed"
+type: application
+version: 0.1.0
+# appVersion tracks the image tag in values.yaml (image.tag).
+appVersion: "v1"
+maintainers:
+  - name: zachd

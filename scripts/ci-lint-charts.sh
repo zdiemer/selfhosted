@@ -22,17 +22,31 @@ TEMPLATE_SKIP=(
   auth/authelia
   # auth.password is `required` (op://homelab/dev-guacamole).
   dev/guacamole
+  # unattend.password is `required` while unattend.enabled (op://homelab/dev-win11).
+  dev/win11
   auth/keepass
   dev/happy-server
   discord/vocard
   docs/paperless-ngx
   games/romm
+  games/cloud-game
+  # admin.password is `required` (op://homelab/games-smt-imagine).
+  games/smt-imagine
+  infra/actions-runner
   infra/cloudflared
+  # secrets.smsApiKey / secrets.feedToken / sms.to all `fail` — a reminder
+  # release that renders without them would text nowhere.
+  life/carson
+  # secrets.ingestToken / secrets.smsApiKey / sms.to all `fail` — an ingest
+  # port with no token, or a detector that texts nobody.
+  life/laundry
   infra/democratic-csi
   infra/duckdns
   infra/egress-proxy
   infra/k8up
   infra/renovate
+  # registry.auth.password is `required` (op://homelab/infra-registry).
+  infra/registry
   # Added dee5b0d, which made crowdsec.bouncerKey a `required` — templating from
   # tracked values alone has failed since, and this list is where that belongs.
   infra/traefik

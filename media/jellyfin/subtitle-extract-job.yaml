@@ -1,0 +1,83 @@
+# One-off Job for the sidecar subtitle extraction.
+#
+# NOT part of the chart: this is an operational task that runs once over the
+# library, not something the release should own. `helm upgrade` must not
+# recreate it, hence a plain manifest applied by hand (or by
+# extract-subtitles.sh --as-job, which also refreshes the ConfigMap).
+#
+# Why a Job rather than `kubectl exec`: the run takes ~12 hours. An exec dies
+# with whatever shell started it, and — learned the hard way — killing that
+# shell does NOT kill the ffmpeg inside the pod; it keeps reading the NAS
+# orphaned, with no handle left to stop it. A Job is killable
+# (`kubectl delete job -n media jellyfin-subtitle-extract`), survives the
+# laptop closing, and keeps its logs.
+#
+# Deliberately NOT pinned to zachd-ubuntu-1. Nothing here needs the GPU, and
+# scheduling it elsewhere keeps its CPU and page cache off the node serving
+# playback. The NAS bandwidth is shared regardless — that part is unavoidable.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jellyfin-subtitle-extract
+  namespace: media
+spec:
+  # A 12-hour job that dies half-way should be re-run deliberately, not
+  # silently restarted from the beginning — it is idempotent (existing
+  # sidecars are skipped), but a surprise second pass competes for the NAS.
+  backoffLimit: 0
+  # Ceiling, not an estimate: ~12h expected, killed at 20h if something wedges.
+  activeDeadlineSeconds: 72000
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jellyfin-subtitle-extract
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: extract
+          # Same image as the server, for the same jellyfin-ffmpeg build.
+          # renovate: datasource=docker depName=docker.io/jellyfin/jellyfin
+          image: "docker.io/jellyfin/jellyfin:10.11.11"
+          command: ["sh", "/scripts/extract-subtitles.remote.sh"]
+          env:
+            - name: APPLY
+              value: "1"
+            - name: LIMIT
+              value: "0"
+            - name: LANGS
+              value: "eng"
+            - name: ALL_TRACKS
+              value: "0"
+            - name: ROOTS
+              value: "/media/tv /media/movies"
+            - name: MAX_GB
+              value: "0"
+          volumeMounts:
+            - name: media
+              mountPath: /media
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            # IO-bound, not CPU-bound: ffmpeg is demuxing, not encoding. A small
+            # request keeps it from displacing anything on a busy node while
+            # still letting it burst.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: media
+          nfs:
+            server: "192.168.4.36"
+            path: /mnt/vault/media
+            # Read-write: the whole point is writing .srt next to the media.
+            readOnly: false
+        - name: scripts
+          configMap:
+            name: jellyfin-subtitle-extract

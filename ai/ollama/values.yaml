@@ -1,0 +1,97 @@
+image:
+  repository: docker.io/ollama/ollama
+  # renovate: image=docker.io/ollama/ollama
+  tag: "0.32.15"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  # Ollama's stock port, kept as-is so in-cluster clients can point any
+  # unmodified SDK at http://ollama.ai.svc:11434 and have defaults just work.
+  port: 11434
+
+ollama:
+  # How long a model stays resident after its last request. On CPU a cold load
+  # of an 8B model is ~15-30s off the iSCSI volume, so this is deliberately
+  # long — the memory is reserved for us either way (see resources below).
+  keepAlive: "1h"
+
+  # One model in memory, one request at a time. The node has ~16Gi to give
+  # this pod; two resident models or parallel decodes would blow through that,
+  # and CPU inference gains nothing from concurrency — the cores are already
+  # saturated by a single decode.
+  maxLoadedModels: 1
+  numParallel: 1
+
+  # Default context window. Ollama's own default is small (4k); 16k is a
+  # usable middle ground that an 8B Q4 model plus KV cache still fits inside
+  # the memory limit. Per-request num_ctx can still override downward.
+  contextLength: 16384
+
+  # Models pulled in the background on every pod start (a no-op once the blobs
+  # are on the PVC). The server comes Ready before these finish, so a fresh
+  # install serves 404 for a model that is still downloading — check
+  # /api/tags, or watch the pod logs, before the first generate.
+  models:
+    - qwen3:8b
+
+persistence:
+  # Model blobs. Re-downloadable at any time, so this volume is a cache, not
+  # data — but a 5-10GB re-pull per model is slow enough that it earns a real
+  # volume. iSCSI rather than local-path so node disk isn't the limit and the
+  # claim can be expanded later.
+  enabled: true
+  size: 60Gi
+  storageClass: truenas-iscsi
+  accessMode: ReadWriteOnce
+
+# Pinned to a single node, and that is the point rather than a smell: CPU
+# inference is memory-bandwidth-bound, so it wants the node with real RAM
+# headroom, and the RWO volume plus Recreate strategy mean the pod was never
+# going to float anyway. zachd-ubuntu-4 (i9-13900H, 32Gi) had ~15Gi of
+# unrequested memory when this was written; zachd-ubuntu-5 has the faster CPU
+# but was already 66% requested, and token generation speed between the two is
+# set by DRAM bandwidth, not cores.
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu-4
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ollama.zachd.duckdns.org
+  tls:
+    enabled: true
+
+auth:
+  # Traefik basicAuth in front of the whole host — NOT Authelia forward-auth,
+  # for ntfy's reason: every client of this host is an API client (curl, an
+  # OpenAI SDK, a bot) and none of them can complete an interactive login.
+  # Ollama itself has no auth at all, so without this middleware the host
+  # would be an open compute endpoint on the public internet.
+  #
+  # `users` is htpasswd lines, deliberately EMPTY here and supplied from the
+  # vault (values.local.yaml -> op://homelab/ai-ollama). A release with no
+  # users renders a middleware that rejects everything, which is the correct
+  # failure for a gate. The plaintext password lives in the same vault entry
+  # (auth.basicAuth.smoke) for upgrade.sh's delivery check and client setup;
+  # no template ever renders it.
+  basicAuth:
+    users: []
+    smoke:
+      user: ""
+      password: ""
+
+resources:
+  # The requests are the admission ticket onto the pinned node; the memory
+  # limit is what actually sizes the model roster: an 8B Q4 model plus a 16k
+  # KV cache runs ~8-9Gi, a 14B Q4 ~12-13Gi. 16Gi allows one of either, not
+  # two of anything (see maxLoadedModels).
+  #
+  # No CPU limit. Decode wants every core it can get, the node is otherwise
+  # CPU-idle, and a limit here would turn burst throttling into visibly slower
+  # tokens for zero protection anyone needs.
+  requests:
+    cpu: "2"
+    memory: 10Gi
+  limits:
+    memory: 16Gi

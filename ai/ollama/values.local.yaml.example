@@ -1,0 +1,12 @@
+# Materialized from op://homelab/ai-ollama — see the secrets CLI.
+#
+# users: htpasswd lines (`openssl passwd -apr1` output works; so does bcrypt).
+# smoke: the same credential in plaintext, used only by upgrade.sh's delivery
+# check and for configuring clients. No template renders it into a manifest.
+auth:
+  basicAuth:
+    users:
+      - "ollama:$apr1$examplex$xxxxxxxxxxxxxxxxxxxxxx"
+    smoke:
+      user: ollama
+      password: "change-me"

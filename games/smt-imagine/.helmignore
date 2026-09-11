@@ -1,0 +1,9 @@
+Dockerfile
+build.sh
+upgrade.sh
+stage-client.sh
+*.md
+.dockerignore
+values.local.yaml
+values.local.tpl.yaml
+.gitignore
