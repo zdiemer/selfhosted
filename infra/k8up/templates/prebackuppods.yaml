@@ -46,7 +46,7 @@ spec:
           # Matches the server's major version. pg_dump refuses to dump a server
           # newer than itself, so this tracks docs/paperless-ngx's postgres image.
           # renovate: datasource=docker depName=postgres
-          image: postgres:16.14-alpine
+          image: postgres:16.15-alpine
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:

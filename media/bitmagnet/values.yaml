@@ -35,7 +35,7 @@ bitmagnet:
 postgres:
   image:
     repository: postgres
-    tag: "16.14-alpine"
+    tag: "16.15-alpine"
     pullPolicy: IfNotPresent
   database: bitmagnet
   user: bitmagnet
