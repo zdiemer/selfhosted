@@ -1,5 +1,5 @@
 # renovate: datasource=docker depName=python
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # No build toolchain: every pinned wheel in requirements.txt is manylinux.
 ENV PYTHONUNBUFFERED=1 \

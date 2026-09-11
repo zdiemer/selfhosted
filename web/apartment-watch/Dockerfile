@@ -2,7 +2,7 @@
 # system libraries". It lands around 1.3GB. That's the cost of getting past
 # Akamai and PerimeterX; plain requests gets a challenge page from three of the
 # four sources.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Firefox's runtime deps. Chromium's set does NOT cover these — GTK, dbus-glib
 # and libasound are Firefox-specific, and xvfb is what `headless="virtual"`

@@ -106,7 +106,7 @@ collector:
   # shape infra/cluster-status's collector uses. No kubectl in the image, no
   # dependencies to install, nothing to build.
   # renovate: datasource=docker depName=python
-  image: python:3.12.13-alpine
+  image: python:3.14.7-alpine
 
   # How long one watch connection lives before the API server closes it and the
   # collector re-lists. NOT a polling interval — pod changes arrive as events.
