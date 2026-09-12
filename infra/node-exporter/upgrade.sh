@@ -15,7 +15,7 @@ NAMESPACE="${NAMESPACE:-infra}"
 # won't start, or worse, one that starts with different default collectors and
 # silently doubles the series bill.
 # renovate: datasource=helm depName=prometheus-node-exporter registryUrl=https://prometheus-community.github.io/helm-charts
-CHART_VERSION="${CHART_VERSION:-4.56.1}"
+CHART_VERSION="${CHART_VERSION:-4.56.3}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
