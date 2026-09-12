@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Read-only web view of the trading journal working copy on the workspace PVC.",
   "dependencies": {
-    "marked": "^18.0.11"
+    "marked": "18.0.12"
   }
 }
