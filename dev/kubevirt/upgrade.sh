@@ -26,7 +26,7 @@ VALUE_ARGS=(-f "${HERE}/values.yaml")
 # renovate: datasource=github-releases depName=kubevirt/kubevirt
 KUBEVIRT_VERSION="${KUBEVIRT_VERSION:-v1.9.0}"
 # renovate: datasource=github-releases depName=kubevirt/containerized-data-importer
-CDI_VERSION="${CDI_VERSION:-v1.66.0}"
+CDI_VERSION="${CDI_VERSION:-v1.66.1}"
 
 KV_BASE="https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}"
 CDI_BASE="https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}"
