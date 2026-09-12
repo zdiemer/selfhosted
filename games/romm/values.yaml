@@ -7,7 +7,7 @@ image:
 # "mariadb" and the app will not start without a reachable server.
 db:
   # renovate: datasource=docker depName=mariadb
-  image: mariadb:11.4.12
+  image: mariadb:11.4.13
   name: romm
   user: romm
   password: ""              # values.local.yaml
