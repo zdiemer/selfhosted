@@ -14,7 +14,7 @@ NAMESPACE="${NAMESPACE:-crowdsec}"
 # Pin the chart: a surprise chart bump is how a quiet log-shipper turns into a
 # pod that won't start. Bump deliberately, reading the chart changelog.
 # renovate: datasource=helm depName=crowdsec registryUrl=https://crowdsecurity.github.io/helm-charts
-CHART_VERSION="${CHART_VERSION:-0.24.0}"
+CHART_VERSION="${CHART_VERSION:-0.24.2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 # The console enrolment token and the SMS notifier config come from 1Password
