@@ -1,4 +1,5 @@
 import { Cron } from "croner";
+import { deliveryKey, laneKey } from "./chat.ts";
 import { config, type ScheduleSpec } from "./config.ts";
 
 // Recurring runs the GATEWAY fires (values.yaml messaging.schedules), as
@@ -41,6 +42,24 @@ function ownerChatKey(surface: "signal" | "whatsapp"): string | undefined {
   return owner ? `${surface}:${owner}` : undefined;
 }
 
+/** The lane a schedule runs in: its session slot, so schedules sharing a slot
+ * (trading-hourly and trading-close) also share a queue and never run the same
+ * thread twice at once. */
+export function scheduleLane(spec: ScheduleSpec): string {
+  return spec.session ?? spec.name;
+}
+
+/** The schedule lanes that report into this chat, for !status and !stop. */
+export function lanesFor(chatKey: string): string[] {
+  const lanes = config.schedules
+    .filter(
+      (spec) =>
+        ownerChatKey(spec.surface ?? "signal") === deliveryKey(chatKey),
+    )
+    .map(scheduleLane);
+  return [...new Set(lanes)];
+}
+
 /** Arm one surface's schedules as its transport connects. Called through
  * onTransportReady like rearmWakeups, and re-entrant for the same reason —
  * a transport reconnecting must replace its jobs, not double them. */
@@ -48,8 +67,8 @@ export function armSchedules(prefix: string): void {
   if (prefix !== "signal" && prefix !== "whatsapp") return;
   for (const spec of config.schedules) {
     if ((spec.surface ?? "signal") !== prefix) continue;
-    const chatKey = ownerChatKey(prefix);
-    if (!chatKey) {
+    const owner = ownerChatKey(prefix);
+    if (!owner) {
       console.error(`schedule ${spec.name}: no owner sender on ${prefix}`);
       continue;
     }
@@ -58,7 +77,8 @@ export function armSchedules(prefix: string): void {
       const job = new Cron(
         spec.cron,
         { timezone: spec.timezone, protect: true },
-        () => runner(spec, chatKey),
+        // In the schedule's own lane, not the owner's chat: see laneKey.
+        () => runner(spec, laneKey(owner, scheduleLane(spec))),
       );
       jobs.set(spec.name, job);
       console.log(

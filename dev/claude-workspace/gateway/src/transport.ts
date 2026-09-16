@@ -1,3 +1,4 @@
+import { deliveryKey } from "./chat.ts";
 import { chunkText } from "./chunk.ts";
 import { config } from "./config.ts";
 
@@ -96,7 +97,7 @@ export async function sendTo(
   }
   let first: MsgRef | undefined;
   for (const chunk of chunkText(text, t.chunkLimit).chunks) {
-    const ref = await t.send(chatKey, chunk);
+    const ref = await t.send(deliveryKey(chatKey), chunk);
     first ??= ref;
   }
   return first;
@@ -122,12 +123,13 @@ export async function sendReply(
     return undefined;
   }
   const { chunks, rest } = chunkText(text, t.chunkLimit);
-  if (rest) overflow.set(chatKey, rest);
-  else overflow.delete(chatKey);
+  // Keyed by the chat you read it in, so !more there pages a laned reply too.
+  if (rest) overflow.set(deliveryKey(chatKey), rest);
+  else overflow.delete(deliveryKey(chatKey));
 
   let first: MsgRef | undefined;
   for (const chunk of chunks) {
-    const ref = await t.send(chatKey, chunk);
+    const ref = await t.send(deliveryKey(chatKey), chunk);
     first ??= ref;
   }
   return first;
@@ -135,13 +137,13 @@ export async function sendReply(
 
 /** The unsent remainder, cleared as it is handed over. */
 export function takeOverflow(chatKey: string): string {
-  const rest = overflow.get(chatKey) ?? "";
-  overflow.delete(chatKey);
+  const rest = overflow.get(deliveryKey(chatKey)) ?? "";
+  overflow.delete(deliveryKey(chatKey));
   return rest;
 }
 
 export function overflowSize(chatKey: string): number {
-  return overflow.get(chatKey)?.length ?? 0;
+  return overflow.get(deliveryKey(chatKey))?.length ?? 0;
 }
 
 /** Send exactly one message, truncating rather than splitting. An edit target
@@ -155,7 +157,7 @@ export async function sendOne(
     console.error(`no transport for ${chatKey}`);
     return undefined;
   }
-  return t.send(chatKey, clampToLimit(text, t.chunkLimit));
+  return t.send(deliveryKey(chatKey), clampToLimit(text, t.chunkLimit));
 }
 
 export function clampToLimit(text: string, limit: number): string {
@@ -176,7 +178,7 @@ export async function reactTo(
   const t = transportFor(chatKey);
   if (!t?.react || target === undefined) return;
   try {
-    await t.react(chatKey, target, emoji, remove);
+    await t.react(deliveryKey(chatKey), target, emoji, remove);
   } catch (err) {
     console.warn(`react failed on ${chatKey}: ${(err as Error).message}`);
   }
@@ -198,7 +200,11 @@ export async function editMsg(
   const t = transportFor(chatKey);
   if (!t?.edit || target === undefined) return { ok: false };
   try {
-    const next = await t.edit(chatKey, target, clampToLimit(text, t.chunkLimit));
+    const next = await t.edit(
+      deliveryKey(chatKey),
+      target,
+      clampToLimit(text, t.chunkLimit),
+    );
     return { ok: true, next: next ?? undefined };
   } catch (err) {
     console.warn(`edit failed on ${chatKey}: ${(err as Error).message}`);
@@ -223,7 +229,7 @@ export async function sendFileTo(
   if (!t) return "no transport";
   if (!t.sendFile) return "this surface can't send files";
   try {
-    await t.sendFile(chatKey, file, caption);
+    await t.sendFile(deliveryKey(chatKey), file, caption);
     return undefined;
   } catch (err) {
     return (err as Error).message;

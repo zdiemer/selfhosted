@@ -759,6 +759,20 @@ that is indistinguishable from an alert. Unmarked text is dropped and logged
 (`schedule <name>: held back N chars`); a run that errored or was killed still
 speaks unmarked, since a failure that goes quiet is the worse bug. A schedule
 whose prompt has a *must-send* case (the Friday weekly) has to name the marker.
+
+Firings run in a **lane** of the owner's chat (`signal:<owner>#<session>`),
+not in the chat itself. The queue, the live process, wake-ups, pending prompts
+and chat state all key on that, so the owner using the chat mid-run cannot
+reach the scheduled agent: `!stop` and `!clear` act on the chat's own thread,
+a typed message queues for (or hands off to) the chat's own run, and the
+chat's `!plan`/`!auto` no longer leak into scheduled runs. Only the transport
+strips the suffix, so replies and prompts still arrive in the same 1:1. A lane
+run's tool prompts are tagged `[<lane>]` and answered as usual (a reaction on
+the prompt is unambiguous; a bare 1/2/3 goes to the chat's own prompt first);
+questions and plans are denied outright in a lane, since they take free text
+and would swallow the next ordinary message. `!status` shows a busy lane and
+`!stop <lane>` is the one way to kill its run — the schedule stays armed.
+
 Occurrences missed while
 the pod is down are skipped, not caught up: these are cadences, not promises,
 and a market-open run fired at 11pm because the pod was rescheduled is worse

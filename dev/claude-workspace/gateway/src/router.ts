@@ -5,6 +5,7 @@ import {
   answerPending,
   hasPending,
   pendingKind,
+  pendingLanesOf,
   pendingPromptRef,
   reactionAnswer,
 } from "./approvals.ts";
@@ -26,11 +27,12 @@ import {
   stop,
   waitingOn,
 } from "./agent/index.ts";
-import { scheduleStatus, setScheduleRunner } from "./schedules.ts";
+import { lanesFor, scheduleStatus, setScheduleRunner } from "./schedules.ts";
 import {
   groupRateAllows,
   groupRateResetMinutes,
   isGroupChat,
+  laneKey,
   recordGroupMessage,
   takeGroupContext,
 } from "./chat.ts";
@@ -308,21 +310,25 @@ export function handleReaction(
   // Answering a permission prompt is a privileged act, so it takes the same
   // credential as a `!` command: membership of an allowlisted group is not it.
   if (!meta.owner || !targetId) return;
-  if (!hasPending(chatKey)) return;
 
   // The reaction has to be ON the prompt. Otherwise a 👍 on some older message
-  // would silently approve whatever happens to be pending now.
-  const promptId = refIdOf(chatKey, pendingPromptRef(chatKey));
-  if (!promptId || promptId !== targetId) return;
+  // would silently approve whatever happens to be pending now. That is also
+  // what picks between the chat's own prompt and a schedule lane's, both of
+  // which are on the same screen.
+  const key = [chatKey, ...pendingLanesOf(chatKey)].find(
+    (k) =>
+      hasPending(k) && refIdOf(k, pendingPromptRef(k)) === targetId,
+  );
+  if (!key) return;
 
   const answer = reactionAnswer(emoji);
   if (!answer) return;
-  const kind = pendingKind(chatKey);
-  if (answerPending(chatKey, answer)) {
-    console.log(`${chatKey}: prompt answered ${answer} by reaction ${emoji}`);
+  const kind = pendingKind(key);
+  if (answerPending(key, answer)) {
+    console.log(`${key}: prompt answered ${answer} by reaction ${emoji}`);
     // Same handover as a typed answer — a 👍 on a plan is still minutes of work
     // starting, and there is no inbound message here to react back to.
-    if (kind !== "tool") void activeStatus(chatKey)?.restart();
+    if (kind !== "tool") void activeStatus(key)?.restart();
   }
 }
 
@@ -419,6 +425,11 @@ export function handleInbound(
 
   // Digit replies feed a pending permission prompt, never claude.
   if (hasPending(chatKey) && answerReceived(chatKey, body, meta.ref)) return;
+  // Then a schedule lane's prompt. Those are tool prompts only (approvals.ts
+  // denies questions and plans in a lane), so this takes a bare 1/2/3 and
+  // nothing else — ordinary text still goes to this chat's own thread.
+  for (const lane of pendingLanesOf(chatKey))
+    if (answerReceived(lane, body, meta.ref)) return;
 
   if (body.startsWith("!")) {
     // Owner-only, everywhere. Membership of an allowlisted group buys the
@@ -1231,6 +1242,29 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       return sendTo(chatKey, await usageReport(window));
     }
     case "!stop": {
+      // `!stop <lane>` is the only way to reach a schedule's run from here —
+      // a bare !stop is about this chat's own thread and leaves it alone.
+      const lanes = lanesFor(chatKey);
+      if (arg) {
+        if (!lanes.includes(arg))
+          return sendTo(
+            chatKey,
+            lanes.length
+              ? `no schedule lane "${arg}" — try ${lanes.join(", ")}`
+              : "usage: !stop (no schedules report here)",
+          );
+        const key = laneKey(chatKey, arg);
+        const killed = [
+          stop(key) ? `${arg} run` : "",
+          cancelWakeup(key) ? `${arg} wake-up` : "",
+        ].filter(Boolean);
+        return sendTo(
+          chatKey,
+          killed.length
+            ? `✓ stopped ${killed.join(" + ")} (the schedule itself stays armed)`
+            : `nothing running in ${arg}`,
+        );
+      }
       // Also the no-model lever on a wake-up loop: the polite way out is the
       // model calling ScheduleWakeup with stop, but the impolite way must not
       // require a model that is misbehaving to cooperate.
@@ -1239,9 +1273,13 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         stopBash(chatKey) ? "bash" : "",
         cancelWakeup(chatKey) ? "scheduled wake-up" : "",
       ].filter(Boolean);
+      const busy = lanes.filter((l) => isRunning(laneKey(chatKey, l)));
       return sendTo(
         chatKey,
-        killed.length ? `✓ stopped ${killed.join(" + ")}` : "nothing running",
+        (killed.length ? `✓ stopped ${killed.join(" + ")}` : "nothing running") +
+          (busy.length
+            ? ` (left ${busy.join(", ")} alone — !stop ${busy[0]} to stop it)`
+            : ""),
       );
     }
     case "!use": {
@@ -1300,6 +1338,24 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
               `schedule ${s.name}: ` +
               (s.next ? `next in ${formatDuration(s.next.getTime() - Date.now())}` : "never"),
           ),
+          // Schedules run in lanes of their own, so this chat's state line
+          // below never describes them. Only a lane with something going on
+          // is worth a line.
+          ...lanesFor(chatKey).flatMap((lane) => {
+            const key = laneKey(chatKey, lane);
+            const laneWake = pendingWakeup(key);
+            const laneQ = queues.get(key)?.length ?? 0;
+            const parts = [
+              isWaiting(key) ? "parked" : isRunning(key) ? "running" : "",
+              laneWake
+                ? `wake-up in ${formatDuration(laneWake.at - Date.now())}`
+                : "",
+              laneQ ? `${laneQ} queued` : "",
+            ].filter(Boolean);
+            return parts.length
+              ? [`lane ${lane}: ${parts.join(", ")} (!stop ${lane})`]
+              : [];
+          }),
           `cwd: ${chat.cwd}`,
           `agent: ${agent.label}${
             allBackends().length > 1 ? " (!agent to switch)" : ""
@@ -1338,6 +1394,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         chatKey,
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
+          "Schedules run in their own lanes — !stop and !clear don't touch " +
+          "them; !stop <lane> does (!status names them)\n" +
           `!agent ${allBackends()
             .map((b) => b.id)
             .join("|")} — switch coding agent; each keeps its own thread\n` +

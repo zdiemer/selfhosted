@@ -5,9 +5,35 @@ import { config } from "./config.ts";
 // claude prints. So groups get their own tool set, their own rate limit, and no
 // permission prompts at all (see claude.ts / approvals.ts).
 
-/** Chat keys are `signal:<sender>`, `signal:g:<groupId>`, or `wa:<jid>`. */
+/** Chat keys are `signal:<sender>`, `signal:g:<groupId>`, or `wa:<jid>` —
+ * optionally with a `#<lane>` suffix (see laneKey). */
 export function isGroupChat(chatKey: string): boolean {
-  return chatKey.startsWith("signal:g:") || chatKey.endsWith("@g.us");
+  const base = deliveryKey(chatKey);
+  return base.startsWith("signal:g:") || base.endsWith("@g.us");
+}
+
+// Lanes: a second run slot that delivers into an existing chat. Gateway
+// schedules run in one, so the trading agent firing at 9:45 is not "the run in
+// flight" for the owner's 1:1 — a !stop, a !clear or an ordinary message typed
+// while it works lands on the owner's own thread and never reaches it. Every
+// per-chat map (queue, live process, wake-up, pending prompt, state) keys on the
+// lane key, so they separate for free; only the transport strips the suffix.
+// `#` appears in no Signal ACI, base64 group id or WhatsApp JID.
+
+export function laneKey(chatKey: string, lane: string): string {
+  return `${deliveryKey(chatKey)}#${lane}`;
+}
+
+/** The chat a (possibly laned) key actually sends to. */
+export function deliveryKey(chatKey: string): string {
+  const i = chatKey.indexOf("#");
+  return i < 0 ? chatKey : chatKey.slice(0, i);
+}
+
+/** The lane name, or undefined for a chat's own slot. */
+export function laneOf(chatKey: string): string | undefined {
+  const i = chatKey.indexOf("#");
+  return i < 0 ? undefined : chatKey.slice(i + 1);
 }
 
 // Everything said in a group becomes context for the next run, not just the

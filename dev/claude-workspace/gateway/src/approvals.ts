@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { isGroupChat } from "./chat.ts";
+import { deliveryKey, isGroupChat, laneOf } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 import { autoActive, getChat, updateChat } from "./state.ts";
 import type { MsgRef } from "./transport.ts";
@@ -85,6 +85,15 @@ export function pendingPromptRef(chatKey: string): MsgRef | undefined {
 
 export function hasPending(chatKey: string): boolean {
   return pending.has(chatKey);
+}
+
+/** Lanes of this chat (chat.ts laneKey) holding an open prompt. Their prompts
+ * are sent into the chat, so its replies and reactions are how they get
+ * answered — but only after the chat's own prompt, which a bare digit means. */
+export function pendingLanesOf(chatKey: string): string[] {
+  return [...pending.keys()].filter(
+    (key) => key !== chatKey && deliveryKey(key) === chatKey,
+  );
 }
 
 /** Which grammar the open prompt takes, for a caller that wants to treat a
@@ -456,6 +465,24 @@ export function requestApproval(
   }
 
   const kind = promptKind(req.toolName);
+  const lane = laneOf(req.chatKey);
+
+  // A laned run (a gateway schedule) gets tool prompts, which only ever take
+  // 1/2/3 or a reaction — but never a question or a plan. Those take free
+  // text, so an open one would swallow whatever the person types next into
+  // their own chat, which is the interference lanes exist to remove. Nobody
+  // asked this run anything; it decides for itself or says so with [[notify]].
+  if (lane && kind !== "tool") {
+    finish({
+      behavior: "deny",
+      message:
+        `${req.toolName} is unavailable in a scheduled run: nobody is watching ` +
+        "it live. Decide per your instructions, or end the turn with " +
+        "[[notify]] and say what you need.",
+    });
+    return { promise, abandon };
+  }
+  const from = lane ? `[${lane}] ` : "";
 
   // "3 = allow all" and auto mode are both meaningless for these two and
   // actively harmful: a blind allow of AskUserQuestion returns no answers, so
@@ -482,7 +509,7 @@ export function requestApproval(
       behavior: "deny",
       message: `approval timed out after ${config.approvalTimeoutMs / 60000}m; re-send your message to retry`,
     });
-    prompt(req.chatKey, "⏱ approval timed out — denied.");
+    prompt(req.chatKey, `${from}⏱ approval timed out — denied.`);
   }, config.approvalTimeoutMs);
 
   const questions = kind === "question" ? readQuestions(req.input) : [];
@@ -509,7 +536,7 @@ export function requestApproval(
 
   ask(
     req.chatKey,
-    `${label} wants: ${describeTool(req.toolName, req.input)}\n` +
+    `${from}${label} wants: ${describeTool(req.toolName, req.input)}\n` +
       `Reply 1 allow · 2 deny · 3 allow all ${req.toolName} this session\n` +
       `(or react 👍 allow · 👎 deny · 💯 allow all)`,
   );

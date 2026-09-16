@@ -1,4 +1,4 @@
-import { isGroupChat } from "./chat.ts";
+import { deliveryKey, isGroupChat, laneOf } from "./chat.ts";
 import { runningChats, stop } from "./claude.ts";
 import { config } from "./config.ts";
 import { activeStatus } from "./router.ts";
@@ -49,7 +49,19 @@ export function announceRestart(): void {
     recordBootNotice();
 
     for (const { chatKey, inFlight } of chats) {
-      if (inFlight) {
+      const lane = laneOf(chatKey);
+      if (lane) {
+        // A schedule lane shares its chat's phone, which gets its own notice.
+        // Only a cut-off run is news, and "continue" would be wrong advice:
+        // typed into the chat it reaches the chat's thread, not this one.
+        if (!inFlight) continue;
+        updateChat(chatKey, { inFlight: false });
+        void sendTo(
+          chatKey,
+          `⚠ gateway restarted and the scheduled ${lane} run was cut off ` +
+            "partway — its next firing starts over.",
+        );
+      } else if (inFlight) {
         // The session id was persisted at run START (claude.ts), so the partial
         // transcript on the PVC is still reachable and "continue" really does
         // resume it. Clear the flag either way — it describes the dead process.
@@ -86,10 +98,12 @@ export function installShutdownHandler(): void {
     hard.unref?.();
 
     await Promise.allSettled(
-      chats.flatMap((chatKey) => [
-        activeStatus(chatKey)?.replace(DOWN) ?? Promise.resolve(),
-        sendTo(chatKey, DOWN),
-      ]),
+      [
+        ...chats.map((chatKey) => activeStatus(chatKey)?.replace(DOWN)),
+        // Once per phone: a chat and its schedule lane both running is one
+        // person waiting, not two.
+        ...[...new Set(chats.map(deliveryKey))].map((to) => sendTo(to, DOWN)),
+      ],
     );
     // After the word goes out, not before: killing first makes drain() race us
     // with an "claude exited null" reply on the way out the door.

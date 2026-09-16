@@ -3,6 +3,7 @@ import net from "node:net";
 import {
   answerPending,
   hasPending,
+  pendingLanesOf,
   plainText,
   selectOptions,
   startApprovalServer,
@@ -326,4 +327,46 @@ test("typing the digit still works", async () => {
   await nextPrompt();
   expect(answerPending("rx:4", "2")).toBe(true);
   expect((await verdict).behavior).toBe("deny");
+});
+
+// ---------------------------------------------------------------------------
+// Schedule lanes
+// ---------------------------------------------------------------------------
+
+test("a lane's tool prompt is labelled and answerable from its chat", async () => {
+  const verdict = ask("rx:5#trading", "Bash", { command: "git push" });
+  const text = await nextPrompt();
+  expect(text.startsWith("[trading] Claude wants: Bash(git push)")).toBe(true);
+  // The chat has no prompt of its own; the lane's is what its replies reach.
+  expect(hasPending("rx:5")).toBe(false);
+  expect(pendingLanesOf("rx:5")).toEqual(["rx:5#trading"]);
+  expect(pendingLanesOf("rx:6")).toEqual([]);
+  handleReaction("rx:5", String(msgId), "👍", OWNER);
+  expect((await verdict).behavior).toBe("allow");
+});
+
+test("a reaction picks the lane's prompt over the chat's own", async () => {
+  const own = ask("rx:7", "Bash", { command: "ls" });
+  await nextPrompt();
+  const ownId = String(msgId);
+  const laned = ask("rx:7#trading", "Bash", { command: "git push" });
+  await nextPrompt();
+  handleReaction("rx:7", String(msgId), "👎", OWNER);
+  expect((await laned).behavior).toBe("deny");
+  expect(hasPending("rx:7")).toBe(true);
+  handleReaction("rx:7", ownId, "👍", OWNER);
+  expect((await own).behavior).toBe("allow");
+});
+
+test("a lane never asks a question or a plan, which would eat free text", async () => {
+  const before = sent.length;
+  const q = (await ask("signal:+15551110012#trading", "AskUserQuestion", QUESTION)) as {
+    behavior: string;
+    message: string;
+  };
+  expect(q.behavior).toBe("deny");
+  expect(q.message).toContain("[[notify]]");
+  const p = await ask("signal:+15551110012#trading", "ExitPlanMode", { plan: "x" });
+  expect(p.behavior).toBe("deny");
+  expect(sent.length).toBe(before);
 });
