@@ -270,6 +270,32 @@ export function plainText(s: string): string {
     .trim();
 }
 
+/**
+ * Is `toolName` on the allowlist that applies to this chat?
+ *
+ * claude gets this for free — the allowlist goes out as `--allowedTools` and a
+ * matching tool never reaches the relay at all. An ACP backend has no such
+ * flag, so the gateway is the only place the list can be applied, and without
+ * this every `Read` on a phone would be a round trip and a group's
+ * WebFetch/WebSearch ceiling would collapse into "everything is denied".
+ *
+ * ⚠️ BARE NAMES ONLY. An entry like `Bash(git status:*)` is deliberately NOT a
+ * match for `Bash` — claude enforces those argument patterns itself, so from
+ * claude they never arrive here anyway, and treating one as a match would turn
+ * "git status is fine" into a standing grant for `Bash(rm -rf /)`. A pattern
+ * entry therefore prompts on an ACP backend rather than pre-approving, which is
+ * the safe direction to be wrong in.
+ */
+function onAllowlist(chatKey: string, toolName: string): boolean {
+  const list = isGroupChat(chatKey)
+    ? config.groups.allowedTools
+    : config.allowedTools;
+  return list
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((entry) => entry === toolName);
+}
+
 /** Does `!auto` cover this chat right now? Auto is a standing "don't ask
  * before touching things", so an ordinary tool is allowed here without a trip
  * to the phone — the same grant bypassPermissions used to give, minus its
@@ -351,15 +377,69 @@ function socketAnswers(): Promise<boolean> {
   });
 }
 
+/**
+ * The socket wrapper. claude reaches approvals through approve-mcp over the
+ * unix socket; an ACP backend calls requestApproval directly, in-process. Same
+ * decision, same prompt, same 1/2/3 — only the transport differs.
+ */
 function handleRequest(
   req: { chatKey: string; toolName: string; input: unknown },
   sock: net.Socket,
-  sendPrompt: ApprovalPrompt,
+  _sendPrompt: ApprovalPrompt,
 ): void {
-  const finish = (verdict: Verdict) => {
+  const { promise, abandon } = requestApproval(
+    req.chatKey,
+    req.toolName,
+    req.input,
+  );
+  void promise.then((verdict) => {
     sock.write(JSON.stringify(verdict) + "\n");
     sock.end();
+  });
+  sock.on("close", abandon);
+}
+
+/**
+ * Ask the human, and resolve with their answer.
+ *
+ * `abandon` drops a still-pending prompt when the thing that asked has gone —
+ * claude died, or was !stopped, mid-question. Without it the chat keeps a
+ * prompt on screen for a run that can no longer receive the answer, and the
+ * next real prompt is refused as "another approval is already pending".
+ */
+export function requestApproval(
+  chatKey: string,
+  toolName: string,
+  input: unknown,
+  /** Who the prompt says is asking. "Claude wants: Bash(…)" is a lie when the
+   * process asking is codex. Passed in rather than looked up: this module is
+   * imported BY the agent registry, so importing it back would be a cycle. */
+  label = "Claude",
+): { promise: Promise<Verdict>; abandon: () => void } {
+  const req = { chatKey, toolName, input };
+  let settle: (v: Verdict) => void = () => {};
+  const promise = new Promise<Verdict>((resolve) => {
+    settle = resolve;
+  });
+  let settled = false;
+  const finish = (verdict: Verdict) => {
+    if (settled) return;
+    settled = true;
+    settle(verdict);
   };
+  const abandon = () => {
+    if (pending.get(req.chatKey)?.input === req.input) {
+      pending.delete(req.chatKey);
+    }
+  };
+
+  // The allowlist, applied before anything else. A read-only tool answered
+  // here never reaches the phone — and on an ACP backend this is the ONLY
+  // place the list is applied at all (see onAllowlist).
+  if (promptKind(req.toolName) === "tool" && onAllowlist(req.chatKey, req.toolName)) {
+    finish({ behavior: "allow", updatedInput: req.input });
+    return { promise, abandon };
+  }
 
   // Groups are never asked. Anything outside groups.allowedTools is refused
   // here rather than relayed: the room would see the prompt, only one member
@@ -372,7 +452,7 @@ function handleRequest(
         `${req.toolName} is not available in group chats. ` +
         "Answer from the conversation, or use WebFetch/WebSearch.",
     });
-    return;
+    return { promise, abandon };
   }
 
   const kind = promptKind(req.toolName);
@@ -386,14 +466,14 @@ function handleRequest(
     (autoAllows(req.chatKey) || autoApproved.get(req.chatKey)?.has(req.toolName))
   ) {
     finish({ behavior: "allow", updatedInput: req.input });
-    return;
+    return { promise, abandon };
   }
 
   // A second concurrent ask for the same chat shouldn't happen (runs are
   // serialized), but deny it rather than silently replacing the first.
   if (pending.has(req.chatKey)) {
     finish({ behavior: "deny", message: "another approval is already pending" });
-    return;
+    return { promise, abandon };
   }
 
   const timer = setTimeout(() => {
@@ -402,7 +482,7 @@ function handleRequest(
       behavior: "deny",
       message: `approval timed out after ${config.approvalTimeoutMs / 60000}m; re-send your message to retry`,
     });
-    sendPrompt(req.chatKey, "⏱ approval timed out — denied.");
+    prompt(req.chatKey, "⏱ approval timed out — denied.");
   }, config.approvalTimeoutMs);
 
   const questions = kind === "question" ? readQuestions(req.input) : [];
@@ -418,29 +498,27 @@ function handleRequest(
     },
   });
 
-  sock.on("close", () => {
-    // claude died or was !stopped while waiting; clear the prompt.
-    if (pending.get(req.chatKey)?.input === req.input) {
-      clearTimeout(timer);
-      pending.delete(req.chatKey);
-    }
-  });
-
   if (questions.length) {
     ask(req.chatKey, renderQuestion(questions[0], 0, questions.length));
-    return;
+    return { promise, abandon: withTimer };
   }
   if (kind === "plan") {
     ask(req.chatKey, renderPlan(planTextOf(req.input)));
-    return;
+    return { promise, abandon: withTimer };
   }
 
   ask(
     req.chatKey,
-    `Claude wants: ${describeTool(req.toolName, req.input)}\n` +
+    `${label} wants: ${describeTool(req.toolName, req.input)}\n` +
       `Reply 1 allow · 2 deny · 3 allow all ${req.toolName} this session\n` +
       `(or react 👍 allow · 👎 deny · 💯 allow all)`,
   );
+  return { promise, abandon: withTimer };
+
+  function withTimer(): void {
+    clearTimeout(timer);
+    abandon();
+  }
 }
 
 /** Questions out of an AskUserQuestion input, defensively — a malformed or

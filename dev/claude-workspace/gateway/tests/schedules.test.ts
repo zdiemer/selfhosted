@@ -66,7 +66,7 @@ test("a pinned run's new id lands in its slot, never the live pointer", () => {
     sessionId: "main-live-id",
     sessions: { trading: "old-trading-id" },
   });
-  const patch = sessionPatchForSlot(getChat(CHAT), "trading", "new-trading-id");
+  const patch = sessionPatchForSlot(getChat(CHAT), "claude", "trading", "new-trading-id");
   expect(patch).toEqual({
     sessions: { trading: "new-trading-id" },
   });
@@ -80,6 +80,6 @@ test("when the pinned slot is the current session, the live pointer moves", () =
     sessionId: "trading-live-id",
     sessions: {},
   });
-  const patch = sessionPatchForSlot(getChat(CHAT), "trading", "next-id");
+  const patch = sessionPatchForSlot(getChat(CHAT), "claude", "trading", "next-id");
   expect(patch).toEqual({ sessionId: "next-id" });
 });

@@ -98,6 +98,19 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v32: claude is no longer the only agent in the image. codex
+  #      (@openai/codex), gemini (@google/gemini-cli) and muse (Meta's Muse
+  #      Code, plus the muse-acp adapter) are installed alongside it, each
+  #      authenticated by a one-time interactive login on the PVC — ~/.codex,
+  #      ~/.gemini, ~/.muse, created by init-home. No API key enters the chart:
+  #      all four run on subscriptions, the same as claude always has.
+  #      `happy codex` / `happy gemini` / `happy acp -- muse-acp` work from
+  #      /term as of this tag (happy has shipped those subcommands since 1.2.0
+  #      and only ever lacked the binaries). The messaging gateway drives the
+  #      non-claude three over ACP — see `messaging.agent` below.
+  #      NOT agy for Google: it can only persist its login through a D-Bus
+  #      secret service, which this pod has no way to provide. See the
+  #      Dockerfile comment for the detail.
   # v31: the status message's redraw cadence is a per-chat verbosity setting
   #      (!verbose quiet|low|normal|high|live) rather than a fixed 5s, and the
   #      default is now a minute. Five seconds spent Signal's whole
@@ -161,7 +174,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v31"
+  tag: "v32"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -508,6 +521,43 @@ messaging:
   # chat at runtime; these are the defaults every chat starts from.
   model: claude-opus-5
   effort: medium
+  # The other coding agents (image v32+): codex, gemini, muse. `!agent <id>`
+  # switches a chat between them and claude, and each keeps its own thread, so
+  # switching back resumes where you left off rather than starting over.
+  #
+  # They are driven over ACP (Agent Client Protocol) rather than each CLI's own
+  # headless mode, because ACP is the only one of them with a permission request
+  # in it — which is what keeps "reply 1/2/3" working on every agent. `codex
+  # exec --json` and `muse exec --json` can only be run pre-approved, and a
+  # pre-approved agent on a cluster-admin pod is not a thing to offer a phone.
+  #
+  # ⚠️ EMPTY BY DEFAULT, deliberately. Each one spends a DIFFERENT subscription
+  # (ChatGPT, Google, Meta), and each needs its own one-time login on the PVC
+  # (see README "Other agents") — so an instance handed to someone else does not
+  # quietly hand them three more accounts. Turn on what you have logged in.
+  #
+  # What they cannot do, and say so rather than silently dropping: !plan,
+  # !usage, ScheduleWakeup, background-task parking. Gateway schedules still
+  # fire — those timers live on this side of the process boundary. !model and
+  # !effort DO work wherever the agent advertises the matching ACP session
+  # config option, and refuse where it doesn't — muse publishes both (its
+  # reasoning_effort runs none|minimal|low|medium|high|xhigh|max|ultra).
+  agents:
+    enabled: []
+    # enabled: [codex, gemini, muse]
+    # Per-agent default model, selected on the session at start via ACP's
+    # session/set_config_option. `!model` overrides per chat and validates
+    # against the catalogue the agent publishes, so a wrong id is refused in
+    # chat rather than quietly ignored.
+    codexModel: gpt-5.4
+    geminiModel: gemini-3.8-pro
+    # ⚠️ NOT muse-spark-1.3-contributor. Same model; the contributor row is
+    # ~12x cheaper because its data is, in Meta's words, "used to improve our
+    # products". What goes through this gateway is private repos, ~/code
+    # checkouts and a cluster-admin seat — not training data. `!model` can
+    # still pick the contributor row per chat for throwaway work.
+    # https://developer.meta.com/ai/models/muse-spark/
+    museModel: muse-spark-1.3
   # Recurring gateway-fired runs. The GATEWAY owns these timers (croner, in
   # schedules.ts): they survive redeploys because they are config, and unlike a
   # ScheduleWakeup chain nothing depends on the model re-arming itself — the

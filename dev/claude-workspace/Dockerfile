@@ -2,6 +2,27 @@
 # dev/happy-server) + ttyd web terminal + tmux, on the same node base as
 # minecraft/claude-bridge. One image serves every pod container (term,
 # tailscaled, init) — they differ only in `command:`.
+
+# ACP adapter for Muse Code (Muse speaks Meta's own MSP over `muse serve`, not
+# ACP). Built from source rather than taken from the release tarballs, which are
+# all -unknown-linux-gnu built on a newer CI: the published binary dies here with
+# "GLIBC_2.39 not found", because bookworm has 2.36. Cheap to build — the crate's
+# [dependencies] is EMPTY ("the shipped binary remains dependency-free"), so this
+# stage compiles std-only Rust and pulls nothing from crates.io.
+# The pinned tag is the trust anchor, same as BAKERY_REF below.
+# renovate: datasource=github-releases depName=BrokkAi/muse-acp extractVersion=^v(?<version>.+)$
+ARG MUSE_ACP_VERSION=0.4.3
+# renovate: datasource=docker depName=rust
+ARG RUST_VERSION=1.98.1
+FROM rust:${RUST_VERSION}-slim-bookworm AS muse-acp-build
+ARG MUSE_ACP_VERSION
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && git clone --depth 1 --branch "v${MUSE_ACP_VERSION}" \
+        https://github.com/BrokkAi/muse-acp /src \
+ && cargo build --locked --release --manifest-path /src/Cargo.toml
+
 FROM node:22-bookworm-slim
 
 # ttyd isn't packaged in bookworm; ship the static release binary. Pinned so
@@ -83,6 +104,45 @@ ARG OP_VERSION=2.38.1
 # registration is not re-creatable without a fresh SMS verify.
 # renovate: datasource=github-releases depName=AsamK/signal-cli extractVersion=^v(?<version>.+)$
 ARG SIGNAL_CLI_VERSION=0.14.6
+# The other coding agents. Each is a real CLI with its own agent loop and tools,
+# not a model id handed to claude — the messaging gateway drives them over ACP
+# (Agent Client Protocol) and Happy has had `happy codex` / `happy gemini` /
+# `happy acp` since 1.2.0. Auth for all three is a one-time interactive login
+# persisted on the home PVC (~/.codex, ~/.gemini, ~/.muse), the same shape as
+# the claude/gh/tailscale logins — no API key is baked in or passed as env.
+#
+# NOT agy (the Antigravity CLI) for Google: it stores its OAuth token only
+# through the org.freedesktop.secrets D-Bus API with no plaintext fallback
+# (google-antigravity/antigravity-cli#57), and there is no dbus or keyring
+# daemon here — nor a way to share one across the pod's containers. gemini-cli
+# writes ~/.gemini/oauth_creds.json, a plain file on the PVC, and is the only
+# one of the three that speaks ACP itself (`gemini --acp`).
+#
+# The other two need an adapter, and each needed a different one — verified
+# against v32 rather than assumed, which is the only reason this is right:
+# `codex` has no acp subcommand (it has `app-server`, its own JSON-RPC), and
+# `muse` has `serve`, which is Meta's MSP rather than ACP.
+# renovate: datasource=npm depName=@openai/codex
+ARG CODEX_VERSION=0.154.0
+# ACP server for codex, from the agentclientprotocol org (the protocol's own).
+# renovate: datasource=npm depName=@agentclientprotocol/codex-acp
+ARG CODEX_ACP_VERSION=1.12.0
+# renovate: datasource=npm depName=@google/gemini-cli
+ARG GEMINI_CLI_VERSION=0.60.0
+# Muse Code (Meta). Upstream only documents `curl https://dev.meta.ai/install.sh
+# | bash`, which drops a SELF-UPDATING launcher in ~/.local/bin — useless under a
+# read-only rootfs and unpinnable besides. But the channel endpoint
+# (api.meta.ai/muse-code/channels/muse-stable) and the manifest it points at are
+# both public and unauthenticated, and the manifest hands out a direct versioned
+# artifact URL plus its sha256. So we pin the binary like every other tool here.
+# To bump: curl the channel endpoint for the current version, then its
+# manifest_url for the new artifacts.x86_linux.checksum.
+# ⚠️ ~300MB — by far the largest thing in this image.
+ARG MUSE_VERSION=1.3.0-R3057.1
+ARG MUSE_SHA256=5187dfc9e5b460999acb5c2326b09190d307e3fe09127490eb5de39a8b200309
+# muse-acp is built in the stage at the top of this file; MUSE_ACP_VERSION is
+# declared there. Re-declared here only so the COPY below can name it.
+ARG MUSE_ACP_VERSION
 
 # git/openssh for repo work, tmux for session persistence, ripgrep/jq/less/
 # procps/curl as the dev baseline claude expects, python3 for scripting, tini
@@ -127,6 +187,16 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
  && printf '#!/bin/sh\nexec /usr/local/bin/tailscale.real --socket=/tmp/tailscale/tailscaled.sock "$@"\n' \
         > /usr/local/bin/tailscale \
  && chmod 0755 /usr/local/bin/tailscale
+
+# Muse itself. The checksum is verified rather than trusted: this comes off a
+# lookaside CDN with no signature, and the manifest that publishes the digest is
+# a different request from the one that serves the bytes.
+RUN curl -fsSL -o /usr/local/bin/muse \
+        "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=muse-x86-linux" \
+ && echo "${MUSE_SHA256}  /usr/local/bin/muse" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/muse
+COPY --from=muse-acp-build --chmod=0755 \
+     /src/target/release/muse-acp /usr/local/bin/muse-acp
 # The `tailscale` wrapper exists because the CLI has no socket env var, only
 # --socket, and the default /var/run/tailscale is unwritable here (read-only
 # rootfs, uid 1000). Pointing it at the tailscaled container's socket on the
@@ -138,7 +208,13 @@ RUN curl -fsSL -o /usr/local/bin/kubectl \
 # its build.sh), so upgrade the pair deliberately. Run `happy` instead of
 # `claude` in tmux to get phone remote control; plain `claude` still works.
 # Bun is the runtime bakery needs (its server + Vite web both run under `bun`).
+# codex and gemini-cli are pinned like every other tool here; they are agents in
+# their own right, not models, and both Happy and the messaging gateway select
+# between them at runtime (see the agent ARGs above).
 RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.0 "bun@${BUN_VERSION}" \
+        "@openai/codex@${CODEX_VERSION}" \
+        "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
+        "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
  && npm cache clean --force
 
 # Vendor bakery at a pinned ref and install its deps at build time. The pod's

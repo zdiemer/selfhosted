@@ -25,7 +25,7 @@ test("a chat starts on the default session", () => {
 
 test("switching parks the current thread and starts the new one fresh", () => {
   updateChat(CHAT, { sessionId: "main-session-id" });
-  expect(switchSession(CHAT, "api").resumed).toBe(false);
+  expect(switchSession(CHAT, "claude", "api").resumed).toBe(false);
 
   const chat = getChat(CHAT);
   expect(chat.session).toBe("api");
@@ -35,10 +35,10 @@ test("switching parks the current thread and starts the new one fresh", () => {
 
 test("switching back resumes the parked id", () => {
   updateChat(CHAT, { sessionId: "main-session-id" });
-  switchSession(CHAT, "api");
+  switchSession(CHAT, "claude", "api");
   updateChat(CHAT, { sessionId: "api-session-id" }); // a run happened on "api"
 
-  expect(switchSession(CHAT, "main").resumed).toBe(true);
+  expect(switchSession(CHAT, "claude", "main").resumed).toBe(true);
   const chat = getChat(CHAT);
   expect(chat.sessionId).toBe("main-session-id");
   expect(chat.sessions?.api).toBe("api-session-id");
@@ -48,13 +48,13 @@ test("switching back resumes the parked id", () => {
 
 test("switching to the session you are already on is a no-op", () => {
   updateChat(CHAT, { sessionId: "same" });
-  expect(switchSession(CHAT, DEFAULT_SESSION).resumed).toBe(true);
+  expect(switchSession(CHAT, "claude", DEFAULT_SESSION).resumed).toBe(true);
   expect(getChat(CHAT).sessionId).toBe("same");
 });
 
 test("listing puts the current thread first and marks it", () => {
   updateChat(CHAT, { sessionId: "a" });
-  switchSession(CHAT, "api");
+  switchSession(CHAT, "claude", "api");
   updateChat(CHAT, { sessionId: "b" });
 
   const list = listSessions(getChat(CHAT));

@@ -77,6 +77,14 @@ spec:
               mkdir -p /home/node/.docker && chmod 700 /home/node/.docker
               # gh CLI auth (one-time `gh auth login`) persists here on the PVC.
               mkdir -p /home/node/.config/gh && chmod 700 /home/node/.config/gh
+              # The other coding agents, each with a one-time interactive login
+              # that lands here (see README "Other agents"): codex device-auth
+              # writes auth.json, gemini writes oauth_creds.json, muse keeps its
+              # own store. 0700 — these hold live OAuth tokens, and the PVC is
+              # cleartext iSCSI.
+              mkdir -p /home/node/.codex && chmod 700 /home/node/.codex
+              mkdir -p /home/node/.gemini && chmod 700 /home/node/.gemini
+              mkdir -p /home/node/.muse && chmod 700 /home/node/.muse
               {{- if .Values.bakery.enabled }}
               # Bakery state (sessions/artifacts DB) + its agent's creds (~/.pi,
               # a one-time interactive login).
@@ -567,6 +575,19 @@ spec:
               value: {{ .Values.messaging.model | quote }}
             - name: GW_EFFORT
               value: {{ .Values.messaging.effort | quote }}
+            {{- with .Values.messaging.agents }}
+            # The other coding agents `!agent` can switch to. Empty means claude
+            # only, which is what this surface was before v32 — each of these
+            # spends a different subscription, so they are opt-in per instance.
+            - name: GW_AGENTS
+              value: {{ .enabled | join "," | quote }}
+            - name: GW_CODEX_MODEL
+              value: {{ .codexModel | quote }}
+            - name: GW_GEMINI_MODEL
+              value: {{ .geminiModel | quote }}
+            - name: GW_MUSE_MODEL
+              value: {{ .museModel | quote }}
+            {{- end }}
             {{- with .Values.messaging.schedules }}
             # Recurring gateway-fired runs, as JSON — a list of structured
             # entries has no comma-separated encoding worth inventing.

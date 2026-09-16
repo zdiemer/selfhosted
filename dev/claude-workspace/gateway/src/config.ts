@@ -314,6 +314,16 @@ export const config = {
   // replies are read on a phone over a bad connection.
   model: process.env.GW_MODEL ?? "claude-opus-5",
   effort: process.env.GW_EFFORT ?? "medium",
+  // The other coding agents, each driven over ACP (see agent/). Off by default
+  // for the same reason groups are: every one of these spends a DIFFERENT
+  // subscription, and an instance handed to someone else should not quietly
+  // hand them three more. `!agent` only offers what is listed here.
+  agents: {
+    enabled: envList("GW_AGENTS"),
+    codexModel: process.env.GW_CODEX_MODEL ?? "gpt-5.4",
+    geminiModel: process.env.GW_GEMINI_MODEL ?? "gemini-3.8-pro",
+    museModel: process.env.GW_MUSE_MODEL ?? "muse-spark-1.3",
+  },
   systemPrompt: process.env.GW_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT,
 
   groups: {

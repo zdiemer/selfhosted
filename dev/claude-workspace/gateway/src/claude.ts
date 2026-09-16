@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { acquireSlot, releaseSlot } from "./agent/slots.ts";
 import { isGroupChat } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 import {
@@ -139,7 +140,6 @@ interface LiveRun {
 }
 
 const running = new Map<string, LiveRun>();
-let activeCount = 0;
 
 /** `--input-format stream-json` speaks the same NDJSON as the output: one JSON
  * user message per line. Writing rather than passing `-p <prompt>` is what
@@ -291,10 +291,6 @@ export function runningChats(): string[] {
   return [...running.keys()];
 }
 
-export function atCapacity(): boolean {
-  return activeCount >= config.maxConcurrentClaude;
-}
-
 /**
  * Hand a message to a run that is parked on background work, instead of
  * queueing it behind the park.
@@ -422,7 +418,7 @@ export async function runClaude(
   const resumeId = run_?.session
     ? run_.fresh
       ? undefined
-      : resumeIdForSlot(chat, run_.session)
+      : resumeIdForSlot(chat, run_.session)  // claude's thread is the top level
     : chat.sessionId;
   if (resumeId) args.push("--resume", resumeId);
   if (group) {
@@ -473,7 +469,7 @@ export async function runClaude(
     if (chat.plan) args.push("--permission-mode", "plan");
   }
 
-  activeCount++;
+  acquireSlot();
   // Recorded on the PVC so the next boot can tell this chat its run was cut
   // off mid-flight (main.ts). Cleared in the finally below, including on crash.
   updateChat(chatKey, { inFlight: true });
@@ -565,7 +561,12 @@ export async function runClaude(
           if (run_?.session)
             updateChat(
               chatKey,
-              sessionPatchForSlot(getChat(chatKey), run_.session, sessionId),
+              sessionPatchForSlot(
+                getChat(chatKey),
+                "claude",
+                run_.session,
+                sessionId,
+              ),
             );
           else updateChat(chatKey, { sessionId });
         }
@@ -661,7 +662,7 @@ export async function runClaude(
       });
     });
   } finally {
-    activeCount--;
+    releaseSlot();
     updateChat(chatKey, { inFlight: false });
   }
 }

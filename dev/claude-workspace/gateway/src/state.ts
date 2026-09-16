@@ -2,7 +2,29 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.ts";
 
+/**
+ * One agent's threads in a chat. Each backend keeps its own: switching to codex
+ * and back must land in the claude conversation you left, not a fresh one, and
+ * the ids are not interchangeable anyway.
+ *
+ * claude's thread is the TOP LEVEL of ChatState rather than an entry in
+ * `backends` — see threadOf. That is not tidiness, it is the migration: every
+ * state.json written before this existed has claude's ids at the top level, and
+ * leaving them there means there is nothing to migrate and no version to check.
+ */
+export interface AgentThread {
+  sessionId?: string;
+  session?: string;
+  sessions?: Record<string, string>;
+  model?: string;
+}
+
 export interface ChatState {
+  /** Which agent this chat is pointed at (!agent). Unset means claude, which is
+   * what every chat was before there was a choice. */
+  backend?: string;
+  /** Threads for every agent EXCEPT claude, whose thread is the top level. */
+  backends?: Record<string, AgentThread>;
   sessionId?: string;
   cwd: string;
   auto: boolean;
@@ -103,8 +125,32 @@ export function updateChat(
 
 export const DEFAULT_SESSION = "main";
 
-export function sessionName(chat: ChatState): string {
-  return chat.session ?? DEFAULT_SESSION;
+/** claude's thread IS the chat state, so this returns the chat itself for it —
+ * structurally an AgentThread, and the reason old state files need no
+ * migration. Everything else lives under `backends`. */
+export function threadOf(chat: ChatState, backend: string): AgentThread {
+  return backend === "claude" ? chat : (chat.backends?.[backend] ?? {});
+}
+
+/** The updateChat patch that writes `patch` into `backend`'s thread. Flat for
+ * claude; a merged sub-record for everything else, because updateChat is a
+ * shallow spread and would otherwise drop the other agents' threads. */
+export function threadPatch(
+  chat: ChatState,
+  backend: string,
+  patch: AgentThread,
+): Partial<ChatState> {
+  if (backend === "claude") return patch;
+  return {
+    backends: {
+      ...(chat.backends ?? {}),
+      [backend]: { ...(chat.backends?.[backend] ?? {}), ...patch },
+    },
+  };
+}
+
+export function sessionName(thread: AgentThread): string {
+  return thread.session ?? DEFAULT_SESSION;
 }
 
 /**
@@ -118,19 +164,24 @@ export function sessionName(chat: ChatState): string {
  */
 export function switchSession(
   chatKey: string,
+  backend: string,
   name: string,
 ): { resumed: boolean } {
   const chat = getChat(chatKey);
-  const from = sessionName(chat);
-  if (from === name) return { resumed: Boolean(chat.sessionId) };
+  const thread = threadOf(chat, backend);
+  const from = sessionName(thread);
+  if (from === name) return { resumed: Boolean(thread.sessionId) };
 
-  const sessions = { ...(chat.sessions ?? {}) };
-  if (chat.sessionId) sessions[from] = chat.sessionId;
+  const sessions = { ...(thread.sessions ?? {}) };
+  if (thread.sessionId) sessions[from] = thread.sessionId;
   else delete sessions[from];
 
   const target = sessions[name];
   delete sessions[name]; // it is the live one now, not a parked one
-  updateChat(chatKey, { session: name, sessionId: target, sessions });
+  updateChat(
+    chatKey,
+    threadPatch(chat, backend, { session: name, sessionId: target, sessions }),
+  );
   return { resumed: Boolean(target) };
 }
 
@@ -138,10 +189,12 @@ export function switchSession(
  * that slot is the chat's current session, else the parked one. Undefined
  * means the slot has never run — start fresh. */
 export function resumeIdForSlot(
-  chat: ChatState,
+  thread: AgentThread,
   slot: string,
 ): string | undefined {
-  return sessionName(chat) === slot ? chat.sessionId : chat.sessions?.[slot];
+  return sessionName(thread) === slot
+    ? thread.sessionId
+    : thread.sessions?.[slot];
 }
 
 /** Where a pinned run's new session id lands: the live pointer when its slot
@@ -149,21 +202,26 @@ export function resumeIdForSlot(
  * which is the whole point of pinning. */
 export function sessionPatchForSlot(
   chat: ChatState,
+  backend: string,
   slot: string,
   id: string,
 ): Partial<ChatState> {
-  if (sessionName(chat) === slot) return { sessionId: id };
-  return { sessions: { ...(chat.sessions ?? {}), [slot]: id } };
+  const thread = threadOf(chat, backend);
+  const patch: AgentThread =
+    sessionName(thread) === slot
+      ? { sessionId: id }
+      : { sessions: { ...(thread.sessions ?? {}), [slot]: id } };
+  return threadPatch(chat, backend, patch);
 }
 
-/** Every session this chat holds, current first. */
+/** Every session this thread holds, current first. */
 export function listSessions(
-  chat: ChatState,
+  thread: AgentThread,
 ): { name: string; sessionId?: string; current: boolean }[] {
-  const current = sessionName(chat);
+  const current = sessionName(thread);
   return [
-    { name: current, sessionId: chat.sessionId, current: true },
-    ...Object.entries(chat.sessions ?? {})
+    { name: current, sessionId: thread.sessionId, current: true },
+    ...Object.entries(thread.sessions ?? {})
       .filter(([name]) => name !== current)
       .map(([name, sessionId]) => ({ name, sessionId, current: false })),
   ];

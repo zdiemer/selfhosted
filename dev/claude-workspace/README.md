@@ -84,7 +84,8 @@ still configured.
 2. Run `claude` → it prints an OAuth URL. Open it in a second tab, authorize
    with the claude.ai subscription account, paste the code back. Credentials
    land in `~/.claude/.credentials.json` on the PVC — this is the only login
-   ever needed.
+   claude ever needs. (The other three agents have their own; see
+   [Other agents](#other-agents).)
 3. Git: `ssh-keygen -t ed25519 -C claude-workspace`, add
    `~/.ssh/id_ed25519.pub` to GitHub, then clone into `~/code/`. The key
    persists on the PVC. (NetworkPolicy allows egress 443 + 22 to public IPs
@@ -98,6 +99,98 @@ still configured.
    Pairing keys land in `~/.happy` on the PVC. From then on, `happy` instead
    of `claude` = same session, controllable from the phone with push
    notifications for permission prompts.
+
+## Other agents
+
+Since image v32 claude is not the only agent here. Three more are on `PATH`,
+each a real CLI with its own agent loop, tools, and model — not a model id
+handed to claude:
+
+| CLI | Agent | Login (once, from `/term`) | Lands on the PVC |
+|---|---|---|---|
+| `codex` | OpenAI Codex | `codex login --device-auth` | `~/.codex/auth.json` |
+| `gemini` | Google Gemini | `gemini`, then paste the OAuth code | `~/.gemini/oauth_creds.json` |
+| `muse` | Meta Muse Code | `muse login` (device code) | `~/.muse` |
+
+**No API key is involved in any of them**, and none is stored in the chart or in
+1Password. All four agents run on subscriptions, which is the same bargain
+claude has always had here — and the same reason the messaging gateway shells
+out to a CLI instead of using an SDK.
+
+Each login is a one-time interactive pass, exactly like `gh auth login`. The
+dirs are created 0700 by `init-home`; the PVC is cleartext iSCSI, so treat them
+the way you would `~/.claude`.
+
+Smoke-test each one after logging in — this is what tells you the credential
+actually works headlessly, which is the thing both the gateway and Happy depend
+on:
+
+```sh
+codex  exec --json "print hello"
+gemini -p "print hello" --output-format json
+muse   exec --json "print hello"
+muse-acp --selftest
+```
+
+### From Happy
+
+`happy` has shipped multi-agent subcommands since 1.2.0 — the pod was only ever
+missing the binaries. Run any of these in tmux instead of plain `happy`:
+
+```sh
+happy codex             # Codex
+happy gemini            # Gemini, over ACP
+happy acp -- muse-acp   # Muse, via the ACP adapter
+```
+
+All of them share this `$HOME`, so they see the same `~/code` checkouts and the
+same git/ssh identity.
+
+### Why gemini-cli and not agy
+
+Google's newer Antigravity CLI (`agy`) persists its OAuth token **only** through
+the `org.freedesktop.secrets` D-Bus API, and degrades to nothing when that is
+absent rather than falling back to a file the way docker and gh do
+(google-antigravity/antigravity-cli#57). There is no dbus or keyring daemon in
+this image, and no good way to share one session across the pod's containers —
+`term`, `happy-daemon` and `messaging-gateway` are separate containers. The API
+key path (`GEMINI_API_KEY` + `modelProvider` in settings.json) works headlessly
+but is a different quota from the subscription. `gemini-cli` writes a plain
+`~/.gemini/oauth_creds.json`, speaks ACP via `--experimental-acp`, and needs
+none of that.
+
+If `gemini` ever claims it is not logged in despite the file being there, it is
+google-gemini/gemini-cli#5474 — the token is only picked up when the CLI starts
+from `~/.gemini`. The workaround is a `~/.gemini/.env` setting
+`GOOGLE_CLOUD_PROJECT`.
+
+### Muse is pinned, not self-updating
+
+Upstream only documents `curl https://dev.meta.ai/install.sh | bash`, which
+installs a self-updating launcher into `~/.local/bin` — unusable under a
+read-only rootfs and impossible to pin. The channel endpoint and the manifest it
+points at are both public and unauthenticated, though, and the manifest hands
+out a direct versioned artifact URL plus its sha256, so the Dockerfile pins the
+binary like everything else here. To bump it:
+
+```sh
+curl -s https://api.meta.ai/muse-code/channels/muse-stable          # → version, manifest_url
+curl -s "<manifest_url>" | jq -r .artifacts.x86_linux.checksum      # → MUSE_SHA256
+```
+
+It is ~300MB, by a wide margin the largest thing in the image.
+
+### Which Muse model
+
+`muse-spark-1.3` and `muse-spark-1.3-contributor` are the same model. The
+contributor row is ~12x cheaper ($0.10 vs $1.25 /Mtok in) because its data is,
+in Meta's words, *"used to improve our products"*.
+
+The default here is the **non-contributor** one. What goes through this pod is
+private repos, `~/code` checkouts and a cluster-admin seat; that is not training
+data, and the price difference is not a reason to make it some. `!model
+muse-spark-1.3-contributor` still selects it per chat when the work is
+throwaway. See [Muse Spark](https://developer.meta.com/ai/models/muse-spark/).
 
 ## Cluster powers
 
@@ -413,7 +506,11 @@ threads in one chat, since there is only one chat with the bot and switching
 context used to destroy the old thread · `!plan [on|off]` per-chat plan mode (`--permission-mode plan` — claude
 researches and proposes, never edits; bare `!plan` turns it on, and it clears
 `!auto`, which is the opposite instruction) ·
-`!model opus|sonnet|haiku|fable|<id>|default` · `!effort
+`!agent claude|codex|gemini|muse` switch which coding agent this chat drives
+(see [Other agents in chat](#other-agents-in-chat)) ·
+`!model opus|sonnet|haiku|fable|<id>|default` — aliases are the ACTIVE agent's,
+and anything unrecognised is passed through verbatim so a model newer than this
+build still works · `!effort
 low|medium|high|xhigh|max|default` ·
 `!verbose quiet|low|normal|high|live|default` how often the live status message
 redraws while a run is going (see below) ·
@@ -533,6 +630,81 @@ While a run is going, three things say so, in increasing order of detail:
   reply and labelled `⏺ answered — continuing below`; otherwise the work your
   answer just bought happens against a status that is both out of revisions and
   scrolled off the screen.
+
+### Other agents in chat
+
+`!agent codex|gemini|muse|claude` switches which agent the chat drives. Each
+keeps **its own thread**, so `!agent codex`, a conversation, `!agent claude`
+lands back in the claude conversation you left rather than a fresh one — and
+`!use`/`!sessions` operate on the active agent's threads. A run belonging to the
+old agent is stopped on the switch rather than orphaned: its replies would
+arrive in a chat that has moved on.
+
+Opt in per instance with `messaging.agents.enabled` (empty by default). Each one
+needs its own PVC login first — see [Other agents](#other-agents).
+
+**How they are driven, and why.** Not each CLI's own headless mode
+(`codex exec --json`, `muse exec --json`) but **ACP**, the Agent Client Protocol,
+over stdio. The reason is permissions: ACP is the only one of the available
+protocols with a `session/request_permission` in it, and that is what lets every
+agent reach the same `reply 1/2/3` prompt claude has always used. A
+`codex exec` can only be run pre-approved, and a pre-approved agent on a
+cluster-admin pod is not a thing to hand a phone.
+
+Only gemini speaks ACP itself (`gemini --acp`). codex goes through
+`@agentclientprotocol/codex-acp`, muse through the `muse-acp` binary — both of
+which still drive the real CLI, so the subscription login is still the
+credential and there is no API key anywhere in this chart.
+
+**What they cannot do.** These say so rather than accepting the command and
+dropping it on the floor, which is the failure worth avoiding — a `!plan on`
+that reports success and then lets the agent edit files is worse than a refusal:
+
+| | Why |
+|---|---|
+| `!plan` | `--permission-mode plan` is a Claude Code flag; ACP has no equivalent |
+| `!usage` | counts tokens from `~/.claude/projects` transcripts, which only claude writes |
+| `ScheduleWakeup` | the model cannot arm one. **Gateway schedules still fire** — those timers live on this side of the process boundary |
+| background tasks | no parked runs, so no second reply when a long job lands; a turn ends when it ends |
+| `!resume` with no id | there is no transcript layout to search, so it asks for an id |
+| project MCP servers | `~/.claude.json` project scope is claude's |
+
+The harness system prompt still applies: with no `--append-system-prompt` to put
+it in, the gateway prepends it to the first message of a new session.
+
+**`!model` and `!effort` do work** — through ACP **session config options**, the
+standard mechanism that replaced the unstable `session/set_model`. On
+`session/new` (and `session/load`) an agent may publish a list of options; the
+gateway selects against the `model` and `thought_level` categories at session
+start, with the same precedence claude uses — a schedule's pin beats the chat's
+`!model` beats `messaging.agents.*Model`.
+
+Because the agent publishes its own catalogue, bare `!model` lists **its real
+models** rather than anything hardcoded here, and a name it does not offer is
+refused in chat naming what is available. A value it accepts but then rejects
+fails the run loudly rather than quietly answering on some other model.
+
+An agent that advertises no model option gets an honest refusal instead. Two
+wrinkles worth knowing, both found by probing the real adapters:
+
+- muse advertises `model` with an **empty list** until `muse login` has
+  refreshed its catalogue from the host. Empty means "not known yet", not
+  "nothing is valid", so the value is still attempted.
+- The option's identifier field is `id` on the wire, though the published spec
+  calls it `configId`. Both are read.
+
+This is worth stating plainly because the first version of this got it wrong:
+`!model` wrote the value to state, replied `✓ … applies to the next message`,
+and **nothing ever read it back**. `AgentSupports` now carries a `model` flag
+alongside the rest so the router has something to check.
+
+**Allowlist and groups.** claude gets `messaging.allowedTools` as a CLI flag, so
+a read-only tool never reaches the relay. ACP has no such flag, so the gateway
+applies the list itself — which means **bare tool names only**. A pattern entry
+like `Bash(git status:*)` deliberately does *not* pre-approve `Bash`, because
+treating it as a match would turn "git status is fine" into a standing grant for
+`Bash(rm -rf /)`. Pattern entries prompt instead. Groups are unaffected: their
+ceiling has no patterns in it.
 
 ### Schedules
 

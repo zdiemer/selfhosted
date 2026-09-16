@@ -10,20 +10,22 @@ import {
 } from "./approvals.ts";
 import { replyPrefix } from "./chunk.ts";
 import {
-  atCapacity,
   type BackgroundTask,
   describeTasks,
-  handOff,
-  isRunning,
-  isWaiting,
-  latestSessionId,
-  resumableBytes,
   type RunOverrides,
   type RunResult,
-  runClaude,
+} from "./claude.ts";
+import {
+  atCapacity,
+  backendById,
+  backendFor,
+  allBackends,
+  DEFAULT_AGENT,
+  isRunning,
+  isWaiting,
   stop,
   waitingOn,
-} from "./claude.ts";
+} from "./agent/index.ts";
 import { scheduleStatus, setScheduleRunner } from "./schedules.ts";
 import {
   groupRateAllows,
@@ -47,6 +49,8 @@ import {
   listSessions,
   sessionName,
   switchSession,
+  threadOf,
+  threadPatch,
   updateChat,
 } from "./state.ts";
 import { createStatus, type Status } from "./status.ts";
@@ -481,7 +485,13 @@ async function drain(chatKey: string): Promise<void> {
     ]
       .filter(Boolean)
       .join("\n\n");
-    if (handOff(chatKey, item.body || NO_CAPTION, handOffPreamble)) {
+    if (
+      backendFor(chatKey).handOff(
+        chatKey,
+        item.body || NO_CAPTION,
+        handOffPreamble,
+      )
+    ) {
       queue.shift();
       if (item.quiet) quietTurn.add(chatKey);
       deliveryRefs.set(chatKey, item.ref);
@@ -505,6 +515,11 @@ async function drain(chatKey: string): Promise<void> {
   }
   const item = queue.shift()!;
   const { body: message, ref, files, wakeup, run: runOverrides } = item;
+  // Resolved once, here, rather than per use: a `!agent` landing mid-run must
+  // not move this run's backend out from under it. The next message picks up
+  // the new one.
+  const agent = backendFor(chatKey);
+  const supports = agent.supportsFor(chatKey);
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
@@ -522,7 +537,9 @@ async function drain(chatKey: string): Promise<void> {
   // a resume means THAT thread can no longer be rebuilt — not that this
   // message was too big — and is recoverable by starting over. Pinned runs
   // manage their own slots and sit this out.
-  const resumingId = runOverrides ? undefined : getChat(chatKey).sessionId;
+  const resumingId = runOverrides
+    ? undefined
+    : threadOf(getChat(chatKey), agent.id).sessionId;
   let retryFresh = false;
   // No status message in a group: the room did not ask to watch the bot's tool
   // calls, and a group run is restricted to WebFetch/WebSearch anyway, so there
@@ -550,7 +567,7 @@ async function drain(chatKey: string): Promise<void> {
     ]
       .filter(Boolean)
       .join("\n\n");
-    const final = await runClaude(chatKey, message || NO_CAPTION, preamble, {
+    const final = await agent.run(chatKey, message || NO_CAPTION, preamble, {
       onEvent: (ev) => {
         // A new turn on a run that already answered once — the CLI woke itself
         // for a finished background task, or was handed a second message. The
@@ -716,8 +733,12 @@ const NUDGE_COOLDOWN_MS = 10 * 60_000;
 
 function transcriptHealth(chatKey: string): void {
   const chat = getChat(chatKey);
-  if (!chat.sessionId) return;
-  const bytes = resumableBytes(chat.cwd, chat.sessionId);
+  const agent = backendFor(chatKey);
+  const sessionId = threadOf(chat, agent.id).sessionId;
+  if (!sessionId) return;
+  // 0 for a backend that exposes no transcript on disk, which reads as healthy
+  // — the right answer, since there is nothing this could nudge about.
+  const bytes = agent.resumableBytes(chat.cwd, sessionId);
   const { compactBytes, capBytes } = config.transcript;
   if (bytes < capBytes && (!compactBytes || bytes < compactBytes)) return;
   const last = nudgedAt.get(chatKey) ?? 0;
@@ -853,6 +874,13 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
   // spacing, quoting and newlines, which the split above flattens.
   const rawArg = body.slice(cmd.length).trim();
   const chat = getChat(chatKey);
+  // Most commands are about one agent's thread, model, or capabilities, so
+  // they all read the same resolved backend rather than each looking it up.
+  const agent = backendFor(chatKey);
+  // What this agent can actually do for this chat. Two of these (model,
+  // effort) depend on what an ACP agent advertised on its last session, so it
+  // is a call rather than a field.
+  const supports = agent.supportsFor(chatKey);
 
   // Escalation needs a code entered in the last `unlock.freshMs`, not merely an
   // open session. `!bash` is a shell with no model in the loop and `!auto` is a
@@ -905,43 +933,133 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         stop(chatKey) ? "stopped its run" : "",
         cancelWakeup(chatKey) ? "cancelled its wake-up" : "",
       ].filter(Boolean);
-      updateChat(chatKey, { sessionId: undefined });
+      // Only the ACTIVE agent's thread. The others are parked conversations
+      // this chat can still switch back to, and clearing them all from a
+      // command that says "history cleared" would be a much bigger promise
+      // than the one the user made.
+      updateChat(
+        chatKey,
+        threadPatch(chat, agent.id, { sessionId: undefined }),
+      );
       return sendTo(
         chatKey,
-        `✓ history cleared${killed.length ? ` (${killed.join(", ")})` : ""}` +
+        `✓ ${agent.label} history cleared` +
+          `${killed.length ? ` (${killed.join(", ")})` : ""}` +
           " — next message starts fresh",
       );
     }
-    case "!model": {
+    case "!agent": {
+      const names = allBackends()
+        .map((b) => b.id)
+        .join("|");
       if (!arg)
         return sendTo(
           chatKey,
-          `model: ${chat.model ?? config.model} (default ${config.model})\n` +
-            `usage: !model ${Object.keys(MODEL_ALIASES).join("|")}|<model-id>|default`,
+          `agent: ${agent.label} (${agent.id})\n` +
+            `usage: !agent ${names}\n` +
+            "each keeps its own thread — switching back resumes where you left off",
         );
-      if (arg === "default") {
-        updateChat(chatKey, { model: undefined });
-        return sendTo(chatKey, `✓ model back to default (${config.model})`);
+      const next = backendById(arg);
+      if (!next) return sendTo(chatKey, `unknown agent — try !agent ${names}`);
+      if (next.id === agent.id)
+        return sendTo(chatKey, `already on ${next.label}`);
+      // A run belonging to the OLD agent is stopped rather than orphaned: its
+      // replies would arrive in a chat that has moved on, and its permission
+      // prompts would be answered against the wrong conversation.
+      const stopped = stop(chatKey) ? " (stopped the run in flight)" : "";
+      updateChat(chatKey, { backend: next.id });
+      const t = threadOf(getChat(chatKey), next.id);
+      return sendTo(
+        chatKey,
+        `✓ ${next.label}${stopped} — ` +
+          (t.sessionId ? "resuming your thread" : "starting fresh"),
+      );
+    }
+    case "!model": {
+      // The guard that was missing, and whose absence made this whole command
+      // a lie on the ACP backends: it wrote the value, said "applies to the
+      // next message", and nothing ever read it back.
+      if (!supports.model)
+        return sendTo(
+          chatKey,
+          `${agent.label} does not offer a model choice over ACP — it runs ` +
+            "whatever its own config selects.",
+        );
+      const fallback = agent.defaultModel;
+      const current = threadOf(chat, agent.id).model ?? fallback;
+      // What the AGENT says it accepts, asked at its last session. Empty means
+      // we have not seen one yet (or, for muse, that it has not refreshed its
+      // catalogue from the host because nothing has logged in) — in which case
+      // a value is taken on trust and the next run is the judge.
+      const { values: choices } = agent.choicesFor(chatKey, "model");
+      const known = choices.map((c) => c.value);
+
+      if (!arg) {
+        const list = choices.length
+          ? choices
+              .map(
+                (c) =>
+                  `${c.value === current ? "▸" : " "} ${c.value}` +
+                  (c.name && c.name !== c.value ? ` — ${c.name}` : ""),
+              )
+              .join("\n")
+          : `usage: !model <model-id>|default\n` +
+            "(this agent's list appears after its first message)";
+        return sendTo(
+          chatKey,
+          `model: ${current} (${agent.label} default ${fallback})\n${list}`,
+        );
       }
-      const model = MODEL_ALIASES[arg] ?? arg;
-      updateChat(chatKey, { model });
-      return sendTo(chatKey, `✓ model ${model} (applies to the next message)`);
+      if (arg === "default") {
+        updateChat(chatKey, threadPatch(chat, agent.id, { model: undefined }));
+        return sendTo(chatKey, `✓ model back to default (${fallback})`);
+      }
+      // Aliases are the active agent's — "opus" means nothing to codex. claude
+      // keeps a small alias map; an ACP agent has none, because it tells us its
+      // real catalogue instead.
+      const model = agent.models[arg] ?? arg;
+      // Rejected HERE when we know the list, rather than at the next run, so
+      // the answer arrives while you are still looking at the phone. Unknown
+      // list ⇒ accept; the run validates and fails loudly if it was wrong.
+      if (known.length && !known.includes(model))
+        return sendTo(
+          chatKey,
+          `${agent.label} does not offer ${model}. Available:\n` +
+            known.map((v) => `· ${v}`).join("\n"),
+        );
+      updateChat(chatKey, threadPatch(chat, agent.id, { model }));
+      return sendTo(
+        chatKey,
+        `✓ ${agent.label} model ${model} (applies to the next message)`,
+      );
     }
     case "!effort": {
+      if (!supports.effort)
+        return sendTo(
+          chatKey,
+          `${agent.label} offers no reasoning-effort setting here.\n` +
+            "!agent claude to use it.",
+        );
+      // Not Claude-only any more: muse advertises a `thought_level` config
+      // option (none…ultra), so the levels on offer are the agent's, and
+      // claude's fixed list is the fallback for the one backend with a flag
+      // instead of a catalogue.
+      const { values: offered } = agent.choicesFor(chatKey, "effort");
+      const levels = offered.length ? offered.map((o) => o.value) : EFFORT_LEVELS;
       if (!arg)
         return sendTo(
           chatKey,
           `effort: ${chat.effort ?? config.effort} (default ${config.effort})\n` +
-            `usage: !effort ${EFFORT_LEVELS.join("|")}|default`,
+            `usage: !effort ${levels.join("|")}|default`,
         );
       if (arg === "default") {
         updateChat(chatKey, { effort: undefined });
         return sendTo(chatKey, `✓ effort back to default (${config.effort})`);
       }
-      if (!EFFORT_LEVELS.includes(arg))
-        return sendTo(chatKey, `usage: !effort ${EFFORT_LEVELS.join("|")}`);
+      if (!levels.includes(arg))
+        return sendTo(chatKey, `usage: !effort ${levels.join("|")}`);
       updateChat(chatKey, { effort: arg });
-      return sendTo(chatKey, `✓ effort ${arg}`);
+      return sendTo(chatKey, `✓ ${agent.label} effort ${arg}`);
     }
     case "!verbose":
     case "!verbosity": {
@@ -975,10 +1093,22 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       );
     }
     case "!resume": {
-      const id = arg || latestSessionId(chat.cwd);
-      if (!id) return sendTo(chatKey, `no sessions found for ${chat.cwd}`);
-      updateChat(chatKey, { sessionId: id });
-      return sendTo(chatKey, `✓ resuming ${id.slice(0, 8)} in ${chat.cwd}`);
+      // With no id: the newest session THIS agent left on disk for this cwd —
+      // the cross-surface handoff from a /term or Happy session. An agent that
+      // keeps no discoverable transcript says so rather than silently finding
+      // claude's.
+      const id = arg || agent.latestSessionId(chat.cwd);
+      if (!id)
+        return sendTo(
+          chatKey,
+          `no ${agent.label} sessions found for ${chat.cwd}` +
+            (arg ? "" : " — pass an id, or !agent to switch"),
+        );
+      updateChat(chatKey, threadPatch(chat, agent.id, { sessionId: id }));
+      return sendTo(
+        chatKey,
+        `✓ resuming ${id.slice(0, 8)} in ${chat.cwd} (${agent.label})`,
+      );
     }
     case "!cwd": {
       if (!arg) return sendTo(chatKey, `cwd: ${chat.cwd}`);
@@ -995,8 +1125,20 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         );
       if (!fs.existsSync(target))
         return sendTo(chatKey, `⚠ no such directory: ${target}`);
-      updateChat(chatKey, { cwd: target, sessionId: undefined });
-      return sendTo(chatKey, `✓ cwd ${target} (session cleared)`);
+      // Every agent's pointer goes, not just the active one: a session id is
+      // bound to the directory it ran in, so a parked codex thread resumed
+      // after a !cwd would be resuming somewhere else entirely.
+      updateChat(chatKey, {
+        cwd: target,
+        sessionId: undefined,
+        backends: Object.fromEntries(
+          Object.entries(chat.backends ?? {}).map(([id, t]) => [
+            id,
+            { ...t, sessionId: undefined },
+          ]),
+        ),
+      });
+      return sendTo(chatKey, `✓ cwd ${target} (sessions cleared)`);
     }
     case "!auto": {
       // Disabled instances refuse even `!auto off`, so the reply never implies
@@ -1035,6 +1177,15 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       // characters before a question you don't want acted on.
       const on = arg === "" || arg === "on";
       if (!on && arg !== "off") return sendTo(chatKey, "usage: !plan [on|off]");
+      // Plan mode is `--permission-mode plan`, a Claude Code flag. Over ACP
+      // there is no equivalent, and pretending otherwise would leave a chat
+      // believing edits were off while the agent made them.
+      if (on && !supports.plan)
+        return sendTo(
+          chatKey,
+          `plan mode is a Claude Code flag — ${agent.label} has no equivalent here.\n` +
+            "!agent claude to use it.",
+        );
       // Clearing auto is the point, not a side effect — "don't touch anything"
       // and "don't ask before touching" cannot both be the rule.
       updateChat(chatKey, { plan: on, auto: on ? false : chat.auto });
@@ -1062,6 +1213,15 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       return sendReply(chatKey, `$ ${rawArg}${status}\n${result.text}`);
     }
     case "!usage": {
+      // Counted by reading ~/.claude/projects transcripts, because nothing else
+      // counts a subscription's spend. The other agents keep no equivalent this
+      // can read, so the number would silently be claude's alone.
+      if (!supports.usage)
+        return sendTo(
+          chatKey,
+          `!usage reads Claude Code's transcripts — there is no ${agent.label} ` +
+            "equivalent to count. !agent claude for claude's spend.",
+        );
       const days = Number(arg);
       const window =
         Number.isFinite(days) && days > 0 ? Math.min(days, 90) : config.usageDays;
@@ -1075,7 +1235,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       // model calling ScheduleWakeup with stop, but the impolite way must not
       // require a model that is misbehaving to cooperate.
       const killed = [
-        stop(chatKey) ? "claude" : "",
+        stop(chatKey) ? agent.label.toLowerCase() : "",
         stopBash(chatKey) ? "bash" : "",
         cancelWakeup(chatKey) ? "scheduled wake-up" : "",
       ].filter(Boolean);
@@ -1088,13 +1248,15 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       if (!arg)
         return sendTo(
           chatKey,
-          `session: ${sessionName(chat)}\nusage: !use <name> — switch or start a thread`,
+          `session: ${sessionName(threadOf(chat, agent.id))} (${agent.label})\n` +
+            "usage: !use <name> — switch or start a thread",
         );
       // One word, so a name can't be confused with the rest of a command.
       const name = arg.split(/\s+/)[0];
       if (!/^[\w-]{1,24}$/.test(name))
         return sendTo(chatKey, "usage: !use <name> (letters, digits, - or _)");
-      const { resumed } = switchSession(chatKey, name);
+      // Threads are per agent, so "api" under codex is not "api" under claude.
+      const { resumed } = switchSession(chatKey, agent.id, name);
       return sendTo(
         chatKey,
         resumed
@@ -1103,14 +1265,18 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       );
     }
     case "!sessions": {
-      const lines = listSessions(chat).map(
+      const lines = listSessions(threadOf(chat, agent.id)).map(
         (s) =>
           `${s.current ? "▸" : " "} ${s.name}` +
           (s.sessionId ? ` · ${s.sessionId.slice(0, 6)}` : " · (new)"),
       );
       return sendTo(
         chatKey,
-        [...lines, "!use <name> to switch or start one"].join("\n"),
+        [
+          `${agent.label} threads:`,
+          ...lines,
+          "!use <name> to switch or start one",
+        ].join("\n"),
       );
     }
     case "!more": {
@@ -1135,8 +1301,16 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
               (s.next ? `next in ${formatDuration(s.next.getTime() - Date.now())}` : "never"),
           ),
           `cwd: ${chat.cwd}`,
-          `session: ${sessionName(chat)} · ${chat.sessionId ?? "(none)"}`,
-          `model: ${chat.model ?? config.model} · effort: ${chat.effort ?? config.effort}`,
+          `agent: ${agent.label}${
+            allBackends().length > 1 ? " (!agent to switch)" : ""
+          }`,
+          `session: ${sessionName(threadOf(chat, agent.id))} · ${
+            threadOf(chat, agent.id).sessionId ?? "(none)"
+          }`,
+          `model: ${threadOf(chat, agent.id).model ?? agent.defaultModel}` +
+            (supports.effort
+              ? ` · effort: ${chat.effort ?? config.effort}`
+              : ""),
           `verbosity: ${chat.verbosity ?? config.progress.verbosity} (${describeVerbosity(
             chat.verbosity ?? config.progress.verbosity,
           )})`,
@@ -1164,6 +1338,9 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
         chatKey,
         "!new/!clear · !resume [id] · !cwd <repo|path> · !auto on|off · " +
           "!plan [on|off] · !model <name> · !effort <level> · !stop · !status\n" +
+          `!agent ${allBackends()
+            .map((b) => b.id)
+            .join("|")} — switch coding agent; each keeps its own thread\n` +
           "!auto takes a duration too: !auto 30m, !auto 2h\n" +
           `!verbose ${VERBOSITY_LEVELS.join("|")} — how often the status ` +
           "message redraws while a run is going (quiet sends none)\n" +
