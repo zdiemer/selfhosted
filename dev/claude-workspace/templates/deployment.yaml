@@ -78,13 +78,19 @@ spec:
               # gh CLI auth (one-time `gh auth login`) persists here on the PVC.
               mkdir -p /home/node/.config/gh && chmod 700 /home/node/.config/gh
               # The other coding agents, each with a one-time interactive login
-              # that lands here (see README "Other agents"): codex device-auth
-              # writes auth.json, gemini writes oauth_creds.json, muse keeps its
-              # own store. 0700 — these hold live OAuth tokens, and the PVC is
-              # cleartext iSCSI.
+              # that lands here (see README "Other agents"). 0700 — these hold
+              # live OAuth tokens, and the PVC is cleartext iSCSI.
+              #
+              # Paths verified against the real logins rather than assumed:
+              # codex writes ~/.codex/auth.json, gemini writes
+              # ~/.gemini/gemini-credentials.json, and muse uses XDG dirs
+              # (~/.config/muse + ~/.local/share/muse) — NOT ~/.muse, which an
+              # earlier cut of this created and nothing ever wrote to.
               mkdir -p /home/node/.codex && chmod 700 /home/node/.codex
               mkdir -p /home/node/.gemini && chmod 700 /home/node/.gemini
-              mkdir -p /home/node/.muse && chmod 700 /home/node/.muse
+              mkdir -p /home/node/.config/muse && chmod 700 /home/node/.config/muse
+              mkdir -p /home/node/.local/share/muse
+              chmod 700 /home/node/.local/share/muse
               {{- if .Values.bakery.enabled }}
               # Bakery state (sessions/artifacts DB) + its agent's creds (~/.pi,
               # a one-time interactive login).

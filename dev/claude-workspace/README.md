@@ -109,8 +109,8 @@ handed to claude:
 | CLI | Agent | Login (once, from `/term`) | Lands on the PVC |
 |---|---|---|---|
 | `codex` | OpenAI Codex | `codex login --device-auth` | `~/.codex/auth.json` |
-| `gemini` | Google Gemini | `gemini`, then paste the OAuth code | `~/.gemini/oauth_creds.json` |
-| `muse` | Meta Muse Code | `muse login` (device code) | `~/.muse` |
+| `gemini` | Google Gemini | `gemini`, then paste the OAuth code | `~/.gemini/gemini-credentials.json` |
+| `muse` | Meta Muse Code | `muse login` (device code) | `~/.config/muse` + `~/.local/share/muse` |
 
 **No API key is involved in any of them**, and none is stored in the chart or in
 1Password. All four agents run on subscriptions, which is the same bargain
@@ -159,10 +159,11 @@ but is a different quota from the subscription. `gemini-cli` writes a plain
 `~/.gemini/oauth_creds.json`, speaks ACP via `--experimental-acp`, and needs
 none of that.
 
-If `gemini` ever claims it is not logged in despite the file being there, it is
-google-gemini/gemini-cli#5474 — the token is only picked up when the CLI starts
-from `~/.gemini`. The workaround is a `~/.gemini/.env` setting
-`GOOGLE_CLOUD_PROJECT`.
+0.60.0 writes `gemini-credentials.json`, not the `oauth_creds.json` older
+write-ups describe. If `gemini` ever claims it is not logged in despite the file
+being there, it is google-gemini/gemini-cli#5474 — the token is only picked up
+when the CLI starts from `~/.gemini`. The workaround is a `~/.gemini/.env`
+setting `GOOGLE_CLOUD_PROJECT`.
 
 ### Muse is pinned, not self-updating
 
@@ -191,6 +192,28 @@ private repos, `~/code` checkouts and a cluster-admin seat; that is not training
 data, and the price difference is not a reason to make it some. `!model
 muse-spark-1.3-contributor` still selects it per chat when the work is
 throwaway. See [Muse Spark](https://developer.meta.com/ai/models/muse-spark/).
+
+**Muse's own default is the contributor row.** Its ACP session comes up with
+`model_id: muse-spark-1.3-contributor, source: startup`, so the chart's
+`messaging.agents.museModel` is not cosmetic — it is the thing that moves a run
+off the training-data variant, applied per session via
+`session/set_config_option`.
+
+### What each agent actually offers
+
+Probed against the live adapters once logged in, rather than taken from docs:
+
+| Agent | Models advertised | Its default | Effort option |
+|---|---|---|---|
+| `codex` | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | `gpt-6-astra` | yes (`low`) |
+| `muse` | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | ⚠️ `muse-spark-1.3-contributor` | yes (`medium`) |
+| `gemini` | **none** — advertises no model config option | n/a | no |
+
+So `!model` and `!effort` work on codex and muse, and are refused on gemini
+(`messaging.agents.geminiModel` is inert, kept only in case a later gemini-cli
+starts publishing one). `codex-acp` will not start at all until
+`codex login --device-auth` has run — it bridges to `codex app-server`, which
+hangs with no output when unauthenticated.
 
 ## Cluster powers
 

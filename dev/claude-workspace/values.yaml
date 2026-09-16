@@ -102,7 +102,8 @@ image:
   #      (@openai/codex), gemini (@google/gemini-cli) and muse (Meta's Muse
   #      Code, plus the muse-acp adapter) are installed alongside it, each
   #      authenticated by a one-time interactive login on the PVC — ~/.codex,
-  #      ~/.gemini, ~/.muse, created by init-home. No API key enters the chart:
+  #      ~/.gemini and muse's XDG dirs, created by init-home. No API key
+  #      enters the chart:
   #      all four run on subscriptions, the same as claude always has.
   #      `happy codex` / `happy gemini` / `happy acp -- muse-acp` work from
   #      /term as of this tag (happy has shipped those subcommands since 1.2.0
@@ -549,7 +550,14 @@ messaging:
     # session/set_config_option. `!model` overrides per chat and validates
     # against the catalogue the agent publishes, so a wrong id is refused in
     # chat rather than quietly ignored.
-    codexModel: gpt-5.4
+    # Verified against the live catalogues (v32, logged in), not guessed:
+    # codex offers gpt-6-astra, gpt-5.6-{sol,terra,luna}, gpt-5.5 and defaults
+    # to gpt-6-astra. A value outside that list fails the run loudly rather
+    # than quietly answering on another model.
+    codexModel: gpt-6-astra
+    # ⚠️ INERT. gemini --acp advertises no model config option at all, so there
+    # is nothing to select and `!model` refuses for gemini. Kept so the key
+    # exists if a later gemini-cli starts publishing one.
     geminiModel: gemini-3.8-pro
     # ⚠️ NOT muse-spark-1.3-contributor. Same model; the contributor row is
     # ~12x cheaper because its data is, in Meta's words, "used to improve our
