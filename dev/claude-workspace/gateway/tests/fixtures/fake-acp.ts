@@ -14,6 +14,13 @@
 //   FAKE_EMPTY_MODELS=1   advertise a model option with an empty option list,
 //                         the way muse-acp does before `muse login`
 //   FAKE_SET_CONFIG_FAILS=1  reject session/set_config_option
+//
+// session/load always replays a prior exchange before answering, the way
+// codex-acp does, and session/prompt narrates before its tool call — neither
+// belongs in the reply.
+
+const REPLAYED = "OLD REPLY FROM HISTORY";
+const NARRATION = "Let me look first.";
 
 const enc = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 
@@ -172,6 +179,16 @@ async function handle(msg: {
         });
         return;
       }
+      for (const update of [
+        { sessionUpdate: "user_message_chunk", content: { type: "text", text: "old question" } },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: REPLAYED } },
+        { sessionUpdate: "tool_call", toolCallId: "old-tc", title: "Old tool", status: "completed" },
+      ])
+        enc({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: { sessionId: msg.params?.sessionId, update },
+        });
       enc({
         jsonrpc: "2.0",
         id: msg.id,
@@ -181,6 +198,17 @@ async function handle(msg: {
 
     case "session/prompt": {
       const sessionId = msg.params?.sessionId as string;
+      enc({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: NARRATION },
+          },
+        },
+      });
       // Echo what we were asked, so a test can assert the prompt text.
       const sent = (msg.params?.prompt as { text?: string }[] | undefined)?.[0]
         ?.text;
@@ -201,24 +229,12 @@ async function handle(msg: {
       });
 
       let denied = false;
+      let permission = "";
       if (wantsPermission) {
         const outcome = (await askPermission(sessionId)) as {
           outcome?: { outcome?: string; optionId?: string };
         };
-        enc({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: `[permission:${outcome?.outcome?.outcome}:${outcome?.outcome?.optionId}]`,
-              },
-            },
-          },
-        });
+        permission = `[permission:${outcome?.outcome?.outcome}:${outcome?.outcome?.optionId}]`;
         denied = String(outcome?.outcome?.optionId ?? "").startsWith("r");
       }
 
@@ -243,7 +259,7 @@ async function handle(msg: {
             sessionUpdate: "agent_message_chunk",
             content: {
               type: "text",
-              text: `${reply} [model:${modelValue}][effort:${effortValue}][sets:${setCalls
+              text: `${reply}${permission} [model:${modelValue}][effort:${effortValue}][sets:${setCalls
                 .map((c) => `${c.configId}=${c.value}`)
                 .join(",")}]`,
             },

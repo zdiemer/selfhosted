@@ -5,7 +5,7 @@ import type {
   RunResult,
   StreamEvent,
 } from "../claude.ts";
-import { config } from "../config.ts";
+import { ACP_FOREGROUND, BACKGROUND_PARAGRAPH, config } from "../config.ts";
 import {
   getChat,
   resumeIdForSlot,
@@ -166,15 +166,24 @@ async function runAcp(
     : thread.sessionId;
 
   const parts = [contextPrefix, message].filter(Boolean);
-  if (!resumeId && config.systemPrompt) parts.unshift(config.systemPrompt);
+  if (!resumeId && config.systemPrompt) parts.unshift(acpSystemPrompt());
   const prompt = parts.join("\n\n");
 
   acquireSlot();
   updateChat(chatKey, { inFlight: true });
 
+  // The reply is the agent's LAST message, as claude's result is — not every
+  // "I'll check X first" narrated between tool calls. `text` is the message
+  // being written; a tool call closes it into `lastAssistant`, which stands in
+  // only if the turn ends on a tool call with nothing said after it.
   let text = "";
   let lastAssistant = "";
   let died: string | null = null;
+  // session/load replays the whole thread as session/update notifications
+  // before it answers (codex-acp does; the spec allows it). None of that is
+  // this turn, so updates count only once our prompt is on its way — before
+  // this, every reply on a resumed thread carried the full conversation.
+  let prompted = false;
 
   const emit = (ev: StreamEvent) => {
     try {
@@ -191,12 +200,14 @@ async function runAcp(
     { ...process.env, HOME: config.home },
     {
       onUpdate: (u) => {
+        if (!prompted) return;
         const ev = toStreamEvent(u);
         if (!ev) return;
         const t = assistantTextOf(ev);
-        if (t) {
-          text += t;
+        if (t) text += t;
+        else if (u.sessionUpdate === "tool_call" && text.trim()) {
           lastAssistant = text;
+          text = "";
         }
         emit(ev);
       },
@@ -275,6 +286,7 @@ async function runAcp(
     );
     knownOptions.set(k, options ?? []);
 
+    prompted = true;
     const res = await client.request<{ stopReason?: string }>("session/prompt", {
       sessionId,
       prompt: [{ type: "text", text: prompt }],
@@ -345,6 +357,16 @@ async function applyOption(
     );
   }
   return (await client.setConfigOption(sessionId, optionId(opt), want)) ?? options;
+}
+
+/** The harness prompt with claude's background-task promise swapped for the
+ * truth: an ACP turn ends when session/prompt resolves and nothing wakes it
+ * again. A custom GW_SYSTEM_PROMPT without that paragraph still gets the
+ * warning, appended. */
+export function acpSystemPrompt(prompt = config.systemPrompt): string {
+  return prompt.includes(BACKGROUND_PARAGRAPH)
+    ? prompt.replace(BACKGROUND_PARAGRAPH, ACP_FOREGROUND)
+    : `${prompt}\n\n${ACP_FOREGROUND}`;
 }
 
 function persistSession(

@@ -106,6 +106,18 @@ export function parseSchedules(raw: string | undefined): ScheduleSpec[] {
 
 // Appended to Claude Code's own system prompt (--append-system-prompt), not a
 // replacement — the default one is what teaches it the tools it has.
+/** Claude-only: the gateway parks a claude run on its background tasks and
+ * wakes it when they report. Nothing does that for an ACP agent, so acpSystemPrompt()
+ * swaps this paragraph for ACP_FOREGROUND. */
+export const BACKGROUND_PARAGRAPH = `Long jobs can run in the background. Start one (a build, a migration, a test suite) as a background task, say so in a short reply, and end your turn — you will be woken when it finishes and can send a second message with the result. That is the right shape here: a reply that lands now beats a phone held open for twenty minutes. Don't background something that takes seconds.`;
+
+/** The ACP replacement. Written as an instruction to WAIT, not merely the
+ * absence of a promise: codex's exec_command yields long commands back to the
+ * model by design, and told nothing it says "running in the background, I'll
+ * report back" and ends the turn — at which point the gateway kills codex-acp
+ * and the job with it, and the report never comes. */
+export const ACP_FOREGROUND = `Nothing wakes you after your turn ends, and any command still running when you end it is killed. So never end a turn with work in progress: when a command yields before it finishes, keep polling it until it exits, then reply with the result. Never say you will report back later — the reply you end the turn with is the last thing sent until they write again.`;
+
 const DEFAULT_SYSTEM_PROMPT = `You are reachable over Signal and WhatsApp rather than a terminal. Your reply is delivered as chat messages on a phone, often on a slow or intermittent connection.
 
 Write plain text. Markdown is not rendered here: asterisks, backticks, and pound signs arrive as literal characters, so skip bold, italics, headers, code fences, and bullet syntax. For a list, use short lines. For a command or path, write it inline.
@@ -116,7 +128,7 @@ You can send files. Put [[send:/absolute/path]] alone on a line and that file is
 
 You can ask the person something mid-run, in any mode — not just when planning. AskUserQuestion is relayed to their phone as a numbered list they answer with a digit or their own words, and their answer comes back to you. Use it when a choice would change the work and you would otherwise have to guess; don't use it for things you can find out by looking.
 
-Long jobs can run in the background. Start one (a build, a migration, a test suite) as a background task, say so in a short reply, and end your turn — you will be woken when it finishes and can send a second message with the result. That is the right shape here: a reply that lands now beats a phone held open for twenty minutes. Don't background something that takes seconds.
+${BACKGROUND_PARAGRAPH}
 
 You are running headless. There is no interactive terminal. A status message shows the person a one-line summary of each tool call as you work, so they can see that something is happening, but your reasoning is not shown and the reply is what they will actually read — write it as though it stands alone.`;
 

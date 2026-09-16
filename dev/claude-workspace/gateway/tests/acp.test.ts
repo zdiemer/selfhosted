@@ -6,7 +6,17 @@ import {
   startApprovalServer,
   stopApprovalServer,
 } from "../src/approvals.ts";
-import { makeAcpBackend, toStreamEvent } from "../src/agent/acp-backend.ts";
+import {
+  acpSystemPrompt,
+  makeAcpBackend,
+  toStreamEvent,
+} from "../src/agent/acp-backend.ts";
+import { ACP_FOREGROUND, BACKGROUND_PARAGRAPH } from "../src/config.ts";
+
+// Must match fixtures/fake-acp.ts. Not imported: loading the fixture would
+// start its stdin reader inside the test process.
+const REPLAYED = "OLD REPLY FROM HISTORY";
+const NARRATION = "Let me look first.";
 import type { StreamEvent } from "../src/claude.ts";
 import { getChat, threadOf, updateChat } from "../src/state.ts";
 import { registerTransport } from "../src/transport.ts";
@@ -156,6 +166,39 @@ test("the harness system prompt rides in front of the first message only", async
   expect(seen[0].length).toBeGreaterThan("first".length); // prompt prepended
   // Second turn resumes, so it carries the message alone.
   expect(seen[1]).toBe("second");
+});
+
+test("a resumed thread's replayed history is not part of the reply", async () => {
+  const chat = "acp:replay";
+  updateChat(chat, { cwd: process.cwd(), backends: undefined });
+  const b = backend();
+  await b.run(chat, "first", "", {});
+
+  const events: StreamEvent[] = [];
+  const res = await b.run(chat, "second", "", {
+    onEvent: (ev) => events.push(ev),
+  });
+
+  expect(res.text).toContain("hello from fake");
+  expect(res.text).not.toContain(REPLAYED);
+  // Nor does the replay reach the status message as tool calls.
+  expect(JSON.stringify(events)).not.toContain("Old tool");
+});
+
+test("the reply is the last message, not the narration before tool calls", async () => {
+  const chat = "acp:narration";
+  updateChat(chat, { cwd: process.cwd(), backends: undefined });
+  const res = await backend().run(chat, "do it", "", {});
+  expect(res.text).toContain("hello from fake");
+  expect(res.text).not.toContain(NARRATION);
+});
+
+test("an ACP agent is told to wait, not promised a wake-up", () => {
+  const p = acpSystemPrompt(`intro\n\n${BACKGROUND_PARAGRAPH}\n\noutro`);
+  expect(p).not.toContain(BACKGROUND_PARAGRAPH);
+  expect(p).toBe(`intro\n\n${ACP_FOREGROUND}\n\noutro`);
+  // A custom prompt without the paragraph still gets the warning.
+  expect(acpSystemPrompt("custom")).toBe(`custom\n\n${ACP_FOREGROUND}`);
 });
 
 test("a resume falls back to a new session when the agent has lost the thread", async () => {
