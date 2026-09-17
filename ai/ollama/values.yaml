@@ -45,15 +45,27 @@ persistence:
   storageClass: truenas-iscsi
   accessMode: ReadWriteOnce
 
-# Pinned to a single node, and that is the point rather than a smell: CPU
-# inference is memory-bandwidth-bound, so it wants the node with real RAM
-# headroom, and the RWO volume plus Recreate strategy mean the pod was never
-# going to float anyway. zachd-ubuntu-4 (i9-13900H, 32Gi) had ~15Gi of
-# unrequested memory when this was written; zachd-ubuntu-5 has the faster CPU
-# but was already 66% requested, and token generation speed between the two is
-# set by DRAM bandwidth, not cores.
-nodeSelector:
-  kubernetes.io/hostname: zachd-ubuntu-4
+# Prefer the proven inference node without making its failure an outage. The
+# RWO iSCSI volume can detach and reattach on another CSI-equipped node, and
+# the 10Gi memory request keeps the pod off machines too small to run it.
+# zachd-ubuntu-6 is the first fallback: 16 CPUs and ~27Gi allocatable RAM when
+# it joined. If both preferred nodes are unavailable, any node with room may
+# run the service rather than leaving it Pending behind a hostname selector.
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [zachd-ubuntu-4]
+      - weight: 90
+        preference:
+          matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [zachd-ubuntu-6]
 
 ingress:
   enabled: true

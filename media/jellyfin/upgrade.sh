@@ -20,6 +20,18 @@ K="kubectl -n ${NAMESPACE}"
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
+GPU_SELECTOR="media.zachd/vaapi=true"
+GPU_NODE_COUNT="$(kubectl get nodes -l "$GPU_SELECTOR" -o name | wc -l)"
+if [[ "$GPU_NODE_COUNT" -lt 1 ]]; then
+  echo "No nodes carry $GPU_SELECTOR; label a verified VAAPI node before deploying." >&2
+  exit 1
+fi
+if [[ "$GPU_NODE_COUNT" -lt 2 ]]; then
+  echo "[WARNING] Only one node carries $GPU_SELECTOR; transcoding has no host failover." >&2
+fi
+echo "==> VAAPI nodes"
+kubectl get nodes -l "$GPU_SELECTOR"
+
 echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" -f "${HERE}/values.yaml" --cleanup-on-fail
 

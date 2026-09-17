@@ -90,10 +90,11 @@ updater:
     #     before adding any node here.
     #   * laptops sleep and roam — poor targets for a stable ingress address,
     #     so they sit at the end as last-resort fallback only.
-    # zachd-ubuntu-1 and -2 are the stable servers, verified clean — keep first.
+    # zachd-ubuntu-1, -2, and -6 are stable servers, verified clean — keep first.
     candidates:
       - { node: zachd-ubuntu-1,        ip: 100.84.179.82 }
       - { node: zachd-ubuntu-2,        ip: 100.118.242.89 }
+      - { node: zachd-ubuntu-6,        ip: 100.97.28.10 }
       # Fallback only (laptops; verify no `tailscale serve` on :443 first):
       - { node: zachd-ubuntu-laptop,   ip: 100.124.40.81 }
       - { node: zachd-ubuntu-laptop-2, ip: 100.81.206.46 }

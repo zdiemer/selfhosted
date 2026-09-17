@@ -1,7 +1,7 @@
 [
   {
     "uid": "sh-node-notready",
-    "title": "Node not Ready",
+    "title": "Schedulable node not Ready",
     "condition": "C",
     "ruleGroup": "selfhosted",
     "for": "10m",
@@ -13,7 +13,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "A node has been NotReady for 10 minutes. Everything on it has been rescheduled or is stranded."
+      "summary": "A schedulable node has been NotReady for 10 minutes. Everything on it has been rescheduled or is stranded."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -28,7 +28,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum(kube_node_status_condition{cluster=\"home-k3s\", condition=\"Ready\", status=\"true\"})",
+          "expr": "sum(kube_node_info{cluster=\"home-k3s\"}) - sum(kube_node_spec_unschedulable{cluster=\"home-k3s\"}) - sum(kube_node_status_condition{cluster=\"home-k3s\", condition=\"Ready\", status=\"true\"})",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -55,9 +55,9 @@
             {
               "evaluator": {
                 "params": [
-                  7
+                  0
                 ],
-                "type": "lt"
+                "type": "gt"
               },
               "operator": {
                 "type": "and"

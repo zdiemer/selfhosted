@@ -12,7 +12,8 @@
 # (`kubectl delete job -n media jellyfin-subtitle-extract`), survives the
 # laptop closing, and keeps its logs.
 #
-# Deliberately NOT pinned to zachd-ubuntu-1. Nothing here needs the GPU, and
+# Deliberately NOT constrained to the Jellyfin GPU pool. Nothing here needs
+# the GPU, and
 # scheduling it elsewhere keeps its CPU and page cache off the node serving
 # playback. The NAS bandwidth is shared regardless — that part is unavoidable.
 apiVersion: batch/v1

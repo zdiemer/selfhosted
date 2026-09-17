@@ -6,8 +6,8 @@ metadata:
     {{- include "jellyfin.labels" . | nindent 4 }}
 spec:
   replicas: 1
-  # The config PVC is RWO and (with transcode) the pod is pinned to the GPU
-  # node anyway — a rolling update would just deadlock on the volume.
+  # The config PVC is RWO, so a rolling update would deadlock on a second
+  # attachment. Recreate also lets that volume detach and follow a failover pod.
   strategy:
     type: Recreate
   selector:
@@ -26,11 +26,21 @@ spec:
       # volume. 60s lets it close out and clean up.
       terminationGracePeriodSeconds: 60
       {{- if .Values.transcode.enabled }}
-      # nodeSelector, NOT nodeName: nodeName bypasses the scheduler, so a
-      # full node means kubelet-rejected (OutOfcpu) pods that the Deployment
-      # replaces in an infinite churn. With a selector the pod just Pends.
+      # A required capability label keeps the pod on a VAAPI host; hostname is
+      # only a preference, so loss of the usual node can fail over cleanly.
       nodeSelector:
-        kubernetes.io/hostname: {{ .Values.transcode.nodeName }}
+        {{- toYaml .Values.transcode.nodeSelector | nindent 8 }}
+      {{- with .Values.transcode.preferredNode }}
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [{{ . | quote }}]
+      {{- end }}
       {{- end }}
       securityContext:
         fsGroup: {{ .Values.runAsGroup }}

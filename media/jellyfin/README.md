@@ -1,9 +1,9 @@
 # jellyfin — the media server
 
 Jellyfin serving `/mnt/vault/media` (NFS, read-write) with VAAPI hardware
-transcoding on `zachd-ubuntu-1` — the Ryzen 3 2200G, the only node with a
-real GPU. Movies and TV land in the library via the sibling
-[`media/arr`](../arr/) stack; requests come in through
+transcoding on a two-node GPU pool: `zachd-ubuntu-1` (Vega 8) and
+`zachd-ubuntu-6` (Radeon 680M). Movies and TV land in the library via the
+sibling [`media/arr`](../arr/) stack; requests come in through
 [`media/jellyseerr`](../jellyseerr/).
 
 ## Access
@@ -26,17 +26,18 @@ account system is the gate — same posture as RomM's built-in login.
 
 ## Transcoding
 
-The pod is pinned to `zachd-ubuntu-1` and mounts `/dev/dri` (privileged: the
-device cgroup denies host device nodes to unprivileged containers, and the
-cluster runs no GPU device plugin). `transcode.renderGid: 992` is that node's
-`render` group. After install, finish the job in the UI:
+The pod requires the `media.zachd/vaapi=true` node label and softly prefers
+`zachd-ubuntu-1`; if that node fails, the RWO iSCSI config volume can detach
+and follow it to `zachd-ubuntu-6`. Both nodes mount `/dev/dri` into the
+privileged container, and both expose `renderD128` with render GID 992. Restore
+the durable scheduling labels after rebuilding either node with:
+
+`kubectl label node zachd-ubuntu-1 zachd-ubuntu-6 media.zachd/vaapi=true`
 
 Dashboard → Playback → Transcoding → **VAAPI**, device `/dev/dri/renderD128`.
-Enable hardware decode/encode for H.264 and HEVC (Vega does both directions).
-Leave AV1 off — VCN 1.0 can't.
-
-If the GPU node is down, `transcode.enabled: false` unpins the pod and drops
-the privileged bit; playback falls back to direct play + CPU transcode.
+Enable hardware decode/encode for H.264 and HEVC, the common capability set.
+Leave AV1 off because the older Vega 8 cannot decode it in hardware. Setting
+`transcode.enabled: false` remains the CPU-only emergency fallback.
 
 ## Playback: what actually happens to a stream
 
@@ -123,8 +124,9 @@ Levers, cheapest first:
   subtitles pixels, so they cannot desync, vanish, or be dropped by PiP — the
   only route to subtitles *in* PiP, and the only option at all for the bitmap
   (PGS/VOBSUB) tracks that cannot become sidecars. The cost is real: video can
-  no longer be copied, so every subtitled stream becomes a full VAAPI encode on
-  `zachd-ubuntu-1` — the node already at ~87% CPU requested. The toggle does
+  no longer be copied, so every subtitled stream becomes a full VAAPI encode
+  on one of the GPU nodes; the preferred
+  `zachd-ubuntu-1` is already at ~87% CPU requested. The toggle does
   exist in this build (it is in the 10.11 web bundle), but there is an [open
   report that burn-in regressed in
   10.11](https://github.com/jellyfin/jellyfin-web/issues/7254), so confirm it

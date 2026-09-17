@@ -158,11 +158,11 @@ isos:
 # Extended resources are quota-able, so requests.devices.kubevirt.io/kvm is a
 # literal ceiling on concurrent VMs that no bug in the app can exceed.
 #
-# The memory numbers are measured, not guessed. Free memory at the time of
-# writing: ~9.9Gi on zachd-ubuntu-5 and ~8.8Gi on -4, and memory is the binding
-# constraint cluster-wide. 16Gi of requests across the namespace is already
-# more than any single node can host, which is the point — the scheduler
-# spreads them and the quota stops the tail.
+# The memory numbers are measured, not guessed. zachd-ubuntu-6 added ~27Gi of
+# allocatable RAM; before it joined, the roomiest nodes had ~9.9Gi free on -5
+# and ~8.8Gi on -4. Memory is the binding constraint cluster-wide. The 20Gi
+# request ceiling now fits on -6 while it is empty; scheduler preferences spread
+# pressure as it fills, and the quota stops the tail.
 # ---------------------------------------------------------------------------
 quota:
   enabled: true
@@ -246,8 +246,8 @@ vm:
     - key: device-type
       values: ["laptop"]
   # Soft, not required: -1 hosts win11 and sits at ~0.4 CPU free, but it should
-  # still be usable if -4 and -5 fill up.
-  preferNodes: ["zachd-ubuntu-5", "zachd-ubuntu-4"]
+  # still be usable if -4, -5, and -6 fill up.
+  preferNodes: ["zachd-ubuntu-6", "zachd-ubuntu-5", "zachd-ubuntu-4"]
 
   # Where a `persist: true` config's disk lives. Named explicitly rather than
   # falling through to the cluster default, because the fall-through IS

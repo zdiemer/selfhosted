@@ -7,9 +7,9 @@ metadata:
     app.kubernetes.io/component: ollama
 spec:
   replicas: 1
-  # Recreate: one RWO iSCSI volume and a node pin — a surge pod would block on
-  # FailedAttachVolume rather than fail, and there is nowhere else for it to
-  # go anyway. The real cost is a model-reload gap on upgrade, which is fine.
+  # Recreate: one RWO iSCSI volume means a surge pod on another node would
+  # block on FailedAttachVolume. The volume can detach and follow this singleton
+  # to another node after a failure; the real cost is a model-reload gap.
   strategy:
     type: Recreate
   selector:
@@ -38,8 +38,8 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
+      {{- with .Values.affinity }}
+      affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:

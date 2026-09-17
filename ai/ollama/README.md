@@ -12,9 +12,11 @@ zachd-ubuntu-4 an i9-13900H with Iris Xe — neither is worth the driver
 plumbing). CPU token generation is memory-*bandwidth*-bound, which drives two
 choices here:
 
-- **Pinned to zachd-ubuntu-4**, not the faster-on-paper ubuntu-5. Both are
-  dual-channel DDR5, so they decode at nearly the same speed; ubuntu-4 simply
-  had ~15Gi of unrequested memory where ubuntu-5 was already 66% committed.
+- **Prefers zachd-ubuntu-4**, with zachd-ubuntu-6 as its first fallback. The
+  former is proven for inference; the latter has 16 CPUs and ~27Gi allocatable
+  RAM. The preference is soft, so a failure of both does not strand the pod if
+  another node can satisfy its 10Gi memory request. Its iSCSI model volume can
+  detach and follow it; `Recreate` prevents a competing multi-attach.
 - **Small models.** 8B at Q4 is the sweet spot (~8–15 tok/s); 14B fits the
   16Gi limit but is noticeably slower. If a bigger brain is ever wanted at CPU
   speeds, `qwen3:30b-a3b` (MoE, ~3B active) is the thing to try — it needs the

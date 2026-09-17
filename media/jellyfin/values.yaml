@@ -37,31 +37,27 @@ media:
   # mount being writable.
   readOnly: false
 
-# Hardware transcode. zachd-ubuntu-1 is the Ryzen 2200G — the only node with
-# a real GPU (Vega 8, VAAPI H.264/HEVC both directions). Pinning Jellyfin
-# there costs flexibility but buys smooth remote/phone playback of
-# high-bitrate files. The container must be privileged to open /dev/dri:
-# non-privileged pods are denied device nodes by the device cgroup, and this
-# cluster has no GPU device plugin. renderGid is the `render` group on that
-# node (`stat -c %g /dev/dri/renderD128`), so the jellyfin user can open the
-# render node.
-# DRAINING zachd-ubuntu-1 TAKES JELLYFIN DOWN, and that is accepted rather than
-# overlooked — scripts/k3s/drain-preflight.sh reports this pod as unmovable, so
-# the reasoning belongs next to the cause.
+# Hardware transcode runs on the two nodes labelled media.zachd/vaapi=true:
+# zachd-ubuntu-1 has a Vega 8, and zachd-ubuntu-6 has a Radeon 680M. Both
+# expose /dev/dri/renderD128 as render GID 992 and pass H.264 VAAPI encoding
+# with the Jellyfin image. The label is a required hardware boundary; the
+# hostname below is only a soft preference that keeps normal rollouts on the
+# original, proven node while allowing automatic failover to ubuntu-6.
 #
-# The pin is a hardware fact, not a scheduling preference: this is the only node
-# with a usable GPU, and the pod additionally hostPath-mounts /dev/dri, which
-# exists nowhere else. Relaxing it needs a second machine with a render node —
-# at which point label both and switch this to a label selector rather than a
-# hostname.
+# The container must be privileged to open /dev/dri: non-privileged pods are
+# denied device nodes by the device cgroup, and this cluster has no GPU device
+# plugin. supplementalGroups grants the Jellyfin user access to renderD128.
 #
-# Setting transcode.enabled: false unpins the pod immediately (no nodeSelector,
-# no /dev/dri mount) at the cost of CPU-only transcoding, which this fleet
-# cannot do for high-bitrate files. That is the lever if the node ever needs a
-# long maintenance window rather than a quick drain.
+# Bootstrap or restore the durable node labels with:
+#   kubectl label node zachd-ubuntu-1 zachd-ubuntu-6 media.zachd/vaapi=true
+#
+# Setting transcode.enabled: false removes the selector, affinity, privileged
+# bit, and /dev/dri mount at the cost of CPU-only transcoding.
 transcode:
   enabled: true
-  nodeName: zachd-ubuntu-1
+  nodeSelector:
+    media.zachd/vaapi: "true"
+  preferredNode: zachd-ubuntu-1
   renderGid: 992
 
 # Jellyfin runs as this uid/gid; the NAS media dirs are owned 1000:1000.
@@ -108,7 +104,8 @@ persistence:
   # the cost of a transcode restart when seeking back past it. See
   # README.md#transcode-cache-growth.
   #
-  # Ceiling on the number: this is node-local disk on zachd-ubuntu-1, which
+  # Ceiling on the number: this is node-local disk; the smaller GPU node is
+  # zachd-ubuntu-1, which
   # had ~54Gi free when this was raised. Going much past 40Gi trades a
   # jellyfin eviction for DiskPressure evicting whatever else lands there.
   cacheSizeLimit: 40Gi
@@ -132,7 +129,8 @@ ingress:
     enabled: true
 
 resources:
-  # The GPU node runs hot (~87% CPU requested, mostly talaria) — keep the
+  # The preferred GPU node runs hot (~87% CPU requested, mostly talaria) —
+  # keep the
   # request small enough to actually fit; VAAPI means playback rarely needs
   # much CPU anyway.
   requests:

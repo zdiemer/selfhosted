@@ -29,7 +29,7 @@ Two things are deliberately *not* goals:
   direct IP from both the cluster and personal devices, without Tailscale in
   the path, because NFS and iSCSI throughput is the point of it.
 - **Isolating nodes from each other.** Flannel VXLAN and etcd want one L2
-  segment with low latency. All seven nodes stay together.
+  segment with low latency. All cluster nodes stay together.
 
 ## Current state, as measured
 
@@ -167,7 +167,7 @@ No NAS access. That is the whole blast radius.
 Parking it with the cluster would save those two rules, and it is the reasonable
 scope cut if inter-VLAN routing turns out to be friction. But L2 adjacency is
 not a rule you can narrow: it would put an unpatched consumer Android next to
-all seven nodes and `192.168.4.36` — NFS exports, the iSCSI portal, SMB, the
+all cluster nodes and `192.168.4.36` — NFS exports, the iSCSI portal, SMB, the
 kubelets, etcd on the three control planes, and Headlamp on `:30100`, which
 answers on every node IP and whose token `infra/headlamp/README.md` describes
 as a full cluster credential. If this cut is ever taken, turn that NodePort off.
@@ -222,7 +222,7 @@ wide-open bypass, and every host here holds a routable GUA.
 
 ## The tailnet bypass
 
-All seven nodes, the NAS, and the personal machines are one flat tailnet with
+All cluster nodes, the NAS, and the personal machines are one flat tailnet with
 `/32` routes and no ACL restrictions. **A compromised pod that escapes to a node
 reaches the laptops over `100.x` regardless of any VLAN boundary.**
 
