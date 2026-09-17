@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breakout — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+<!--
+  CheerpJ 4.3: a WebAssembly JVM. It runs the 2014 bytecode unmodified — the
+  jar this page loads was produced by javac from the original sources, and
+  nothing in the game was rewritten for the browser.
+
+  Free for personal projects under CheerpJ's Community License, which also
+  covers unlimited use of this CDN. Credit is in the footer, as it asks.
+-->
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>Breakout</h1>
+  <p class="sub">
+    Java Swing, Fall 2014. A pair project with Adam Greenstein &mdash; the
+    README still carries the &ldquo;Division of Labor&rdquo; section we were
+    asked to write. Adam took the game engine and level editor; I took the
+    menus, the layout and the bug-fixing.
+  </p>
+</header>
+
+<div id="display"></div>
+<p class="status" id="status">Loading a JVM into your browser&hellip;</p>
+
+<h2>Playing it</h2>
+<p>
+  <strong>Left</strong> and <strong>Right</strong> move the paddle,
+  <strong>Space</strong> launches the ball, <strong>Esc</strong> pauses. Click
+  the game area first &mdash; it needs keyboard focus, and while it has focus
+  the arrow keys and space will not scroll this page.
+</p>
+<p>
+  Save and load work, which I did not expect. The 2014 code does
+  <code>new FileOutputStream("breakout.sav")</code> relative to the working
+  directory; under CheerpJ that directory is a writable, IndexedDB-backed
+  virtual filesystem, so the save lands in your browser rather than on the
+  server and survives a reload. Pause with Esc and the pause menu's
+  <em>Save Game</em> really does put up its &ldquo;Game Saved&rdquo; dialog.
+  The level editor works too.
+</p>
+<p>
+  One quirk of the original worth knowing: pressing Space to launch the ball
+  calls <code>manager.setCanSave(false)</code>, so a game can only be saved
+  before the ball is in play. That is 2014's decision, not the browser's.
+</p>
+
+<blockquote>
+  <p>
+    <strong>Quit exits the JVM, not a window.</strong> The menu buttons call
+    <code>System.exit(0)</code>, which in a tab means the whole runtime stops and
+    the black rectangle above simply goes dead. Reload the page to start over.
+    That is the original behaviour meeting a context it was never written for,
+    and it is left alone.
+  </p>
+</blockquote>
+
+<h2>What it is</h2>
+<dl class="facts">
+  <dt>Source</dt>
+  <dd><a href="https://github.com/zdiemer/Breakout">github.com/zdiemer/Breakout</a>
+      &mdash; 24 classes, one package, first commit 18 Nov 2014, last 5 Dec 2014.</dd>
+  <dt>Toolkit</dt>
+  <dd>Plain Swing. A <code>JFrame</code> with a <code>CardLayout</code> of
+      screens, and a <code>JLayeredPane</code> playfield where the ball, paddle
+      and every brick are each their own <code>JPanel</code> overriding
+      <code>paintComponent</code>. Not an applet, no ACM library, no
+      third-party jars at all.</dd>
+  <dt>Game loop</dt>
+  <dd>A <code>javax.swing.Timer(10, …)</code> on the event dispatch thread
+      &mdash; nominally 100 frames a second.</dd>
+  <dt>Assets</dt>
+  <dd>One: a hand-drawn <code>ball.png</code>. No sound.</dd>
+  <dt>Build</dt>
+  <dd>None in the repo. No Makefile, no Ant, no Maven, no jar &mdash; the
+      README says to &ldquo;click on the compiled jar file&rdquo; and the jar was
+      never committed. It is built here with
+      <code>javac --release 8</code>.</dd>
+</dl>
+
+<h2>Notes, eleven years on</h2>
+<ul class="notes">
+  <li>
+    <strong>The resource path is a trap.</strong> <code>Ball.java</code> does
+    <code>getResource("/images/ball.png")</code> with a leading slash, so
+    <code>images/</code> has to sit at the <em>root</em> of the jar, beside
+    <code>breakout/</code> rather than inside it. Get it wrong and
+    <code>ImageIO.read</code> returns null, the constructor's catch block prints
+    the exception to a stdout nobody is reading, and the very next line throws
+    again. The game dies before the window appears. The build asserts the
+    entry's position rather than trusting it.
+  </li>
+  <li>
+    <strong>The window height is load-bearing.</strong>
+    <code>Ball.setPosition</code> computes <code>frame.getHeight() - 480</code>,
+    so the physics assume the frame is exactly the 480 pixels it was set to in
+    2014. The frame is non-resizable, which is the only reason that was ever
+    fine.
+  </li>
+  <li>
+    <strong>Nine deprecated boxing constructors.</strong>
+    <code>new Integer(30)</code> for the <code>JLayeredPane</code> layer
+    arguments. Deprecated for removal since JDK 9 &mdash; which is part of why
+    this is compiled against Java 8, where the call is still ordinary.
+  </li>
+  <li>
+    <strong>No <code>serialVersionUID</code> anywhere,</strong> on five
+    <code>Serializable</code> classes that a save file is written from. A save
+    made by one build would not necessarily load into the next. Nothing forced
+    the issue because nobody kept a save.
+  </li>
+  <li>
+    <strong>The frame rate is aspirational.</strong> A 10&nbsp;ms Swing timer on
+    the EDT was already optimistic in 2014; under a JVM that is itself compiled
+    to WebAssembly it settles wherever the browser's animation frames land. The
+    game is frame-rate-dependent, so it plays a little differently here than it
+    did on a lab machine. That felt more honest than retuning the constants.
+  </li>
+</ul>
+
+<a class="backlink" href="/">&larr; the other three</a>
+
+<footer>
+  <p>
+    Runs on <a href="https://cheerpj.com/">CheerpJ</a> by
+    <a href="https://leaningtech.com/">Leaning Technologies</a> &mdash; a
+    WebAssembly JVM, used here under its Community License.
+  </p>
+</footer>
+
+</div>
+
+<script>
+(async function () {
+  var status = document.getElementById("status");
+  var display = document.getElementById("display");
+
+  function say(msg) { status.textContent = msg; }
+
+  try {
+    await cheerpjInit();
+
+    // 740x480 matches Breakout.java's frame.setSize(740, 480) exactly. The
+    // layout maths depend on that height — Ball.setPosition computes
+    // frame.getHeight() - 480 — so this is not a free parameter.
+    cheerpjCreateDisplay(740, 480, display);
+
+    // NO keydown preventDefault handler here, and that is a measured decision
+    // rather than an oversight. The obvious worry is that Space and the arrow
+    // keys scroll the page out from under the game, so the first version of
+    // this file suppressed their default action while the display had focus.
+    // Tested both ways in a real browser: CheerpJ gives keyboard focus to a
+    // hidden textarea inside the display and consumes those keys itself, and
+    // window.scrollY stayed at 0 with the handler removed. It was doing
+    // nothing, and a handler that does nothing is one someone later has to
+    // reason about.
+    display.addEventListener("click", function () { display.focus(); });
+
+    say("Click the game, then press Space to launch. Esc pauses.");
+
+    // /app/ is CheerpJ's read-only view of this origin's document root, so the
+    // jar stays at the root even though this page does not.
+    await cheerpjRunJar("/app/breakout.jar");
+
+    // cheerpjRunJar resolves when main() returns or System.exit is called.
+    // Every Quit button in this game is System.exit(0), so reaching here
+    // normally means the player quit and the JVM in this tab is now gone.
+    say("The JVM exited — a Quit button calls System.exit(0). Reload to play again.");
+  } catch (err) {
+    say("Could not start the JVM: " + err + " — the CheerpJ runtime is loaded from " +
+        "cjrtnc.leaningtech.com, so this page needs internet access even though " +
+        "the site itself does not.");
+  }
+})();
+</script>
+</body>
+</html>

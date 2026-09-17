@@ -86,6 +86,7 @@ the ANSI it prints, and paints it into the window above.
 | [`web/kelsey-green/`](web/kelsey-green/) | kelsey.green — static Astro site, no image of our own: git-sync pulls the CI-built `deploy` branch and nginx serves it. Public via a Cloudflare tunnel (outbound-only) as well as the usual DuckDNS ingress. | [web/kelsey-green/README](web/kelsey-green/README.md) |
 | [`web/rachel-freeman/`](web/rachel-freeman/) | rachelfreeman.zachd.duckdns.org — an online art store for originals and prints: Payload CMS admin + Next.js storefront in one image, Postgres, and Stripe Checkout. Prices live in Postgres, not in Stripe, so there is one catalogue and nothing to keep in sync. The only chart here whose GHCR package is private. | [web/rachel-freeman/README](web/rachel-freeman/README.md) |
 | [`web/old-diemer-codes/`](web/old-diemer-codes/) → **submodule** | old.diemer.codes — the 2019 Create React App personal site, kept exactly as it was. Inverts the usual submodule shape: the app repo is a frozen archive we don't modify, so the chart + Dockerfile live here and the source is the submodule under `site/`. Public via the shared Cloudflare tunnel. | [web/old-diemer-codes/README](web/old-diemer-codes/README.md) |
+| [`web/fsu/`](web/fsu/) → **submodules** | fsu.zachd.duckdns.org — four pieces of 2014–16 Florida State coursework, running rather than screenshotted: a C shell (Cloysta) and a C++ hash-table REPL, each behind its own ttyd; a Swing Breakout compiled to Java 8 bytecode and run client-side on CheerpJ's WebAssembly JVM; and a Django 1.9.5 bank still on Python 2.7, because mixed tabs and an implicit relative import mean it cannot be anything else. Inverts the submodule shape four times over — see Conventions. Three images from one context. Tailnet only, with Authelia in front of the two terminals because one of them is a real fork/exec shell. | [web/fsu/README](web/fsu/README.md) |
 | [`web/talaria/`](web/talaria/) → **submodule** | talaria — auction watch platform (search, tracking, listing alerts): a Python backend, scrapers, and a frontend, with Postgres, Elasticsearch, Redis and Logstash in its own chart at `helm/talaria/`. The biggest thing on the cluster, and the only one whose secrets are sops-encrypted in-git rather than in a `values.local.yaml`. Chart + source live in [zdiemer/talaria](https://github.com/zdiemer/talaria). | [zdiemer/talaria README](https://github.com/zdiemer/talaria#readme) |
 | [`web/talaria-deals/`](web/talaria-deals/) | talaria.deals — a single Ingress publishing the sibling `talaria` project's existing service through the shared Cloudflare tunnel. Lives here rather than in talaria's chart because that chart is in another repo; additive, so talaria keeps answering on DuckDNS. | [web/talaria-deals/README](web/talaria-deals/README.md) |
 | [`web/apartment-watch/`](web/apartment-watch/) → **deprecated** | SF rental scraper → SMS, retired 2026-08-13 when the flat search it served ended. A CronJob scraped Craigslist and Dahlia (plain HTTP) plus Zumper/Apartments.com/Zillow (Camoufox, to clear Akamai and PerimeterX), filtered on rent/laundry/parking/neighborhood with a scored scam filter, texted new matches through `infra/sms-relay`, and served the run pages at `homes.diemer.codes`. Uninstalled from the cluster; the chart and source stay here as the worked example for `infra/egress-proxy`'s browser tier and for private-GHCR image pulls. | [web/apartment-watch/README](web/apartment-watch/README.md) |
@@ -268,14 +269,22 @@ the ANSI it prints, and paints it into the window above.
   `sync-submodules.sh` now reads the current pin from the index rather than the
   worktree, so a stale checkout cannot talk it into re-pinning old code.
 
-  The one exception is [`web/old-diemer-codes/`](web/old-diemer-codes/), where the
-  app repo is a frozen 2019 archive that is deliberately not being modified: the
-  chart and the Dockerfile live in *this* repo and the app is the submodule
-  underneath, rather than the other way round. The submodule has to sit inside the
-  chart directory because `docker build` cannot COPY from outside its context —
-  which also means npm only ever runs in the build, so the submodule worktree is
-  never dirtied. Everything else — the registry, `build.sh`, `upgrade.sh`, appVersion
-  tracking `image.tag` — is the same shape.
+  There are two exceptions, both for the same reason: the app repo is a frozen
+  archive that is deliberately not being modified, so the chart and the Dockerfile
+  live in *this* repo and the app is the submodule underneath, rather than the
+  other way round. The submodule has to sit inside the chart directory because
+  `docker build` cannot COPY from outside its context — which also means the build
+  only ever reads it, so the submodule worktree is never dirtied. Everything
+  else — the registry, `build.sh`, `upgrade.sh`, appVersion tracking `image.tag` —
+  is the same shape.
+
+  [`web/old-diemer-codes/`](web/old-diemer-codes/) is the 2019 site, one submodule
+  at `site/`. [`web/fsu/`](web/fsu/) is the same idea at four: 2014–16 university
+  coursework under `projects/`, none of which has a chart, a build or a deploy of
+  its own. Those four are the strongest case for the shape — running them
+  unmodified is the entire point, so every fix an eleven-year-old program needs in
+  2026 lives outside it in `web/fsu/`, and `submodules-lock.sh` plus the deny rules
+  in `.claude/settings.json` make that a filesystem property rather than a promise.
 - **The lint checks run before the push, not just after it.**
   [`.github/workflows/lint.yml`](.github/workflows/lint.yml) has always run
   `ci-lint-charts.sh`, `check-appversion-drift.sh`, `ci-lint-availability.sh`

@@ -1,0 +1,225 @@
+# syntax=docker/dockerfile:1
+#
+# fsu-terminal — Cloysta (C, FSU Operating Systems, Fall 2015) and a REPL driver
+# for MyDS (C++, January 2015), each behind its own ttyd.
+#
+# Build context is web/fsu/. Both projects are git submodules under projects/
+# and are FROZEN: nothing here writes to them. The Cloysta build copies the tree
+# into the builder and compiles from the copy; the MyDS build only ever reads
+# two headers. Every fix lives in this file or in terminal/.
+
+# renovate: datasource=docker depName=debian
+ARG DEBIAN_TAG=bookworm-20250929-slim
+
+# ----------------------------------------------------------- cloysta builder
+#
+# bookworm = GCC 12, where -Wint-conversion is still a warning. GCC 14 promoted
+# it (along with -Wimplicit-function-declaration) to an ERROR, and
+# REPL/execute.c:otroexec() opens with `int status = NULL;`. The pin is defence
+# in depth; the -Wno- flag below is what actually keeps this building, so that a
+# base-image bump cannot resurrect an eleven-year-old diagnostic.
+FROM debian:${DEBIAN_TAG} AS cloysta-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY projects/Cloysta/ /src/
+
+# The repo's own makefile cannot build this, for three separate reasons, and
+# fixing any of them would mean editing a frozen archive:
+#
+#  1. It sets `C=gcc` but every rule invokes `$(CC)`, so make silently falls
+#     back to its builtin `cc`. It built in 2015 because the FSU lab machines
+#     had a cc symlink.
+#
+#  2. CFLAGS is `-ansi -pedantic -Wall -std=c99 -D_XOPEN_SOURCE`. -std=c99 (not
+#     gnu99) defines __STRICT_ANSI__, which suppresses _DEFAULT_SOURCE and so
+#     __USE_MISC; bare -D_XOPEN_SOURCE expands to 1 (XPG3), which sets
+#     _POSIX_C_SOURCE to 2 and leaves __USE_XOPEN_EXTENDED and __USE_XOPEN2K
+#     off. That combination hides declarations this code calls unconditionally:
+#     putenv (execute.c), the __timezone_ptr_t that gettimeofday's second
+#     parameter uses (execute.c, the `etime` builtin), and the BSD alias
+#     MAXPATHLEN (prompt.c). -std=gnu99 turns all of it back on at once and is
+#     strictly wider than -D_XOPEN_SOURCE ever was.
+#
+#     C99 itself is non-negotiable: `char args[][ACOLS]` with
+#     `extern const int ACOLS` is a variably-modified parameter type. And gnu99
+#     rather than the compiler default, because main.h declares
+#     `int shell_loop();` and prompt.h declares `int _prompt();` while prompt.c
+#     defines `int _prompt(char** settings)` — under C23 an empty parameter list
+#     means (void), and that pair becomes a conflicting-types error.
+#
+#  3. `execute.o : REPL/execute.c REPL/echo.o` depends on an object file it has
+#     no rule to build. It only ever worked where echo.o already existed, which
+#     is why REPL/echo.o is committed to the repository.
+#
+# Sources are listed one by one rather than globbed, on purpose. `REPL/*.c`
+# would be fine but `REPL/*` picks up that committed echo.o, and a `*.c*` glob
+# picks up redirect.c.save.1 — eleven lines of invalid C that #includes a
+# "../globals.h" which has never existed. UTILS/util.c and REPL/redirect.c.save
+# are both zero bytes and have no rule pointing at them either.
+#
+# -O0 deliberately. This program's observable behaviour lives inside undefined
+# behaviour: uninitialised reads in chgdir() and otroexec(), a putenv()'d
+# pointer into a stack array, strcat onto garbage. -O2 is entitled to compile
+# those paths into something that behaves differently from what a 2015 grader
+# saw, and the point of this exhibit is what it did, not what it should have.
+#
+# -Wall -Wextra stay ON and the output is KEPT. The warnings are the most honest
+# artifact this project produces and site/cloysta.html prints them verbatim.
+RUN set -eux; \
+    gcc -std=gnu99 -O0 -Wall -Wextra -Wno-int-conversion -I. \
+        -o /cloysta \
+        main.c \
+        REPL/setup.c REPL/prompt.c REPL/read.c REPL/parse.c \
+        REPL/echo.c REPL/execute.c REPL/redirect.c \
+        UTILS/memmy.c \
+        2> /build-warnings.txt \
+    || { echo '--- cloysta build failed ---'; cat /build-warnings.txt; exit 1; }; \
+    cat /build-warnings.txt; \
+    test -x /cloysta
+
+# -------------------------------------------------------------- myds builder
+FROM debian:${DEBIAN_TAG} AS myds-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+# Two headers. That is the entire repository: no Makefile, no main(), no README,
+# two commits on 2015-01-26.
+COPY projects/my-data-structure/MyDS.h projects/my-data-structure/MyHash.h /src/inc/
+COPY terminal/repl.cpp /src/repl.cpp
+# c++17 compiles both headers clean — nothing in them is removed or deprecated,
+# and the C++98-era `vector< list<string> >` spacing still parses. What it DOES
+# produce is signed/unsigned comparisons (`size == nodes.size()` and
+# `i < nodes.size()` in MyDS.h, `i < s.length()` in MyHash.h). No -Werror: those
+# warnings are the exhibit, so they are captured and the REPL's `warnings`
+# command prints them back.
+RUN set -eux; \
+    mkdir -p /out; \
+    g++ -std=c++17 -O2 -Wall -Wextra -I/src/inc \
+        /src/repl.cpp -o /out/myds-repl \
+        2> /out/build-warnings.txt \
+    || { echo '--- myds build failed ---'; cat /out/build-warnings.txt; exit 1; }; \
+    cat /out/build-warnings.txt; \
+    test -x /out/myds-repl
+
+# ------------------------------------------------------------ wordlist stage
+#
+# Debian's wamerican (SCOWL, permissively licensed). Derived deterministically —
+# every 10th word after sort -u, no shuf and no seed — so two builds produce
+# identical bytes. The runtime image has no network and -slim carries no
+# /usr/share/dict.
+#
+# The filter below leaves ~44,900 of the dictionary's entries and every 10th of
+# those is ~4,500 words: enough that the bucket distribution is interesting and
+# few enough that `load common` returns instantly. The assert is a floor, not a
+# target — if a wamerican update shrinks the dictionary, the build says so
+# rather than shipping a two-hundred-word demo.
+#
+# Filtered to lowercase ASCII 3..9 chars, which also keeps MyHash's signed-char
+# quirk (bytes >= 0x80 sign-extend into the accumulator) a footnote on the page
+# rather than a confound in the numbers.
+FROM debian:${DEBIAN_TAG} AS words
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends wamerican \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    mkdir -p /words; \
+    grep -x "[a-z]\{3,9\}" /usr/share/dict/american-english \
+      | sort -u | awk 'NR % 10 == 0' > /words/common.txt; \
+    test "$(wc -l < /words/common.txt)" -gt 3000
+
+# ------------------------------------------------------------------ runtime
+FROM debian:${DEBIAN_TAG}
+
+# renovate: datasource=github-releases depName=tsl0922/ttyd
+ARG TTYD_VERSION=1.7.7
+
+# coreutils and util-linux are not incidental. REPL/redirect.c:mpipe() ignores
+# the command you typed and always runs the hardcoded pair /bin/ls | /bin/more,
+# at those absolute paths — `more` lives in util-linux. The asserts below are
+# the only thing standing between a base-image change and a demo that is
+# silently broken in a way no probe can see.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl coreutils util-linux; \
+    mkdir -p /usr/libexec/fsu; \
+    curl -fsSL -o /usr/libexec/fsu/ttyd \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"; \
+    chmod 0755 /usr/libexec/fsu/ttyd; \
+    apt-get purge -y --auto-remove curl; \
+    rm -rf /var/lib/apt/lists/*; \
+    test -x /bin/ls; \
+    test -x /bin/more; \
+    test -x /usr/bin/timeout
+
+# /usr/libexec/fsu holds everything the POD runs; /usr/local/bin holds exactly
+# what a VISITOR may run. Keeping ttyd, the two programs and the session
+# wrappers out of the visitor's PATH means "what can be run from inside the
+# shell" is answerable by listing one directory, rather than by remembering
+# which of the things in it were meant to be there.
+COPY --from=cloysta-build /cloysta              /usr/libexec/fsu/cloysta
+COPY --from=cloysta-build /build-warnings.txt   /opt/cloysta/build-warnings.txt
+COPY --from=myds-build    /out/myds-repl        /usr/libexec/fsu/myds-repl
+COPY --from=myds-build    /out/build-warnings.txt /opt/myds/build-warnings.txt
+COPY --from=words         /words/common.txt     /opt/myds/words/common.txt
+COPY terminal/words/fsu.txt                     /opt/myds/words/fsu.txt
+COPY terminal/cloysta-session.sh terminal/myds-session.sh /usr/libexec/fsu/
+
+# A single-entry PATH for Cloysta (set in the chart), so the demo binaries have
+# to live in /usr/local/bin. findexec()/otroexec() build a candidate list in
+# PATH order and then keep the LAST executable match rather than the first —
+# PATH precedence, inverted. One directory makes that unreachable.
+#
+# This is also the entire set of things a visitor can run. It is deliberately
+# small and deliberately boring: enough for `ls`, `cat`, `pwd`, redirection and
+# the hardcoded pipe to be worth trying, and nothing that reads a credential,
+# because there are none in this image to read.
+#
+# Resolved against the real filesystem rather than with `command -v`, which
+# reports shell builtins by bare name — `command -v echo` prints "echo", and
+# `ln -sf echo /usr/local/bin/echo` makes a symlink to itself. Cloysta has no
+# builtins for most of these and execv's a path, so a broken link is a broken
+# demo command.
+RUN set -eux; \
+    chmod 0755 /usr/libexec/fsu/cloysta-session.sh /usr/libexec/fsu/myds-session.sh; \
+    for b in ls cat echo pwd head tail wc sort uniq date env printenv \
+             true false sleep more id uname; do \
+        src=""; \
+        for d in /bin /usr/bin; do \
+            if [ -x "$d/$b" ] && [ ! -d "$d/$b" ]; then src="$d/$b"; break; fi; \
+        done; \
+        [ -n "$src" ] || { echo "no binary for $b"; exit 1; }; \
+        ln -sf "$src" "/usr/local/bin/$b"; \
+        test -x "/usr/local/bin/$b"; \
+    done; \
+    test -f /opt/myds/words/common.txt; \
+    test -f /opt/myds/words/fsu.txt; \
+    /usr/libexec/fsu/myds-repl < /dev/null > /dev/null; \
+    # /usr/local/bin is the visitor's entire command set. Assert that nothing
+    # the pod needs leaked into it — a stray ttyd or session wrapper here would
+    # be runnable from inside Cloysta.
+    for leaked in ttyd cloysta myds-repl cloysta-session.sh myds-session.sh; do \
+        test ! -e "/usr/local/bin/${leaked}" \
+            || { echo "LEAKED into the visitor PATH: ${leaked}"; exit 1; }; \
+    done
+
+# Non-root, and nothing in this image is worth reaching: Cloysta fork/execv's
+# anything on PATH, so the CONTAINER is the security boundary. No credentials,
+# no service-account token (automountServiceAccountToken: false in the chart),
+# no egress at all (NetworkPolicy egress: []).
+#
+# /home/demo and /tmp are emptyDir mounts at runtime; the rootfs is read-only.
+# The directory is created here so the image is runnable on its own for testing.
+RUN set -eux; \
+    groupadd -g 10001 demo; \
+    useradd -u 10001 -g 10001 -d /home/demo -s /usr/sbin/nologin demo; \
+    mkdir -p /home/demo; \
+    chown 10001:10001 /home/demo
+USER 10001:10001
+WORKDIR /home/demo
+
+# No CMD: each pod container sets its own `command:`, one ttyd per terminal.
+# See templates/deployment-terminal.yaml.

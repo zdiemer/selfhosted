@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FSU coursework, running</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>Four school projects, actually running</h1>
+  <p class="sub">
+    Coursework from Florida State, 2014&ndash;2016, dug out of GitHub and put
+    back on a machine where you can use it. Not screenshots &mdash; the original
+    code, compiled from the original commits, with the original bugs.
+  </p>
+</header>
+
+<p>
+  Nothing here has been fixed up. The four repositories are checked out as
+  frozen git submodules and are never written to; every adjustment needed to
+  make an eleven-year-old program run in 2026 &mdash; a compiler flag, a
+  settings shim, a REPL harness &mdash; lives outside them. Where something is
+  broken, it is broken the way it was when it was graded, and the pages say so.
+</p>
+
+<ul class="cards">
+
+  <li class="card">
+    <h2><a href="/projects/cloysta.html">Cloysta</a></h2>
+    <p class="meta">C &middot; Operating Systems &middot; Fall 2015</p>
+    <p>
+      A Unix shell. Forks, execs, redirects, and has opinions about pipes that
+      turn out not to involve reading what you typed. Runs in a real PTY in your
+      browser.
+    </p>
+    <div class="spacer"></div>
+    <p><a class="btn" href="/projects/cloysta.html">Open the shell</a>
+       <span class="tag tag-auth">sign-in</span></p>
+  </li>
+
+  <li class="card">
+    <h2><a href="/projects/breakout.html">Breakout</a></h2>
+    <p class="meta">Java Swing &middot; Fall 2014</p>
+    <p>
+      A complete Breakout with a level editor, save files and an options menu.
+      The original 2014 bytecode, running on a WebAssembly JVM &mdash; no plugin,
+      no rewrite, no Java installed.
+    </p>
+    <div class="spacer"></div>
+    <p><a class="btn" href="/projects/breakout.html">Play it</a></p>
+  </li>
+
+  <li class="card">
+    <h2><a href="/projects/pybank.html">pybank</a></h2>
+    <p class="meta">Django 1.9 &middot; Spring 2016</p>
+    <p>
+      An online bank, complete with cleartext PINs and five bare
+      <code>except: pass</code> blocks. Still Python&nbsp;2.7, because it cannot
+      be anything else.
+    </p>
+    <div class="spacer"></div>
+    <p><a class="btn" href="/projects/pybank.html">Open the bank</a></p>
+  </li>
+
+  <li class="card">
+    <h2><a href="/projects/myds.html">MyDS</a></h2>
+    <p class="meta">C++ &middot; January 2015</p>
+    <p>
+      A chained hash table, in two header files, with no <code>main()</code> and
+      no README. A REPL reads its private members so you can watch a rehash
+      quietly corrupt its own bookkeeping.
+    </p>
+    <div class="spacer"></div>
+    <p><a class="btn" href="/projects/myds.html">Open the REPL</a>
+       <span class="tag tag-auth">sign-in</span></p>
+  </li>
+
+</ul>
+
+<h2>Why two of them ask you to sign in</h2>
+<p>
+  Cloysta is a real shell: it resolves a command against <code>PATH</code> and
+  <code>execv</code>s it, so anyone who opens that page can run whatever the
+  container holds. The MyDS REPL is tamer, but it shares a pod with the shell.
+  Both sit behind a second sign-in; the game, the bank and this page do not.
+</p>
+<p>
+  The shell's container has no credentials, no Kubernetes token, a read-only
+  filesystem and no network access whatsoever &mdash; <code>ping</code> and
+  <code>curl</code> resolve nothing and eventually time out. Sessions are capped
+  in both wall-clock and CPU seconds. It is a sealed box with a 2015 shell in it.
+</p>
+
+<footer>
+  <p>
+    Sources:
+    <a href="https://github.com/zdiemer/Cloysta">Cloysta</a> &middot;
+    <a href="https://github.com/zdiemer/Breakout">Breakout</a> &middot;
+    <a href="https://github.com/zdiemer/pybank">pybank</a> &middot;
+    <a href="https://github.com/zdiemer/my-data-structure">my-data-structure</a>
+  </p>
+  <p>
+    Breakout runs on <a href="https://cheerpj.com/">CheerpJ</a> by Leaning
+    Technologies. The terminals are <a href="https://github.com/tsl0922/ttyd">ttyd</a>.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,194 @@
+# syntax=docker/dockerfile:1
+#
+# fsu-pybank — Django 1.9.5 on Python 2.7, the way it ran in April 2016.
+#
+# Four stages, and the split is the design: every network fetch and every source
+# rewrite happens on a MODERN base, so the python:2.7 stage does nothing but
+# install offline artifacts and run. python:2.7-slim is Debian buster with a
+# 2020-vintage pip and a 2020-vintage CA bundle, and buster's repositories moved
+# to archive.debian.org when LTS ended in 2024 — it is where builds go to fail
+# mysteriously, so it is given as little to do as possible.
+#
+# Build context is web/fsu/. projects/pybank is a frozen submodule; every fix
+# lives in this file or in pybank/.
+
+# renovate: datasource=docker depName=debian
+ARG DEBIAN_TAG=bookworm-20250929-slim
+
+# --------------------------------------------------------------- fetch stage
+# The downloads happen HERE, on a modern base with a current CA bundle, not on
+# python:2.7. That turns the py2 stage into a purely offline install.
+#
+# Explicit sha256 on both: a pinned version number says WHICH artifact, a hash
+# says it is the same bytes. For dependencies this old, pulled from indexes that
+# will outlive anyone's attention, the hash is the actual trust anchor.
+FROM debian:${DEBIAN_TAG} AS fetch
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    mkdir -p /dl; \
+    curl -fsSL -o /dl/Django-1.9.5.tar.gz \
+      https://files.pythonhosted.org/packages/source/D/Django/Django-1.9.5.tar.gz; \
+    echo "e54667ad305a29f5895f14108127cc79dabebce2e80c7c6cf852a6495de26aa6  /dl/Django-1.9.5.tar.gz" \
+      | sha256sum -c -; \
+    curl -fsSL -o /dl/jquery-2.2.2.min.js \
+      https://code.jquery.com/jquery-2.2.2.min.js; \
+    echo "dfa729d82a3effadab1000181cb99108f232721e3b0af74cfae4c12704b35a32  /dl/jquery-2.2.2.min.js" \
+      | sha256sum -c -
+
+# -------------------------------------------------------- patched source stage
+# The repo is frozen, so the two external references that cannot work on a
+# modern HTTPS host are rewritten HERE, in a copy, in a stage whose whole
+# purpose is to make the change readable and to assert its exact size.
+FROM debian:${DEBIAN_TAG} AS src
+COPY projects/pybank/ /src/
+COPY --from=fetch /dl/jquery-2.2.2.min.js /src/main/static/main/jquery-2.2.2.min.js
+RUN set -eux; \
+    cd /src/main/templates/main; \
+    \
+    # 1. jQuery 2.2.2 is loaded from http://ajax.googleapis.com — PLAIN HTTP.
+    #    A browser blocks that as mixed content on an HTTPS page, so the site
+    #    would load with no JS at all and the modals would silently do nothing.
+    #    Vendored (fetch stage, above) and repointed at the app's own static
+    #    directory, which {% static %} already knows how to address.
+    sed -i 's|<script src="http://ajax.googleapis.com/ajax/libs/jquery/2.2.2/jquery.min.js"></script>|<script src="{% static '"'"'main/jquery-2.2.2.min.js'"'"' %}"></script>|' \
+        index.html transfer.html transfer_between.html transfer_process.html; \
+    \
+    # 2. FontAwesome 4.6.1 from maxcdn.bootstrapcdn.com. HTTPS, so not a
+    #    mixed-content problem — but BootstrapCDN was decommissioned in 2024,
+    #    so it is simply a dead request that delays first paint. And a search
+    #    for `fa fa-` across every template in this project returns ZERO
+    #    matches: the stylesheet was linked and never used. Deleted rather than
+    #    vendored, because deleting an unused stylesheet changes no pixel.
+    sed -i '\|maxcdn.bootstrapcdn.com/font-awesome|d' \
+        index.html transfer.html transfer_between.html transfer_process.html; \
+    \
+    # Assert the exact blast radius. Four files changed, two lines each, and
+    # nothing else in the project reaches off-origin any more.
+    test "$(grep -rl 'jquery-2.2.2.min.js' . | wc -l)" -eq 4; \
+    test "$(grep -rc 'ajax.googleapis.com' . | grep -vc ':0$')" -eq 0; \
+    test "$(grep -rc 'bootstrapcdn' . | grep -vc ':0$')" -eq 0; \
+    ! grep -rn 'src="http://\|href="http://' . ; \
+    \
+    # Every one of those templates already loads staticfiles for the UIKit
+    # assets, so the {% static %} tag above resolves. Assert rather than assume.
+    for f in index.html transfer.html transfer_between.html transfer_process.html; do \
+        grep -q '{% load staticfiles %}' "$f"; \
+    done
+
+# ------------------------------------------------------------- locale stage
+# THE STEP WHOSE ABSENCE IS INVISIBLE.
+#
+# main/views.py calls locale.setlocale(LC_ALL, '') OUTSIDE a try block and
+# locale.currency() INSIDE one. On a slim image with no generated locales:
+#   * LANG unset   -> setlocale returns 'C', locale.currency() raises
+#                     ValueError, one of the five bare `except:` blocks in
+#                     views.py swallows it, and EVERY balance on the site
+#                     renders as $0 while the page looks perfectly fine.
+#   * LANG set     -> setlocale itself raises locale.Error, uncaught, and every
+#                     page under /pybank/main/ returns a 500.
+#
+# buster's apt sources are gone from deb.debian.org, so `apt-get install
+# locales` on the py2 base is not an option. The locale definitions are copied
+# from bookworm instead and compiled in the runtime stage.
+FROM debian:${DEBIAN_TAG} AS locale
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends locales \
+ && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------------ runtime
+# renovate: datasource=docker depName=python
+FROM python:2.7.18-slim-buster
+
+# localedef and the definition files, lifted from bookworm. See the locale
+# stage for why this is load-bearing rather than cosmetic.
+COPY --from=locale /usr/share/i18n /usr/share/i18n
+RUN set -eux; \
+    # No -A: python:2.7-slim-buster ships no /usr/share/locale/locale.alias and
+    # localedef treats a missing alias file as fatal. The aliases only matter
+    # for shorthand names like "en_US"; this image always spells it in full.
+    localedef -i en_US -c -f UTF-8 en_US.UTF-8; \
+    python -c "import locale; locale.setlocale(locale.LC_ALL, 'en_US.UTF-8'); \
+               v = locale.currency(4200, grouping=True); \
+               assert v.startswith('\$'), v; print('locale ok: ' + v)"
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+# Offline install from the sdist fetched on a modern base. No network here, no
+# index lookup, no TLS negotiation from a 2020 CA bundle.
+COPY --from=fetch /dl/Django-1.9.5.tar.gz /tmp/
+RUN set -eux; \
+    pip install --no-cache-dir --no-index --no-deps /tmp/Django-1.9.5.tar.gz; \
+    rm -f /tmp/Django-1.9.5.tar.gz; \
+    python -c "import django; assert django.get_version() == '1.9.5', django.get_version()"
+
+COPY --from=src /src/ /opt/pybank/
+COPY pybank/settings_shim.py pybank/urls_shim.py pybank/seed.py /opt/pybank-shim/
+COPY pybank/entrypoint.sh /usr/local/bin/pybank-entrypoint.sh
+
+# Both the app and the shim on the path. The shim is a SIBLING of the project,
+# not inside it, so `from pybank.settings import *` in settings_shim resolves to
+# the original module and the override can never accidentally import itself.
+ENV PYTHONPATH=/opt/pybank:/opt/pybank-shim \
+    DJANGO_SETTINGS_MODULE=settings_shim \
+    PYTHONUNBUFFERED=1 \
+    PYBANK_DB_DIR=/data
+
+# Fail the build rather than discover any of this at runtime. Each one fails
+# silently otherwise.
+RUN set -eux; \
+    chmod 0755 /usr/local/bin/pybank-entrypoint.sh; \
+    \
+    # The single reason this image is python:2.7 and not python:3 — an implicit
+    # relative import, which is a syntax-level Python 2 feature. If this line
+    # ever disappears from the upstream repo, this image should be revisited
+    # rather than silently kept on an EOL interpreter.
+    grep -qx 'import account_type' /opt/pybank/main/views.py; \
+    \
+    # The editor backups committed in 2016 shadow nothing (Django loads .html),
+    # but they still carry the dead CDN links the src stage rewrote, so their
+    # absence is worth asserting rather than assuming .dockerignore held.
+    ! find /opt/pybank -name '*.html~' | grep -q .; \
+    \
+    # The CDN rewrite survived the copy.
+    grep -q 'jquery-2.2.2.min.js' /opt/pybank/main/templates/main/index.html; \
+    test -f /opt/pybank/main/static/main/jquery-2.2.2.min.js; \
+    \
+    # The shim loads, the URLconf resolves through the /pybank mount, and
+    # reverse() emits the prefix. This is the whole FORCE_SCRIPT_NAME argument
+    # from settings_shim.py, checked in one place at build time.
+    cd /opt/pybank; \
+    python -c "\
+import django; django.setup(); \
+from django.core.urlresolvers import resolve, reverse; \
+from django.conf import settings; \
+assert reverse('main:index') == '/pybank/main/', reverse('main:index'); \
+assert reverse('main:register') == '/pybank/main/register/', reverse('main:register'); \
+assert resolve('/pybank/main/').url_name == 'index'; \
+assert settings.STATIC_URL == '/pybank/static/', settings.STATIC_URL; \
+print('urls ok')"; \
+    \
+    # And that runserver's static handler will accept the prefixed path. This
+    # is the exact comparison StaticFilesHandler.__call__ makes on the raw
+    # PATH_INFO, and it is the half of the prefix problem that a StripPrefix
+    # middleware would break.
+    python -c "\
+import django; django.setup(); \
+from django.contrib.staticfiles.handlers import StaticFilesHandler; \
+h = StaticFilesHandler(lambda e, s: None); \
+assert h._should_handle('/pybank/static/main/uikit.min.css'); \
+assert not h._should_handle('/static/main/uikit.min.css'); \
+assert h.file_path('/pybank/static/main/uikit.min.css') == 'main/uikit.min.css'; \
+print('static ok')"
+
+# /data is an emptyDir mount at runtime; the rootfs is read-only. SQLite needs
+# the DIRECTORY writable, not just the file — it creates a -journal sibling.
+RUN set -eux; \
+    groupadd -g 10001 pybank; \
+    useradd -u 10001 -g 10001 -d /opt/pybank -s /usr/sbin/nologin pybank; \
+    mkdir -p /data; \
+    chown 10001:10001 /data
+USER 10001:10001
+WORKDIR /opt/pybank
+EXPOSE 8000
+CMD ["/usr/local/bin/pybank-entrypoint.sh"]

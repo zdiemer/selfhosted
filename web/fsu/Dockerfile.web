@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1
+#
+# fsu-web — the static showcase site plus the Breakout jar, on the same
+# nginx-unprivileged base as the rest of web/.
+#
+# Two stages: a JDK builder that produces breakout.jar from the 2014 sources,
+# and nginx. Build context is web/fsu/; projects/Breakout is a frozen submodule
+# and nothing here writes to it.
+
+# ------------------------------------------------------------ breakout builder
+#
+# renovate: datasource=docker depName=eclipse-temurin
+FROM eclipse-temurin:17-jdk AS breakout
+COPY projects/Breakout/src /src
+
+# --release 8, not 17. CheerpJ 4.3 supports Java 8, 11 and 17, and class file
+# major version 52 is the safest of those. Nothing in these 24 files needs more:
+# the newest constructs present are the diamond operator and switch-on-String,
+# both Java 7. A bonus is that the nine `new Integer(30)` calls compile against
+# the Java 8 API, where that constructor is not yet deprecated — so this is also
+# the quietest possible build of this code.
+#
+# JDK 17 rather than 21 or 25 because --release 8 has been deprecated for
+# removal since JDK 21, and 17 is the LTS that will still accept it for years.
+#
+# images/ IS COPIED TO THE JAR ROOT, and this is not optional. Ball.java does
+#   ImageIO.read(Ball.class.getResource("/images/ball.png"))
+# with a LEADING SLASH, so it resolves from the classpath root: images/ must be
+# a top-level jar entry, a sibling of breakout/, not nested under it. Get it
+# wrong and getResource returns null, the constructor's catch prints the NPE to
+# a stdout nobody reads, and the next line — image.getHeight() — throws again.
+# The game dies before the window appears, with no useful error anywhere.
+#
+# Hence the asserts: the two things that fail silently at runtime are the
+# resource's position in the jar and the bytecode version. Fail here, loudly.
+RUN set -eux; \
+    find /src/breakout -name '*.java' > /sources.txt; \
+    test "$(wc -l < /sources.txt)" -ge 20; \
+    javac --release 8 -d /out @/sources.txt; \
+    cp -r /src/images /out/images; \
+    jar --create --file /breakout.jar --main-class breakout.Breakout -C /out .; \
+    jar --list --file /breakout.jar | grep -qx 'images/ball.png'; \
+    jar --list --file /breakout.jar | grep -qx 'breakout/Breakout.class'; \
+    javap -verbose -cp /out breakout.Breakout | grep -q 'major version: 52'
+
+# ------------------------------------------------------------------- runtime
+# renovate: datasource=docker depName=nginxinc/nginx-unprivileged
+FROM nginxinc/nginx-unprivileged:1.29-alpine
+
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+# Root-owned on purpose: nginx runs as uid 101 and only ever reads.
+COPY site/ /usr/share/nginx/html/
+
+# At the document ROOT, because breakout.html asks CheerpJ for
+# "/app/breakout.jar" and /app/ is CheerpJ's read-only view of this origin's
+# document root. Moving the jar into a subdirectory means editing that string.
+COPY --from=breakout /breakout.jar /usr/share/nginx/html/breakout.jar
+
+# Fail the build rather than serve a half-built site. Every one of these is
+# silent at runtime: a missing stylesheet still returns 200 for the page it
+# styles, and a missing jar surfaces only as a CheerpJ fetch error in a console
+# nobody has open. Same reasoning as web/old-diemer-codes and web/luke-birthday.
+USER root
+RUN set -eux; \
+    cd /usr/share/nginx/html; \
+    for f in index.html style.css term.js breakout.jar \
+             projects/breakout.html projects/cloysta.html \
+             projects/myds.html projects/pybank.html; do \
+        test -s "$f" || { echo "MISSING: $f"; exit 1; }; \
+    done; \
+    \
+    # THE RESERVED-PREFIX CHECK, and it is here because this exact mistake
+    # shipped once.
+    #
+    # Traefik v3's PathPrefix is a RAW STRING prefix, unlike Kubernetes
+    # pathType: Prefix, which is element-wise. So the Ingress rule for
+    # /cloysta also matches /cloysta.html, and /pybank also matches
+    # /pybank.html. Serving the explainer pages from the document root meant
+    # /cloysta.html bounced off Authelia and /pybank.html was handed to Django,
+    # which 404'd it — both with a perfectly healthy nginx behind them.
+    #
+    # Hence projects/. Any file whose served path begins with one of these
+    # three strings is unreachable no matter what nginx does, so the build
+    # refuses it rather than letting it 404 in production.
+    for p in cloysta hashtable pybank; do \
+        if find . -mindepth 1 -maxdepth 1 -name "${p}*" | grep -q .; then \
+            echo "RESERVED PREFIX: /${p}* is routed to another Service by the"; \
+            echo "Ingress and can never reach nginx. Move it under projects/."; \
+            exit 1; \
+        fi; \
+    done; \
+    \
+    # Every local href in every page must resolve to a file that exists. This
+    # catches a renamed page long before a visitor finds the 404. The three
+    # prefixes above are skipped because they are other Services, not files.
+    for f in index.html projects/*.html; do \
+        grep -o 'href="/[^"#]*"' "$f" | sed 's/href="\///; s/"$//' | \
+        while read -r t; do \
+            case "$t" in \
+                ""|pybank/*|cloysta/*|hashtable/*) continue ;; \
+            esac; \
+            test -e "$t" || { echo "$f -> broken link: /$t"; exit 1; }; \
+        done; \
+    done; \
+    \
+    # The one string tying the page to the jar's location. /app/ is CheerpJ's
+    # read-only view of this document root, so the jar must stay at the root
+    # even though the page that loads it does not.
+    grep -q '/app/breakout.jar' projects/breakout.html; \
+    test -f breakout.jar
+USER 101

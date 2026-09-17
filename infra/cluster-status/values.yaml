@@ -490,6 +490,15 @@ catalog:
       category: Sites
       namespace: web
       service: luke-birthday
+    - name: FSU coursework
+      category: Sites
+      namespace: fsu
+      service: fsu-web
+      note: 2014–16 projects, running
+      # Only the web tile. fsu-terminal and fsu-pybank are behind the same
+      # hostname on path prefixes, so a tile each would be three rows pointing
+      # at one link — and the two terminals sit behind Authelia, which the
+      # favicon fetcher would land on rather than the app.
     - name: whatnow.gg
       category: Sites
       namespace: whatnow

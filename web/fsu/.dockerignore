@@ -1,0 +1,40 @@
+# One build context (web/fsu/) feeds three Dockerfiles, so this excludes what
+# none of them need rather than what any one of them does.
+#
+# The chart itself is not build input: templates render on the client, and
+# values.yaml is read by build.sh before the context is streamed.
+templates/
+Chart.yaml
+values.yaml
+values.local.yaml
+.helmignore
+/build.sh
+/upgrade.sh
+README.md
+
+# Submodule git metadata. projects/*/.git is a FILE (a gitdir pointer), not a
+# directory, but excluding both spellings costs nothing and keeps the upload
+# honest about what is being sent.
+projects/*/.git
+projects/*/.git/**
+projects/*/.gitignore
+projects/*/.gitattributes
+
+# Eclipse CDT's committed build tree: a 114 KB x86-64 ELF from 2015 plus its
+# .o/.d files. Dockerfile.terminal compiles from source and never looks at it,
+# and shipping a prebuilt binary into a builder invites someone to run it by
+# accident.
+projects/Cloysta/Debug/
+projects/Cloysta/REPL/*.o
+projects/Cloysta/REPL/*.save
+projects/Cloysta/REPL/*.save.1
+
+# IDE metadata committed by the 2014–16 authors. pybank's .idea/workspace.xml
+# still contains unresolved <<<<<<< HEAD merge markers.
+projects/*/.idea/
+projects/*/.project
+projects/*/.cproject
+projects/*/*.iml
+
+# Editor backups committed alongside the templates they shadow.
+projects/pybank/main/templates/main/*.html~

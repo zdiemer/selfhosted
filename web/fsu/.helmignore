@@ -1,0 +1,30 @@
+# NON-OPTIONAL, and the failure without it is confusing.
+#
+# Helm packs the entire chart directory into the release Secret, which etcd caps
+# at 1 MB. projects/ is four git checkouts and site/ carries a Breakout jar's
+# worth of build input — none of which renders a template. Leave them in and
+# `helm upgrade` fails with:
+#
+#     Secret "sh.helm.release.v1.fsu.v1" is invalid: data: Too long
+#
+# Same reasoning as web/old-diemer-codes and web/luke-birthday. Check with
+# `helm package . -d /tmp && ls -lh /tmp/fsu-*.tgz` — single-digit KB is right.
+
+projects/
+site/
+nginx/
+terminal/
+pybank/
+Dockerfile.web
+Dockerfile.terminal
+Dockerfile.pybank
+.dockerignore
+build.sh
+upgrade.sh
+README.md
+
+.git/
+.gitignore
+*.tgz
+values.local.yaml
+values.local.tpl.yaml

@@ -1,0 +1,82 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+THE UNAUTHENTICATED HALF: the static site, Breakout, and pybank.
+
+The two shells live on ingress-terminal.yaml with Authelia in front. The split
+into two objects is forced, not stylistic: `router.middlewares` is an annotation
+on the INGRESS and Traefik applies it to every router that Ingress produces, so
+there is no way to say "Authelia on /cloysta, none on /" inside one object. Same
+forcing as life/carson, inverted — there the second Ingress exists to REMOVE
+auth from one path, here to ADD it to two.
+
+Path order matters less than it looks: Traefik's default router priority is the
+LENGTH of the rule string, so PathPrefix(`/pybank`) beats PathPrefix(`/`)
+regardless of the order they appear in here.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "fsu.fullname" . }}
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # UNAUTHENTICATED, DELIBERATELY (infra/ingress-policy rule 4).
+    #
+    # What gates this host is DNS: infra/duckdns runs mode: tailnet, so
+    # *.zachd.duckdns.org resolves to a 100.64/10 address that is unroutable off
+    # the tailnet. See the cloudflareHosts comment in values.yaml.
+    #
+    # Behind this annotation: a hand-written static page, a 2014 Swing game
+    # compiled to WASM and running entirely in the visitor's browser, and a 2016
+    # Django demo bank whose whole database is an emptyDir of fake money
+    # recreated on every pod start. The two things that are actually a shell are
+    # on the other Ingress, and they are not covered by this.
+    ingress.zachd/public-unauthenticated: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          {{- if .Values.pybank.enabled }}
+          - path: /pybank
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "fsu.fullname" . }}-pybank
+                port:
+                  number: {{ .Values.pybank.service.port }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "fsu.fullname" . }}-web
+                port:
+                  number: {{ .Values.web.service.port }}
+    {{- /*
+      Extra hosts served over the shared Cloudflare tunnel. Empty, and the
+      values.yaml comment explains at length why it must stay that way. The
+      block is kept so that publishing something here one day is a values edit
+      rather than a template edit — but read that comment first.
+    */}}
+    {{- range .Values.ingress.cloudflareHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "fsu.fullname" $ }}-web
+                port:
+                  number: {{ $.Values.web.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

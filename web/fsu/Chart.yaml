@@ -1,0 +1,12 @@
+apiVersion: v2
+name: fsu
+description: fsu.zachd.duckdns.org — four pieces of 2014–16 Florida State coursework, running again. Tailnet only.
+type: application
+version: 1.0.6
+# appVersion tracks the image tags in values.yaml. Unusually for this repo the
+# chart builds THREE images (fsu-web, fsu-terminal, fsu-pybank); build.sh hard-
+# fails unless all three tags equal this value, so "which one did I forget to
+# bump" is not a question anyone has to ask.
+appVersion: "1.0.6"
+maintainers:
+  - name: zachd

@@ -1,0 +1,250 @@
+{{- if .Values.terminal.enabled }}
+{{/*
+Two containers from ONE image, differing only in `command:` — the shape
+dev/claude-workspace already uses. ttyd runs exactly one command, so one
+container per terminal is the natural split, and it buys separate probes,
+separate limits and separate log streams for free.
+
+CONTAINMENT. Cloysta fork/execv's anything on its PATH, so the CONTAINER is the
+security boundary, not the shell. Everything below exists because of that:
+
+  automountServiceAccountToken  a leaked token from a shell is worth nothing
+  runAsNonRoot + fsGroup        see the fsGroup note — it is load-bearing
+  readOnlyRootFilesystem        every writable path is an in-memory emptyDir
+                                with a sizeLimit, so filling one is a bounded
+                                container problem rather than a node problem
+  drop: ALL, no privesc         nothing to escalate to
+  cpu limit                     the throttle on a busy loop typed into the shell
+  NetworkPolicy egress: []      networkpolicy.yaml — no DNS, no metadata
+                                endpoint, no tailnet, nothing
+
+and the per-PROCESS bounds Kubernetes cannot express (ulimits, wall-clock and
+CPU-second timeouts) live in terminal/cloysta-session.sh, which is where a
+reader looking for "what stops a fork bomb" should go next.
+
+WHAT IS NOT LOGGED. ttyd logs connection events; the PTY traffic travels over
+the websocket and never touches container stdout. So the connect/disconnect
+record reaches Grafana Cloud and nothing anyone types into the shell does. That
+is the audit trail you want and exactly nothing more.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fsu.fullname" . }}-terminal
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: terminal
+spec:
+  replicas: {{ .Values.terminal.replicaCount }}
+  # Recreate, not RollingUpdate: a PTY session is pinned to a pod, so there is
+  # nothing to gain from overlapping the old and new ones. Sessions drop on a
+  # roll either way.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "terminal") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fsu.selectorLabels" (dict "root" . "component" "terminal") | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      # THE CHEAPEST CONTROL HERE, AND THE ONE WHOSE ABSENCE IS INVISIBLE.
+      # A shell with a projected service-account token is a shell with a
+      # credential for the API server.
+      automountServiceAccountToken: false
+      serviceAccountName: {{ include "fsu.fullname" . }}-terminal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # fsGroup is LOAD-BEARING, not hygiene. The kubelet creates an emptyDir
+        # root-owned 0755; without this the demo user cannot write to its own
+        # HOME, and the failure presents as "the shell is broken" rather than as
+        # a permissions problem.
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: cloysta
+          image: "{{ .Values.images.terminal.repository }}:{{ .Values.images.terminal.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # ttyd itself writes nothing to disk: it binds a socket, serves an
+            # index compiled into the binary, and on each websocket connect
+            # calls forkpty() + execvp(). Every write comes from the child, and
+            # the child needs exactly two paths — $HOME and /tmp — both mounted
+            # below as in-memory emptyDirs.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # --base-path, NOT a StripPrefix middleware, for three reasons:
+          #
+          #  1. ttyd's served index derives its websocket URL from the base
+          #     path. Under StripPrefix it emits /ws, the browser asks for
+          #     https://fsu…/ws, Traefik hands that to the / catch-all and nginx
+          #     404s. --base-path makes it emit /cloysta/ws.
+          #  2. StripPrefix rewrites the path BEFORE forwardAuth sees it, so
+          #     Authelia's X-Forwarded-Uri would read / rather than /cloysta —
+          #     quietly breaking any future access-control rule written against
+          #     the real path.
+          #  3. dev/claude-workspace already says so in its running chart.
+          #
+          # -W because ttyd >= 1.7 is read-only by default. --check-origin
+          # rejects a websocket handshake whose Origin does not match Host;
+          # nothing in this cluster rewrites Host, so it is free. --ping-interval
+          # keeps the connection off Traefik's 180s idleTimeout so a silent
+          # terminal is not dropped mid-thought.
+          command:
+            - /usr/libexec/fsu/ttyd
+            - -W
+            - -p
+            - {{ .Values.terminal.cloysta.port | quote }}
+            - --base-path
+            - /cloysta
+            - --max-clients
+            - {{ .Values.terminal.maxClients | quote }}
+            - --check-origin
+            - --ping-interval
+            - "30"
+            - --cwd
+            - /home/demo
+            - --terminal-type
+            - xterm-256color
+            - /usr/libexec/fsu/cloysta-session.sh
+          env:
+            - name: HOME
+              value: /home/demo
+            # REPL/prompt.c prints "$USER@$MACHINE: $PWD => " and does
+            # `cuser = getenv("USER")` with no NULL check, so an unset USER
+            # renders the prompt as "(null)@…". MACHINE is Cloysta's own
+            # invention — it has no fallback to gethostname().
+            - name: USER
+              value: guest
+            - name: LOGNAME
+              value: guest
+            - name: MACHINE
+              value: linprog
+            - name: TERM
+              value: xterm-256color
+            # Single-entry PATH, deliberately, and it is the complete list of
+            # what a visitor can run: /usr/local/bin holds only the curated demo
+            # utilities, while ttyd, the two programs and the session wrappers
+            # live in /usr/libexec/fsu and are invoked by absolute path. So
+            # "what is reachable from inside the shell" is answered by listing
+            # one directory, and Dockerfile.terminal asserts nothing leaked.
+            #
+            # One entry also defuses a real quirk: findexec()/otroexec() build a
+            # candidate list in PATH order and then keep the LAST executable
+            # match rather than the first — PATH precedence, inverted.
+            - name: PATH
+              value: /usr/local/bin
+            - name: FSU_SESSION_SECONDS
+              value: {{ .Values.terminal.sessionSeconds | quote }}
+            - name: FSU_SESSION_CPU_SECONDS
+              value: {{ .Values.terminal.sessionCpuSeconds | quote }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: cloysta
+              containerPort: {{ .Values.terminal.cloysta.port }}
+          # TCP probes, matching dev/claude-workspace: ttyd's HTTP surface under
+          # --base-path is an implementation detail; the listener itself is the
+          # health signal.
+          readinessProbe:
+            tcpSocket:
+              port: cloysta
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: cloysta
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/demo
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.terminal.resources | nindent 12 }}
+        - name: hashtable
+          image: "{{ .Values.images.terminal.repository }}:{{ .Values.images.terminal.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /usr/libexec/fsu/ttyd
+            - -W
+            - -p
+            - {{ .Values.terminal.hashtable.port | quote }}
+            - --base-path
+            - /hashtable
+            - --max-clients
+            - {{ .Values.terminal.maxClients | quote }}
+            - --check-origin
+            - --ping-interval
+            - "30"
+            - --cwd
+            - /home/demo
+            - --terminal-type
+            - xterm-256color
+            - /usr/libexec/fsu/myds-session.sh
+          env:
+            - name: HOME
+              value: /home/demo
+            - name: TERM
+              value: xterm-256color
+            - name: PATH
+              value: /usr/local/bin
+            - name: FSU_SESSION_SECONDS
+              value: {{ .Values.terminal.sessionSeconds | quote }}
+            - name: FSU_SESSION_CPU_SECONDS
+              value: {{ .Values.terminal.sessionCpuSeconds | quote }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: hashtable
+              containerPort: {{ .Values.terminal.hashtable.port }}
+          readinessProbe:
+            tcpSocket:
+              port: hashtable
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: hashtable
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/demo
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.terminal.resources | nindent 12 }}
+      volumes:
+        # In-memory and size-limited: a visitor can fill these, and when they do
+        # it costs the container its 128Mi rather than costing the node its
+        # disk. `ulimit -f` in the session wrapper bounds a single file on top.
+        - name: home
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+{{- end }}

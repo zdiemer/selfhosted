@@ -1,0 +1,31 @@
+{{/*
+Bounds voluntary disruption (drains, not crashes) for the static site only.
+
+Gated on replicaCount > 1 deliberately: minAvailable: 1 against a single replica
+is unsatisfiable by evicting it, so a drain blocks indefinitely rather than
+failing. scripts/lib/check-availability.py treats "replicas=1 WITH a PDB" as an
+outright failure for that reason.
+
+That is also why fsu-terminal and fsu-pybank have no PDB at all. Both are
+single-replica by necessity — a PTY is pinned to a pod, and pybank's SQLite is
+an emptyDir — so a drain is supposed to take them down and bring them back.
+
+The selector must carry the component label. check-availability.py matches a PDB
+to a Deployment by comparing spec.selector.matchLabels as a sorted tuple,
+exactly; omit it and the PDB silently matches nothing while the linter reports
+the Deployment as unprotected.
+*/}}
+{{- if gt (int .Values.web.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fsu.fullname" . }}-web
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+{{- end }}

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pybank — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>pybank</h1>
+  <p class="sub">
+    &ldquo;A Django and Python powered online banking system.&rdquo; Spring 2016,
+    a team project with Wenqi Wang. The last commit is titled <em>Final
+    functionality push before presentation tomorrow</em>, which tells you most of
+    what you need to know.
+  </p>
+</header>
+
+<p>
+  <a class="btn" href="/pybank/main/">Open the bank</a>
+</p>
+
+<p>
+  Sign in as <code id="u">demo</code> / <code id="p">seminoles</code>. There is a
+  second account, <code>alex</code>, with the same password, so the
+  transfer-to-another-user flow has somewhere to send money. Both start funded.
+</p>
+
+<blockquote>
+  <p>
+    The database is recreated from scratch every time the pod restarts, and it
+    lives in memory rather than on a disk. Move the fake money around as freely
+    as you like.
+  </p>
+</blockquote>
+
+<h2>Running Python 2.7 on purpose</h2>
+<p>
+  This one could not be modernised without editing it, and the rule for this
+  site is that the repositories are not edited. Two things pin it:
+  <code>main/views.py</code> does <code>import account_type</code> &mdash; an
+  implicit relative import, which is Python 2 syntax and a
+  <code>ModuleNotFoundError</code> on Python 3 &mdash; and the same file mixes
+  tabs and spaces for indentation, which Python 3 rejects at parse time before
+  it ever gets that far.
+</p>
+<p>
+  So it runs where it ran: Python 2.7.18 and Django 1.9.5, on Django's
+  development server, with <code>DEBUG = True</code>. That is not nostalgia
+  cosplay &mdash; <code>runserver</code> with <code>DEBUG</code> on is the only
+  thing serving the stylesheets, and the yellow Django error page is part of the
+  exhibit. The <code>SECRET_KEY</code> has been sitting in the public repository
+  since 2016, so there is no secret left to protect; what makes this acceptable
+  is that the host is unreachable off my tailnet, the container has no network
+  access and a read-only filesystem, and the entire database is fake.
+</p>
+<p>
+  Two things were changed, both in the container image and neither in the
+  repository: jQuery was vendored locally because the page loaded it over plain
+  <code>http://</code> and a browser will not do that on an HTTPS site, and a
+  dead FontAwesome <code>&lt;link&gt;</code> was dropped &mdash; its CDN was shut
+  down in 2024 and a search of every template finds not one
+  <code>fa&nbsp;fa-</code> class using it.
+</p>
+
+<h2>What it is</h2>
+<dl class="facts">
+  <dt>Source</dt>
+  <dd><a href="https://github.com/zdiemer/pybank">github.com/zdiemer/pybank</a>
+      &mdash; 6 Apr to 19 Apr 2016.</dd>
+  <dt>Model</dt>
+  <dd>One. <code>Account</code>: a user, a 16-digit card number, an
+      <code>IntegerField</code> balance, a type discriminator for
+      savings/checking/credit, an activation flag and a PIN.</dd>
+  <dt>Features</dt>
+  <dd>Register, log in, deposit, transfer between your own accounts, transfer to
+      another user, open a credit card, pay it off, spend against a card number
+      and PIN, and change your email or password.</dd>
+  <dt>Frontend</dt>
+  <dd>UIKit 2.x, vendored into the repo.</dd>
+</dl>
+
+<h2>Notes, ten years on</h2>
+<ul class="notes">
+  <li>
+    <strong>Money is an <code>IntegerField</code>.</strong> Whole dollars, no
+    cents. Not a demo simplification &mdash; that is what the model declares.
+  </li>
+  <li>
+    <strong>PINs are stored in clear text</strong> in a
+    <code>CharField(max_length=4)</code>, next to a card number that is also in
+    clear text. Passwords are hashed, because Django did that part for us.
+  </li>
+  <li>
+    <strong>There is no ledger.</strong> No <code>Transaction</code> model, no
+    history, no audit trail: a transfer reads two integers, adds and subtracts,
+    and saves. There is nothing to reconcile against and no way to see what
+    happened.
+  </li>
+  <li>
+    <strong>Five bare <code>except: pass</code> blocks</strong> in a single view.
+    <code>IndexView.post</code> is one handler for every action on the dashboard,
+    working out what you meant from which POST keys are present, with each
+    branch wrapped in a bare except. Anything that goes wrong looks exactly like
+    nothing happening.
+  </li>
+  <li>
+    <strong>Logged out, it still shows you an account.</strong> Open the bank
+    without signing in and you get &ldquo;Your Account&rdquo;, Savings and
+    Checking, each reading <code>$0</code>. <code>views.py:13</code> tests
+    <code>if user.is_authenticated:</code> without the parentheses &mdash; in
+    Django 1.9 that attribute is a bound <em>method</em>, and a method object is
+    always truthy, so the branch runs for anonymous visitors too. Every
+    <code>Account.objects.get</code> inside it then raises, and the bare excepts
+    turn each one into the string <code>'$0'</code>. Fifty lines further down,
+    <code>views.py:56</code> calls the same thing correctly, with
+    <code>()</code>.
+  </li>
+  <li>
+    <strong>The site root has always been a 404.</strong>
+    <code>pybank/urls.py</code> mounts the app at <code>^main/</code> and the
+    admin at <code>^admin/</code> and defines nothing for <code>^$</code>. The
+    link above goes to <code>/pybank/main/</code> for that reason.
+  </li>
+  <li>
+    <strong>The first migration creates <code>Question</code> and
+    <code>Choice</code></strong> &mdash; the models from the Django tutorial's
+    polls app, scaffolded and never cleaned up. The second migration deletes them
+    both. You can read the first week of the project in the migration history.
+  </li>
+  <li>
+    <strong>Two migrations contain a hard-coded card number</strong>
+    (<code>'1555363332285110'</code>), because at the moment
+    <code>makemigrations</code> ran, the field's default was a function call, and
+    Django froze the value it returned.
+  </li>
+  <li>
+    <strong>Balances render as currency through the C library.</strong>
+    <code>views.py</code> calls <code>locale.setlocale(LC_ALL, '')</code> and
+    then <code>locale.currency()</code> &mdash; and the second one is inside one
+    of those bare excepts. In a container with no generated locale, every
+    balance on the site silently renders as <code>$0</code> and the page looks
+    fine. The image generates <code>en_US.UTF-8</code> specifically so that does
+    not happen.
+  </li>
+</ul>
+
+<a class="backlink" href="/">&larr; the other three</a>
+
+</div>
+</body>
+</html>

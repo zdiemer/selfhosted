@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fsu.fullname" . }}-web
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.web.service.type }}
+  ports:
+    - port: {{ .Values.web.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 4 }}
+{{- if .Values.terminal.enabled }}
+---
+{{/*
+One Service, two ports: the Ingress routes /cloysta and /hashtable to different
+ports on the same pod. Splitting them into two Services would add an object
+without adding a boundary — they are containers in one pod either way.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fsu.fullname" . }}-terminal
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: terminal
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.terminal.cloysta.port }}
+      targetPort: cloysta
+      protocol: TCP
+      name: cloysta
+    - port: {{ .Values.terminal.hashtable.port }}
+      targetPort: hashtable
+      protocol: TCP
+      name: hashtable
+  selector:
+    {{- include "fsu.selectorLabels" (dict "root" . "component" "terminal") | nindent 4 }}
+{{- end }}
+{{- if .Values.pybank.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fsu.fullname" . }}-pybank
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pybank
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.pybank.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "fsu.selectorLabels" (dict "root" . "component" "pybank") | nindent 4 }}
+{{- end }}

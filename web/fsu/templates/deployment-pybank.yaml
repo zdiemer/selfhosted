@@ -1,0 +1,122 @@
+{{- if .Values.pybank.enabled }}
+{{/*
+Django 1.9.5 on Python 2.7, the way it ran in April 2016.
+
+DEBUG stays True, deliberately and not by omission:
+  * it is what the original ran as, and the SECRET_KEY is committed to a public
+    repo, so there is no secret left to protect;
+  * runserver's StaticFilesHandler only serves /static/ when DEBUG is on, and
+    vendoring a staticfiles pipeline into a 2016 project is not the exhibit;
+  * the yellow Django error page IS part of the exhibit — five bare
+    `except: pass` blocks in views.py mean most failures never reach it, and the
+    ones that do are worth seeing.
+
+What makes that acceptable rather than reckless: a tailnet-only host, a
+read-only rootfs, egress: [] (networkpolicy.yaml), and a database that is an
+emptyDir of fake money recreated from scratch on every pod start.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fsu.fullname" . }}-pybank
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pybank
+spec:
+  replicas: {{ .Values.pybank.replicaCount }}
+  # Recreate, and it is FORCED rather than chosen. Each replica gets its own
+  # emptyDir SQLite file, so a RollingUpdate would open a window where two pods
+  # serve two divergent banks and a logged-in session sees its balance change
+  # depending on which one it lands on. The cost is a few seconds of downtime on
+  # a roll, which for a demo is the honest trade.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "pybank") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fsu.selectorLabels" (dict "root" . "component" "pybank") | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # SQLite needs the DIRECTORY writable, not just the file — it creates a
+        # -journal sibling — and the kubelet hands out a root-owned emptyDir.
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: django
+          image: "{{ .Values.images.pybank.repository }}:{{ .Values.images.pybank.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command: ["/usr/local/bin/pybank-entrypoint.sh"]
+          env:
+            - name: PYBANK_DB_DIR
+              value: /data
+            - name: PYBANK_DEMO_USER
+              value: {{ .Values.pybank.demo.username | quote }}
+            - name: PYBANK_DEMO_PASSWORD
+              value: {{ .Values.pybank.demo.password | quote }}
+            - name: PYBANK_OTHER_USER
+              value: {{ .Values.pybank.demo.otherUsername | quote }}
+            - name: PYBANK_OTHER_PASSWORD
+              value: {{ .Values.pybank.demo.otherPassword | quote }}
+            - name: PYBANK_CHECKING_BALANCE
+              value: {{ .Values.pybank.demo.checkingBalance | quote }}
+            - name: PYBANK_SAVINGS_BALANCE
+              value: {{ .Values.pybank.demo.savingsBalance | quote }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: http
+              containerPort: {{ .Values.pybank.service.port }}
+          # /pybank/main/ rather than /: pybank/urls.py mounts main at ^main/
+          # and admin at ^admin/ and defines nothing for ^$, so the project root
+          # has always been a 404. Probing it would report a healthy app as
+          # broken. The login page renders for an anonymous request, which makes
+          # it a real end-to-end probe: URLconf, templates and the ORM all have
+          # to work to produce it.
+          readinessProbe:
+            httpGet:
+              path: /pybank/main/
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /pybank/main/
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.pybank.resources | nindent 12 }}
+      volumes:
+        - name: data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+{{- end }}

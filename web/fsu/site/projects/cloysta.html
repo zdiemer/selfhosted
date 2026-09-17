@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloysta — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap-wide">
+
+<header class="masthead">
+  <h1>Cloysta</h1>
+  <p class="sub">
+    A Unix shell in C. Florida State, Operating Systems, Fall 2015, written with
+    Taylor Ereio &mdash; thirty commits, all of them on the night of 28
+    September, from <code>linprog1</code> and <code>linprog3</code> in the CS lab.
+  </p>
+</header>
+
+<div id="terminal" data-base="/cloysta" data-label="the Cloysta shell">
+  <p class="status">Checking…</p>
+</div>
+
+<p class="status">
+  A real PTY, a real <code>fork</code>/<code>execv</code>, running the binary
+  <code>gcc</code> produced from the 2015 sources. Type <code>exit</code> to
+  leave.
+</p>
+
+<h2>Things worth typing</h2>
+<pre><code>pwd
+ls /opt
+echo hi &gt; f
+cat f
+etime ls              # the shell times a command for you
+limits                # reads /proc/&lt;pid&gt;/limits
+export FOO=bar        # ... then: echo $FOO
+ls | more             # read the warning it prints
+cd /usr               # this one may take the shell down with it</code></pre>
+
+<h2>What it does</h2>
+<dl class="facts">
+  <dt>Source</dt>
+  <dd><a href="https://github.com/zdiemer/Cloysta">github.com/zdiemer/Cloysta</a>
+      &mdash; roughly 1,500 lines of C across <code>REPL/</code> and
+      <code>UTILS/</code>.</dd>
+  <dt>Structure</dt>
+  <dd>Exactly the loop the assignment asked for:
+      <code>_setup</code> &rarr; <code>_prompt</code> &rarr; <code>_read</code>
+      &rarr; <code>_parse</code> &rarr; <code>_execute</code>, one file each.</dd>
+  <dt>Builtins</dt>
+  <dd><code>exit</code>, <code>cd</code>, <code>echo</code> (with
+      <code>$VAR</code> expansion), <code>export</code>, <code>etime</code>,
+      <code>limits</code>. Everything else is resolved against
+      <code>PATH</code> and <code>execv</code>'d.</dd>
+  <dt>Also implemented</dt>
+  <dd><code>&gt;</code> and <code>&lt;</code> redirection via
+      <code>dup2</code>, background jobs with <code>&amp;</code>, and a
+      hand-rolled allocation tracker in <code>UTILS/memmy.c</code>.</dd>
+  <dt>Dependencies</dt>
+  <dd>None. No readline, no ncurses &mdash; which is why there is no history and
+      why the arrow keys just emit escape codes at you.</dd>
+</dl>
+
+<h2>Notes, eleven years on</h2>
+<ul class="notes">
+  <li>
+    <strong>The shell cannot detect end of input.</strong>
+    <code>REPL/read.c</code> calls <code>fgets</code> and throws the return value
+    away, then returns <code>line == NULL ? 0 : 1</code> &mdash; but
+    <code>line</code> is the caller's buffer and is never null, so it always
+    returns 1. The <code>run = 0</code> branch in <code>main.c</code> that was
+    supposed to handle EOF is unreachable code. At EOF <code>fgets</code> leaves
+    its buffer untouched, so <code>strcpy</code> copies uninitialised heap and
+    the shell reprints the prompt forever.
+    <br>
+    Measured here: about 42&nbsp;MB of prompt in 13 seconds. This session
+    disables the terminal's EOF character outright so a stray Ctrl-D cannot
+    reach that path, and caps CPU seconds in case anything else does.
+  </li>
+  <li>
+    <strong><code>export</code> cannot outlive the line it was typed on.</strong>
+    It calls <code>putenv(args[1])</code>, and <code>args</code> is
+    <code>main()</code>'s <code>char cmd[255][255]</code> stack array.
+    <code>putenv</code> stores the pointer rather than a copy, and
+    <code>_setup()</code> zeroes that array at the top of every loop &mdash; so
+    by the time you can type <code>echo $FOO</code>, the environment entry points
+    at bytes that have been cleared. Try it; it says the variable is not found.
+  </li>
+  <li>
+    <strong>The pipe does not read your command.</strong>
+    <code>findPipe()</code> prints &ldquo;Warning: Piping does not work
+    correctly&rdquo; and calls <code>mpipe()</code>, which is hardcoded to
+    <code>/bin/ls | /bin/more</code> &mdash; the real argument parsing is sitting
+    right there, commented out. It also calls <code>pipe()</code> after forking
+    rather than before, so the two halves get different pipes. The container
+    ships <code>more</code> at that exact path purely so the failure is the
+    interesting one rather than &ldquo;command not found&rdquo;.
+  </li>
+  <li>
+    <strong><code>cd</code> builds its argument out of garbage.</strong>
+    <code>chgdir()</code> declares <code>char path[510];</code>, never
+    initialises it, and then <code>strcat</code>s <code>"PWD="</code> onto
+    whatever was on the stack. It works when the stack happens to start with a
+    zero byte. When it does not, the shell dies &mdash; which is why the session
+    wrapper restarts it rather than pretending that does not happen.
+  </li>
+  <li>
+    <strong>Two commands fork a second shell.</strong> The child in
+    <code>compute_limits()</code> never calls <code>exit()</code>; it returns up
+    through <code>_execute</code> into <code>while(run) shell_loop(...)</code>. A
+    failed background <code>execv</code> does the same thing, because that branch
+    has no <code>exit(1)</code> after it. Both leave a duplicate shell competing
+    for your keystrokes.
+  </li>
+  <li>
+    <strong>The makefile never built this.</strong> It sets <code>C=gcc</code>
+    and then every rule uses <code>$(CC)</code>, so it silently fell back to
+    make's built-in <code>cc</code>; one rule depends on an object file it has no
+    recipe for, which is why a stale <code>echo.o</code> is committed to the
+    repository. And <code>-std=c99 -D_XOPEN_SOURCE</code> hides the declarations
+    of <code>putenv</code>, <code>gettimeofday</code> and <code>MAXPATHLEN</code>
+    that the code calls anyway &mdash; harmless in 2015, an error on a modern
+    compiler. It is built here with <code>-std=gnu99</code>, at
+    <code>-O0</code> so that eleven years of optimiser improvements do not
+    quietly change what all that undefined behaviour does.
+  </li>
+</ul>
+
+<h2>What <code>-Wall -Wextra</code> still says</h2>
+<p>
+  Seven warnings, kept rather than silenced. The last one is the honest summary
+  of the pipe implementation.
+</p>
+<pre><code>main.c:39:14:          unused parameter 'argc'
+main.c:39:26:          unused parameter 'args'
+REPL/prompt.c:9:20:    unused parameter 'settings'
+REPL/parse.c:20:29:    unused parameter 'input'
+REPL/redirect.c:92:38: unused parameter 'n'
+REPL/redirect.c:106:16: unused parameter 'args'
+REPL/redirect.c:168:25: 'fds' may be used uninitialized</code></pre>
+
+<h2>The container it runs in</h2>
+<p>
+  This program resolves a name against <code>PATH</code> and <code>execv</code>s
+  it, so the container is the security boundary rather than the shell. It holds
+  no credentials and no Kubernetes token, its root filesystem is read-only, and
+  its network policy denies all egress &mdash; there is no DNS, so
+  <code>ping</code> and <code>curl</code> hang rather than failing quickly. The
+  command set on <code>PATH</code> is a deliberately short list of the boring
+  ones. Each session is capped in wall-clock seconds and, separately, in CPU
+  seconds, because an idle shell and a runaway one look identical to a clock.
+</p>
+
+<a class="backlink" href="/">&larr; the other three</a>
+
+</div>
+<script src="/term.js"></script>
+</body>
+</html>

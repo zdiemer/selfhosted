@@ -1,0 +1,88 @@
+{{- if and .Values.ingress.enabled .Values.terminal.enabled }}
+{{/*
+THE SHELLS, AND WHY THEY ARE A SECOND INGRESS.
+
+/cloysta is a real fork/exec shell: Cloysta's execute.c resolves argv[0] against
+PATH and execv's it, so anyone who loads that page gets to run whatever the
+container holds. /hashtable is tamer — one C++ REPL, no exec — but it shares a
+pod with the shell and there is no reason to treat them differently.
+
+Traefik attaches middleware to a ROUTER, and `router.middlewares` is an
+annotation on the INGRESS, so it applies to every router the Ingress produces.
+There is no per-path middleware in the Ingress API. The split is therefore
+forced: each Ingress may contain only paths that share one middleware chain.
+life/carson does the same thing in the other direction.
+
+PRIORITY. Traefik's default router priority is the LENGTH of the rule string, so
+
+    Host(`fsu…`) && PathPrefix(`/cloysta`)
+
+already outranks
+
+    Host(`fsu…`) && PathPrefix(`/`)
+
+and life/carson has relied on exactly that in production. But "the specific path
+wins, so the unauthenticated catch-all can never shadow a shell" is the property
+that keeps this host safe, and a property that load-bearing should not be a side
+effect of how many characters are in a string. 100 states it outright.
+
+Setting it on the Ingress means it applies to BOTH routers here, which is safe
+only because /cloysta and /hashtable cannot match each other's requests — equal
+priority between them is meaningless. Do not add a third, less specific path to
+this object.
+
+THE TRAP THIS CREATES. Kubernetes pathType: Prefix is element-wise: /cloysta
+matches /cloysta and /cloysta/foo but not /cloystaXYZ. Traefik v3's PathPrefix
+is a RAW STRING prefix and does match /cloystaXYZ. So any static page whose path
+starts with /cloysta or /hashtable is swallowed by these routers and bounces off
+Authelia. That is why the explainer pages are site/cloysta.html and
+site/myds.html at the document root rather than /cloysta/about.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "fsu.fullname" . }}-terminal
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.priority: "100"
+    {{- if .Values.auth.forwardAuth.enabled }}
+    # NO ingress.zachd/public-unauthenticated here, and that is the point. The
+    # infra/ingress-policy auth rule is satisfied by the substring "forwardauth"
+    # in the value below. Carrying both annotations would satisfy the policy
+    # twice and make the audit trail a lie.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "fsu.fullname" . }}-terminal-forwardauth@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /cloysta
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "fsu.fullname" . }}-terminal
+                port:
+                  number: {{ .Values.terminal.cloysta.port }}
+          - path: /hashtable
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "fsu.fullname" . }}-terminal
+                port:
+                  number: {{ .Values.terminal.hashtable.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  {{- /*
+    Both Ingresses list the same host. Neither names a secretName, so both
+    routers pick up the cluster-wide default wildcard from Traefik's TLSStore
+    (infra/traefik-certs). life/carson does the same and it is fine.
+  */}}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+  {{- end }}
+{{- end }}

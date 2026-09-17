@@ -1,0 +1,115 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+THREE POLICIES, ALL THE SAME SHAPE: only Traefik may reach these pods, and none
+of them may reach anything.
+
+`egress: []` with Egress in policyTypes denies everything — DNS, the API server,
+other pods, the tailnet, and 169.254.169.254. Omitting the key entirely would
+deny NOTHING, so the empty list is load-bearing rather than tidy. dev/vmlab's
+vm-none policy spells out the same distinction.
+
+Deny-all rather than the "0.0.0.0/0 except RFC1918" shape used elsewhere in this
+repo, and vmlab's own comment says why: every one of those except-blocks omits
+100.64.0.0/10, so those pods can still reach every tailnet peer. There is
+nothing to forget here.
+
+None of the three needs egress. nginx does no proxy_pass; Django is on SQLite
+with no external calls; the terminal image has no network features at all. The
+first one that grows a dependency should get an explicit rule, not a hole.
+
+Kubelet probes are NOT blocked by this — probes originate on the node, outside
+the pod network policy path. dev/claude-workspace has run with the same ingress
+shape and working probes for months, which is the proof rather than the theory.
+*/}}
+{{- if .Values.terminal.enabled }}
+{{/*
+THE SHELL. Consequence to expect, so nobody debugs it twice: inside Cloysta,
+`ping`, `curl` and anything that resolves a name will hang until they time out
+rather than failing fast. There is no DNS rule here on purpose.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fsu.fullname" . }}-terminal
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: terminal
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "terminal") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: {{ .Values.terminal.cloysta.port }}
+          protocol: TCP
+        - port: {{ .Values.terminal.hashtable.port }}
+          protocol: TCP
+  egress: []
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fsu.fullname" . }}-web
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress: []
+{{- if .Values.pybank.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fsu.fullname" . }}-pybank
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pybank
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "pybank") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: {{ .Values.pybank.service.port }}
+          protocol: TCP
+  egress: []
+{{- end }}
+{{- end }}

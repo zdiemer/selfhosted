@@ -21,7 +21,12 @@
 #   head     pin the branch head and say plainly that it could not be verified.
 #            talaria pins every image to `latest`, so a tag comparison would
 #            compare "latest" with "latest" and prove nothing.
-#   skip     web/old-diemer-codes/site is a frozen 2019 archive we do not touch.
+#   skip     frozen archives we do not touch: web/old-diemer-codes/site (2019)
+#            and the four school projects under web/fsu/projects (2014-16).
+#            Those four carry no chart of their own, so the `cluster` strategy
+#            would find no values.yaml to read a tag out of and report "no
+#            image.repository in the chart" on every run — correct by accident,
+#            and noisy. They are also on `master`, not `main`.
 #
 # Each entry is  <submodule path>:<chart dir within the repo>:<strategy>.
 SUBMODULES=(
@@ -33,6 +38,10 @@ SUBMODULES=(
   "web/whatnowgg:deploy/chart:tag"
   "web/talaria:helm/talaria:head"
   "web/old-diemer-codes/site::skip"
+  "web/fsu/projects/Cloysta::skip"
+  "web/fsu/projects/Breakout::skip"
+  "web/fsu/projects/pybank::skip"
+  "web/fsu/projects/my-data-structure::skip"
 )
 
 set -euo pipefail

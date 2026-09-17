@@ -7,6 +7,10 @@
     "the change it is. scripts/submodules-lock.sh enforces this on the filesystem; these",
     "rules are the version that can explain itself, and they fire before the write is",
     "attempted rather than after it fails with EACCES.",
+    "web/fsu/projects/* is the exception to that reasoning and needs the rule more, not less:",
+    "those four are frozen 2014-16 coursework with no deploy anywhere, whose only consumer is",
+    "web/fsu's Dockerfiles. There is no 'correct checkout' to edit instead — showcasing them",
+    "unmodified is the entire point, so every fix they need lives outside them in web/fsu/.",
     "additionalDirectories names ~/Code so the correct checkout is reachable by default."
   ],
   "permissions": {
@@ -26,7 +30,9 @@
       "Edit(web/diemer-codes/**)",
       "Write(web/diemer-codes/**)",
       "Edit(web/old-diemer-codes/site/**)",
-      "Write(web/old-diemer-codes/site/**)"
+      "Write(web/old-diemer-codes/site/**)",
+      "Edit(web/fsu/projects/**)",
+      "Write(web/fsu/projects/**)"
     ],
     "additionalDirectories": [
       "~/Code"

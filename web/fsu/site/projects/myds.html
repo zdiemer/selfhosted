@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyDS — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap-wide">
+
+<header class="masthead">
+  <h1>MyDS</h1>
+  <p class="sub">
+    A separate-chaining hash table in C++, January 2015. The whole repository is
+    two header files: no <code>main()</code>, no Makefile, no README, two
+    commits, and nothing since.
+  </p>
+</header>
+
+<div id="terminal" data-base="/hashtable" data-label="the MyDS REPL">
+  <p class="status">Checking…</p>
+</div>
+
+<p class="status">
+  Type <code>demo</code> for the guided tour, or <code>help</code> for the
+  command list.
+</p>
+
+<h2>A caveat about the course</h2>
+<blockquote>
+  <p>
+    I have seen this attributed to COP&nbsp;4530, and the date and the naming
+    convention fit &mdash; but nothing in the repository says so. There is no
+    README, no header comment and no assignment text. Treat the course as a
+    guess; the January 2015 date and the authorship are the only parts I can
+    actually source.
+  </p>
+</blockquote>
+
+<h2>What exists</h2>
+<p>
+  <code>MyHash.h</code> is a functor wrapping djb2. <code>MyDS.h</code> is the
+  table: a <code>vector&lt;list&lt;string&gt;&gt;</code>, an <code>int
+  max_size</code> and an <code>int size</code>, all private, with exactly four
+  public members &mdash; a constructor, a destructor, <code>push</code> and
+  <code>search</code>. That is the entire surface.
+</p>
+<p>
+  It was written against an instructor's driver that was never committed, so
+  from a clone it has never been runnable at all. The REPL on this page is a
+  harness written in 2026; it lives outside the repository and the repository is
+  untouched. It does reach into the private members &mdash; the bucket
+  distribution and the rehash are the whole point of the assignment, and there
+  are no accessors, not even <code>size()</code> &mdash; so every number it
+  prints is read from the real object rather than reconstructed.
+</p>
+
+<h2>Notes, eleven years on</h2>
+<ul class="notes">
+  <li>
+    <strong><code>size</code> does not count what you think it counts.</strong>
+    <code>push</code> increments it only when a bucket goes from empty to
+    non-empty, so it is a count of occupied <em>buckets</em>, not of elements.
+    There is no accessor, so nothing outside the class could ever have noticed.
+  </li>
+  <li>
+    <strong>And then a rehash makes it wrong.</strong> <code>rehash()</code>
+    builds a new vector, splices every chain into it and swaps &mdash; without
+    recomputing <code>size</code>. The moment a rehash separates two keys that
+    used to share a bucket, the real occupied count moves and the field does not.
+    In the demo it ends up short by about 150, permanently, and nothing in the
+    class ever corrects it. It is also the left-hand side of the growth
+    condition.
+  </li>
+  <li>
+    <strong>The table starts with 60,000 buckets</strong> &mdash; roughly
+    1.5&nbsp;MB of empty <code>std::list</code> headers &mdash; with the comment
+    &ldquo;to avoid expensive rehashing at larger sizes&rdquo;. It works, but it
+    also means the <code>size == nodes.size()</code> growth trigger needs 60,000
+    <em>occupied</em> buckets and can never realistically fire.
+  </li>
+  <li>
+    <strong>So the only reachable trigger is a chain of 150</strong>, and since
+    <code>push</code> does not deduplicate, the way to reach it is to insert the
+    same string 150 times. Which then cannot be fixed by rehashing, because
+    identical keys hash identically &mdash; so every subsequent insert of that
+    word quadruples <code>max_size</code> and rebuilds the entire table again.
+    <code>max_size *= 4</code> overflows a signed <code>int</code> after seven of
+    those.
+  </li>
+  <li>
+    <strong>A miss can cost far more than a hit.</strong> <code>search</code> is
+    <code>std::find</code> over the bucket's list. With 150 copies of one string
+    in a bucket, finding it stops at the first node and failing to find something
+    else in that same bucket walks all 150. The demo brute-forces a colliding key
+    so you can watch both numbers.
+  </li>
+  <li>
+    <strong>There is no <code>remove()</code>.</strong> Not an oversight I can
+    dress up &mdash; deletion was not part of the assignment and was never
+    written. The REPL does not pretend otherwise.
+  </li>
+  <li>
+    <strong>The destructor sets <code>max_size = 6000</code>.</strong> A dropped
+    zero, in code that runs immediately before the object ceases to exist. It is
+    harmless, and it is how you know nobody ever read it.
+  </li>
+  <li>
+    <strong>The hash copies every key.</strong>
+    <code>MyHash::operator()</code> takes its <code>string</code> by value,
+    including inside <code>rehash()</code>'s inner loop. And <code>s[i]</code> is
+    a plain <code>char</code>, which is signed on x86, so any byte above 0x7F
+    sign-extends into the accumulator &mdash; invisible with ASCII words, which
+    is all this was ever fed.
+  </li>
+</ul>
+
+<h2>What <code>-Wall -Wextra</code> still says</h2>
+<p>
+  Three warnings, all the same one: a signed loop counter or field compared
+  against an unsigned <code>size()</code>. The REPL's <code>warnings</code>
+  command prints them in full. Both headers otherwise compile clean at C++17
+  without a single change.
+</p>
+
+<a class="backlink" href="/">&larr; the other three</a>
+
+</div>
+<script src="/term.js"></script>
+</body>
+</html>

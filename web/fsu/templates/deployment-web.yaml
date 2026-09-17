@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fsu.fullname" . }}-web
+  labels:
+    {{- include "fsu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  # No PVC and no per-pod state — the site and the Breakout jar are inside the
+  # image — so this rolls rather than recreates, and never drops below full
+  # capacity.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        # Ships this pod's logs to infra/alloy. Derived from the chart's own
+        # ingress switch, so the allowlist cannot drift out of sync.
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+    spec:
+      # Nothing here talks to the API server.
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      # Explicit rather than the inherited 30s default, because the preStop
+      # sleep below eats into it: this has to cover the sleep plus nginx's own
+      # SIGQUIT drain.
+      terminationGracePeriodSeconds: 30
+      # Spread the two replicas so a single node going away doesn't take the
+      # site with it. Required rather than preferred, with the accompanying PDB,
+      # is what makes a drain provably safe — see web/luke-birthday's deployment
+      # for the full argument. matchLabelKeys scopes the skew to one
+      # pod-template-hash so a rollout spreads the new ReplicaSet against itself
+      # rather than deadlocking against the outgoing pods.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "fsu.selectorLabels" (dict "root" . "component" "web") | nindent 14 }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.images.web.repository }}:{{ .Values.images.web.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            # uid/gid of the nginx-unprivileged base image.
+            runAsUser: 101
+            runAsGroup: 101
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Removing a pod from a Service's Endpoints and sending it SIGTERM are
+          # concurrent, not ordered: Traefik can still be routing here when
+          # nginx starts shutting down, and those requests become 502s. The
+          # native sleep action rather than `exec: sh -c sleep`, which this
+          # image cannot run on a read-only rootfs.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          ports:
+            - name: http
+              containerPort: 8080
+          # If nginx has bound the port, the site is there, because the site IS
+          # the image. The failure a probe cannot catch — a missing stylesheet
+          # or a jar built without images/ at its root — is caught at build time
+          # instead, by the asserts in Dockerfile.web.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          volumeMounts:
+            # readOnlyRootFilesystem is on. nginx writes its pid to /tmp and
+            # keeps client_body/proxy/fastcgi temp paths under /var/cache/nginx;
+            # without both of these it exits at startup.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: nginx-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

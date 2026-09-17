@@ -24,6 +24,11 @@ SKIP = {"infra/egress-proxy"}
 NESTED = {
     "discord/vocard": ("images", "bot", "tag"),   # bot leads
     "media/arr": ("apps", "sonarr", "tag"),       # sonarr leads (Chart.yaml comment)
+    # Three images, one story. web leads; web/fsu/build.sh hard-fails unless all
+    # three tags equal appVersion, so checking one checks them all. Without this
+    # entry dig(values, ("image", "tag")) returns None and the chart is skipped
+    # SILENTLY — opting out of the drift check without saying so.
+    "web/fsu": ("images", "web", "tag"),
 }
 
 # Submodules carry their own charts and their own CI; also absent in a

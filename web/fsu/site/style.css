@@ -1,0 +1,260 @@
+/* One stylesheet for five hand-written pages. No framework, no build step.
+   Garnet and gold, because of course. */
+
+:root {
+    --garnet: #782f40;
+    --garnet-light: #9c4a5c;
+    --gold: #ceb888;
+    --gold-dim: #a08e63;
+    --ink: #1a1618;
+    --ink-soft: #4a4247;
+    --paper: #faf8f5;
+    --rule: #e2dcd4;
+    --code-bg: #f3efe9;
+    --warn-bg: #fdf6e3;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --garnet: #c97a8b;
+        --garnet-light: #e0a3b0;
+        --gold: #ceb888;
+        --gold-dim: #8a7a54;
+        --ink: #ece8e4;
+        --ink-soft: #b3aca6;
+        --paper: #171415;
+        --rule: #332c30;
+        --code-bg: #221d20;
+        --warn-bg: #2a2418;
+    }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    padding: 0 16px 6rem;
+    background: var(--paper);
+    color: var(--ink);
+    font: 17px/1.65 ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+.wrap { max-width: 46rem; margin: 0 auto; }
+.wrap-wide { max-width: 64rem; margin: 0 auto; }
+
+header.masthead {
+    border-bottom: 3px solid var(--garnet);
+    margin: 3rem 0 2.5rem;
+    padding-bottom: 1.25rem;
+}
+
+h1 {
+    font-size: clamp(1.9rem, 5vw, 2.6rem);
+    line-height: 1.15;
+    margin: 0 0 .4rem;
+    letter-spacing: -.02em;
+}
+
+h2 {
+    font-size: 1.3rem;
+    margin: 2.5rem 0 .75rem;
+    padding-bottom: .3rem;
+    border-bottom: 1px solid var(--rule);
+}
+
+h3 { font-size: 1.05rem; margin: 1.75rem 0 .5rem; }
+
+.sub {
+    color: var(--ink-soft);
+    font-size: 1.02rem;
+    margin: 0;
+}
+
+a { color: var(--garnet); text-underline-offset: 2px; }
+a:hover { color: var(--garnet-light); }
+
+/* ---- the project cards on the index ---- */
+
+.cards {
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    margin: 2rem 0;
+    padding: 0;
+    list-style: none;
+}
+
+.card {
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--gold);
+    border-radius: 3px;
+    padding: 1.1rem 1.25rem 1.25rem;
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+}
+
+.card h2 {
+    border: 0;
+    margin: 0 0 .15rem;
+    padding: 0;
+    font-size: 1.22rem;
+}
+
+.card h2 a { text-decoration: none; }
+.card h2 a:hover { text-decoration: underline; }
+
+.card .meta {
+    font: 500 .78rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--ink-soft);
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    margin: 0 0 .6rem;
+}
+
+.card p { margin: 0 0 .9rem; font-size: .95rem; }
+.card .spacer { flex: 1; }
+
+/* ---- small pieces ---- */
+
+.tag {
+    display: inline-block;
+    font: 600 .7rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: .3rem .5rem;
+    border-radius: 2px;
+    background: var(--code-bg);
+    color: var(--ink-soft);
+    vertical-align: middle;
+}
+
+.tag-auth { background: var(--garnet); color: #fff; }
+
+.btn {
+    display: inline-block;
+    background: var(--garnet);
+    color: #fff;
+    text-decoration: none;
+    padding: .5rem .95rem;
+    border-radius: 3px;
+    font: 600 .9rem/1.3 system-ui, -apple-system, sans-serif;
+}
+.btn:hover { background: var(--garnet-light); color: #fff; }
+
+.backlink {
+    display: inline-block;
+    margin: 2rem 0 0;
+    font: .9rem/1 system-ui, -apple-system, sans-serif;
+}
+
+code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+code {
+    background: var(--code-bg);
+    padding: .1em .35em;
+    border-radius: 2px;
+    font-size: .88em;
+}
+
+pre {
+    background: var(--code-bg);
+    border-left: 3px solid var(--gold-dim);
+    padding: .9rem 1rem;
+    overflow-x: auto;
+    font-size: .82rem;
+    line-height: 1.5;
+    border-radius: 0 2px 2px 0;
+}
+
+pre code { background: none; padding: 0; font-size: inherit; }
+
+blockquote {
+    margin: 1.25rem 0;
+    padding: .75rem 1rem;
+    background: var(--warn-bg);
+    border-left: 3px solid var(--gold-dim);
+    font-size: .95rem;
+}
+blockquote p { margin: .4rem 0; }
+blockquote :first-child { margin-top: 0; }
+blockquote :last-child { margin-bottom: 0; }
+
+dl.facts { margin: 1.25rem 0; }
+dl.facts dt {
+    font: 600 .75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--ink-soft);
+    margin-top: .8rem;
+}
+dl.facts dd { margin: .1rem 0 0; }
+
+ul.notes { padding-left: 1.2rem; }
+ul.notes li { margin: .65rem 0; }
+
+/* ---- embedded terminals and apps ---- */
+
+.frame {
+    width: 100%;
+    height: 34rem;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: #000;
+    display: block;
+}
+
+.frame-tall { height: 42rem; }
+
+#display {
+    width: 740px;
+    height: 480px;
+    max-width: 100%;
+    margin: 1.5rem auto;
+    border: 1px solid var(--rule);
+    background: #000;
+}
+
+.status {
+    font: .85rem/1.5 system-ui, -apple-system, sans-serif;
+    color: var(--ink-soft);
+    text-align: center;
+    margin: 1rem 0;
+}
+
+footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: .82rem;
+    color: var(--ink-soft);
+}
+footer a { color: var(--ink-soft); }
+
+/* The sign-in panel the terminal pages show when Authelia has not been
+   satisfied yet — see site/term.js for why an iframe cannot just show the
+   login page itself. */
+.gate {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--garnet);
+    border-radius: 3px;
+    padding: 1.25rem 1.4rem;
+    background: var(--code-bg);
+}
+.gate p { margin: .6rem 0; }
+.gate p:first-child { margin-top: 0; }
+
+.btn-quiet {
+    background: transparent;
+    color: var(--garnet);
+    border: 1px solid var(--rule);
+    cursor: pointer;
+    font: 600 .9rem/1.3 system-ui, -apple-system, sans-serif;
+    padding: .5rem .95rem;
+    border-radius: 3px;
+}
+.btn-quiet:hover { background: var(--paper); color: var(--garnet-light); }

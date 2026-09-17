@@ -1,0 +1,165 @@
+# fsu.zachd.duckdns.org — four pieces of 2014–16 Florida State coursework,
+# running again rather than screenshotted.
+#
+#   Cloysta            a C shell          FSU Operating Systems, Fall 2015
+#   Breakout           Swing game         Fall 2014, pair project
+#   pybank             Django 1.9 bank    Spring 2016, team project
+#   my-data-structure  C++ hash table     January 2015
+#
+# This chart INVERTS the repo's usual submodule shape, the same way
+# web/old-diemer-codes does and for the same reason: the four app repos are
+# frozen archives that must not be modified, so the chart and the three
+# Dockerfiles live HERE and the sources are submodules under projects/. They sit
+# inside the chart directory because `docker build` cannot COPY from outside its
+# context — which also means nothing a build does can dirty a submodule
+# worktree. scripts/submodules-lock.sh chmod -R a-w's them on top of that.
+#
+# Every fix, shim, wrapper and driver these projects need in 2026 lives in
+# web/fsu/, never in projects/. That is a filesystem property, not a promise.
+
+nameOverride: ""
+
+images:
+  # Three images, one build context, three Dockerfiles. build.sh REQUIRES all
+  # three tags to equal Chart.yaml appVersion: one version number for the whole
+  # showcase.
+  #
+  # scripts/check-appversion-drift.sh reads a top-level `image.tag` by default
+  # and SILENTLY SKIPS a chart that has none, so web/fsu is registered in that
+  # script's NESTED map as ("images","web","tag") — the mechanism discord/vocard
+  # and media/arr already use. Without that entry this chart would opt out of
+  # the drift check without saying so.
+  web:
+    repository: registry.zachd.duckdns.org/zdiemer/fsu-web
+    tag: "1.0.6"
+  terminal:
+    repository: registry.zachd.duckdns.org/zdiemer/fsu-terminal
+    tag: "1.0.6"
+  pybank:
+    repository: registry.zachd.duckdns.org/zdiemer/fsu-pybank
+    tag: "1.0.6"
+  # IfNotPresent — so NEVER reuse a tag. A rebuilt tag is not re-pulled by any
+  # node that already holds it, and the cluster keeps serving the old bytes.
+  # build.sh refuses to push over an existing tag for exactly this reason.
+  pullPolicy: IfNotPresent
+
+ingress:
+  enabled: true
+  className: traefik
+  host: fsu.zachd.duckdns.org
+
+  # MUST STAY EMPTY, and this is the entire security model.
+  #
+  # A chart here is tailnet-only iff cloudflareHosts is []: infra/duckdns runs
+  # mode: tailnet, so every *.zachd.duckdns.org name resolves to a cluster
+  # node's 100.64/10 Tailscale address, which is CGNAT and unroutable from the
+  # public internet. Nothing else is needed and nothing else is doing the work.
+  #
+  # Adding a host here would publish, to the open internet: a Django 1.9 dev
+  # server running with DEBUG=True and a SECRET_KEY that is in a public git
+  # repo, and two PTYs, one of which is a shell that fork/execv's anything on
+  # its PATH. Do not.
+  #
+  # There is deliberately NO ipAllowList middleware. See infra/hatch/values.yaml
+  # for the measurement: Traefik is externalTrafficPolicy: Cluster behind
+  # klipper-lb, so a tailnet request is SNAT'd to a pod CIDR before Traefik sees
+  # it, and a 100.64.0.0/10 allowlist would 403 every real request.
+  cloudflareHosts: []
+
+  tls:
+    enabled: true
+
+web:
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+terminal:
+  enabled: true
+  # ONE replica, deliberately. A PTY lives in one pod; a reconnect that landed
+  # on a second replica would get a different, empty shell — worse than no HA.
+  # A node drain drops live sessions, which for a demo shell is correct.
+  replicaCount: 1
+  cloysta:
+    port: 7681
+  hashtable:
+    port: 7682
+  # ttyd --max-clients. Two, because `ulimit -u` in cloysta-session.sh is a
+  # per-UID limit and is therefore shared across concurrent sessions: a fork
+  # bomb in one denies the other. Two is the number where that trade is
+  # acceptable.
+  maxClients: 2
+  # Wall-clock bound per session (timeout -s KILL in cloysta-session.sh).
+  sessionSeconds: 900
+  # CPU-seconds bound per session (ulimit -t). This is the one that actually
+  # catches Cloysta's EOF spin-loop — see the wrapper script.
+  sessionCpuSeconds: 60
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      # The throttle on a busy loop typed into the shell. A visitor can make
+      # this container spin; they cannot make the node spin.
+      cpu: 250m
+      memory: 128Mi
+
+pybank:
+  enabled: true
+  # ONE replica, and it is forced rather than chosen: the SQLite file is an
+  # emptyDir, so two replicas is two different banks, and a logged-in session
+  # that lands on the other one sees a different balance. strategy: Recreate in
+  # the Deployment for the same reason — a RollingUpdate would open a window
+  # where two pods serve two divergent databases.
+  replicaCount: 1
+  service:
+    port: 8000
+  # Seeded through the ORM on every start into an emptyDir. Fake money, a
+  # tailnet-only host, and gone when the pod restarts — which is why these are
+  # in the clear and there is no values.local.yaml anywhere in this chart.
+  demo:
+    username: demo
+    password: seminoles
+    # The counterparty, so the "transfer to another user" flow is demoable
+    # without registering a second account first.
+    otherUsername: alex
+    otherPassword: seminoles
+    # Whole dollars: Account.balance is an IntegerField. That is not a
+    # simplification for the demo, it is what the 2016 model declares.
+    checkingBalance: 4200
+    savingsBalance: 15000
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 192Mi
+
+auth:
+  # Authelia in front of /cloysta and /hashtable ONLY, via a second Ingress.
+  # The landing page, Breakout and pybank stay open to anything on the tailnet;
+  # a remote shell does not.
+  forwardAuth:
+    enabled: true
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+networkPolicy:
+  # ON by default, unlike infra/hatch where it is off because a wrong netpol
+  # looks like an application bug. Here the policy is the justification for
+  # running a shell at all, so a failure is supposed to be loud.
+  #
+  # Consequence, stated so nobody debugs it twice: inside the Cloysta shell,
+  # `ping`, `curl` and anything DNS will hang and then time out rather than
+  # failing fast. That is the policy working.
+  enabled: true
