@@ -292,7 +292,7 @@ share the machine and every toolchain on it, and all of them answer to
 **Why this is a VM and not a pod.** `infra/actions-runner` runs GitHub's Linux
 runner as pods — ephemeral, scale-to-zero, no state between jobs — and that is
 strictly the better model. It cannot do Windows. A Windows runner pod needs a
-Windows node and all ten nodes here are Linux, and a KubeVirt VM is not
+Windows node and every node here is Linux, and a KubeVirt VM is not
 something a runner scale set can schedule. So the Windows runner is the
 ordinary agent installed in the guest, registered as a service.
 

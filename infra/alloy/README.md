@@ -185,7 +185,7 @@ Each of the nine scrape jobs carries its own keep-list. Measured contributions:
 
 | Job | Series | Note |
 |---|---|---|
-| node-exporter | ~1,800 | ~180 of ~570 exported, ×10 nodes |
+| node-exporter | ~1,600 | ~180 of ~570 exported, ×9 nodes |
 | kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded` phases dropped here |
 | Traefik | ~800 | `*_bucket` dropped |
 | CoreDNS, kubelet, cloudflared, k8up, Alloy, CrowdSec | ~700 | |

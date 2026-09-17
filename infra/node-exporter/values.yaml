@@ -36,15 +36,15 @@
 # THIS IS THE SERIES BUDGET, and it is the most important block in the file.
 #
 # Grafana Cloud's free tier caps active series at 10k, and node-exporter's
-# defaults produce roughly 600-800 series per node. Times ten nodes that is
-# 6-8k — most of the budget, spent on one exporter, for metrics nobody reads.
+# defaults produce roughly 600-800 series per node. Times nine nodes that is
+# 5-7k — most of the budget, spent on one exporter, for metrics nobody reads.
 #
 # --collector.disable-defaults flips the model from "everything unless
 # excluded" to "nothing unless asked for", which is the only version that stays
 # correct as the exporter adds collectors upstream.
 #
 # MEASURED, not estimated: the ten collectors below export ~570 series per node,
-# of which Alloy's keep-list ships ~180 — about 1.8k across ten nodes.
+# of which Alloy's keep-list ships ~180 — about 1.6k across nine nodes.
 # node_cpu_seconds_total is over half of that on its own (cores x 8 modes, so
 # 96 series on a 12-core box) and it stays, because iowait and steal are the
 # two numbers that explain a slow node when the CPU average looks fine.
@@ -82,7 +82,7 @@ extraArgs:
   # the active-series budget with series nobody will ever query again.
   #
   # Excluded by name rather than kept by name because the interesting set (eth0,
-  # enp*, wlp*, bond*) differs across these ten machines, and a keep-list would
+  # enp*, wlp*, bond*) differs across these nine machines, and a keep-list would
   # silently miss a node's NIC. flannel.1/cni0 are the cluster overlay — pod
   # traffic, already visible in Traefik; tailscale0 is the tailnet, which is
   # real traffic but double-counts what the physical NIC already carried.

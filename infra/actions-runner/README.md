@@ -31,7 +31,7 @@ its release and namespace.
 ## Linux only — where Windows jobs go
 
 Everything here is a pod, so everything here is Linux. A Windows runner pod
-would need a Windows node and all ten in this cluster are Linux, and a KubeVirt
+would need a Windows node and every node in this cluster is Linux, and a KubeVirt
 VM is not something a runner scale set can schedule. `runs-on: arc` therefore
 never satisfies a Windows job.
 

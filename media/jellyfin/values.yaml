@@ -37,19 +37,18 @@ media:
   # mount being writable.
   readOnly: false
 
-# Hardware transcode runs on the two nodes labelled media.zachd/vaapi=true:
-# zachd-ubuntu-1 has a Vega 8, and zachd-ubuntu-6 has a Radeon 680M. Both
-# expose /dev/dri/renderD128 as render GID 992 and pass H.264 VAAPI encoding
-# with the Jellyfin image. The label is a required hardware boundary; the
-# hostname below is only a soft preference that keeps normal rollouts on the
-# original, proven node while allowing automatic failover to ubuntu-6.
+# Hardware transcode runs on nodes labelled media.zachd/vaapi=true. Today that
+# is only zachd-ubuntu-1 (Vega 8, /dev/dri/renderD128 as render GID 992), so
+# DRAINING IT TAKES JELLYFIN DOWN. The label is a required hardware boundary;
+# the hostname below is only a soft preference, so labelling a second verified
+# VAAPI node (same render GID) gives automatic failover with no chart change.
 #
 # The container must be privileged to open /dev/dri: non-privileged pods are
 # denied device nodes by the device cgroup, and this cluster has no GPU device
 # plugin. supplementalGroups grants the Jellyfin user access to renderD128.
 #
 # Bootstrap or restore the durable node labels with:
-#   kubectl label node zachd-ubuntu-1 zachd-ubuntu-6 media.zachd/vaapi=true
+#   kubectl label node zachd-ubuntu-1 media.zachd/vaapi=true
 #
 # Setting transcode.enabled: false removes the selector, affinity, privileged
 # bit, and /dev/dri mount at the cost of CPU-only transcoding.
@@ -104,8 +103,7 @@ persistence:
   # the cost of a transcode restart when seeking back past it. See
   # README.md#transcode-cache-growth.
   #
-  # Ceiling on the number: this is node-local disk; the smaller GPU node is
-  # zachd-ubuntu-1, which
+  # Ceiling on the number: this is node-local disk on zachd-ubuntu-1, which
   # had ~54Gi free when this was raised. Going much past 40Gi trades a
   # jellyfin eviction for DiskPressure evicting whatever else lands there.
   cacheSizeLimit: 40Gi
