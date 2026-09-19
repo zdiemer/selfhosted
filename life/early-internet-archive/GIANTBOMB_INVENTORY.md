@@ -52,6 +52,30 @@ no complete review-page capture has been found. The profile reports 12 reviews
 while the surviving indexes expose only eleven distinct titles, leaving one
 deleted title unidentified. Neither is promoted as a complete review.
 
+## Blogs, lists, and forum posts
+
+Exact artifact-page recovery currently yields 34 additional authored catalog
+records:
+
+| Kind | Complete records | Detail |
+|---|---:|---|
+| Blogs | 8 | Full bodies dated 2008–13 |
+| User lists | 19 | 1,918 distinct list entries retained in searchable bodies and structured metadata |
+| Forum posts | 7 | Attributed messages from five seeded discussion threads |
+
+The blogs include *Well that was weird*, *What I've been playing...*, *That's
+a tough one...*, *New Review*, *100,000 wiki points, oh my!*, both recovered
+*Indie Reviews* posts, and *Bundle Backlog – Solar 2 and Dynamite Jack*. The
+list parser covers all three historical Giant Bomb layouts and merges legacy,
+modern, and paginated captures by list ID. Five newly recovered pagination
+captures expand *Humble Obsession Bundle* to 395 retained entries and preserve
+the second page of *Xbox Live Indie Collection*.
+
+These counts distinguish discovered profile links from captured bodies: seven
+of the fifteen discovered blog pages and eight of the twenty-seven discovered
+list pages still lack a recoverable page capture. Their exact URLs remain
+seeded for future archive passes.
+
 ## Notable authored inventory
 
 The recovered URLs include early blogs such as *Hey, everyone*, *Japanese
@@ -75,7 +99,8 @@ python3 scrape_source_sweep.py --download --skip-wayback --skip-common-crawl
 python3 build_library.py
 ```
 
-The collector reads gzip-compressed profile evidence beneath
-`data/source_sweep/raw/wayback/giantbomb-profile/`, writes normalized artifact
-and review records to `data/giantbomb/giantbomb.sqlite3`, and adds discovered
-exact routes to the source-sweep database. Re-running it is idempotent.
+The collector reads gzip-compressed profile and artifact evidence beneath
+`data/source_sweep/raw/wayback/`, writes normalized artifact, review, blog,
+list, and forum-post records to `data/giantbomb/giantbomb.sqlite3`, and adds
+discovered exact and pagination routes to the source-sweep database.
+Re-running it is idempotent.

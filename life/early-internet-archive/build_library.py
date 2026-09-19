@@ -76,6 +76,12 @@ def open_source(path: Path) -> sqlite3.Connection:
     return db
 
 
+def table_exists(db: sqlite3.Connection, name: str) -> bool:
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
 def create_catalog(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
@@ -456,7 +462,13 @@ def import_giantbomb(db: sqlite3.Connection, root: Path) -> bool:
     if not path.exists():
         return False
     source = open_source(path)
-    if source.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0:
+    review_count = source.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
+    content_count = (
+        source.execute("SELECT COUNT(*) FROM content_items").fetchone()[0]
+        if table_exists(source, "content_items")
+        else 0
+    )
+    if review_count == 0 and content_count == 0:
         source.close()
         return False
     for row in source.execute("SELECT * FROM reviews ORDER BY reviewed_at,review_id"):
@@ -484,6 +496,33 @@ def import_giantbomb(db: sqlite3.Connection, root: Path) -> bool:
                 "raw_paths": json.loads(row["raw_paths_json"]),
             },
         )
+    if content_count:
+        for row in source.execute(
+            "SELECT * FROM content_items ORDER BY published_at,kind,external_id"
+        ):
+            metadata = json.loads(row["metadata_json"])
+            metadata.update(
+                {
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
+                    "snapshot_count": row["snapshot_count"],
+                    "raw_paths": json.loads(row["raw_paths_json"]),
+                }
+            )
+            add_item(
+                db,
+                item_id=f"giantbomb:{row['content_id']}",
+                source="giantbomb",
+                kind=row["kind"],
+                external_id=row["content_id"],
+                title=row["title"],
+                body=row["body"],
+                author="StarFoxA",
+                published_at=normalize_date(row["published_at"]),
+                canonical_url=row["canonical_url"],
+                section="Giant Bomb",
+                metadata=metadata,
+            )
     source.close()
     db.commit()
     return True
@@ -501,7 +540,7 @@ def build_stats(db: sqlite3.Connection) -> None:
         "backloggd": ("Backloggd", "Game reviews recovered from the confirmed StarFoxA profile."),
         "giantbomb": (
             "Giant Bomb",
-            "Reviews recovered from historical snapshots of the confirmed StarFoxA profile.",
+            "Reviews, blogs, user lists, and forum posts recovered from historical snapshots of the confirmed StarFoxA profile.",
         ),
     }
     sources = {row[0] for row in db.execute("SELECT DISTINCT source FROM items")}

@@ -9,7 +9,7 @@ capture is frozen with provenance.
 
 | Source | Identity | Discovered footprint | Preserved now | Next recovery pass |
 |---|---|---:|---:|---|
-| Giant Bomb | Confirmed `StarFoxA` | 5,266–5,267 forum posts, 12 reported reviews, and a larger historical artifact footprint | 148 profile snapshots; 103 artifact records; ten full reviews; hundreds of exact-page captures | Parse recovered blogs and lists, recover the *Fluid* body, identify the twelfth review, then enumerate forum posts |
+| Giant Bomb | Confirmed `StarFoxA` | 5,266–5,267 forum posts, 12 reported reviews, and a larger historical artifact footprint | 148 profile snapshots; 103 artifact records; 10 reviews, 8 blogs, 19 lists, and 7 forum posts in the catalog | Recover the *Fluid* body, identify the twelfth review, then broaden forum-post enumeration |
 | GameSpot | Confirmed `StarFoxA` | Five indexed reviews from 2007–08 | Search-index text and five exact seeds | Recover the pages, locate the historical profile/review index, and enumerate remaining reviews |
 | Animal Crossing Community | Confirmed `Irock` | Joined in 2004; account later deleted for inactivity | First-person NSider2 evidence | Recover the historical profile and enumerate posts carrying the `Irock` byline |
 | Twitter | Confirmed `@zach_diemer` | Profile known; tweet inventory unknown | Identity link on preserved 2019 personal site | Inventory exact profile/tweet URLs in web archives |
@@ -50,9 +50,11 @@ reviews from 2008–12 are now in the public catalog. The historical and modern
 artifact-route formats are both retained; this recovered multiple deleted
 pages that the modern form missed.
 
-Known remaining high-value seeds include the authored 17-BIT thread and a
-Chrono Trigger cease-and-desist thread. See `GIANTBOMB_INVENTORY.md` for the
-route-level accounting and parser workflow. Live pages remain
+Artifact-page parsing adds eight complete blogs, nineteen user lists with
+1,918 retained entries, and seven attributed posts across five discussion
+threads, including the authored 17-BIT thread and Chrono Trigger
+cease-and-desist discussion. See `GIANTBOMB_INVENTORY.md` for the route-level
+accounting and parser workflow. Live pages remain
 Cloudflare-protected, so recovery continues from exact archive indexes rather
 than treating live 403 responses as loss.
 
@@ -164,9 +166,9 @@ remain retryable; an index outage never becomes a false zero-result check.
 The live pass follows the same rule: successful responses are frozen with
 digests and final URLs, while DNS, origin, and HTTP failures remain errors.
 
-Current sweep state: 23 identity records, 213 exact targets, 334 completed or
-retryable index checks, and 571 capture records across 80 targets. The target
+Current sweep state: 23 identity records, 253 exact targets, 374 completed or
+retryable index checks, and 576 capture records across 85 targets. The target
 count includes 133 routes dynamically discovered from frozen Giant Bomb
-profiles plus 30 historical and modern routes discovered from its review
-index. Every indexed capture currently has a frozen raw payload. Common Crawl
-index errors remain queued for retry.
+profiles, 30 historical and modern routes discovered from its review index,
+and 40 list-pagination routes. Every indexed capture currently has a frozen
+raw payload. Common Crawl index errors remain queued for retry.

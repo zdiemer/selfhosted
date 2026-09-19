@@ -311,6 +311,31 @@ class SourceSweepTests(unittest.TestCase):
 
 
 class GiantBombParserTests(unittest.TestCase):
+    def test_non_review_content_is_imported_into_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "giantbomb"
+            db = scrape_giantbomb.connect(source_root / "giantbomb.sqlite3")
+            db.execute(
+                """INSERT INTO content_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "blog:1", "blog", "1", "Recovered blog", "Complete body",
+                    "2013-03-21", "https://www.giantbomb.com/profile/starfoxa/blog/x/1/",
+                    "{}", "20130322000000", "20130322000000", 1, "[]",
+                    "2026-09-19T00:00:00+00:00",
+                ),
+            )
+            db.commit()
+            db.close()
+            catalog = root / "library.sqlite3"
+            build_library.build(root, catalog)
+            result = sqlite3.connect(catalog)
+            item = result.execute(
+                "SELECT kind,title,body FROM items WHERE id='giantbomb:blog:1'"
+            ).fetchone()
+            result.close()
+            self.assertEqual(item, ("blog", "Recovered blog", "Complete body"))
+
     def test_profile_artifacts_and_reviews(self) -> None:
         source = """
         <a href="/profile/StarFoxA/hey-everyone/30-4615/">Hey, everyone</a>
@@ -381,6 +406,57 @@ class GiantBombParserTests(unittest.TestCase):
         self.assertEqual(review["game_title"], "Burnout Paradise")
         self.assertEqual(review["rating"], 10)
         self.assertIn("Nested second", review["body"])
+
+    def test_blog_list_and_forum_content(self) -> None:
+        blog = scrape_giantbomb.parse_blog_page(
+            """
+            <title>What I've been playing... - giantbomb.com</title>
+            <div class="corner lgray-bot"><span><div class="fl">Added by
+            <a href="/profile/starfoxa/">StarFoxA</a> on March 9, 2009</div>
+            </span></div><div class="pl-10 pr-10"><p>A preserved blog body
+            with enough original text to import.</p></div>
+            """,
+            "https://www.giantbomb.com/profile/starfoxa/example/30-22936/",
+            "22936",
+        )
+        self.assertIsNotNone(blog)
+        self.assertEqual(blog["published_at"], "2009-03-09")
+        self.assertIn("preserved blog body", blog["body"])
+
+        user_list = scrape_giantbomb.parse_list_page(
+            """
+            <title>Games I Plan on S-Ranking</title>
+            <div class="list-description"><div class="wiki-content">
+            I will have those last precious points!</div></div>
+            <table class="user-list"><tr id="div_list_listitem_284577">
+            <td class="title"><a href="/geometry-wars/61-11099/">
+            1. Geometry Wars</a><p>Surviving is impossible!</p></td></tr></table>
+            """,
+            "https://www.giantbomb.com/profile/starfoxa/example/46-14587/",
+            "14587",
+        )
+        self.assertIsNotNone(user_list)
+        self.assertEqual(user_list["metadata"]["item_count"], 1)
+        self.assertIn("Surviving is impossible", user_list["body"])
+
+        posts = scrape_giantbomb.parse_forum_posts(
+            """
+            <h1>Example Game</h1><h1>Example discussion</h1>
+            <div id="js-message-1" class="message js-message">
+            <a href="?page=1#js-message-6698282">#1</a>
+            <a class="message-user" data-user-slug="starfoxa">StarFoxA</a>
+            <article class="message-content message-body"><p>My forum post.</p></article>
+            <time datetime="2013-06-20T09:54:56-07:00"></time></div>
+            <div id="js-message-2" class="message js-message">
+            <a href="?page=1#js-message-6698290">#2</a>
+            <a class="message-user">SomeoneElse</a>
+            <article class="message-body">Not mine.</article></div>
+            """,
+            "https://www.giantbomb.com/forums/example-1/",
+        )
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["external_id"], "6698282")
+        self.assertEqual(posts[0]["title"], "Example discussion — post #1")
 
 
 class BackloggdParserTests(unittest.TestCase):

@@ -49,7 +49,9 @@ python3 scrape_source_sweep.py --download --skip-wayback --skip-common-crawl
 ```
 
 Current Giant Bomb discovery: 103 attributed artifacts (15 blogs, 27 lists,
-and 61 image records) plus ten complete reviews from 2008–12. See
+and 61 image records). Captured artifact pages currently yield eight complete
+blogs, nineteen user lists, and seven forum posts, alongside ten complete
+reviews from 2008–12; all 44 records are searchable in the catalog. See
 [`GIANTBOMB_INVENTORY.md`](GIANTBOMB_INVENTORY.md) for coverage and recovery
 details.
 

@@ -280,6 +280,217 @@ def parse_review_page(
     }
 
 
+def page_title(source: str) -> str:
+    match = re.search(r"(?is)<title\b[^>]*>(.*?)</title>", source)
+    title = clean_text(match.group(1)) if match else ""
+    return re.sub(r"\s+-\s+(?:Giant Bomb|giantbomb\.com)\s*$", "", title, flags=re.I)
+
+
+def parse_blog_page(
+    source: str,
+    canonical_url: str,
+    blog_id: str,
+) -> dict[str, Any] | None:
+    body = clean_text(extract_class_inner(source, "div", "blog-copy"))
+    byline = re.search(
+        r"(?is)<span\b[^>]*class=[\"'][^\"']*\bbyline\b[^\"']*[\"'][^>]*>(.*?)</span>",
+        source,
+    )
+    byline_text = clean_text(byline.group(1)) if byline else ""
+    byline_end = byline.end() if byline else 0
+    if not byline_text:
+        generic_byline = re.search(
+            r"(?is)(?:Added\s+by|By)\s*.*?StarFoxA.*?(?:\bon\s+)?"
+            r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z.]*\s+\d{1,2},\s+\d{4})",
+            source,
+        )
+        byline_text = clean_text(generic_byline.group(0)) if generic_byline else ""
+        byline_end = generic_byline.end() if generic_byline else 0
+    if not body:
+        article = extract_class_inner(source, "article", "profile-blog")
+        if article:
+            article = re.sub(
+                r'(?is)<section\b[^>]*class=["\'][^"\']*\bnews-hdr\b[^"\']*["\'][^>]*>.*?</section>',
+                "",
+                article,
+                count=1,
+            )
+            article = re.sub(
+                r'(?is)<section\b[^>]*class=["\'][^"\']*\bprofile-blog-edit\b[^"\']*["\'][^>]*>.*?</section>',
+                "",
+                article,
+                count=1,
+            )
+            body = clean_text(article)
+    if not body and byline_end:
+        body = clean_text(extract_class_inner(source[byline_end:], "div", "pl-10"))
+    if not body:
+        post = extract_class_inner(source, "div", "post")
+        subtitle = re.search(
+            r'(?is)<div\b[^>]*class=["\'][^"\']*\bblog-sub-title\b[^"\']*["\'][^>]*>.*?</div>',
+            post,
+        )
+        if subtitle:
+            post = post[subtitle.end() :]
+            post = re.sub(
+                r'(?is)^\s*<p\b[^>]*class=["\'][^"\']*\bbold\b[^"\']*["\'][^>]*>.*?</p>',
+                "",
+                post,
+            )
+            post = re.split(
+                r'(?is)<div\b[^>]*class=["\'][^"\']*\bfl\b[^"\']*["\'][^>]*>\s*<a\b[^>]*class=["\'][^"\']*\bcomment-link\b',
+                post,
+                maxsplit=1,
+            )[0]
+            body = clean_text(post)
+    if len(body) < 20 or "starfoxa" not in byline_text.lower():
+        return None
+    date_match = re.search(
+        r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z.]*\s+\d{1,2},\s+\d{4})",
+        byline_text,
+        re.I,
+    )
+    return {
+        "content_id": f"blog:{blog_id}",
+        "kind": "blog",
+        "external_id": blog_id,
+        "title": page_title(source) or f"Blog {blog_id}",
+        "body": body,
+        "published_at": parse_date(date_match.group(1)) if date_match else "",
+        "canonical_url": canonical_url,
+        "metadata": {},
+    }
+
+
+def parse_list_page(
+    source: str,
+    canonical_url: str,
+    list_id: str,
+) -> dict[str, Any] | None:
+    title = ""
+    description = ""
+    article = extract_class_inner(source, "article", "content-body")
+    if article:
+        heading = re.search(r"(?is)<h1\b[^>]*>(.*?)</h1>", article)
+        title = clean_text(heading.group(1)) if heading else ""
+        without_heading = re.sub(r"(?is)<h1\b[^>]*>.*?</h1>", "", article, count=1)
+        description = clean_text(without_heading)
+    if not title:
+        legacy = re.search(
+            r"(?is)<div\b[^>]*class=[\"'][^\"']*\bvlgray-top\b[^\"']*[\"'][^>]*>"
+            r"\s*<span[^>]*>(.*?)</span>\s*</div>\s*"
+            r"<div\b[^>]*class=[\"'][^\"']*\bdgray-body\b[^\"']*[\"'][^>]*>(.*?)</div>",
+            source,
+        )
+        if legacy:
+            title = clean_text(legacy.group(1))
+            description = clean_text(legacy.group(2))
+    if not title:
+        title = page_title(source)
+    if not description:
+        description = clean_text(extract_class_inner(source, "div", "list-description"))
+
+    items: dict[str, dict[str, str]] = {}
+    for row in re.findall(
+        r'(?is)<tr\b[^>]*id=["\']div_list_listitem_\d+["\'][^>]*>(.*?)</tr>',
+        source,
+    ):
+        item = re.search(
+            r'(?is)<a\b[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*\bbold\b[^"\']*["\'][^>]*>(.*?)</a>',
+            row,
+        )
+        if not item:
+            title_cell = extract_class_inner(row, "td", "title")
+            item = re.search(
+                r'(?is)<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                title_cell,
+            )
+        if not item:
+            continue
+        item_title = re.sub(r"^\s*\d+\.\s*", "", clean_text(item.group(2)))
+        item_url = absolute_url(item.group(1))
+        note = re.search(r"(?is)<p\b[^>]*>(.*?)</p>", row)
+        items[item_url] = {
+            "title": item_title,
+            "url": item_url,
+            "note": clean_text(note.group(1)) if note else "",
+        }
+
+    modern_list = extract_class_inner(source, "ul", "user-list")
+    for item in re.finditer(
+        r'(?is)<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>.*?'
+        r"<h3\b[^>]*>(.*?)</h3>.*?"
+        r'<span\b[^>]*class=["\'][^"\']*\bdeck\b[^"\']*["\'][^>]*>(.*?)</span>.*?</a>',
+        modern_list,
+    ):
+        item_url = absolute_url(item.group(1))
+        items[item_url] = {
+            "title": clean_text(item.group(2)),
+            "url": item_url,
+            "note": clean_text(item.group(3)),
+        }
+
+    if not title or (not description and not items):
+        return None
+    lines = [description] if description else []
+    if items:
+        lines.extend(
+            ["List items:"]
+            + [
+                f"{index}. {item['title']}" + (f" — {item['note']}" if item["note"] else "")
+                for index, item in enumerate(items.values(), 1)
+            ]
+        )
+    return {
+        "content_id": f"list:{list_id}",
+        "kind": "list",
+        "external_id": list_id,
+        "title": title,
+        "body": "\n".join(lines),
+        "published_at": "",
+        "canonical_url": canonical_url,
+        "metadata": {"items": list(items.values()), "item_count": len(items)},
+    }
+
+
+def parse_forum_posts(source: str, canonical_url: str) -> list[dict[str, Any]]:
+    before_messages = source.split('id="js-message-', 1)[0]
+    headings = [clean_text(value) for value in re.findall(r"(?is)<h1\b[^>]*>(.*?)</h1>", before_messages)]
+    topic = headings[-1] if headings else page_title(source).split(" - ")[0]
+    posts: list[dict[str, Any]] = []
+    for chunk in re.split(r'<div\s+id=["\']js-message-\d+["\'][^>]*>', source, flags=re.I)[1:]:
+        author = re.search(
+            r'(?is)<a\b[^>]*class=["\'][^"\']*\bmessage-user\b[^"\']*["\'][^>]*>(.*?)</a>',
+            chunk,
+        )
+        author_name = clean_text(author.group(1)) if author else ""
+        if author_name.lower() != "starfoxa":
+            continue
+        permalink = re.search(r'href=["\']([^"\']*#js-message-(\d+))["\']', chunk, re.I)
+        if not permalink:
+            continue
+        message_id = permalink.group(2)
+        body = clean_text(extract_class_inner(chunk, "article", "message-body"))
+        if not body:
+            continue
+        sequence = re.search(r">\s*#(\d+)\s*</a>", chunk)
+        published = re.search(r'<time\b[^>]*datetime=["\']([^"\']+)', chunk, re.I)
+        fragment_url = absolute_url(permalink.group(1))
+        posts.append(
+            {
+                "content_id": f"forum:{message_id}",
+                "kind": "forum-post",
+                "external_id": message_id,
+                "title": f"{topic} — post #{sequence.group(1) if sequence else message_id}",
+                "body": body,
+                "published_at": published.group(1) if published else "",
+                "canonical_url": fragment_url or f"{canonical_url}#js-message-{message_id}",
+                "metadata": {"topic": topic, "sequence": int(sequence.group(1)) if sequence else None},
+            }
+        )
+    return posts
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
@@ -316,6 +527,21 @@ def connect(path: Path) -> sqlite3.Connection:
             raw_paths_json TEXT NOT NULL,
             parsed_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS content_items (
+            content_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            snapshot_count INTEGER NOT NULL,
+            raw_paths_json TEXT NOT NULL,
+            parsed_at TEXT NOT NULL
+        );
         """
     )
     columns = {row[1] for row in db.execute("PRAGMA table_info(artifacts)")}
@@ -332,6 +558,7 @@ def discover(
 ) -> None:
     artifacts: dict[str, dict[str, Any]] = {}
     reviews: dict[str, dict[str, Any]] = {}
+    content_items: dict[str, dict[str, Any]] = {}
     rows = sweep_db.execute(
         """SELECT timestamp,raw_path FROM captures
            WHERE target_id='giantbomb-profile' AND raw_path IS NOT NULL
@@ -469,6 +696,98 @@ def discover(
         if parsed["rating"] is not None:
             record["rating"] = parsed["rating"]
 
+    rows = sweep_db.execute(
+        """SELECT c.timestamp,c.original_url,c.raw_path,t.id target_id,t.kind,t.url
+           FROM captures c JOIN targets t ON t.id=c.target_id
+           WHERE c.raw_path IS NOT NULL
+             AND t.source='giantbomb'
+             AND t.kind IN ('user-blog','user-list','forum-thread')
+           ORDER BY t.id,c.timestamp"""
+    ).fetchall()
+    for row in rows:
+        with gzip.open(
+            sweep_root / "raw" / row["raw_path"],
+            "rt",
+            encoding="utf-8",
+            errors="replace",
+        ) as source:
+            payload = source.read()
+        id_match = re.search(r"(?:blog|list)-(\d+)", row["target_id"])
+        parsed_items: list[dict[str, Any]] = []
+        if row["kind"] == "user-blog" and id_match:
+            parsed = parse_blog_page(payload, row["url"], id_match.group(1))
+            if parsed:
+                parsed_items.append(parsed)
+        elif row["kind"] == "user-list" and id_match:
+            parsed = parse_list_page(payload, row["url"], id_match.group(1))
+            if parsed:
+                parsed_items.append(parsed)
+            for raw_url in re.findall(
+                r'(?is)<a\b[^>]*href=["\']([^"\']*[?&]page=(\d+)[^"\']*)["\']',
+                payload,
+            ):
+                page_url, page_number = raw_url
+                page_url = absolute_url(page_url)
+                page_url = urllib.parse.urlunsplit(
+                    urllib.parse.urlsplit(page_url)._replace(fragment="")
+                )
+                sweep_db.execute(
+                    """INSERT OR REPLACE INTO targets(id,source,kind,url,attribution)
+                       VALUES(?,?,?,?,?)""",
+                    (
+                        f"giantbomb-discovered-list-{id_match.group(1)}-page-{page_number}",
+                        "giantbomb", "user-list", page_url, "confirmed",
+                    ),
+                )
+        elif row["kind"] == "forum-thread":
+            parsed_items.extend(parse_forum_posts(payload, row["url"]))
+
+        for parsed in parsed_items:
+            record = content_items.get(parsed["content_id"])
+            if record is None:
+                content_items[parsed["content_id"]] = dict(
+                    parsed,
+                    first_seen=row["timestamp"],
+                    last_seen=row["timestamp"],
+                    raw_paths=[row["raw_path"]],
+                )
+                continue
+            record["first_seen"] = min(record["first_seen"], row["timestamp"])
+            record["last_seen"] = max(record["last_seen"], row["timestamp"])
+            record["raw_paths"].append(row["raw_path"])
+            if len(parsed["title"]) > len(record["title"]):
+                record["title"] = parsed["title"]
+            if parsed["published_at"] and not record["published_at"]:
+                record["published_at"] = parsed["published_at"]
+            if "/lists/" in parsed["canonical_url"]:
+                record["canonical_url"] = parsed["canonical_url"]
+            if parsed["kind"] == "list":
+                merged = {
+                    item["url"]: item
+                    for item in record["metadata"].get("items", [])
+                }
+                merged.update(
+                    {item["url"]: item for item in parsed["metadata"].get("items", [])}
+                )
+                items = list(merged.values())
+                record["metadata"] = {"items": items, "item_count": len(items)}
+                description = record["body"].split("\nList items:\n", 1)[0]
+                candidate_description = parsed["body"].split("\nList items:\n", 1)[0]
+                if len(candidate_description) > len(description):
+                    description = candidate_description
+                record["body"] = "\n".join(
+                    ([description] if description else [])
+                    + (["List items:"] if items else [])
+                    + [
+                        f"{index}. {item['title']}"
+                        + (f" — {item['note']}" if item["note"] else "")
+                        for index, item in enumerate(items, 1)
+                    ]
+                )
+            elif len(parsed["body"]) > len(record["body"]):
+                record["body"] = parsed["body"]
+                record["metadata"] = parsed["metadata"]
+
     now = utc_now()
     for record in artifacts.values():
         db.execute(
@@ -514,6 +833,19 @@ def discover(
                 json.dumps(sorted(set(record["raw_paths"]))), now,
             ),
         )
+    db.execute("DELETE FROM content_items")
+    for record in content_items.values():
+        db.execute(
+            """INSERT INTO content_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                record["content_id"], record["kind"], record["external_id"],
+                record["title"], record["body"], record["published_at"],
+                record["canonical_url"], json.dumps(record["metadata"], ensure_ascii=False),
+                record["first_seen"], record["last_seen"],
+                len(set(record["raw_paths"])),
+                json.dumps(sorted(set(record["raw_paths"]))), now,
+            ),
+        )
     db.commit()
     sweep_db.commit()
 
@@ -522,6 +854,7 @@ def export_jsonl(db: sqlite3.Connection, root: Path) -> None:
     for table, filename, order in (
         ("artifacts", "artifacts.jsonl", "kind,legacy_id"),
         ("reviews", "reviews.jsonl", "reviewed_at,review_id"),
+        ("content_items", "content_items.jsonl", "kind,published_at,external_id"),
     ):
         with (root / filename).open("w", encoding="utf-8") as output:
             for row in db.execute(f"SELECT * FROM {table} ORDER BY {order}"):
@@ -538,6 +871,13 @@ def status(db: sqlite3.Connection) -> dict[str, Any]:
             )
         },
         "reviews": db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
+        "content_items": db.execute("SELECT COUNT(*) FROM content_items").fetchone()[0],
+        "content_by_kind": {
+            row["kind"]: row["count"]
+            for row in db.execute(
+                "SELECT kind,COUNT(*) count FROM content_items GROUP BY kind ORDER BY kind"
+            )
+        },
     }
 
 
