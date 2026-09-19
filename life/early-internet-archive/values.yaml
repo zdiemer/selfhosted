@@ -1,0 +1,80 @@
+image:
+  repository: registry.zachd.duckdns.org/zdiemer/early-internet-archive
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Stateless web replicas. Each copies the immutable catalog from NFS into its
+# own emptyDir before starting; recovered media is served from NFS read-only.
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: archive.zachd.duckdns.org
+
+# There is intentionally no Cloudflare-host list. DuckDNS resolves this name to
+# the tailnet address (infra/duckdns mode: tailnet), and Authelia is a second,
+# independent gate. This archive may contain material not reviewed for public
+# publication.
+
+auth:
+  forwardAuth:
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+persistence:
+  archive:
+    # Set existingClaim to mount a manually managed NAS claim. When empty, the
+    # chart creates and retains a TrueNAS NFS-backed RWX claim.
+    existingClaim: ""
+    create: true
+    storageClass: truenas-nfs
+    accessMode: ReadWriteMany
+    size: 20Gi
+    mountPath: /archive
+
+# The preservation data has this shape at the root of the NAS volume:
+#
+#   library.sqlite3
+#   indienerds/media/...
+#   photobucket/media/...
+#
+# The SQLite projection is copied locally at pod startup. SQLite never opens a
+# database over NFS, while large recovered media stays on the NAS and is
+# streamed through the app's stable /asset/<id> route.
+catalogCopy:
+  sourceFile: library.sqlite3
+  emptyDirSize: 2Gi
+  # upgrade.sh supplies a fresh value on every deployment so a rebuilt catalog
+  # causes a rollout even when the image and chart did not change.
+  revision: ""
+  image:
+    repository: busybox
+    # renovate: datasource=docker depName=busybox
+    tag: "1.37.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+networkPolicy:
+  # The app serves files and queries its local catalog; it has no reason to
+  # initiate a network connection. Only Traefik may reach its HTTP port.
+  enabled: true

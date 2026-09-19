@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Search · Early Internet Archive{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">The written archive</p>
+  <h1>Search {{ "{:,}".format(total) if q or source or year else "everything" }}</h1>
+  <form class="filter-form" action="/search" method="get">
+    <label><span>Words</span><input name="q" type="search" value="{{ q }}" placeholder="A phrase, game, or username"></label>
+    <label><span>Source</span><select name="source"><option value="">All sources</option>{% for row in sources %}<option value="{{ row.source }}" {% if source == row.source %}selected{% endif %}>{{ row.label }}</option>{% endfor %}</select></label>
+    <label><span>Year</span><select name="year"><option value="">All years</option>{% for option in years %}<option value="{{ option }}" {% if year == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <button type="submit">Search</button>
+  </form>
+</section>
+<section class="section compact">
+  <p class="result-count">{{ "{:,}".format(total) }} result{% if total != 1 %}s{% endif %}</p>
+  <div class="result-list">
+  {% for item in items %}
+    <article class="result">
+      <div class="result-meta"><span class="pill source-{{ item.source }}">{{ item.source_label }}</span><time>{{ item.date }}</time><span>{{ item.kind|replace('-', ' ') }}</span>{% if item.completeness != 'full' %}<span class="incomplete">{{ item.completeness }}</span>{% endif %}</div>
+      <h2><a href="/item/{{ item.source }}/{{ item.external_id }}">{{ item.title }}</a></h2>
+      <p>{{ item.body[:320] }}{% if item.body|length > 320 %}…{% endif %}</p>
+      {% if item.section %}<small>{{ item.section }}</small>{% endif %}
+    </article>
+  {% else %}
+    <div class="empty"><h2>No matches</h2><p>Try fewer words or remove a source or year filter.</p></div>
+  {% endfor %}
+  </div>
+  {% include "pagination.html" %}
+</section>
+{% endblock %}

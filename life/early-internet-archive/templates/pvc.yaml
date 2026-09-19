@@ -1,0 +1,21 @@
+{{- if and .Values.persistence.archive.create (not .Values.persistence.archive.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "early-internet-archive.fullname" . }}-archive
+  labels:
+    {{- include "early-internet-archive.labels" . | nindent 4 }}
+  annotations:
+    # The source captures are irreplaceable. Removing the Helm release must not
+    # ask Kubernetes to delete the NAS dataset that contains them.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.archive.accessMode }}
+  {{- with .Values.persistence.archive.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.archive.size }}
+{{- end }}

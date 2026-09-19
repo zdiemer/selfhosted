@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "early-internet-archive.fullname" . }}
+  labels:
+    {{- include "early-internet-archive.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "early-internet-archive.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "early-internet-archive.selectorLabels" . | nindent 8 }}
+        {{- if .Values.ingress.enabled }}
+        logging.zachd/external-ingress: "true"
+        {{- end }}
+      annotations:
+        # This value is deliberately operator-controlled: the catalog lives on
+        # NFS, outside Helm, so Helm cannot hash it. upgrade.sh sets a fresh
+        # revision to recopy a newly built catalog onto each pod's emptyDir.
+        archive.zachd/catalog-revision: {{ .Values.catalogCopy.revision | quote }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "early-internet-archive.selectorLabels" . | nindent 14 }}
+      initContainers:
+        - name: copy-catalog
+          image: "{{ .Values.catalogCopy.image.repository }}:{{ .Values.catalogCopy.image.tag }}"
+          imagePullPolicy: {{ .Values.catalogCopy.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              test -r "$SOURCE_CATALOG"
+              cp "$SOURCE_CATALOG" /work/library.sqlite3
+              test -s /work/library.sqlite3
+          env:
+            - name: SOURCE_CATALOG
+              value: {{ printf "%s/%s" (trimSuffix "/" .Values.persistence.archive.mountPath) .Values.catalogCopy.sourceFile | quote }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.catalogCopy.resources | nindent 12 }}
+          volumeMounts:
+            - name: archive
+              mountPath: {{ .Values.persistence.archive.mountPath }}
+              readOnly: true
+            - name: work
+              mountPath: /work
+      containers:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: ARCHIVE_CATALOG
+              value: /work/library.sqlite3
+            - name: ARCHIVE_ROOT
+              value: {{ .Values.persistence.archive.mountPath | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: archive
+              mountPath: {{ .Values.persistence.archive.mountPath }}
+              readOnly: true
+            - name: work
+              mountPath: /work
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: archive
+          persistentVolumeClaim:
+            claimName: {{ include "early-internet-archive.claimName" . }}
+            readOnly: true
+        - name: work
+          emptyDir:
+            sizeLimit: {{ .Values.catalogCopy.emptyDirSize }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Early Internet Archive{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">2005–2016 · Personal digital history</p>
+  <h1>The web leaves traces.<br>This keeps the ones that were mine.</h1>
+  <p class="lede">Forum conversations, reviews, lists, and images recovered from old communities and public web archives.</p>
+  <form class="hero-search" action="/search" method="get">
+    <label class="sr-only" for="q">Search the archive</label>
+    <input id="q" name="q" type="search" placeholder="Search posts, topics, reviews…" autofocus>
+    <button type="submit">Search</button>
+  </form>
+</section>
+
+<section class="totals" aria-label="Archive totals">
+  <div><strong>{{ "{:,}".format(totals["items"]) }}</strong><span>writings</span></div>
+  <div><strong>{{ "{:,}".format(totals["context"]) }}</strong><span>context messages</span></div>
+  <div><strong>{{ "{:,}".format(totals["assets"]) }}</strong><span>recovered images</span></div>
+</section>
+
+<section class="section">
+  <div class="section-heading"><p class="eyebrow">Collections</p><h2>Sources preserved so far</h2></div>
+  <div class="source-grid">
+  {% for stat in stats %}
+    <a class="source-card source-{{ stat.source }}" href="{{ '/gallery' if stat.item_count == 0 else '/search?source=' ~ stat.source }}">
+      <span class="source-label">{{ stat.label }}</span>
+      <strong>{{ "{:,}".format(stat.item_count or stat.asset_count) }}</strong>
+      <span>{{ "items" if stat.item_count else "images" }}</span>
+      <p>{{ stat.description }}</p>
+      {% if stat.first_at %}<small>{{ stat.first_at[:4] }}–{{ stat.last_at[:4] }}</small>{% endif %}
+    </a>
+  {% endfor %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-heading split"><div><p class="eyebrow">Most recent</p><h2>Latest in the library</h2></div><a href="/search">Browse all →</a></div>
+  <div class="result-list">
+  {% for item in latest %}
+    <article class="result">
+      <div class="result-meta"><span class="pill source-{{ item.source }}">{{ item.source_label }}</span><time>{{ item.date }}</time></div>
+      <h3><a href="/item/{{ item.source }}/{{ item.external_id }}">{{ item.title }}</a></h3>
+      <p>{{ item.body[:220] }}{% if item.body|length > 220 %}…{% endif %}</p>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+<p class="build-date">Catalog generated {{ generated[:10] }}</p>
+{% endblock %}

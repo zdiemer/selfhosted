@@ -1,0 +1,20 @@
+# Only the Helm metadata, values, and templates belong in a release Secret.
+# The project also contains hundreds of MB of source captures and Docker build
+# input; without these exclusions `helm lint` itself exceeds Helm's 5 MiB file
+# limit and a release would exceed etcd's object limit.
+data/
+app/
+__pycache__/
+*.py
+*.pyc
+Dockerfile
+.dockerignore
+.gitignore
+build.sh
+upgrade.sh
+*.md
+
+.git/
+*.tgz
+values.local.yaml
+values.local.tpl.yaml

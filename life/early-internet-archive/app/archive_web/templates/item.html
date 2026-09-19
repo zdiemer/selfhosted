@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} · Early Internet Archive{% endblock %}
+{% block content %}
+<article class="item-page">
+  <header class="item-header">
+    <div class="result-meta"><span class="pill source-{{ item.source }}">{{ item.source_label }}</span><time>{{ item.date }}</time><span>{{ item.kind|replace('-', ' ') }}</span></div>
+    <h1>{{ item.title }}</h1>
+    {% if item.section %}<p class="item-section">{{ item.section }}</p>{% endif %}
+    {% if item.completeness != 'full' %}<p class="notice">Only an archived {{ item.completeness }} survives for this entry.</p>{% endif %}
+  </header>
+  <div class="prose">{{ item.body }}</div>
+  {% if item.tags %}<ul class="tags" aria-label="Tags">{% for tag in item.tags %}<li>{{ tag }}</li>{% endfor %}</ul>{% endif %}
+  {% if assets %}
+  <section class="attached"><h2>Recovered media</h2><div class="gallery-grid">{% for asset in assets %}<a href="/asset/{{ asset.id }}"><img src="/asset/{{ asset.id }}" loading="lazy" alt="Recovered media from {{ item.title }}"></a>{% endfor %}</div></section>
+  {% endif %}
+  <footer class="provenance"><h2>Provenance</h2><dl><dt>Author</dt><dd>{{ item.author }}</dd><dt>Archive ID</dt><dd><code>{{ item.id }}</code></dd><dt>Preservation</dt><dd>{{ item.completeness }}</dd>{% if item.canonical_url %}<dt>Source snapshot</dt><dd><a href="{{ item.canonical_url }}" rel="external noreferrer">Open original ↗</a></dd>{% endif %}</dl></footer>
+</article>
+{% if context %}
+<section class="context section compact">
+  <div class="section-heading"><p class="eyebrow">Conversation</p><h2>Surrounding thread context</h2><p>The highlighted messages are by StarFoxA.</p></div>
+  <ol class="thread">
+  {% for message in context %}
+    <li class="{% if message.is_owner %}owner{% endif %}">
+      <div><strong>{{ message.author or "Unknown" }}</strong><time>{{ message.published_at[:10] }}</time><a href="#message-{{ message.external_id }}">#{{ message.external_id }}</a></div>
+      <p id="message-{{ message.external_id }}">{{ message.body }}</p>
+    </li>
+  {% endfor %}
+  </ol>
+</section>
+{% endif %}
+{% endblock %}

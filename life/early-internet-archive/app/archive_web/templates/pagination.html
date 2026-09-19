@@ -1,0 +1,7 @@
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Pagination">
+  {% if page > 1 %}<a href="{{ pagination_url(request, page - 1) }}">← Previous</a>{% else %}<span></span>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="{{ pagination_url(request, page + 1) }}">Next →</a>{% endif %}
+</nav>
+{% endif %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Images · Early Internet Archive{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Recovered media</p><h1>{{ "{:,}".format(total) }} surviving images</h1>
+  <form class="filter-form gallery-filter" action="/gallery" method="get">
+    <label><span>Source</span><select name="source"><option value="">All sources</option>{% for row in sources %}<option value="{{ row.source }}" {% if source == row.source %}selected{% endif %}>{{ row.label }}</option>{% endfor %}</select></label>
+    <button type="submit">Filter</button>
+  </form>
+</section>
+<section class="section compact">
+  <div class="gallery-grid">
+  {% for asset in assets %}
+    <figure><a href="/asset/{{ asset.id }}"><img src="/asset/{{ asset.id }}" loading="lazy" alt="Recovered {{ asset.source }} image"></a><figcaption><span class="pill source-{{ asset.source }}">{{ source_labels.get(asset.source, asset.source) }}</span><small>{{ display_date(asset.captured_at) }}</small></figcaption></figure>
+  {% else %}<div class="empty"><h2>No images found</h2></div>{% endfor %}
+  </div>
+  {% include "pagination.html" %}
+</section>
+{% endblock %}
