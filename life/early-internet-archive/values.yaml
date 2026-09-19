@@ -1,6 +1,6 @@
 image:
   repository: registry.zachd.duckdns.org/zdiemer/early-internet-archive
-  tag: "0.1.1"
+  tag: "0.1.2"
   pullPolicy: IfNotPresent
 
 # Stateless web replicas. Each copies the immutable catalog from NFS into its

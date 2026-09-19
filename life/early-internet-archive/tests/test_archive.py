@@ -271,6 +271,8 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("Mario&#39;s archive post", home.text)
         self.assertIn('class="skip-link"', home.text)
         self.assertIn("Archive register", home.text)
+        self.assertIn('href="/static/archive.css"', home.text)
+        self.assertNotIn('href="http://', home.text)
         self.assertEqual(home.headers["x-content-type-options"], "nosniff")
         self.assertIn("frame-ancestors 'none'", home.headers["content-security-policy"])
 
