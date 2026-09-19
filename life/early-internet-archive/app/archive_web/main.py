@@ -19,6 +19,7 @@ CATALOG = Path(os.environ.get("ARCHIVE_CATALOG", "/work/library.sqlite3"))
 ARCHIVE_ROOT = Path(os.environ.get("ARCHIVE_ROOT", "/archive"))
 PAGE_SIZE = 30
 SOURCE_LABELS = {
+    "official_nsider": "Official NSider",
     "nsider2": "NSider2",
     "indienerds": "IndieNerds",
     "photobucket": "PhotoBucket",
@@ -68,6 +69,19 @@ def decode_item(row: sqlite3.Row) -> dict:
     return item
 
 
+def decode_asset(row: sqlite3.Row) -> dict:
+    asset = dict(row)
+    asset["source_label"] = SOURCE_LABELS.get(asset["source"], asset["source"])
+    asset["date"] = display_date(asset["captured_at"])
+    asset["linked_items"] = json.loads(asset.pop("item_ids_json"))
+    if asset["linked_items"]:
+        source, _, external_id = asset["linked_items"][0].partition(":")
+        asset["first_item"] = {"source": source, "external_id": external_id}
+    else:
+        asset["first_item"] = None
+    return asset
+
+
 def display_date(value: str) -> str:
     if not value:
         return "Unknown date"
@@ -104,6 +118,26 @@ templates.env.globals.update(
 )
 
 
+@app.exception_handler(HTTPException)
+async def archive_http_error(request: Request, exc: HTTPException):
+    if request.url.path.startswith("/api/") or request.url.path == "/healthz":
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    messages = {
+        404: ("Record not found", "That archive record may have moved, or it was never recovered."),
+        503: ("Archive unavailable", "The catalog is not ready yet. Please try again in a moment."),
+    }
+    title, message = messages.get(
+        exc.status_code,
+        ("Something went wrong", "The archive could not complete that request."),
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context={"status_code": exc.status_code, "error_title": title, "error_message": message},
+        status_code=exc.status_code,
+    )
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> JSONResponse:
     if not CATALOG.is_file():
@@ -127,10 +161,22 @@ def home(request: Request):
         }
         latest = [decode_item(row) for row in db.execute("SELECT * FROM items ORDER BY published_at DESC LIMIT 8")]
         generated = json.loads(db.execute("SELECT value FROM metadata WHERE key='generated_at'").fetchone()[0])
+        dated = [stat for stat in stats if stat["first_at"] and stat["last_at"]]
+        archive_span = (
+            f"{min(stat['first_at'] for stat in dated)[:4]}–{max(stat['last_at'] for stat in dated)[:4]}"
+            if dated
+            else "Dates unknown"
+        )
     return templates.TemplateResponse(
         request=request,
         name="home.html",
-        context={"stats": stats, "totals": totals, "latest": latest, "generated": generated},
+        context={
+            "stats": stats,
+            "totals": totals,
+            "latest": latest,
+            "generated": generated,
+            "archive_span": archive_span,
+        },
     )
 
 
@@ -182,7 +228,8 @@ def search(
         name="search.html",
         context={
             "items": items, "total": total, "q": q, "source": source, "year": year,
-            "page": page, "pages": pages, "sources": sources, "years": years,
+            "page": page, "pages": pages, "page_size": PAGE_SIZE,
+            "sources": sources, "years": years,
         },
     )
 
@@ -201,7 +248,7 @@ def item_detail(request: Request, source: str, external_id: str):
             )
         ]
         assets = [
-            dict(asset)
+            decode_asset(asset)
             for asset in db.execute(
                 "SELECT * FROM assets WHERE EXISTS (SELECT 1 FROM json_each(item_ids_json) WHERE value=?) ORDER BY id",
                 (item["id"],),
@@ -210,7 +257,16 @@ def item_detail(request: Request, source: str, external_id: str):
     return templates.TemplateResponse(
         request=request,
         name="item.html",
-        context={"item": item, "context": context, "assets": assets},
+        context={
+            "item": item,
+            "context": context,
+            "assets": assets,
+            "owner_messages": sum(message["is_owner"] for message in context),
+            "first_owner_id": next(
+                (message["external_id"] for message in context if message["is_owner"]),
+                "",
+            ),
+        },
     )
 
 
@@ -220,8 +276,9 @@ def gallery(request: Request, source: str = "", page: int = Query(1, ge=1)):
     params = (source,) if source else ()
     with closing(connect()) as db:
         total = db.execute(f"SELECT COUNT(*) FROM assets {where}", params).fetchone()[0]
+        asset_total = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         assets = [
-            dict(row)
+            decode_asset(row)
             for row in db.execute(
                 f"SELECT * FROM assets {where} ORDER BY captured_at,id LIMIT ? OFFSET ?",
                 (*params, PAGE_SIZE, (page - 1) * PAGE_SIZE),
@@ -234,7 +291,15 @@ def gallery(request: Request, source: str = "", page: int = Query(1, ge=1)):
     return templates.TemplateResponse(
         request=request,
         name="gallery.html",
-        context={"assets": assets, "total": total, "source": source, "sources": sources, "page": page, "pages": pages},
+        context={
+            "assets": assets,
+            "total": total,
+            "asset_total": asset_total,
+            "source": source,
+            "sources": sources,
+            "page": page,
+            "pages": pages,
+        },
     )
 
 

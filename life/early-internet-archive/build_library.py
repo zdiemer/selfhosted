@@ -286,6 +286,58 @@ def import_nsider2(db: sqlite3.Connection, root: Path) -> bool:
     return True
 
 
+def import_official_nsider(db: sqlite3.Connection, root: Path) -> bool:
+    path = root / "official_nsider" / "official_nsider.sqlite3"
+    if not path.exists():
+        return False
+    source = open_source(path)
+    if source.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0:
+        source.close()
+        return False
+    for row in source.execute("SELECT * FROM posts ORDER BY posted_at,post_id"):
+        add_item(
+            db,
+            item_id=f"official_nsider:{row['post_id']}",
+            source="official_nsider",
+            kind="forum-post",
+            external_id=row["post_id"],
+            title=row["post_title"] or row["thread_title"] or f"Post {row['post_id']}",
+            body=row["content_text"],
+            author=row["author_name"] or "STARFOXA",
+            published_at=normalize_date(row["posted_at"]),
+            canonical_url=row["snapshot_url"],
+            section=row["board_id"] or "Official NSider",
+            metadata={
+                "thread_id": row["thread_id"],
+                "thread_title": row["thread_title"],
+                "reply_number": row["reply_number"],
+                "reply_count": row["reply_count"],
+                "official_url": row["canonical_url"],
+                "capture_timestamp": row["capture_timestamp"],
+            },
+        )
+    db.commit()
+    for row in source.execute(
+        """SELECT requested_post_id,context_post_id,sequence,author_name,
+                  posted_at,content_text
+           FROM context_posts ORDER BY requested_post_id,sequence"""
+    ):
+        db.execute(
+            """INSERT OR IGNORE INTO context_messages(
+                   item_id,sequence,external_id,author,published_at,body,is_owner
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                f"official_nsider:{row['requested_post_id']}", row["sequence"],
+                row["context_post_id"], row["author_name"] or "",
+                normalize_date(row["posted_at"]), row["content_text"],
+                int((row["author_name"] or "").upper() == "STARFOXA"),
+            ),
+        )
+    source.close()
+    db.commit()
+    return True
+
+
 def import_indienerds(db: sqlite3.Connection, root: Path) -> bool:
     path = root / "indienerds" / "indienerds.sqlite3"
     if not path.exists():
@@ -362,6 +414,10 @@ def import_photobucket(db: sqlite3.Connection, root: Path) -> bool:
 
 def build_stats(db: sqlite3.Connection) -> None:
     labels = {
+        "official_nsider": (
+            "Official NSider",
+            "Recovered posts from Nintendo's original NSider forums with page context.",
+        ),
         "nsider2": ("NSider2", "Forum posts with surrounding conversation context."),
         "indienerds": ("IndieNerds", "Reviews, hands-on articles, and interviews."),
         "photobucket": ("PhotoBucket", "Recovered images referenced by contemporary posts."),
@@ -401,6 +457,7 @@ def build(root: Path, output: Path) -> None:
     try:
         db = create_catalog(temporary)
         imported = {
+            "official_nsider": import_official_nsider(db, root),
             "nsider2": import_nsider2(db, root),
             "indienerds": import_indienerds(db, root),
             "photobucket": import_photobucket(db, root),

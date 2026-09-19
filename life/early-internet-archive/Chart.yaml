@@ -2,8 +2,8 @@ apiVersion: v2
 name: early-internet-archive
 description: A read-only, provenance-first browser for Zach Diemer's personal web archive
 type: application
-version: 0.1.0
+version: 0.1.1
 # appVersion tracks image.tag in values.yaml; build.sh enforces the match.
-appVersion: "0.1.0"
+appVersion: "0.1.1"
 maintainers:
   - name: zachd

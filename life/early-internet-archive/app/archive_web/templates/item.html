@@ -1,31 +1,49 @@
 {% extends "base.html" %}
 {% block title %}{{ item.title }} · Early Internet Archive{% endblock %}
 {% block content %}
-<article class="item-page">
+<article class="item-page" id="record-top">
+  <a class="back-link" href="/search?source={{ item.source }}"><span aria-hidden="true">←</span> Back to {{ item.source_label }}</a>
   <header class="item-header">
-    <div class="result-meta"><span class="pill source-{{ item.source }}">{{ item.source_label }}</span><time>{{ item.date }}</time><span>{{ item.kind|replace('-', ' ') }}</span></div>
+    <div class="result-meta"><span class="pill source-{{ item.source }}">{{ item.source_label }}</span><time datetime="{{ item.published_at }}">{{ item.date }}</time><span>{{ item.kind|replace('-', ' ') }}</span></div>
     <h1>{{ item.title }}</h1>
-    {% if item.section %}<p class="item-section">{{ item.section }}</p>{% endif %}
-    {% if item.completeness != 'full' %}<p class="notice">Only an archived {{ item.completeness }} survives for this entry.</p>{% endif %}
+    <p class="item-byline">By <strong>{{ item.author or "Unknown author" }}</strong>{% if item.section %} <span>in {{ item.section }}</span>{% endif %}</p>
+    {% if item.completeness != 'full' %}<p class="notice"><strong>Partial record.</strong> Only an archived {{ item.completeness }} survives for this entry.</p>{% endif %}
   </header>
-  <div class="prose">{{ item.body }}</div>
-  {% if item.tags %}<ul class="tags" aria-label="Tags">{% for tag in item.tags %}<li>{{ tag }}</li>{% endfor %}</ul>{% endif %}
-  {% if assets %}
-  <section class="attached"><h2>Recovered media</h2><div class="gallery-grid">{% for asset in assets %}<a href="/asset/{{ asset.id }}"><img src="/asset/{{ asset.id }}" loading="lazy" alt="Recovered media from {{ item.title }}"></a>{% endfor %}</div></section>
-  {% endif %}
-  <footer class="provenance"><h2>Provenance</h2><dl><dt>Author</dt><dd>{{ item.author }}</dd><dt>Archive ID</dt><dd><code>{{ item.id }}</code></dd><dt>Preservation</dt><dd>{{ item.completeness }}</dd>{% if item.canonical_url %}<dt>Source snapshot</dt><dd><a href="{{ item.canonical_url }}" rel="external noreferrer">Open original ↗</a></dd>{% endif %}</dl></footer>
+  <div class="article-layout">
+    <div class="article-main">
+      <div class="prose">{{ item.body or "No body text survives for this record." }}</div>
+      {% if assets %}
+      <section class="attached" aria-labelledby="media-title"><div class="subsection-heading"><p class="eyebrow">Attachments</p><h2 id="media-title">Recovered media</h2></div><div class="attached-grid">{% for asset in assets %}<a href="/asset/{{ asset.id }}"><img src="/asset/{{ asset.id }}" loading="lazy" decoding="async" alt="Recovered attachment from {{ item.title }}"><span>Open original ↗</span></a>{% endfor %}</div></section>
+      {% endif %}
+    </div>
+    <aside class="record-card" aria-labelledby="record-details-title">
+      <p class="record-label" id="record-details-title">Record details</p>
+      <dl><div><dt>Author</dt><dd>{{ item.author or "Unknown" }}</dd></div><div><dt>Date</dt><dd>{{ item.date }}</dd></div><div><dt>Archive ID</dt><dd><code>{{ item.id }}</code></dd></div><div><dt>Preservation</dt><dd>{{ item.completeness|capitalize }}</dd></div></dl>
+      {% if item.tags %}<div class="record-tags"><span>Filed with</span><ul class="tags" aria-label="Tags">{% for tag in item.tags %}<li>{{ tag }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if item.canonical_url %}<a class="record-source-link" href="{{ item.canonical_url }}" rel="external noreferrer">View source snapshot <span aria-hidden="true">↗</span></a>{% endif %}
+    </aside>
+  </div>
 </article>
+
 {% if context %}
-<section class="context section compact">
-  <div class="section-heading"><p class="eyebrow">Conversation</p><h2>Surrounding thread context</h2><p>The highlighted messages are by StarFoxA.</p></div>
-  <ol class="thread">
-  {% for message in context %}
-    <li class="{% if message.is_owner %}owner{% endif %}">
-      <div><strong>{{ message.author or "Unknown" }}</strong><time>{{ message.published_at[:10] }}</time><a href="#message-{{ message.external_id }}">#{{ message.external_id }}</a></div>
-      <p id="message-{{ message.external_id }}">{{ message.body }}</p>
-    </li>
-  {% endfor %}
-  </ol>
+<section class="context-section" aria-labelledby="conversation-title">
+  <div class="context-inner">
+    <header class="context-heading">
+      <div><p class="eyebrow">Conversation preserved</p><h2 id="conversation-title">Around this post.</h2><p>{{ context|length }} messages provide the surrounding thread. Posts by StarFoxA are marked in red.</p></div>
+      <nav class="context-actions" aria-label="Conversation shortcuts"><span>{{ owner_messages }} authored</span>{% if first_owner_id %}<a href="#message-{{ first_owner_id }}">Jump to first authored post ↓</a>{% endif %}</nav>
+    </header>
+    <ol class="thread">
+    {% for message in context %}
+      <li id="message-{{ message.external_id }}" class="{% if message.is_owner %}owner{% endif %}">
+        <article>
+          <header class="message-header"><span class="avatar" aria-hidden="true">{{ message.author[0]|upper if message.author else "?" }}</span><div><strong>{{ message.author or "Unknown" }}</strong>{% if message.is_owner %}<span class="owner-label">Archive owner</span>{% endif %}<time datetime="{{ message.published_at }}">{{ display_date(message.published_at) }}</time></div><a class="message-anchor" href="#message-{{ message.external_id }}" aria-label="Link to message {{ message.external_id }}">#{{ loop.index }}</a></header>
+          <p>{{ message.body or "No text survives for this message." }}</p>
+        </article>
+      </li>
+    {% endfor %}
+    </ol>
+    <a class="back-to-top" href="#record-top">Back to record ↑</a>
+  </div>
 </section>
 {% endif %}
 {% endblock %}

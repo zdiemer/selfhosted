@@ -1,18 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Images · Early Internet Archive{% endblock %}
+{% block title %}Recovered Images · Early Internet Archive{% endblock %}
 {% block content %}
-<section class="page-head">
-  <p class="eyebrow">Recovered media</p><h1>{{ "{:,}".format(total) }} surviving images</h1>
+<section class="page-head gallery-head">
+  <p class="eyebrow">Recovered media</p>
+  <h1>Images that survived.</h1>
+  <p class="page-lede">Avatars, screenshots, signatures, and fragments recovered alongside the written archive.</p>
   <form class="filter-form gallery-filter" action="/gallery" method="get">
-    <label><span>Source</span><select name="source"><option value="">All sources</option>{% for row in sources %}<option value="{{ row.source }}" {% if source == row.source %}selected{% endif %}>{{ row.label }}</option>{% endfor %}</select></label>
-    <button type="submit">Filter</button>
+    <label><span>Collection</span><select name="source"><option value="">All collections · {{ asset_total }}</option>{% for row in sources %}<option value="{{ row.source }}" {% if source == row.source %}selected{% endif %}>{{ row.label }} · {{ row.asset_count }}</option>{% endfor %}</select></label>
+    <button type="submit">Filter <span aria-hidden="true">→</span></button>
+    {% if source %}<a class="reset-link" href="/gallery">Show all</a>{% endif %}
   </form>
 </section>
-<section class="section compact">
+<section class="section compact gallery-section">
+  <div class="results-bar"><p class="result-count"><strong>{{ "{:,}".format(total) }}</strong> surviving image{% if total != 1 %}s{% endif %}</p><p class="match-note">Select an image to inspect the original file</p></div>
   <div class="gallery-grid">
   {% for asset in assets %}
-    <figure><a href="/asset/{{ asset.id }}"><img src="/asset/{{ asset.id }}" loading="lazy" alt="Recovered {{ asset.source }} image"></a><figcaption><span class="pill source-{{ asset.source }}">{{ source_labels.get(asset.source, asset.source) }}</span><small>{{ display_date(asset.captured_at) }}</small></figcaption></figure>
-  {% else %}<div class="empty"><h2>No images found</h2></div>{% endfor %}
+    <figure class="media-card">
+      <a class="media-frame" href="/asset/{{ asset.id }}">
+        <img src="/asset/{{ asset.id }}" loading="lazy" decoding="async" alt="Recovered image from {{ asset.source_label }}, captured {{ asset.date }}">
+        <span class="media-open" aria-hidden="true">Open ↗</span>
+      </a>
+      <figcaption>
+        <div><span class="pill source-{{ asset.source }}">{{ asset.source_label }}</span><small>{{ asset.date }}</small></div>
+        {% if asset.first_item %}<a href="/item/{{ asset.first_item.source }}/{{ asset.first_item.external_id }}">Linked record{% if asset.linked_items|length > 1 %}s ({{ asset.linked_items|length }}){% endif %} →</a>{% else %}<span class="unlinked">Standalone recovery</span>{% endif %}
+      </figcaption>
+    </figure>
+  {% else %}
+    <div class="empty"><span class="empty-mark" aria-hidden="true">0</span><h2>No images in this collection</h2><p>Choose another collection to keep browsing.</p><a class="button-link" href="/gallery">Show all images</a></div>
+  {% endfor %}
   </div>
   {% include "pagination.html" %}
 </section>

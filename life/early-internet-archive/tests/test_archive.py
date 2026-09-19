@@ -13,6 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 import build_library
+import scrape_official_nsider
 from archive_web import main as archive_web
 from fastapi.testclient import TestClient
 
@@ -78,6 +79,103 @@ class CatalogBuilderTests(unittest.TestCase):
                 build_library.build(root, output)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.glob(".library.sqlite3.*.tmp")), [])
+
+
+class OfficialNsiderParserTests(unittest.TestCase):
+    def test_profile_identity_and_thread_posts(self) -> None:
+        profile = """
+        <title>View Profile for STARFOXA - Nintendo NSider Forums</title>
+        <tr><td><span class="title">Rank</span></td><td>Mr. Saturn</td></tr>
+        <tr><td><span class="title">Date Registered</span></td>
+        <td><span class=date_text>06-05-2005</span> <span class=time_text>05:05 PM</span></td></tr>
+        <tr><td><span class="title">Date Last Visited</span></td>
+        <td><span class=date_text>08-21-2007</span> <span class=time_text>07:17 PM</span></td></tr>
+        <tr><td><span class="title">Total Posts</span></td><td>10138</td></tr>
+        """
+        parsed_profile = scrape_official_nsider.parse_profile(profile)
+        self.assertEqual(parsed_profile["username"], "STARFOXA")
+        self.assertEqual(parsed_profile["registered_at"], "2005-06-05T17:05:00")
+        self.assertEqual(parsed_profile["total_posts"], 10138)
+
+        page = """
+        <title>A preserved thread - Power On - Nintendo NSider Forums</title>
+        <tr id="M123"><td colspan=1>
+          <td class="subjectbar" width="100%">A preserved thread</td>
+          <td class="msg_user_cell">
+            <a href='/nintendo/view_profile?user.id=106819' class="auth_text">
+              <span>STARFOXA</span></a>
+            Reply <a href="/nintendo/board/message?board.id=np_po&amp;message.id=123#M123">1</a> of 2
+          </td>
+          <td class="msg_text_cell"><p>Target &amp; body</p></td></tr><tr>
+          <td class="msg_date_cell"><span class=date_text>06-06-2005</span>
+            <span class=time_text>01:02 PM</span></td>
+        </tr>
+        <tr id="M124"><td colspan=1>
+          <td class="subjectbar" width="100%">Re: A preserved thread</td>
+          <td class="msg_user_cell">
+            <a href='/nintendo/view_profile?user.id=42' class="auth_text">Friend</a>
+            Reply <a href="/nintendo/board/message?board.id=np_po&amp;message.id=124#M124">2</a> of 2
+          </td>
+          <td class="msg_text_cell"><p>Context reply</p></td></tr><tr>
+          <td class="msg_date_cell"><span class=date_text>06-06-2005</span>
+            <span class=time_text>01:03 PM</span></td>
+        </tr>
+        """
+        parsed_page = scrape_official_nsider.parse_page(
+            page,
+            "http://forums.nintendo.com/nintendo/board/message?board.id=np_po&message.id=123",
+        )
+        self.assertEqual(parsed_page["thread_title"], "A preserved thread")
+        self.assertEqual(len(parsed_page["posts"]), 2)
+        self.assertEqual(parsed_page["posts"][0]["author_id"], "106819")
+        self.assertEqual(parsed_page["posts"][0]["content_text"], "Target & body")
+        self.assertEqual(parsed_page["posts"][1]["post_id"], "124")
+
+    def test_recovered_post_is_imported_into_catalog(self) -> None:
+        page = b"""
+        <title>Recovered title - Power On - Nintendo NSider Forums</title>
+        <tr id="M456"><td colspan=1>
+          <td class="subjectbar" width="100%">Recovered title</td>
+          <td class="msg_user_cell">
+            <a href='/nintendo/view_profile?user.id=106819' class="auth_text">STARFOXA</a>
+            Reply <a href="/nintendo/board/message?board.id=np_po&amp;message.id=456#M456">1</a> of 1
+          </td>
+          <td class="msg_text_cell"><p>Recovered words</p></td></tr><tr>
+          <td class="msg_date_cell"><span class=date_text>07-01-2005</span>
+            <span class=time_text>02:03 PM</span></td>
+        </tr>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "official_nsider"
+            db = scrape_official_nsider.connect(source_root / "official_nsider.sqlite3")
+            scrape_official_nsider.save_page(
+                db,
+                source_root,
+                {
+                    "timestamp": "20050702000000",
+                    "original": (
+                        "http://forums.nintendo.com/nintendo/board/message?"
+                        "board.id=np_po&message.id=456"
+                    ),
+                    "digest": "fixture",
+                    "length": str(len(page)),
+                },
+                page,
+            )
+            db.close()
+            catalog = root / "library.sqlite3"
+            build_library.build(root, catalog)
+            result = sqlite3.connect(catalog)
+            item = result.execute(
+                "SELECT source,title,body FROM items WHERE id='official_nsider:456'"
+            ).fetchone()
+            stats = result.execute(
+                "SELECT label,item_count FROM source_stats WHERE source='official_nsider'"
+            ).fetchone()
+            result.close()
+            self.assertEqual(item, ("official_nsider", "Recovered title", "Recovered words"))
+            self.assertEqual(stats, ("Official NSider", 1))
 
 
 class FrontendTests(unittest.TestCase):
@@ -171,12 +269,16 @@ class FrontendTests(unittest.TestCase):
         home = self.client.get("/")
         self.assertEqual(home.status_code, 200)
         self.assertIn("Mario&#39;s archive post", home.text)
+        self.assertIn('class="skip-link"', home.text)
+        self.assertIn("Archive register", home.text)
         self.assertEqual(home.headers["x-content-type-options"], "nosniff")
         self.assertIn("frame-ancestors 'none'", home.headers["content-security-policy"])
 
         search = self.client.get("/search", params={"q": "searchable", "source": "fixture"})
         self.assertEqual(search.status_code, 200)
-        self.assertIn("1 result", search.text)
+        self.assertIn("<strong>1</strong> result", search.text)
+        self.assertIn('aria-current="page"', search.text)
+        self.assertIn("All search words must match", search.text)
 
         api = self.client.get("/api/v1/search", params={"q": "Mario's"})
         self.assertEqual(api.status_code, 200)
@@ -187,11 +289,14 @@ class FrontendTests(unittest.TestCase):
         item = self.client.get("/item/fixture/1")
         self.assertEqual(item.status_code, 200)
         self.assertIn("Earlier context", item.text)
+        self.assertIn("Around this post", item.text)
+        self.assertIn("Record details", item.text)
         self.assertNotIn("javascript:alert", item.text)
 
         gallery = self.client.get("/gallery")
         self.assertEqual(gallery.status_code, 200)
         self.assertIn("2010-02-03", gallery.text)
+        self.assertIn("Linked record", gallery.text)
 
         asset = self.client.get("/asset/fixture:image")
         self.assertEqual(asset.status_code, 200)
@@ -199,9 +304,14 @@ class FrontendTests(unittest.TestCase):
         self.assertEqual(asset.headers["content-type"], "image/png")
 
     def test_rejects_bad_pages_and_out_of_root_assets(self) -> None:
-        self.assertEqual(self.client.get("/search?page=2").status_code, 404)
+        bad_page = self.client.get("/search?page=2")
+        self.assertEqual(bad_page.status_code, 404)
+        self.assertIn("Record not found", bad_page.text)
+        self.assertIn("Return home", bad_page.text)
         self.assertEqual(self.client.get("/gallery?page=2").status_code, 404)
-        self.assertEqual(self.client.get("/api/v1/search?page=2").status_code, 404)
+        bad_api_page = self.client.get("/api/v1/search?page=2")
+        self.assertEqual(bad_api_page.status_code, 404)
+        self.assertEqual(bad_api_page.json(), {"detail": "page does not exist"})
         self.assertEqual(self.client.get("/asset/fixture:escape").status_code, 404)
 
     def test_health_reports_missing_catalog(self) -> None:

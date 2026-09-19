@@ -3,6 +3,25 @@
 Tools and manifests for preserving Zach Diemer's public early-internet work.
 Downloaded archive data is intentionally excluded from Git under `data/`.
 
+## Official NSider
+
+The Official Nintendo NSider collector identifies `STARFOXA` as Lithium user
+ID `106819` from the archived profile, preserves the complete Wayback CDX
+message inventory, and scans surviving thread pages in resumable deterministic
+batches. Each fetched page is stored as compressed raw evidence before parsing;
+matching posts and the surrounding page context are normalized into SQLite.
+
+```bash
+python3 scrape_official_nsider.py
+python3 scrape_official_nsider.py --limit 500
+python3 scrape_official_nsider.py --status
+```
+
+Nintendo's linked author-tracker page was not archived, so the default pass is
+bounded to post-registration captures from Power On, the account's documented
+primary board. See [`OFFICIAL_NSIDER_INVENTORY.md`](OFFICIAL_NSIDER_INVENTORY.md)
+for quantified coverage, evidence, current results, and broader resume options.
+
 ## NSider2
 
 The NSider2 collector uses the forum's read-only Tapatalk XML-RPC API. It stores
