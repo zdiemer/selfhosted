@@ -48,8 +48,9 @@ persistence:
 # Prefer the proven inference node without making its failure an outage. The
 # RWO iSCSI volume can detach and reattach on another CSI-equipped node, and
 # the 10Gi memory request keeps the pod off machines too small to run it.
-# If it is unavailable, any node with room may run the service rather than
-# leaving it Pending behind a hostname selector.
+# zachd-ubuntu-6 is the first fallback: 16 CPUs and ~27Gi allocatable RAM when
+# it joined. If both preferred nodes are unavailable, any node with room may
+# run the service rather than leaving it Pending behind a hostname selector.
 affinity:
   nodeAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:
@@ -59,6 +60,12 @@ affinity:
             - key: kubernetes.io/hostname
               operator: In
               values: [zachd-ubuntu-4]
+      - weight: 90
+        preference:
+          matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [zachd-ubuntu-6]
 
 ingress:
   enabled: true

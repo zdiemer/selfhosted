@@ -4,7 +4,7 @@
 
 [![lint](https://img.shields.io/github/actions/workflow/status/zdiemer/selfhosted/lint.yml?style=flat-square&label=lint)](https://github.com/zdiemer/selfhosted/actions/workflows/lint.yml)
 ![License](https://img.shields.io/github/license/zdiemer/selfhosted?style=flat-square)
-![k3s](https://img.shields.io/badge/k3s-9_nodes-FFC61C?style=flat-square&logo=k3s&logoColor=black)
+![k3s](https://img.shields.io/badge/k3s-10_nodes-FFC61C?style=flat-square&logo=k3s&logoColor=black)
 ![Helm](https://img.shields.io/badge/Helm-53_charts-0F1689?style=flat-square&logo=helm&logoColor=white)
 ![Traefik](https://img.shields.io/badge/Traefik-single_ingress-24A1C1?style=flat-square&logo=traefikproxy&logoColor=white)
 ![Renovate](https://img.shields.io/badge/Renovate-enabled-1A1F6C?style=flat-square&logo=renovate&logoColor=white)
@@ -14,7 +14,7 @@
 # selfhosted
 
 Helm charts and install scripts for the services running on my home k3s
-cluster (9 nodes: 3 control-plane, 6 workers). External exposure goes
+cluster (10 nodes: 3 control-plane, 7 workers). External exposure goes
 through [`infra/traefik/`](infra/traefik/) — the single ingress choke point,
 its ACME DNS-01 certresolver holding a `*.zachd.duckdns.org` wildcard cert
 (no cert-manager involved), and its access log — with the DuckDNS side of
@@ -76,7 +76,7 @@ the ANSI it prints, and paints it into the window above.
 | [`games/ffxiv-1x/`](games/ffxiv-1x/) | FINAL FANTASY XIV 1.23b — the original 2010 game, erased by A Realm Reborn — as a private server: Garlemald Server (the Rust port of Project Meteor), four binaries on one SQLite file, built from upstream git at a pinned commit. Three game ports on the node IPs, no Ingress: the client needs an IP. 75 of 524 quests scripted upstream; `CONTENT.md` is the inventory. Tailnet only. | [games/ffxiv-1x/README](games/ffxiv-1x/README.md) |
 | [`games/gamedex/`](games/gamedex/) → **submodule** | Gamedex — searchable browser for the Games Master List spreadsheet, mirrored live from a Dropbox shared link. Faceted search, no auth, PII columns stripped. Chart + source live in [zdiemer/gamedex](https://github.com/zdiemer/gamedex); the pin here is the deployed commit. | [zdiemer/gamedex README](https://github.com/zdiemer/gamedex#readme) |
 | [`finance/money/`](finance/money/) → **submodule** | money — self-hosted personal finance dashboard: a Monte Carlo retirement/FI planning engine, interactive scenarios, and an auto-syncing monthly net-worth tracker (SimpleFIN + real home/vehicle valuations + collectibles). Gated behind Authelia at `money.zachd.duckdns.org`; single user, DuckDNS-only, personal numbers never committed to the (public) image. | [zdiemer/money README](https://github.com/zdiemer/money#readme) |
-| [`media/jellyfin/`](media/jellyfin/) | Jellyfin — media server for `/mnt/vault/media` (NFS, read-write), with VAAPI transcoding on any node labelled `media.zachd/vaapi=true` (today only the Vega 8). Not behind Authelia (TV/phone apps need the raw API); LAN NodePort `:30096` for smart TVs. | [media/jellyfin/README](media/jellyfin/README.md) |
+| [`media/jellyfin/`](media/jellyfin/) | Jellyfin — media server for `/mnt/vault/media` (NFS, read-write), with VAAPI transcoding able to fail over between the Vega 8 and Radeon 680M nodes. Not behind Authelia (TV/phone apps need the raw API); LAN NodePort `:30096` for smart TVs. | [media/jellyfin/README](media/jellyfin/README.md) |
 | [`media/jellyseerr/`](media/jellyseerr/) | Jellyseerr — request/discovery frontend; signs users in with their Jellyfin account and hands approved requests to Radarr/Sonarr. | [media/jellyseerr/README](media/jellyseerr/README.md) |
 | [`media/arr/`](media/arr/) | Prowlarr + Sonarr + Radarr + qBittorrent-inside-gluetun (PIA, port forwarding, real killswitch), with a decluttarr watchdog that blocklists dead downloads so the *arrs re-search instead of stalling. Acquisition automation behind Jellyfin: imports are hardlinks into the shared NFS media volume. Admin UIs behind Authelia forward-auth. The VPN pod deliberately bypasses `infra/egress-proxy`. | [media/arr/README](media/arr/README.md) |
 | [`media/bitmagnet/`](media/bitmagnet/) | bitmagnet — a self-hosted BitTorrent DHT crawler that builds its own Torznab index in Postgres and serves it to Prowlarr. No tracker site, account, or Cloudflare in the path, which is why it survives the blocks that kill public indexers. Index PVC is deliberately excluded from k8up (a re-crawlable cache). UI behind Authelia forward-auth — bitmagnet has no login of its own. | [media/bitmagnet/README](media/bitmagnet/README.md) |

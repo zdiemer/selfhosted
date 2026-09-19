@@ -1,8 +1,8 @@
 # jellyfin — the media server
 
 Jellyfin serving `/mnt/vault/media` (NFS, read-write) with VAAPI hardware
-transcoding on the nodes labelled `media.zachd/vaapi=true` — today only
-`zachd-ubuntu-1` (Vega 8). Movies and TV land in the library via the
+transcoding on a two-node GPU pool: `zachd-ubuntu-1` (Vega 8) and
+`zachd-ubuntu-6` (Radeon 680M). Movies and TV land in the library via the
 sibling [`media/arr`](../arr/) stack; requests come in through
 [`media/jellyseerr`](../jellyseerr/).
 
@@ -27,13 +27,12 @@ account system is the gate — same posture as RomM's built-in login.
 ## Transcoding
 
 The pod requires the `media.zachd/vaapi=true` node label and softly prefers
-`zachd-ubuntu-1`, which today is the only labelled node, so there is no GPU
-failover: draining it takes Jellyfin down. A second VAAPI node joins the pool
-by exposing `renderD128` as render GID 992 and carrying the label; the RWO
-iSCSI config volume can then detach and follow the pod to it. Restore the label
-after rebuilding a node with:
+`zachd-ubuntu-1`; if that node fails, the RWO iSCSI config volume can detach
+and follow it to `zachd-ubuntu-6`. Both nodes mount `/dev/dri` into the
+privileged container, and both expose `renderD128` with render GID 992. Restore
+the durable scheduling labels after rebuilding either node with:
 
-`kubectl label node zachd-ubuntu-1 media.zachd/vaapi=true`
+`kubectl label node zachd-ubuntu-1 zachd-ubuntu-6 media.zachd/vaapi=true`
 
 Dashboard → Playback → Transcoding → **VAAPI**, device `/dev/dri/renderD128`.
 Enable hardware decode/encode for H.264 and HEVC, the common capability set.
@@ -126,7 +125,7 @@ Levers, cheapest first:
   only route to subtitles *in* PiP, and the only option at all for the bitmap
   (PGS/VOBSUB) tracks that cannot become sidecars. The cost is real: video can
   no longer be copied, so every subtitled stream becomes a full VAAPI encode
-  on the GPU node, and
+  on one of the GPU nodes; the preferred
   `zachd-ubuntu-1` is already at ~87% CPU requested. The toggle does
   exist in this build (it is in the 10.11 web bundle), but there is an [open
   report that burn-in regressed in

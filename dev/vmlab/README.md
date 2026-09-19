@@ -595,10 +595,10 @@ kubectl -n vmlab cp win98.iso <a-pod>:/isos/win98.iso   # any pod mounting vmlab
 
 ## Capacity
 
-Memory is the binding constraint cluster-wide, not CPU. At the time of writing:
-`zachd-ubuntu-5` ~29 vCPU / ~9.9Gi free, `-4` ~15.7 vCPU / ~8.8Gi free, and
-`-1` has 19Gi free but **0.4 CPU** and hosts win11. Guests prefer `-5` and `-4`
-softly, and are kept off
+Memory is the binding constraint cluster-wide, not CPU. `zachd-ubuntu-6` adds
+16 CPUs and ~27Gi allocatable RAM; before it joined, `-5` had ~29 vCPU / ~9.9Gi
+free, `-4` ~15.7 vCPU / ~8.8Gi free, and `-1` had 19Gi free but **0.4 CPU** and
+hosted win11. Guests prefer `-6`, `-5`, and `-4` softly, and are kept off
 `zachd-ubuntu-laptop-2` by a *required* affinity term —
 it advertises `kvm=1k` and carries **no taint**, only the label
 `device-type=laptop`, so requesting the KVM device does not exclude it.
