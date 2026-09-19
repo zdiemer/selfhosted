@@ -125,6 +125,27 @@
       "confidence": "confirmed",
       "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. The 2007 Pokemon Diamond submission's Nintendo focus and Action Replay use independently align with the contemporary NSider corpus.",
       "profile_url": ""
+    },
+    {
+      "source": "itch_io",
+      "handle": "starfoxa",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. The live profile was registered in 2015 and exposes one public community post.",
+      "profile_url": "https://itch.io/profile/starfoxa"
+    },
+    {
+      "source": "neoseeker",
+      "handle": "starfoxa",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. A live Fantasian walkthrough retains a technical correction posted under the exact handle in January 2022.",
+      "profile_url": ""
+    },
+    {
+      "source": "playstation_underground",
+      "handle": "unresolved",
+      "confidence": "confirmed-membership",
+      "evidence": "NSider2 posts 993821 through 995163 state in the first person that the author had begun posting on, then was banned from, the PlayStation Underground forums in December 2007. The forum handle and authored URLs remain unresolved.",
+      "profile_url": ""
     }
   ],
   "targets": [
@@ -414,6 +435,27 @@
       "kind": "third-party-attribution",
       "url": "https://gamefaqs.gamespot.com/boards/925601-pokemon-diamond-version/43964068",
       "attribution": "confirmed-subject"
+    },
+    {
+      "id": "itch-starfoxa-profile",
+      "source": "itch_io",
+      "kind": "profile",
+      "url": "https://itch.io/profile/starfoxa",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "itch-bittersweet-birthday-comment",
+      "source": "itch_io",
+      "kind": "game-comment",
+      "url": "https://worldeater-dev.itch.io/bittersweet-birthday/comments?before=41",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "neoseeker-fantasian-metal-ribbidon-comment",
+      "source": "neoseeker",
+      "kind": "walkthrough-comment",
+      "url": "https://www.neoseeker.com/fantasian/Sidequests/Metal_Ribbidon",
+      "attribution": "confirmed"
     }
   ]
 }

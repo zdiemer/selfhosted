@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 import build_library
 import scrape_backloggd
+import scrape_giantbomb
 import scrape_official_nsider
 import scrape_source_sweep
 from archive_web import main as archive_web
@@ -202,8 +204,8 @@ class SourceSweepTests(unittest.TestCase):
                 "SELECT confidence FROM identities WHERE source='gog'"
             ).fetchone()[0]
             db.close()
-            self.assertEqual(identities, 18)
-            self.assertEqual(targets, 41)
+            self.assertEqual(identities, 21)
+            self.assertEqual(targets, 44)
             self.assertEqual(giantbomb, "confirmed")
             self.assertEqual(tuple(acc), ("Irock", "confirmed"))
             self.assertEqual(gog, "confirmed")
@@ -237,6 +239,106 @@ class SourceSweepTests(unittest.TestCase):
             scrape_source_sweep.extract_warc_payload(buffer.getvalue()),
             b"<body>saved</body>",
         )
+
+    def test_wayback_results_are_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seeds = root / "seeds.json"
+            seeds.write_text(
+                json.dumps(
+                    {
+                        "identities": [
+                            {
+                                "source": "fixture",
+                                "handle": "StarFoxA",
+                                "confidence": "confirmed",
+                                "evidence": "fixture",
+                                "profile_url": "https://example.com/starfoxa",
+                            }
+                        ],
+                        "targets": [
+                            {
+                                "id": "fixture-profile",
+                                "source": "fixture",
+                                "kind": "profile",
+                                "url": "https://example.com/starfoxa",
+                                "attribution": "confirmed",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            db = scrape_source_sweep.connect(root / "sweep.sqlite3")
+            scrape_source_sweep.load_seeds(db, seeds)
+            rows = [
+                {
+                    "timestamp": "20080102030405",
+                    "original": "https://example.com/starfoxa",
+                    "statuscode": "200",
+                    "mimetype": "text/html",
+                    "digest": "fixture-digest",
+                }
+            ]
+            with mock.patch.object(scrape_source_sweep, "wayback_query", return_value=rows):
+                scrape_source_sweep.collect_wayback(db, delay=0)
+            capture = db.execute(
+                "SELECT target_id,timestamp,digest FROM captures"
+            ).fetchone()
+            check = db.execute(
+                "SELECT result_count,error FROM index_checks WHERE provider='wayback'"
+            ).fetchone()
+            self.assertEqual(
+                tuple(capture), ("fixture-profile", "20080102030405", "fixture-digest")
+            )
+            self.assertEqual(tuple(check), (1, None))
+            with mock.patch.object(
+                scrape_source_sweep, "request_bytes", return_value=b"<p>archived</p>"
+            ) as request:
+                scrape_source_sweep.download_wayback(db, root / "raw", delay=0)
+            saved = db.execute(
+                "SELECT raw_path FROM captures WHERE provider='wayback'"
+            ).fetchone()[0]
+            db.close()
+            request.assert_called_once_with(
+                "https://web.archive.org/web/20080102030405id_/"
+                "https://example.com/starfoxa",
+                timeout=60,
+                retries=3,
+            )
+            with gzip.open(root / "raw" / saved, "rb") as archived:
+                self.assertEqual(archived.read(), b"<p>archived</p>")
+
+
+class GiantBombParserTests(unittest.TestCase):
+    def test_profile_artifacts_and_reviews(self) -> None:
+        source = """
+        <a href="/profile/StarFoxA/hey-everyone/30-4615/">Hey, everyone</a>
+        <a href="/profile/starfoxa/lists/every-game-ive-ever-finished/32782/">
+          Every Game I've Ever Finished</a>
+        <a href="/profile/starfoxa/sample_image/51-123/">Image</a>
+        <div id="div_shout_review_3541">
+          <table class="review"><tr><td class="va-t">
+          <a href="/professor-layton/61-11865/"><img></a></td></tr></table>
+          <span class="f-11 lh-8">July 27, 2008</span>
+          <span class="f-14 bold">An excellent &amp; thoughtful game</span>
+          <img src="/star-9.png"><div class="pb-20">First line.<br>Second line.</div>
+        </div>
+        """
+        artifacts = scrape_giantbomb.parse_artifacts(source)
+        self.assertEqual(
+            {(row["kind"], row["legacy_id"]) for row in artifacts},
+            {("blog", "4615"), ("list", "32782"), ("image", "123")},
+        )
+        self.assertEqual(
+            next(row for row in artifacts if row["kind"] == "blog")["urls"],
+            ["https://www.giantbomb.com/profile/starfoxa/hey-everyone/30-4615/"],
+        )
+        review = scrape_giantbomb.parse_reviews(source)[0]
+        self.assertEqual(review["review_id"], "3541")
+        self.assertEqual(review["reviewed_at"], "2008-07-27")
+        self.assertEqual(review["rating"], 9)
+        self.assertEqual(review["body"], "First line.\nSecond line.")
 
 
 class BackloggdParserTests(unittest.TestCase):

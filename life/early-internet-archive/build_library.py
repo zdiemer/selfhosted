@@ -451,6 +451,44 @@ def import_backloggd(db: sqlite3.Connection, root: Path) -> bool:
     return True
 
 
+def import_giantbomb(db: sqlite3.Connection, root: Path) -> bool:
+    path = root / "giantbomb" / "giantbomb.sqlite3"
+    if not path.exists():
+        return False
+    source = open_source(path)
+    if source.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0:
+        source.close()
+        return False
+    for row in source.execute("SELECT * FROM reviews ORDER BY reviewed_at,review_id"):
+        add_item(
+            db,
+            item_id=f"giantbomb:{row['review_id']}",
+            source="giantbomb",
+            kind="review",
+            external_id=row["review_id"],
+            title=f"{row['game_title']}: {row['headline']}",
+            body=row["body"],
+            author="StarFoxA",
+            published_at=normalize_date(row["reviewed_at"]),
+            canonical_url=row["canonical_url"],
+            section="Giant Bomb",
+            tags=[str(row["rating"])] if row["rating"] is not None else [],
+            metadata={
+                "game_title": row["game_title"],
+                "game_url": row["game_url"],
+                "headline": row["headline"],
+                "rating": row["rating"],
+                "first_seen": row["first_seen"],
+                "last_seen": row["last_seen"],
+                "snapshot_count": row["snapshot_count"],
+                "raw_paths": json.loads(row["raw_paths_json"]),
+            },
+        )
+    source.close()
+    db.commit()
+    return True
+
+
 def build_stats(db: sqlite3.Connection) -> None:
     labels = {
         "official_nsider": (
@@ -461,6 +499,10 @@ def build_stats(db: sqlite3.Connection) -> None:
         "indienerds": ("IndieNerds", "Reviews, hands-on articles, and interviews."),
         "photobucket": ("PhotoBucket", "Recovered images referenced by contemporary posts."),
         "backloggd": ("Backloggd", "Game reviews recovered from the confirmed StarFoxA profile."),
+        "giantbomb": (
+            "Giant Bomb",
+            "Reviews recovered from historical snapshots of the confirmed StarFoxA profile.",
+        ),
     }
     sources = {row[0] for row in db.execute("SELECT DISTINCT source FROM items")}
     sources.update(row[0] for row in db.execute("SELECT DISTINCT source FROM assets"))
@@ -502,6 +544,7 @@ def build(root: Path, output: Path) -> None:
             "indienerds": import_indienerds(db, root),
             "photobucket": import_photobucket(db, root),
             "backloggd": import_backloggd(db, root),
+            "giantbomb": import_giantbomb(db, root),
         }
         sources = [name for name, present in imported.items() if present]
         if not sources:

@@ -319,7 +319,7 @@ def collect_wayback(
         db.execute(
             """INSERT OR REPLACE INTO index_checks(
                    provider,collection,target_id,query_url,result_count,checked_at,error
-               ) VALUES('wayback','',?,?,?,?,?,?)""",
+               ) VALUES('wayback','',?,?,?,?,?)""",
             (target["id"], target["url"], len(rows), utc_now(), error),
         )
         db.commit()
@@ -413,6 +413,47 @@ def extract_warc_payload(blob: bytes) -> bytes:
     return payload if separator else content
 
 
+def download_wayback(
+    db: sqlite3.Connection,
+    raw_dir: Path,
+    delay: float = 0.25,
+) -> None:
+    """Freeze every indexed Wayback response that has not been saved yet."""
+    rows = db.execute(
+        """SELECT * FROM captures
+           WHERE provider='wayback' AND status=200 AND raw_path IS NULL
+           ORDER BY target_id,timestamp"""
+    ).fetchall()
+    for number, row in enumerate(rows, 1):
+        replay_url = (
+            f"https://web.archive.org/web/{row['timestamp']}id_/"
+            f"{row['original_url']}"
+        )
+        try:
+            payload = request_bytes(replay_url, timeout=60, retries=3)
+            digest = hashlib.sha256(payload).hexdigest()
+            suffix = ".xml.gz" if "xml" in (row["mimetype"] or "") else ".html.gz"
+            relative = (
+                Path("wayback")
+                / row["target_id"]
+                / f"{row['timestamp']}--{digest[:16]}{suffix}"
+            )
+            target = raw_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(target, "wb", compresslevel=9) as output:
+                output.write(payload)
+            db.execute("UPDATE captures SET raw_path=? WHERE id=?", (str(relative), row["id"]))
+            db.commit()
+            print(f"Wayback payload {number}/{len(rows)}: {relative}", flush=True)
+        except Exception as exc:
+            print(
+                f"Wayback payload failed {row['target_id']} {row['timestamp']}: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        time.sleep(delay)
+
+
 def download_common_crawl(db: sqlite3.Connection, raw_dir: Path) -> None:
     rows = db.execute(
         """SELECT * FROM captures
@@ -502,6 +543,7 @@ def main() -> None:
                 args.source,
             )
         if args.download:
+            download_wayback(db, args.data_dir / "raw")
             download_common_crawl(db, args.data_dir / "raw")
     print(json.dumps(status(db), indent=2))
     db.close()
