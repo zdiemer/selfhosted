@@ -31,7 +31,7 @@ if ! kubectl -n "$NAMESPACE" get pvc "$CLAIM" >/dev/null 2>&1; then
   fi
   echo "==> Creating NAS-backed PVC $NAMESPACE/$CLAIM"
   helm template "$RELEASE" "$HERE" -n "$NAMESPACE" -f "$HERE/values.yaml" \
-    --show-only templates/pvc.yaml | kubectl apply -f -
+    --show-only templates/pvc.yaml | kubectl -n "$NAMESPACE" apply -f -
 fi
 
 # A claim created before the first Helm install needs the same ownership
