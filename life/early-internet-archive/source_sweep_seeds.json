@@ -262,6 +262,13 @@
       "attribution": "confirmed"
     },
     {
+      "id": "giantbomb-starfoxa-reviews",
+      "source": "giantbomb",
+      "kind": "review-index",
+      "url": "https://www.giantbomb.com/profile/starfoxa/reviews/",
+      "attribution": "confirmed"
+    },
+    {
       "id": "giantbomb-eternal-darkness-review",
       "source": "giantbomb",
       "kind": "review",

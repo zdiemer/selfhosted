@@ -205,7 +205,7 @@ class SourceSweepTests(unittest.TestCase):
             ).fetchone()[0]
             db.close()
             self.assertEqual(identities, 23)
-            self.assertEqual(targets, 49)
+            self.assertEqual(targets, 50)
             self.assertEqual(giantbomb, "confirmed")
             self.assertEqual(tuple(acc), ("Irock", "confirmed"))
             self.assertEqual(gog, "confirmed")
@@ -339,6 +339,48 @@ class GiantBombParserTests(unittest.TestCase):
         self.assertEqual(review["reviewed_at"], "2008-07-27")
         self.assertEqual(review["rating"], 9)
         self.assertEqual(review["body"], "First line.\nSecond line.")
+
+    def test_review_index_and_dedicated_page(self) -> None:
+        index = """
+        <a href="/burnout-paradise/61-5648/user-reviews/?review_id=8043">
+          Welcome to Paradise City</a>
+        (<span class="platform X360">X360</span>)
+        <span class="author">Reviewed by
+          <a href="/profile/starfoxa/">StarFoxA</a> on April 21, 2009</span>
+        <img src="/icons/star-9.png">
+        <a href="/burnout-paradise/3030-5648/user-reviews/2200-8043/">
+          Welcome to Paradise City</a>
+        """
+        link = scrape_giantbomb.parse_review_links(index)[0]
+        self.assertEqual(link["review_id"], "8043")
+        self.assertEqual(link["rating"], 9)
+        self.assertEqual(link["reviewed_at"], "2009-04-21")
+        self.assertEqual(len(link["urls"]), 2)
+
+        page = """
+        <h1><a href="/burnout-paradise/3030-5648/" class="wiki-title">
+          Burnout Paradise</a></h1>
+        <h3 class="header-border"><a href="/profile/starfoxa/">starfoxa's</a>
+          Burnout Paradise (Xbox 360) review</h3>
+        <time datetime="2009-04-21T16:59:00-0800">April 21, 2009</time>
+        Score: <span class="score score-5"></span>
+        <article class="content-body"><h2>Welcome to Paradise City</h2>
+          <div class="user-review-body"><p>First paragraph with enough text to
+          make this a genuine recovered review body.</p><div><p>Nested second
+          paragraph that must not truncate the body.</p></div></div>
+        </article>
+        """
+        review = scrape_giantbomb.parse_review_page(
+            page,
+            "https://www.giantbomb.com/burnout-paradise/3030-5648/"
+            "user-reviews/2200-8043/",
+            "8043",
+        )
+        self.assertIsNotNone(review)
+        self.assertEqual(review["review_id"], "8043")
+        self.assertEqual(review["game_title"], "Burnout Paradise")
+        self.assertEqual(review["rating"], 10)
+        self.assertIn("Nested second", review["body"])
 
 
 class BackloggdParserTests(unittest.TestCase):

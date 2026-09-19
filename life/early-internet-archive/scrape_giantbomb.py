@@ -47,6 +47,26 @@ def clean_text(fragment: str) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
+def extract_class_inner(source: str, tag: str, class_name: str) -> str:
+    """Return one class-matched element's inner HTML while respecting nesting."""
+    start = re.search(
+        rf"(?is)<{tag}\b[^>]*class=[\"'][^\"']*\b{re.escape(class_name)}\b[^\"']*[\"'][^>]*>",
+        source,
+    )
+    if not start:
+        return ""
+    token = re.compile(rf"(?is)<{tag}\b[^>]*>|</{tag}\s*>")
+    depth = 1
+    for match in token.finditer(source, start.end()):
+        if match.group(0).lower().startswith(f"</{tag}"):
+            depth -= 1
+        else:
+            depth += 1
+        if depth == 0:
+            return source[start.end() : match.start()]
+    return ""
+
+
 def absolute_url(value: str) -> str:
     value = html.unescape(value.strip())
     if value.startswith("//"):
@@ -160,6 +180,106 @@ def parse_reviews(source: str) -> list[dict[str, Any]]:
     return reviews
 
 
+def parse_review_links(source: str) -> list[dict[str, Any]]:
+    """Recover every attributed review route exposed by a profile review index."""
+    reviews: dict[str, dict[str, Any]] = {}
+    link_pattern = re.compile(
+        r"(?is)<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>"
+    )
+    for match in link_pattern.finditer(source):
+        raw_url, raw_label = match.groups()
+        url = absolute_url(raw_url)
+        parsed = urllib.parse.urlsplit(url)
+        review_id = ""
+        modern = re.search(r"/user-reviews/2200-(\d+)", parsed.path)
+        if modern:
+            review_id = modern.group(1)
+        else:
+            query_id = urllib.parse.parse_qs(parsed.query).get("review_id", [])
+            if query_id and query_id[0].isdigit():
+                review_id = query_id[0]
+        if not review_id:
+            continue
+        normalized = urllib.parse.urlunsplit(
+            ("https", "www.giantbomb.com", parsed.path, parsed.query, "")
+        )
+        record = reviews.setdefault(
+            review_id,
+            {
+                "review_id": review_id,
+                "headline": clean_text(raw_label),
+                "rating": None,
+                "reviewed_at": "",
+                "urls": [],
+            },
+        )
+        record["urls"].append(normalized)
+        label = clean_text(raw_label)
+        if len(label) > len(record["headline"]):
+            record["headline"] = label
+        following = source[match.end() : match.end() + 2500]
+        rating = re.search(r"/star-(\d+)\.png", following, re.I)
+        if rating:
+            record["rating"] = int(rating.group(1))
+        reviewed_at = re.search(
+            r"(?is)Reviewed by\s*<a[^>]*>\s*StarFoxA\s*</a>\s*on\s*([^<]+)",
+            following,
+        )
+        if reviewed_at:
+            record["reviewed_at"] = parse_date(clean_text(reviewed_at.group(1)))
+    for record in reviews.values():
+        record["urls"] = sorted(
+            set(record["urls"]),
+            key=lambda value: ("/2200-" not in value, value),
+        )
+    return list(reviews.values())
+
+
+def parse_review_page(
+    source: str,
+    canonical_url: str,
+    review_id: str,
+) -> dict[str, Any] | None:
+    body = clean_text(extract_class_inner(source, "div", "user-review-body"))
+    if len(body) < 100 or "/profile/starfoxa/" not in source.lower():
+        return None
+    header_match = re.search(
+        r'(?is)<h3\b[^>]*class=["\'][^"\']*header-border[^"\']*["\'][^>]*>(.*?)</h3>',
+        source,
+    )
+    header = clean_text(header_match.group(1)) if header_match else ""
+    game_match = re.search(r"(?is)starfoxa's\s+(.*?)\s+\([^)]+\)\s+review", header)
+    title_match = re.search(
+        r'(?is)<h1\b[^>]*>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*wiki-title[^"\']*["\'][^>]*>(.*?)</a>',
+        source,
+    )
+    article = extract_class_inner(source, "article", "content-body")
+    headline_match = re.search(r"(?is)<h2\b[^>]*>(.*?)</h2>", article)
+    page_title_match = re.search(r"(?is)<title>(.*?)</title>", source)
+    date_match = re.search(r'<time\b[^>]*datetime=["\']([^"\']+)', source, re.I)
+    score_match = re.search(r"Score:\s*<span\b[^>]*class=[\"'][^\"']*score-(\d+)", source, re.I)
+    parsed_url = urllib.parse.urlsplit(canonical_url)
+    slug = parsed_url.path.strip("/").split("/")[0]
+    return {
+        "review_id": review_id,
+        "game_title": (
+            clean_text(game_match.group(1))
+            if game_match
+            else slug.replace("-", " ").title()
+        ),
+        "game_url": absolute_url(title_match.group(1)) if title_match else f"{BASE_URL}/{slug}/",
+        "headline": (
+            clean_text(headline_match.group(1))
+            if headline_match
+            else clean_text(page_title_match.group(1)) if page_title_match else "Review"
+        ),
+        "rating": int(score_match.group(1)) * 2 if score_match else None,
+        "reviewed_at": date_match.group(1)[:10] if date_match else "",
+        "body": body,
+        "canonical_url": canonical_url,
+    }
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
@@ -245,6 +365,109 @@ def discover(
             record["first_seen"] = min(record["first_seen"], row["timestamp"])
             record["last_seen"] = max(record["last_seen"], row["timestamp"])
             record["raw_paths"].append(raw_path)
+
+    review_links: dict[str, dict[str, Any]] = {}
+    rows = sweep_db.execute(
+        """SELECT timestamp,raw_path FROM captures
+           WHERE target_id='giantbomb-starfoxa-reviews' AND raw_path IS NOT NULL
+           ORDER BY timestamp"""
+    ).fetchall()
+    for row in rows:
+        with gzip.open(
+            sweep_root / "raw" / row["raw_path"],
+            "rt",
+            encoding="utf-8",
+            errors="replace",
+        ) as source:
+            for parsed in parse_review_links(source.read()):
+                record = review_links.setdefault(
+                    parsed["review_id"],
+                    {
+                        "review_id": parsed["review_id"],
+                        "headline": "",
+                        "rating": None,
+                        "reviewed_at": "",
+                        "urls": [],
+                    },
+                )
+                record["urls"].extend(parsed["urls"])
+                if len(parsed["headline"]) > len(record["headline"]):
+                    record["headline"] = parsed["headline"]
+                if parsed["rating"] is not None:
+                    record["rating"] = parsed["rating"]
+                if parsed["reviewed_at"]:
+                    record["reviewed_at"] = parsed["reviewed_at"]
+
+    for record in review_links.values():
+        urls = sorted(
+            set(record["urls"]),
+            key=lambda value: ("/2200-" not in value, value),
+        )
+        for index, url in enumerate(urls):
+            suffix = "" if index == 0 else f"-alias-{index}"
+            sweep_db.execute(
+                """INSERT OR REPLACE INTO targets(id,source,kind,url,attribution)
+                   VALUES(?,?,?,?,?)""",
+                (
+                    f"giantbomb-discovered-review-{record['review_id']}{suffix}",
+                    "giantbomb",
+                    "review",
+                    url,
+                    "confirmed",
+                ),
+            )
+
+    rows = sweep_db.execute(
+        """SELECT c.timestamp,c.raw_path,t.id target_id,t.url
+           FROM captures c JOIN targets t ON t.id=c.target_id
+           WHERE c.raw_path IS NOT NULL AND (
+               t.id='giantbomb-eternal-darkness-review'
+               OR t.id LIKE 'giantbomb-discovered-review-%'
+           )
+           ORDER BY t.id,c.timestamp"""
+    ).fetchall()
+    for row in rows:
+        id_match = re.search(r"review-(\d+)", row["target_id"])
+        review_id = id_match.group(1) if id_match else "24164"
+        with gzip.open(
+            sweep_root / "raw" / row["raw_path"],
+            "rt",
+            encoding="utf-8",
+            errors="replace",
+        ) as source:
+            parsed = parse_review_page(source.read(), row["url"], review_id)
+        if not parsed:
+            continue
+        index_record = review_links.get(review_id)
+        if index_record:
+            parsed["canonical_url"] = index_record["urls"][0]
+            parsed["headline"] = index_record["headline"] or parsed["headline"]
+            parsed["rating"] = index_record["rating"] or parsed["rating"]
+            parsed["reviewed_at"] = index_record["reviewed_at"] or parsed["reviewed_at"]
+        record = reviews.get(review_id)
+        if record is None:
+            reviews[review_id] = dict(
+                parsed,
+                first_seen=row["timestamp"],
+                last_seen=row["timestamp"],
+                raw_paths=[row["raw_path"]],
+            )
+            continue
+        record["first_seen"] = min(record["first_seen"], row["timestamp"])
+        record["last_seen"] = max(record["last_seen"], row["timestamp"])
+        record["raw_paths"].append(row["raw_path"])
+        if len(parsed["body"]) > len(record["body"]):
+            for key in (
+                "game_title",
+                "game_url",
+                "headline",
+                "reviewed_at",
+                "body",
+                "canonical_url",
+            ):
+                record[key] = parsed[key]
+        if parsed["rating"] is not None:
+            record["rating"] = parsed["rating"]
 
     now = utc_now()
     for record in artifacts.values():

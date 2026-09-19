@@ -9,7 +9,7 @@ capture is frozen with provenance.
 
 | Source | Identity | Discovered footprint | Preserved now | Next recovery pass |
 |---|---|---:|---:|---|
-| Giant Bomb | Confirmed `StarFoxA` | 5,266–5,267 forum posts, 12 reviews, and a larger historical artifact footprint | 148 profile snapshots; 103 artifact records; four full reviews; hundreds of exact-page captures indexed | Parse recovered blogs and lists, resolve eight missing reviews, then enumerate forum posts |
+| Giant Bomb | Confirmed `StarFoxA` | 5,266–5,267 forum posts, 12 reported reviews, and a larger historical artifact footprint | 148 profile snapshots; 103 artifact records; ten full reviews; hundreds of exact-page captures | Parse recovered blogs and lists, recover the *Fluid* body, identify the twelfth review, then enumerate forum posts |
 | GameSpot | Confirmed `StarFoxA` | Five indexed reviews from 2007–08 | Search-index text and five exact seeds | Recover the pages, locate the historical profile/review index, and enumerate remaining reviews |
 | Animal Crossing Community | Confirmed `Irock` | Joined in 2004; account later deleted for inactivity | First-person NSider2 evidence | Recover the historical profile and enumerate posts carrying the `Irock` byline |
 | Twitter | Confirmed `@zach_diemer` | Profile known; tweet inventory unknown | Identity link on preserved 2019 personal site | Inventory exact profile/tweet URLs in web archives |
@@ -44,17 +44,17 @@ account moved primarily to Giant Bomb. Current indexed pages attach the
 5,266 forum posts, and 260,824 wiki points.
 
 The recovered profile snapshots produced 103 exact artifact records: 15 blogs,
-27 lists, and 61 image records. Four complete 2008 reviews embedded in those
-snapshots are now in the public catalog: *Professor Layton and the Curious
-Village*, *Contra 4*, *Super Mario Galaxy*, and *Chrono Trigger*. The historical
-and modern list-route formats are both retained; this recovered multiple
-deleted lists that the modern form missed.
+27 lists, and 61 image records. The dedicated review index then exposed ten
+historical review IDs plus *Fluid*, whose body remains missing. Ten complete
+reviews from 2008–12 are now in the public catalog. The historical and modern
+artifact-route formats are both retained; this recovered multiple deleted
+pages that the modern form missed.
 
-Known remaining high-value seeds include the complete 2012 *Eternal Darkness*
-review, the authored 17-BIT thread, and a Chrono Trigger cease-and-desist
-thread. See `GIANTBOMB_INVENTORY.md` for the route-level accounting and parser
-workflow. Live pages remain Cloudflare-protected, so recovery continues from
-exact archive indexes rather than treating live 403 responses as loss.
+Known remaining high-value seeds include the authored 17-BIT thread and a
+Chrono Trigger cease-and-desist thread. See `GIANTBOMB_INVENTORY.md` for the
+route-level accounting and parser workflow. Live pages remain
+Cloudflare-protected, so recovery continues from exact archive indexes rather
+than treating live 403 responses as loss.
 
 ## GameSpot evidence
 
@@ -164,8 +164,9 @@ remain retryable; an index outage never becomes a false zero-result check.
 The live pass follows the same rule: successful responses are frozen with
 digests and final URLs, while DNS, origin, and HTTP failures remain errors.
 
-Current sweep state: 23 identity records, 182 exact targets, 303 completed or
-retryable index checks, and 519 capture records across 67 targets. The target
+Current sweep state: 23 identity records, 213 exact targets, 334 completed or
+retryable index checks, and 571 capture records across 80 targets. The target
 count includes 133 routes dynamically discovered from frozen Giant Bomb
-profiles. Every indexed capture currently has a frozen raw payload. Common
-Crawl index errors remain queued for retry.
+profiles plus 30 historical and modern routes discovered from its review
+index. Every indexed capture currently has a frozen raw payload. Common Crawl
+index errors remain queued for retry.

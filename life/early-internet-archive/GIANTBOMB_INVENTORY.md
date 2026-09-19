@@ -30,8 +30,9 @@ Collection*.
 
 ## Complete reviews
 
-Four full reviews survive inside the historical profile snapshots and are now
-projected into the public catalog:
+Four full reviews survive inside historical profile snapshots. A separate
+15-snapshot review-index recovery exposed additional exact URLs, and dedicated
+review-page captures raised the catalog to ten complete reviews:
 
 | Date | Game | Rating | Body characters |
 |---|---|---:|---:|
@@ -39,10 +40,17 @@ projected into the public catalog:
 | 2008-07-27 | *Contra 4* | 8/10 | 3,905 |
 | 2008-07-27 | *Super Mario Galaxy* | 9/10 | 6,713 |
 | 2008-10-04 | *Chrono Trigger* | 10/10 | 6,327 |
+| 2009-03-08 | *The World Ends With You* | 10/10 | 4,292 |
+| 2009-04-21 | *Burnout Paradise* | 9/10 | 6,670 |
+| 2009-08-13 | *Demons of the Badlands* | 8/10 | 2,370 |
+| 2010-04-19 | *Arkedo Series – 03 PIXEL!* | 9/10 | 3,592 |
+| 2010-09-13 | *Castlevania: Harmony of Despair* | 7/10 | 5,899 |
+| 2012-10-05 | *Eternal Darkness: Sanity's Requiem* | 6/10 | 4,630 |
 
-The profile reports 12 reviews in total, so eight remain unresolved. The known
-2012 *Eternal Darkness: Sanity's Requiem* review is separately seeded and is a
-high-priority recovery target.
+The index also identifies *Fluid* (2010, 10/10) and preserves its excerpt, but
+no complete review-page capture has been found. The profile reports 12 reviews
+while the surviving indexes expose only eleven distinct titles, leaving one
+deleted title unidentified. Neither is promoted as a complete review.
 
 ## Notable authored inventory
 
