@@ -412,6 +412,45 @@ def import_photobucket(db: sqlite3.Connection, root: Path) -> bool:
     return True
 
 
+def import_backloggd(db: sqlite3.Connection, root: Path) -> bool:
+    path = root / "backloggd" / "backloggd.sqlite3"
+    if not path.exists():
+        return False
+    source = open_source(path)
+    if source.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0:
+        source.close()
+        return False
+    for row in source.execute("SELECT * FROM reviews ORDER BY reviewed_at,review_id"):
+        tags = [value for value in (row["play_status"], row["platform"]) if value]
+        if row["release_year"]:
+            tags.append(str(row["release_year"]))
+        add_item(
+            db,
+            item_id=f"backloggd:{row['review_id']}",
+            source="backloggd",
+            kind="review",
+            external_id=row["review_id"],
+            title=row["title"],
+            body=row["body"],
+            author="starfoxa",
+            published_at=normalize_date(row["reviewed_at"]),
+            canonical_url=row["canonical_url"],
+            section="Backloggd",
+            tags=tags,
+            metadata={
+                "game_url": row["game_url"],
+                "release_year": row["release_year"],
+                "rating": row["rating"],
+                "play_status": row["play_status"],
+                "platform": row["platform"],
+                "source_page": row["source_page"],
+            },
+        )
+    source.close()
+    db.commit()
+    return True
+
+
 def build_stats(db: sqlite3.Connection) -> None:
     labels = {
         "official_nsider": (
@@ -421,6 +460,7 @@ def build_stats(db: sqlite3.Connection) -> None:
         "nsider2": ("NSider2", "Forum posts with surrounding conversation context."),
         "indienerds": ("IndieNerds", "Reviews, hands-on articles, and interviews."),
         "photobucket": ("PhotoBucket", "Recovered images referenced by contemporary posts."),
+        "backloggd": ("Backloggd", "Game reviews recovered from the confirmed StarFoxA profile."),
     }
     sources = {row[0] for row in db.execute("SELECT DISTINCT source FROM items")}
     sources.update(row[0] for row in db.execute("SELECT DISTINCT source FROM assets"))
@@ -461,6 +501,7 @@ def build(root: Path, output: Path) -> None:
             "nsider2": import_nsider2(db, root),
             "indienerds": import_indienerds(db, root),
             "photobucket": import_photobucket(db, root),
+            "backloggd": import_backloggd(db, root),
         }
         sources = [name for name, present in imported.items() if present]
         if not sources:

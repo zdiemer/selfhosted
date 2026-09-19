@@ -1,0 +1,419 @@
+{
+  "identities": [
+    {
+      "source": "giantbomb",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "NSider2 posts 7559449 and 10666370 link to this profile in the first person.",
+      "profile_url": "https://www.giantbomb.com/profile/starfoxa/"
+    },
+    {
+      "source": "gamespot",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "GameSpot review pages carry the StarFoxA byline and NSider2 posts describe first-person GameSpot activity.",
+      "profile_url": ""
+    },
+    {
+      "source": "twitter",
+      "handle": "zach_diemer",
+      "confidence": "confirmed",
+      "evidence": "The preserved 2019 personal site links directly to this Twitter profile.",
+      "profile_url": "https://twitter.com/zach_diemer"
+    },
+    {
+      "source": "animal_crossing_community",
+      "handle": "Irock",
+      "confidence": "confirmed",
+      "evidence": "NSider2 post 2539114 says 'my old username was irock btw' in the ACC discussion; posts 546322 and 2538650 identify ACC as the first forum, joined in 2004, with the account later deleted for inactivity.",
+      "profile_url": "http://www.animalcrossingcommunity.com/accf_profile.asp?UserName=Irock"
+    },
+    {
+      "source": "fsu",
+      "handle": "zdiemer",
+      "confidence": "confirmed",
+      "evidence": "Four original coursework repositories are already preserved under web/fsu.",
+      "profile_url": "https://fsu.zachd.duckdns.org/"
+    },
+    {
+      "source": "steam",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "NSider2 post 458196 says 'I'm StarFoxA on Steam'; the public profile is Steam ID 76561197993375857, independently mapped to StarFoxA in the preserved smitele-bot roster.",
+      "profile_url": "https://steamcommunity.com/profiles/76561197993375857"
+    },
+    {
+      "source": "backloggd",
+      "handle": "starfoxa",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. The software-engineer bio, Chrono Trigger favorite, and game-tracking history independently align with the confirmed Giant Bomb history.",
+      "profile_url": "https://backloggd.com/u/starfoxa/"
+    },
+    {
+      "source": "chrono_compendium",
+      "handle": "StarFoxA",
+      "confidence": "confirmed-membership",
+      "evidence": "In NSider2 post 10666183, another user says they found StarFoxA on Chrono Compendium and StarFoxA replies that they posted there once.",
+      "profile_url": ""
+    },
+    {
+      "source": "chipmusic",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them; the 2011 account also matches the contemporary chiptune interests in the preserved corpus.",
+      "profile_url": "https://chipmusic.org/StarFoxA"
+    },
+    {
+      "source": "gtfoutsider",
+      "handle": "STARFOXA",
+      "confidence": "confirmed-subject",
+      "evidence": "NSider2 posts link directly to a WikiSider page titled STARFOXA and discuss the author's Sage status; this is a third-party artifact, not necessarily authored content.",
+      "profile_url": "http://gtfoutsider.com/wikisider/index.php?title=STARFOXA"
+    },
+    {
+      "source": "gog",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "NSider2 posts 4539521 and 4539549 say the author signed up for GOG's beta and bought Fallout 1 and 2 on 2008-09-11; a GOG StarFoxA post from that same day says it is their first Fallout and celebrates the two-for-one purchase.",
+      "profile_url": "https://www.gog.com/u/StarFoxA"
+    },
+    {
+      "source": "kevan_brain",
+      "handle": "StarFoxA",
+      "confidence": "confirmed-artifact",
+      "evidence": "NSider2 posts 1561534, 1561554, and 1561599 link the StarFoxA brain page in the first person and say it was created in 2005.",
+      "profile_url": "http://kevan.org/brain.cgi?StarFoxA"
+    },
+    {
+      "source": "clackys_hut",
+      "handle": "unresolved",
+      "confidence": "confirmed-membership",
+      "evidence": "Numerous NSider2 posts explicitly describe posting, sharing a photo, using the shoutbox, and playing games on Clacky's Hut; no archived profile URL has been resolved yet.",
+      "profile_url": "http://www.clackyshut.com/"
+    },
+    {
+      "source": "national_sig_league",
+      "handle": "unresolved",
+      "confidence": "confirmed-participation",
+      "evidence": "NSider2 post 2549187 links a specific NationalSigLeague thread and identifies the signature on the left as the author's work; the forum handle remains unresolved.",
+      "profile_url": ""
+    },
+    {
+      "source": "gimptalk",
+      "handle": "unresolved",
+      "confidence": "confirmed-membership",
+      "evidence": "NSider2 post 3207259 records another user asking StarFoxA to comment on a thread they made on GIMPTalk and the author agreeing; the thread URL and forum handle remain unresolved.",
+      "profile_url": ""
+    },
+    {
+      "source": "xboxachievements",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. This 2009 account is in the United States and has 25 achievement-focused gaming posts.",
+      "profile_url": ""
+    },
+    {
+      "source": "ds_fanboy",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. This 2008 comment also matches the author's contemporary Nintendo/Wii interests.",
+      "profile_url": ""
+    },
+    {
+      "source": "supercheats",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that StarFoxA identities may be attributed to them. The 2007 Pokemon Diamond submission's Nintendo focus and Action Replay use independently align with the contemporary NSider corpus.",
+      "profile_url": ""
+    }
+  ],
+  "targets": [
+    {
+      "id": "backloggd-starfoxa-profile",
+      "source": "backloggd",
+      "kind": "profile",
+      "url": "https://backloggd.com/u/starfoxa/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "backloggd-starfoxa-reviews",
+      "source": "backloggd",
+      "kind": "review-index",
+      "url": "https://backloggd.com/u/starfoxa/reviews/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "backloggd-starfoxa-activity",
+      "source": "backloggd",
+      "kind": "activity-index",
+      "url": "https://backloggd.com/u/starfoxa/activity/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "backloggd-starfoxa-lists",
+      "source": "backloggd",
+      "kind": "list-index",
+      "url": "https://backloggd.com/u/starfoxa/lists/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "backloggd-starfoxa-stats",
+      "source": "backloggd",
+      "kind": "stats",
+      "url": "https://backloggd.com/u/starfoxa/stats/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "chipmusic-starfoxa-profile",
+      "source": "chipmusic",
+      "kind": "profile",
+      "url": "https://chipmusic.org/StarFoxA",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "chipmusic-vocal-chiptunes-thread",
+      "source": "chipmusic",
+      "kind": "forum-thread",
+      "url": "https://chipmusic.org/forums/topic/4568/what-are-the-best-chiptunes-with-vocals/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gtfoutsider-starfoxa-wiki",
+      "source": "gtfoutsider",
+      "kind": "third-party-profile",
+      "url": "http://gtfoutsider.com/wikisider/index.php?title=STARFOXA",
+      "attribution": "confirmed-subject"
+    },
+    {
+      "id": "steam-starfoxa-profile",
+      "source": "steam",
+      "kind": "profile",
+      "url": "https://steamcommunity.com/profiles/76561197993375857",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "steam-starfoxa-profile-xml",
+      "source": "steam",
+      "kind": "profile-data",
+      "url": "https://steamcommunity.com/profiles/76561197993375857?xml=1",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "steam-starfoxa-reviews",
+      "source": "steam",
+      "kind": "review-index",
+      "url": "https://steamcommunity.com/id/starfoxa/recommended/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "steam-starfoxa-screenshots",
+      "source": "steam",
+      "kind": "media-index",
+      "url": "https://steamcommunity.com/id/starfoxa/screenshots/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "acc-irock-profile",
+      "source": "animal_crossing_community",
+      "kind": "profile",
+      "url": "http://www.animalcrossingcommunity.com/accf_profile.asp?UserName=Irock",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-profile",
+      "source": "giantbomb",
+      "kind": "profile",
+      "url": "https://www.giantbomb.com/profile/starfoxa/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-eternal-darkness-review",
+      "source": "giantbomb",
+      "kind": "review",
+      "url": "https://www.giantbomb.com/eternal-darkness-sanitys-requiem/3030-7512/user-reviews/2200-24164/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-chrono-trigger-review-page",
+      "source": "giantbomb",
+      "kind": "review-listing",
+      "url": "https://www.giantbomb.com/chrono-trigger/3030-9249/user-reviews/2200-3925/",
+      "attribution": "confirmed-snippet"
+    },
+    {
+      "id": "giantbomb-17bit-thread",
+      "source": "giantbomb",
+      "kind": "forum-thread",
+      "url": "https://www.giantbomb.com/17-bit/3010-7157/forums/17-bit-talks-about-their-relationship-with-microso-1441722/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-chrono-trigger-thread",
+      "source": "giantbomb",
+      "kind": "forum-thread",
+      "url": "https://www.giantbomb.com/chrono-trigger/3030-9249/forums/square-enix-sends-cease-and-desist-letter-to-sever-242280/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-splosion-man-thread",
+      "source": "giantbomb",
+      "kind": "forum-thread",
+      "url": "https://www.giantbomb.com/splosion-man/3030-26355/forums/do-you-recommend-it-for-400-msp-424638/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-pc-coop-thread",
+      "source": "giantbomb",
+      "kind": "forum-thread",
+      "url": "https://www.giantbomb.com/pc/3045-94/forums/is-it-true-that-the-pc-has-no-good-couch-co-op-gam-1433578/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-game-of-decade-thread",
+      "source": "giantbomb",
+      "kind": "forum-thread",
+      "url": "https://www.giantbomb.com/forums/general-discussion-30/game-of-the-decade-379647/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "giantbomb-bundle-backlog",
+      "source": "giantbomb",
+      "kind": "user-list",
+      "url": "https://www.giantbomb.com/user-lists/uid/4170/bundle-backlog",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gamespot-wii-channels-review",
+      "source": "gamespot",
+      "kind": "review",
+      "url": "https://www.gamespot.com/wii-channels/user-reviews/2200-290559/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gamespot-professor-layton-review",
+      "source": "gamespot",
+      "kind": "review",
+      "url": "https://www.gamespot.com/professor-layton-and-the-curious-village/user-reviews/2200-44869/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gamespot-super-mario-galaxy-review",
+      "source": "gamespot",
+      "kind": "review",
+      "url": "https://www.gamespot.com/super-mario-galaxy/user-reviews/2200-381643/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gamespot-metroid-prime-3-review-listing",
+      "source": "gamespot",
+      "kind": "review-listing",
+      "url": "https://www.gamespot.com/games/metroid-prime-3-corruption/reviews/?page=40",
+      "attribution": "confirmed-snippet"
+    },
+    {
+      "id": "gamespot-marvel-ultimate-alliance-review-listing",
+      "source": "gamespot",
+      "kind": "review-listing",
+      "url": "https://www.gamespot.com/games/marvel-ultimate-alliance/reviews/?page=27",
+      "attribution": "confirmed-snippet"
+    },
+    {
+      "id": "twitter-zach-diemer",
+      "source": "twitter",
+      "kind": "profile",
+      "url": "https://twitter.com/zach_diemer",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gog-starfoxa-profile",
+      "source": "gog",
+      "kind": "profile",
+      "url": "https://www.gog.com/u/StarFoxA",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gog-fallout-first-time",
+      "source": "gog",
+      "kind": "forum-thread",
+      "url": "https://www.gog.com/forum/fallout_series/how_many_of_us_are_playing_fallout_for_the_first_time_thanks_to_gog_also_home_to/page5",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gog-game-wishlist",
+      "source": "gog",
+      "kind": "forum-thread",
+      "url": "https://www.gog.com/forum/general/game_wish_list/page57",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gog-broken-sword-2",
+      "source": "gog",
+      "kind": "forum-thread",
+      "url": "https://www.gog.com/forum/general_archive/surprise_release_broken_sword_2_the_smoking_mirror",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "kevan-starfoxa-brain",
+      "source": "kevan_brain",
+      "kind": "interactive-artifact",
+      "url": "http://kevan.org/brain.cgi?StarFoxA",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "kevan-starfoxa-brain-count",
+      "source": "kevan_brain",
+      "kind": "interactive-artifact-stats",
+      "url": "http://kevan.org/brain.cgi?StarFoxA!count",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "clackys-hut-home",
+      "source": "clackys_hut",
+      "kind": "forum-root",
+      "url": "http://www.clackyshut.com/",
+      "attribution": "confirmed-membership"
+    },
+    {
+      "id": "national-sig-league-thread-162183",
+      "source": "national_sig_league",
+      "kind": "forum-thread",
+      "url": "http://www.nationalsigleague.com/forum/showthread.php?t=162183",
+      "attribution": "confirmed-artifact"
+    },
+    {
+      "id": "xboxachievements-red-faction-radio-missions",
+      "source": "xboxachievements",
+      "kind": "forum-thread",
+      "url": "https://www.xboxachievements.com/forum/topic/134774-list-of-radio-missions-for-revolutionary-w-maps/page/6/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "ds-fanboy-homebrew-comment",
+      "source": "ds_fanboy",
+      "kind": "article-comment",
+      "url": "https://www.dsfanboy.com/2008/08/17/attention-homebrewers-grab-free-money-here/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "ds-fanboy-starfoxa-profile",
+      "source": "ds_fanboy",
+      "kind": "profile",
+      "url": "https://www.dsfanboy.com/profile/1596471/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "supercheats-secret-id-modifier",
+      "source": "supercheats",
+      "kind": "code-submission",
+      "url": "https://www.supercheats.com/nintendods/pokemon-diamond/910/ar-codes/secret-id-modifier-press-l/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "gamefaqs-starfoxa-code-attribution",
+      "source": "supercheats",
+      "kind": "third-party-attribution",
+      "url": "https://gamefaqs.gamespot.com/boards/925601-pokemon-diamond-version/43964068",
+      "attribution": "confirmed-subject"
+    }
+  ]
+}

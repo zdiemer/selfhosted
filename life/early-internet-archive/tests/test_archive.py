@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import sqlite3
 import sys
@@ -13,7 +15,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 import build_library
+import scrape_backloggd
 import scrape_official_nsider
+import scrape_source_sweep
 from archive_web import main as archive_web
 from fastapi.testclient import TestClient
 
@@ -176,6 +180,126 @@ class OfficialNsiderParserTests(unittest.TestCase):
             result.close()
             self.assertEqual(item, ("official_nsider", "Recovered title", "Recovered words"))
             self.assertEqual(stats, ("Official NSider", 1))
+
+
+class SourceSweepTests(unittest.TestCase):
+    def test_seed_inventory_and_url_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = scrape_source_sweep.connect(Path(directory) / "sweep.sqlite3")
+            scrape_source_sweep.load_seeds(
+                db, PROJECT_ROOT / "source_sweep_seeds.json"
+            )
+            identities = db.execute("SELECT COUNT(*) FROM identities").fetchone()[0]
+            targets = db.execute("SELECT COUNT(*) FROM targets").fetchone()[0]
+            giantbomb = db.execute(
+                "SELECT confidence FROM identities WHERE source='giantbomb'"
+            ).fetchone()[0]
+            acc = db.execute(
+                "SELECT handle,confidence FROM identities "
+                "WHERE source='animal_crossing_community'"
+            ).fetchone()
+            gog = db.execute(
+                "SELECT confidence FROM identities WHERE source='gog'"
+            ).fetchone()[0]
+            db.close()
+            self.assertEqual(identities, 18)
+            self.assertEqual(targets, 41)
+            self.assertEqual(giantbomb, "confirmed")
+            self.assertEqual(tuple(acc), ("Irock", "confirmed"))
+            self.assertEqual(gog, "confirmed")
+        self.assertEqual(
+            scrape_source_sweep.query_urls("https://www.example.com/path/"),
+            ["example.com/path", "example.com/path/", "www.example.com/path", "www.example.com/path/"],
+        )
+        self.assertEqual(
+            scrape_source_sweep.query_urls(
+                "http://www.example.com/profile.asp?UserName=Irock"
+            ),
+            [
+                "example.com/profile.asp/?UserName=Irock",
+                "example.com/profile.asp?UserName=Irock",
+                "www.example.com/profile.asp/?UserName=Irock",
+                "www.example.com/profile.asp?UserName=Irock",
+            ],
+        )
+
+    def test_common_crawl_json_and_warc_payload_parsing(self) -> None:
+        rows = scrape_source_sweep.parse_json_lines(
+            b'{"url":"https://example.com","status":"200"}\nnot-json\n'
+        )
+        self.assertEqual(rows[0]["status"], "200")
+        response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<body>saved</body>"
+        record = b"WARC/1.0\r\nContent-Length: 74\r\n\r\n" + response
+        buffer = io.BytesIO()
+        with gzip.GzipFile(fileobj=buffer, mode="wb") as output:
+            output.write(record)
+        self.assertEqual(
+            scrape_source_sweep.extract_warc_payload(buffer.getvalue()),
+            b"<body>saved</body>",
+        )
+
+
+class BackloggdParserTests(unittest.TestCase):
+    def test_review_and_profile_parsing(self) -> None:
+        source = """
+        <span id="bio-title">Bio</span>
+        <span id="bio-body">Software engineer &amp; gamer.</span>
+        <h1>1,606</h1></a><h4>Games Played</h4>
+        <div class="row mb-1 game-name"><a href="/games/chrono-trigger/">
+        <h3 class="mb-0">Chrono &amp; Trigger</h3></a>
+        <p class="text-color-secondary game-date mb-0">1995</p>
+        <div class="stars-top" style="width:80%"></div>
+        <p class="mb-0 play-type completed">Completed</p>
+        <a class="review-platform"><p>Nintendo DS</p></a>
+        <time datetime="2012-10-05T00:00:00Z"></time>
+        <div class="row review-body" review_id="24164">
+        <div class="mb-0 card-text" id="collapseReview24164">First line.<br>Second line.</div>
+        <a class="open-review-link" href="/u/starfoxa/review/24164/">Open review</a>
+        """
+        profile = scrape_backloggd.parse_profile(source)
+        reviews = scrape_backloggd.parse_reviews(source, 1)
+        self.assertEqual(profile["total_games"], 1606)
+        self.assertIn("Software engineer", profile["bio"])
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["title"], "Chrono & Trigger")
+        self.assertEqual(reviews[0]["rating"], 4)
+        self.assertEqual(reviews[0]["body"], "First line.\nSecond line.")
+
+    def test_recovered_review_is_imported_into_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "backloggd"
+            source = scrape_backloggd.connect(source_root / "backloggd.sqlite3")
+            source.execute(
+                """INSERT INTO pages(page,url,review_count,fetched_at,error)
+                   VALUES(1,'https://backloggd.com/u/starfoxa/reviews/',1,'now',NULL)"""
+            )
+            source.execute(
+                """INSERT INTO reviews(
+                       review_id,title,game_url,release_year,rating,play_status,
+                       platform,reviewed_at,body,canonical_url,source_page,parsed_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "123", "Chrono Trigger", "https://backloggd.com/games/chrono-trigger/",
+                    1995, 5.0, "Completed", "Super Nintendo",
+                    "2021-02-05T18:14:57Z", "Still wonderful.",
+                    "https://backloggd.com/u/starfoxa/review/123/", 1, "now",
+                ),
+            )
+            source.commit()
+            source.close()
+            catalog = root / "library.sqlite3"
+            build_library.build(root, catalog)
+            result = sqlite3.connect(catalog)
+            item = result.execute(
+                "SELECT source,title,body FROM items WHERE id='backloggd:123'"
+            ).fetchone()
+            stats = result.execute(
+                "SELECT label,item_count FROM source_stats WHERE source='backloggd'"
+            ).fetchone()
+            result.close()
+            self.assertEqual(item, ("backloggd", "Chrono Trigger", "Still wonderful."))
+            self.assertEqual(stats, ("Backloggd", 1))
 
 
 class FrontendTests(unittest.TestCase):

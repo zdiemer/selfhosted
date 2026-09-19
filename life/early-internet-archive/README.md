@@ -3,6 +3,40 @@
 Tools and manifests for preserving Zach Diemer's public early-internet work.
 Downloaded archive data is intentionally excluded from Git under `data/`.
 
+## Breadth-first source sweep
+
+The cross-source sweep tracks confirmed identities and exact recovery targets
+for Giant Bomb, GameSpot, Animal Crossing Community, GOG, Steam, Backloggd,
+ChipMusic, several smaller forums, Twitter, FSU coursework, and the preserved
+personal site. It inventories live pages, Wayback, and Common Crawl
+without promoting search-result snippets into the public archive as if they
+were preserved originals.
+
+```bash
+python3 scrape_source_sweep.py --skip-wayback
+python3 scrape_source_sweep.py --download --skip-wayback
+python3 scrape_source_sweep.py --source animal_crossing_community --skip-wayback
+python3 scrape_source_sweep.py --live --skip-wayback --skip-common-crawl
+python3 scrape_source_sweep.py --status
+```
+
+See [`SOURCE_SWEEP_INVENTORY.md`](SOURCE_SWEEP_INVENTORY.md) for the evidence,
+coverage, and next recovery action for each source.
+
+The Backloggd collector preserves the public profile and every review-list page
+as compressed raw evidence, then stores attributed review text and provenance
+in SQLite and JSONL:
+
+```bash
+python3 scrape_backloggd.py
+python3 scrape_backloggd.py --status
+```
+
+Current Backloggd capture: all 45 review pages and 673 full reviews, with no
+page errors. Owner confirmation permits these reviews to be projected into the
+public catalog. See [`BACKLOGGD_INVENTORY.md`](BACKLOGGD_INVENTORY.md) for
+coverage and provenance.
+
 ## Official NSider
 
 The Official Nintendo NSider collector identifies `STARFOXA` as Lithium user
