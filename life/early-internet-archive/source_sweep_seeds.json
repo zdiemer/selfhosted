@@ -146,6 +146,20 @@
       "confidence": "confirmed-membership",
       "evidence": "NSider2 posts 993821 through 995163 state in the first person that the author had begun posting on, then was banned from, the PlayStation Underground forums in December 2007. The forum handle and authored URLs remain unresolved.",
       "profile_url": ""
+    },
+    {
+      "source": "math_stackexchange",
+      "handle": "starfoxa",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that exact StarFoxA identities may be attributed to them. The unregistered 2014 Mathematics Stack Exchange account retains two questions and multiple follow-up comments.",
+      "profile_url": "https://math.stackexchange.com/users/175458/starfoxa"
+    },
+    {
+      "source": "spriters_resource",
+      "handle": "StarFoxA",
+      "confidence": "confirmed",
+      "evidence": "The archive owner confirmed that exact StarFoxA identities may be attributed to them. The Spriters Resource credits the handle for a 1798-by-3680 Uninvited NES scene sheet.",
+      "profile_url": ""
     }
   ],
   "targets": [
@@ -455,6 +469,41 @@
       "source": "neoseeker",
       "kind": "walkthrough-comment",
       "url": "https://www.neoseeker.com/fantasian/Sidequests/Metal_Ribbidon",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "math-stackexchange-starfoxa-profile",
+      "source": "math_stackexchange",
+      "kind": "profile",
+      "url": "https://math.stackexchange.com/users/175458/starfoxa",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "math-stackexchange-question-928345",
+      "source": "math_stackexchange",
+      "kind": "question",
+      "url": "https://math.stackexchange.com/questions/928345/i-have-two-symmetric-relations-on-a-set-how-can-i-prove-that-the-symmetric-diff",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "math-stackexchange-question-999805",
+      "source": "math_stackexchange",
+      "kind": "question",
+      "url": "https://math.stackexchange.com/questions/999805/defining-an-example-of-a-boolean-algebra-discrete-math",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "spriters-resource-uninvited-scenes",
+      "source": "spriters_resource",
+      "kind": "sprite-sheet",
+      "url": "https://www.spriters-resource.com/nes/uninvited/asset/13564/",
+      "attribution": "confirmed"
+    },
+    {
+      "id": "spriters-resource-uninvited-scenes-png",
+      "source": "spriters_resource",
+      "kind": "original-image",
+      "url": "https://www.spriters-resource.com/media/assets/13/13564.png?updated=1755472475",
       "attribution": "confirmed"
     }
   ]

@@ -204,8 +204,8 @@ class SourceSweepTests(unittest.TestCase):
                 "SELECT confidence FROM identities WHERE source='gog'"
             ).fetchone()[0]
             db.close()
-            self.assertEqual(identities, 21)
-            self.assertEqual(targets, 44)
+            self.assertEqual(identities, 23)
+            self.assertEqual(targets, 49)
             self.assertEqual(giantbomb, "confirmed")
             self.assertEqual(tuple(acc), ("Irock", "confirmed"))
             self.assertEqual(gog, "confirmed")

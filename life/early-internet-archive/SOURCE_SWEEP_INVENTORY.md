@@ -28,6 +28,8 @@ capture is frozen with provenance.
 | itch.io | Confirmed `starfoxa` | Profile registered in 2015; one public comment | Live profile and comment plus archive captures frozen | Check historical profile captures for deleted activity |
 | Neoseeker | Confirmed `starfoxa` | One indexed 2022 *Fantasian* walkthrough correction | Full comment text retained by the search index; origin returns 403 | Retry archives and enumerate the account profile |
 | PlayStation Underground | Membership confirmed; handle unresolved | Posting and December 2007 ban described in first-person | NSider2 evidence | Resolve the historical forum handle and profile URL |
+| Mathematics Stack Exchange | Confirmed `starfoxa` | Unregistered 2014 account with two questions and follow-up comments | Profile frozen live; both complete question pages frozen from Wayback | Parse questions and attributed comments into the catalog |
+| The Spriters Resource | Confirmed `StarFoxA` | One known *Uninvited* NES scene-sheet contribution | Live and archived metadata pages plus original 1798×3680 PNG frozen | Resolve the contributor profile and check for more assets |
 | Chrono Compendium | Membership confirmed `StarFoxA` | Exactly one post by first-person account | NSider2 evidence only | Solve the site's guest-search verification or recover its member index |
 | Kevan brain | Confirmed `StarFoxA` artifact | Personal interactive page created in 2005 | Exact URLs seeded; origin offline | Recover an archive capture |
 | WikiSider | Confirmed subject `STARFOXA` | Third-party profile about NSider status | Exact URL and first-person discussion | Recover the page as third-party context only |
@@ -132,6 +134,12 @@ handle: posts `993821` through `995163` describe beginning to post there and
 then trying to bypass a December 2007 ban. This remains a membership lead, not
 an attributed `StarFoxA` account.
 
+The broader exact-handle pass found an unregistered Mathematics Stack Exchange
+profile with two 2014 discrete-mathematics questions and several follow-up
+comments. Both question pages survive in full. The same pass found a credited
+*Uninvited* NES scene sheet at The Spriters Resource; its 497,240-byte original
+PNG is verified at 1798×3680 pixels and frozen alongside the page metadata.
+
 ## Reproducible sweep
 
 `source_sweep_seeds.json` holds confirmed identities and exact known URLs.
@@ -156,8 +164,8 @@ remain retryable; an index outage never becomes a false zero-result check.
 The live pass follows the same rule: successful responses are frozen with
 digests and final URLs, while DNS, origin, and HTTP failures remain errors.
 
-Current sweep state: 21 identity records, 177 exact targets, 293 completed or
-retryable index checks, and 511 capture records across 62 targets. The target
+Current sweep state: 23 identity records, 182 exact targets, 303 completed or
+retryable index checks, and 519 capture records across 67 targets. The target
 count includes 133 routes dynamically discovered from frozen Giant Bomb
-profiles. Wayback CDX recovered the majority of the current payload inventory;
-transient replay and Common Crawl errors remain queued for retry.
+profiles. Every indexed capture currently has a frozen raw payload. Common
+Crawl index errors remain queued for retry.

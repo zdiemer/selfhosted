@@ -7,8 +7,9 @@ Downloaded archive data is intentionally excluded from Git under `data/`.
 
 The cross-source sweep tracks confirmed identities and exact recovery targets
 for Giant Bomb, GameSpot, Animal Crossing Community, GOG, Steam, Backloggd,
-ChipMusic, several smaller forums, Twitter, FSU coursework, and the preserved
-personal site. It inventories live pages, Wayback, and Common Crawl
+ChipMusic, Mathematics Stack Exchange, The Spriters Resource, several smaller
+forums, Twitter, FSU coursework, and the preserved personal site. It inventories
+live pages, Wayback, and Common Crawl
 without promoting search-result snippets into the public archive as if they
 were preserved originals.
 
