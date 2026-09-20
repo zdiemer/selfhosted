@@ -344,6 +344,102 @@ def import_official_nsider(db: sqlite3.Connection, root: Path) -> bool:
     return True
 
 
+def import_acc(db: sqlite3.Connection, root: Path) -> bool:
+    path = root / "acc" / "acc.sqlite3"
+    if not path.exists():
+        return False
+    source = open_source(path)
+    post_count = source.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
+    pattern_count = source.execute("SELECT COUNT(*) FROM patterns").fetchone()[0]
+    if post_count == 0 and pattern_count == 0:
+        source.close()
+        return False
+    for row in source.execute("SELECT * FROM posts ORDER BY posted_at,post_id"):
+        add_item(
+            db,
+            item_id=f"animal_crossing_community:{row['post_id']}",
+            source="animal_crossing_community",
+            kind="forum-post",
+            external_id=row["post_id"],
+            title=row["thread_title"] or f"ACC post {row['post_id']}",
+            body=row["content_text"],
+            author=row["author_name"] or "Irock",
+            published_at=normalize_date(row["posted_at"]),
+            canonical_url=row["snapshot_url"],
+            section="Animal Crossing Community",
+            metadata={
+                "thread_id": row["thread_id"],
+                "page_number": row["page_number"],
+                "sequence": row["sequence"],
+                "official_url": row["canonical_url"],
+                "capture_timestamp": row["capture_timestamp"],
+                "user_id": row["author_id"],
+            },
+        )
+    db.commit()
+    for row in source.execute("SELECT * FROM patterns ORDER BY published_at,pattern_id"):
+        body_parts = [f"Pattern by {row['author_name']}."]
+        if row["votes"] is not None and row["score"] is not None:
+            body_parts.append(f"Archived score: {row['score']:.2f} from {row['votes']} votes.")
+        add_item(
+            db,
+            item_id=f"animal_crossing_community:pattern:{row['pattern_id']}",
+            source="animal_crossing_community",
+            kind="pattern",
+            external_id=f"pattern:{row['pattern_id']}",
+            title=row["title"],
+            body=" ".join(body_parts),
+            author=row["author_name"] or "Irock",
+            published_at=normalize_date(row["published_at"]),
+            canonical_url=row["detail_url"],
+            section="ACC Patterns",
+            completeness="metadata" if not source.execute(
+                "SELECT 1 FROM pattern_assets WHERE pattern_id=?", (row["pattern_id"],)
+            ).fetchone() else "full",
+            metadata={
+                "pattern_id": row["pattern_id"],
+                "votes": row["votes"],
+                "score": row["score"],
+                "image_url": row["image_url"],
+                "listing_capture_timestamp": row["listing_capture_timestamp"],
+            },
+        )
+    db.commit()
+    for row in source.execute("SELECT * FROM pattern_assets ORDER BY pattern_id"):
+        add_asset(
+            db,
+            asset_id=f"animal_crossing_community:pattern:{row['pattern_id']}",
+            source="animal_crossing_community",
+            original_url=row["original_url"],
+            media_path=f"acc/{row['media_path']}",
+            mime_type=row["mime_type"],
+            captured_at=row["capture_timestamp"] or "",
+            sha256=row["sha256"],
+            byte_length=row["byte_length"],
+            item_ids=[f"animal_crossing_community:pattern:{row['pattern_id']}"],
+        )
+    db.commit()
+    for row in source.execute(
+        """SELECT requested_post_id,context_post_id,sequence,author_name,
+                  posted_at,content_text
+           FROM context_posts ORDER BY requested_post_id,sequence"""
+    ):
+        db.execute(
+            """INSERT OR IGNORE INTO context_messages(
+                   item_id,sequence,external_id,author,published_at,body,is_owner
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                f"animal_crossing_community:{row['requested_post_id']}",
+                row["sequence"], row["context_post_id"], row["author_name"] or "",
+                normalize_date(row["posted_at"]), row["content_text"],
+                int((row["author_name"] or "").casefold() == "irock"),
+            ),
+        )
+    source.close()
+    db.commit()
+    return True
+
+
 def import_indienerds(db: sqlite3.Connection, root: Path) -> bool:
     path = root / "indienerds" / "indienerds.sqlite3"
     if not path.exists():
@@ -656,6 +752,10 @@ def import_additional(db: sqlite3.Connection, root: Path) -> bool:
 
 def build_stats(db: sqlite3.Connection) -> None:
     labels = {
+        "animal_crossing_community": (
+            "Animal Crossing Community",
+            "Posts recovered from archived ACC threads under the confirmed Irock byline.",
+        ),
         "official_nsider": (
             "Official NSider",
             "Recovered posts from Nintendo's original NSider forums with page context.",
@@ -715,6 +815,7 @@ def build(root: Path, output: Path) -> None:
     try:
         db = create_catalog(temporary)
         imported = {
+            "animal_crossing_community": import_acc(db, root),
             "official_nsider": import_official_nsider(db, root),
             "nsider2": import_nsider2(db, root),
             "indienerds": import_indienerds(db, root),

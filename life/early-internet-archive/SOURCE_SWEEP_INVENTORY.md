@@ -85,9 +85,13 @@ first-person identity chain, not a fuzzy username match. `Parker94` belongs to
 a different participant in the quoted conversation and remains specifically
 excluded.
 
-The initial recovery seed uses ACC's historical profile pattern
-`accf_profile.asp?UserName=Irock`. Archive indexes must confirm the URL before
-any profile fields are promoted into the catalog.
+Archived ACC pages confirm that the exact handle is `Irock`. They also correct
+the initial route assumption: the site's username lookup submitted to
+`user_profile.asp?UserName=Irock`, while resolved profile and post bylines used
+the stable numeric form `user_profile.asp?UserID=...`. Historical threads used
+`thread_messages.asp?ThreadID=...` before later moving to `/Topic/...` routes.
+The ACC collector therefore matches the exact `Irock` byline in archived
+threads and uses its linked numeric user ID as the durable recovery key.
 
 ## Twitter and FSU evidence
 

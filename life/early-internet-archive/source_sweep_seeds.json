@@ -26,7 +26,7 @@
       "handle": "Irock",
       "confidence": "confirmed",
       "evidence": "NSider2 post 2539114 says 'my old username was irock btw' in the ACC discussion; posts 546322 and 2538650 identify ACC as the first forum, joined in 2004, with the account later deleted for inactivity.",
-      "profile_url": "http://www.animalcrossingcommunity.com/accf_profile.asp?UserName=Irock"
+      "profile_url": "http://www.animalcrossingcommunity.com/user_profile.asp?UserName=Irock"
     },
     {
       "source": "fsu",
@@ -251,7 +251,7 @@
       "id": "acc-irock-profile",
       "source": "animal_crossing_community",
       "kind": "profile",
-      "url": "http://www.animalcrossingcommunity.com/accf_profile.asp?UserName=Irock",
+      "url": "http://www.animalcrossingcommunity.com/user_profile.asp?UserName=Irock",
       "attribution": "confirmed"
     },
     {

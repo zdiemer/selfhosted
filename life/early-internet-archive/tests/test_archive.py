@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 import build_library
 import scrape_additional_sources
+import scrape_acc
 import scrape_backloggd
 import scrape_giantbomb
 import scrape_official_nsider
@@ -183,6 +184,96 @@ class OfficialNsiderParserTests(unittest.TestCase):
             result.close()
             self.assertEqual(item, ("official_nsider", "Recovered title", "Recovered words"))
             self.assertEqual(stats, ("Official NSider", 1))
+
+
+class AnimalCrossingCommunityParserTests(unittest.TestCase):
+    PAGE = """
+    <title>Animal Crossing Community: My old thread</title>
+    <td class="threadbold"><span><a href="user_profile.asp?UserID=31415" class="tab">Irock</a></span></td>
+    <td class="threadbody"><div class="postdate"><b>Posted:</b> 8/14/2004 9:41pm</div>
+    <div class="threadmessage">My recovered &amp; exact post.</div>
+    <table><tr><td class="signature">Signature--------------</td></tr></table></td>
+    <td class="threadbold"><span><a href="user_profile.asp?UserID=42" class="tab">Friend</a></span></td>
+    <td class="threadbody"><div class="postdate"><b>Posted:</b> 9:42pm</div>
+    <div class="threadmessage">Context reply</div>
+    <table><tr><td class="signature">Signature--------------</td></tr></table></td>
+    """
+
+    def test_exact_byline_resolves_numeric_user_id(self) -> None:
+        parsed = scrape_acc.parse_page(
+            self.PAGE,
+            "http://www.animalcrossingcommunity.com/thread_messages.asp?ThreadID=123&PageNumber=2",
+            "20040815010000",
+        )
+        self.assertEqual(parsed["thread_title"], "My old thread")
+        self.assertEqual(len(parsed["posts"]), 2)
+        self.assertEqual(parsed["posts"][0]["author_name"], "Irock")
+        self.assertEqual(parsed["posts"][0]["author_id"], "31415")
+        self.assertEqual(parsed["posts"][0]["content_text"], "My recovered & exact post.")
+        self.assertEqual(parsed["posts"][1]["posted_at"], "2004-08-15T21:42:00")
+
+    def test_pattern_listing_parser_requires_exact_irock_byline(self) -> None:
+        listing = """
+        <tr bgcolor="#eee"><td><table><tr><td>
+        <a href="pattern_view.asp?PatternID=142230"><img></a></td>
+        <td>&nbsp;</td><td><a href="pattern_view.asp?PatternID=142230">Mario (Anicro)</a>
+        </td></tr></table></td><td><a href="patterns.asp?UserLogin=Irock">Irock</a></td>
+        <td>8/2/2006</td><td align="right">8</td><td align="right">9.13</td></tr>
+        <tr bgcolor="#fff"><td><table><tr><td>
+        <a href="pattern_view.asp?PatternID=9"><img></a></td>
+        <td>&nbsp;</td><td><a href="pattern_view.asp?PatternID=9">Collision</a>
+        </td></tr></table></td><td><a href="patterns.asp?UserLogin=123Irock">123Irock</a></td>
+        <td>8/2/2006</td><td align="right">1</td><td align="right">10.00</td></tr>
+        """
+        patterns = scrape_acc.parse_patterns_page(listing)
+        self.assertEqual(len(patterns), 1)
+        self.assertEqual(patterns[0]["pattern_id"], "142230")
+        self.assertEqual(patterns[0]["published_at"], "2006-08-02")
+        self.assertEqual(patterns[0]["score"], 9.13)
+
+    def test_match_and_context_are_imported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "acc"
+            db = scrape_acc.connect(source_root / "acc.sqlite3")
+            scrape_acc.store_success(
+                db,
+                source_root,
+                {
+                    "timestamp": "20040815010000",
+                    "original": (
+                        "http://www.animalcrossingcommunity.com/"
+                        "thread_messages.asp?ThreadID=123&PageNumber=2"
+                    ),
+                    "digest": "fixture",
+                    "length": str(len(self.PAGE)),
+                },
+                self.PAGE.encode(),
+            )
+            identity = db.execute(
+                "SELECT username,user_id FROM identities WHERE username='Irock'"
+            ).fetchone()
+            db.close()
+            self.assertEqual(tuple(identity), ("Irock", "31415"))
+            catalog = root / "library.sqlite3"
+            build_library.build(root, catalog)
+            result = sqlite3.connect(catalog)
+            item = result.execute(
+                """SELECT source,author,title,body FROM items
+                   WHERE source='animal_crossing_community'"""
+            ).fetchone()
+            context = result.execute("SELECT COUNT(*) FROM context_messages").fetchone()[0]
+            result.close()
+            self.assertEqual(
+                item,
+                (
+                    "animal_crossing_community",
+                    "Irock",
+                    "My old thread",
+                    "My recovered & exact post.",
+                ),
+            )
+            self.assertEqual(context, 2)
 
 
 class SourceSweepTests(unittest.TestCase):

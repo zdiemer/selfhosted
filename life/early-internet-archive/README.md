@@ -24,6 +24,22 @@ python3 scrape_source_sweep.py --status
 See [`SOURCE_SWEEP_INVENTORY.md`](SOURCE_SWEEP_INVENTORY.md) for the evidence,
 coverage, and next recovery action for each source.
 
+The ACC deep-dive collector scans preserved 2004–06 thread pages for the exact
+`Irock` byline, resolves its linked numeric `UserID`, and retains matching raw
+pages plus surrounding conversation:
+
+```bash
+python3 scrape_acc.py --limit 250
+python3 scrape_acc.py --retry-failures --workers 1
+python3 scrape_acc.py --status
+```
+
+It also preserves the archived Irock pattern gallery. The current recovery is
+45 unique pattern records, 50 historical score observations, and 44 original
+GIFs; archived gallery totals show 369 patterns in 2006 and 450 in the later
+capture. See [`ACC_INVENTORY.md`](ACC_INVENTORY.md) for the evidence, recovered
+designs, quantified gaps, and forum-scan progress.
+
 The Backloggd collector preserves the public profile and every review-list page
 as compressed raw evidence, then stores attributed review text and provenance
 in SQLite and JSONL:
