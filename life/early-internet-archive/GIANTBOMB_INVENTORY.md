@@ -71,6 +71,12 @@ modern, and paginated captures by list ID. Five newly recovered pagination
 captures expand *Humble Obsession Bundle* to 395 retained entries and preserve
 the second page of *Xbox Live Indie Collection*.
 
+All 103 profile artifacts now appear in the archive browser. Complete captures
+retain their recovered bodies; the other 76 entries are visibly marked as
+metadata-only rather than silently omitted. The *Fluid* profile excerpt is
+likewise searchable and marked as an excerpt, bringing Giant Bomb to 121
+public catalog records.
+
 These counts distinguish discovered profile links from captured bodies: seven
 of the fifteen discovered blog pages and eight of the twenty-seven discovered
 list pages still lack a recoverable page capture. Their exact URLs remain

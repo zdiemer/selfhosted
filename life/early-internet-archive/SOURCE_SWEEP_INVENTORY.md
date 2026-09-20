@@ -1,6 +1,6 @@
 # Breadth-first source inventory
 
-Updated 2026-09-19. This register separates identity evidence, indexed leads,
+Updated 2026-09-20. This register separates identity evidence, indexed leads,
 and locally preserved artifacts. A search-engine result is discovery evidence;
 it does not count as preserved until the original response or an archive
 capture is frozen with provenance.
@@ -13,23 +13,23 @@ capture is frozen with provenance.
 | GameSpot | Confirmed `StarFoxA` | Five indexed reviews from 2007–08 | Search-index text and five exact seeds | Recover the pages, locate the historical profile/review index, and enumerate remaining reviews |
 | Animal Crossing Community | Confirmed `Irock` | Joined in 2004; account later deleted for inactivity | First-person NSider2 evidence | Recover the historical profile and enumerate posts carrying the `Irock` byline |
 | Twitter | Confirmed `@zach_diemer` | Profile known; tweet inventory unknown | Identity link on preserved 2019 personal site | Inventory exact profile/tweet URLs in web archives |
-| FSU coursework | Confirmed `zdiemer` | Four original repositories, 2014–16 | Fully preserved under `web/fsu` | Add project records to the archive catalog; no new scrape required |
-| Personal site | Confirmed | 2019 React portfolio and outbound identity links | Preserved under `web/old-diemer-codes` | Add a catalog record and retain a rendered snapshot |
-| Steam | Confirmed `StarFoxA` / ID `76561197993375857` | Public profile, two reviews, 12 screenshot IDs | Four live targets frozen | Parse attributed reviews and screenshot metadata |
-| GOG | Confirmed `StarFoxA` / ID `809111026997` | At least three posts from 2008–09 | Profile and three complete thread pages frozen | Parse the four known posts and enumerate the account's remaining forum history |
+| FSU coursework | Confirmed `zdiemer` | Four original repositories, 2014–16 | Four project records in the catalog; originals under `web/fsu` | Preserve rendered/project-release context where available |
+| Personal site | Confirmed | 2019 React portfolio and outbound identity links | Preserved source and catalog record | Retain a rendered snapshot |
+| Steam | Confirmed `StarFoxA` / ID `76561197993375857` | Public profile, two reviews, 12 screenshot IDs | Two reviews, 12 screenshot records, and 12 original images in the catalog | Retry one rate-limited detail page and inventory older activity |
+| GOG | Confirmed `StarFoxA` / ID `809111026997` | At least three posts from 2008–09 | Three complete posts in the catalog | Enumerate the account's remaining forum history |
 | Backloggd | Confirmed `starfoxa` | 1,603 played games; 673 reviews | Profile and all 45 review pages frozen | Import reviews; then inventory lists and diary data |
-| ChipMusic | Confirmed `StarFoxA` | One known 2011 topic | Profile and complete topic frozen | Parse the authored topic post |
+| ChipMusic | Confirmed `StarFoxA` | One known 2011 topic | Authored post in the catalog | Enumerate other posts by the account |
 | Clacky's Hut | Membership confirmed; handle unresolved | Repeated participation from 2007–08 | First-person NSider2 evidence | Recover forum/profile patterns from archived captures |
 | GIMPTalk | Membership confirmed; handle unresolved | At least one thread participation | First-person NSider2 evidence | Resolve the thread and profile URL |
 | NationalSigLeague | Participation confirmed; handle unresolved | One exact 2008 thread and linked signature | Exact URL seeded | Recover the thread and identify the byline |
 | XboxAchievements | Confirmed `StarFoxA` | 25-post account; one known 2009 thread | Search-index text; exact thread seeded | Resolve the profile and enumerate posts |
-| DS Fanboy | Confirmed `StarFoxA` | One known 2008 article comment; profile ID `1596471` | Original page frozen live | Recover the historical profile/comment inventory |
-| SuperCheats | Confirmed `StarFoxA` | One full 2007 Action Replay code submission | Original frozen; GameFAQs attribution thread seeded | Search for additional submissions |
-| itch.io | Confirmed `starfoxa` | Profile registered in 2015; one public comment | Live profile and comment plus archive captures frozen | Check historical profile captures for deleted activity |
+| DS Fanboy | Confirmed `StarFoxA` | One known 2008 article comment; profile ID `1596471` | Complete comment in the catalog | Recover the historical profile/comment inventory |
+| SuperCheats | Confirmed `StarFoxA` | One full 2007 Action Replay code submission | Complete submission in the catalog; GameFAQs attribution thread seeded | Search for additional submissions |
+| itch.io | Confirmed `starfoxa` | Profile registered in 2015; one public comment | Complete comment in the catalog | Check historical profile captures for deleted activity |
 | Neoseeker | Confirmed `starfoxa` | One indexed 2022 *Fantasian* walkthrough correction | Full comment text retained by the search index; origin returns 403 | Retry archives and enumerate the account profile |
 | PlayStation Underground | Membership confirmed; handle unresolved | Posting and December 2007 ban described in first-person | NSider2 evidence | Resolve the historical forum handle and profile URL |
-| Mathematics Stack Exchange | Confirmed `starfoxa` | Unregistered 2014 account with two questions and follow-up comments | Profile frozen live; both complete question pages frozen from Wayback | Parse questions and attributed comments into the catalog |
-| The Spriters Resource | Confirmed `StarFoxA` | One known *Uninvited* NES scene-sheet contribution | Live and archived metadata pages plus original 1798×3680 PNG frozen | Resolve the contributor profile and check for more assets |
+| Mathematics Stack Exchange | Confirmed `starfoxa` | Unregistered 2014 account with two questions and follow-up comments | Both complete questions and authored comments in the catalog | Check for activity outside the unregistered profile |
+| The Spriters Resource | Confirmed `StarFoxA` | One known *Uninvited* NES scene-sheet contribution | Catalog record and original 1798×3680 PNG | Resolve the contributor profile and check for more assets |
 | Chrono Compendium | Membership confirmed `StarFoxA` | Exactly one post by first-person account | NSider2 evidence only | Solve the site's guest-search verification or recover its member index |
 | Kevan brain | Confirmed `StarFoxA` artifact | Personal interactive page created in 2005 | Exact URLs seeded; origin offline | Recover an archive capture |
 | WikiSider | Confirmed subject `STARFOXA` | Third-party profile about NSider status | Exact URL and first-person discussion | Recover the page as third-party context only |
@@ -166,9 +166,9 @@ remain retryable; an index outage never becomes a false zero-result check.
 The live pass follows the same rule: successful responses are frozen with
 digests and final URLs, while DNS, origin, and HTTP failures remain errors.
 
-Current sweep state: 23 identity records, 253 exact targets, 374 completed or
-retryable index checks, and 576 capture records across 85 targets. The target
+Current sweep state: 23 identity records, 291 exact targets, 412 completed or
+retryable index checks, and 613 capture records across 122 targets. The target
 count includes 133 routes dynamically discovered from frozen Giant Bomb
-profiles, 30 historical and modern routes discovered from its review index,
-and 40 list-pagination routes. Every indexed capture currently has a frozen
+profiles, historical and modern routes discovered from its review index,
+list-pagination routes, and Steam review/screenshot/media routes. Every indexed capture currently has a frozen
 raw payload. Common Crawl index errors remain queued for retry.

@@ -16,6 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 import build_library
+import scrape_additional_sources
 import scrape_backloggd
 import scrape_giantbomb
 import scrape_official_nsider
@@ -382,6 +383,18 @@ class GiantBombParserTests(unittest.TestCase):
         self.assertEqual(link["reviewed_at"], "2009-04-21")
         self.assertEqual(len(link["urls"]), 2)
 
+        excerpt_index = """
+        <div class="content-pod user-review-detail"><div class="bd"><table><tr>
+        <td class="review"><span class="title">
+        <a href="/fluid/61-33053/user-reviews/?review_id=17450">Smooth, innovative, unique</a>
+        </span><p>A preserved profile excerpt.</p>
+        <span class="author">Reviewed by <a>StarFoxA</a> on Nov. 5, 2010</span></td>
+        <td><img src="/icons/star-10.png"></td></tr></table></div></div>
+        """
+        lead = scrape_giantbomb.parse_review_links(excerpt_index)[0]
+        self.assertEqual(lead["game_title"], "Fluid")
+        self.assertEqual(lead["excerpt"], "A preserved profile excerpt.")
+
         page = """
         <h1><a href="/burnout-paradise/3030-5648/" class="wiki-title">
           Burnout Paradise</a></h1>
@@ -520,6 +533,62 @@ class BackloggdParserTests(unittest.TestCase):
             result.close()
             self.assertEqual(item, ("backloggd", "Chrono Trigger", "Still wonderful."))
             self.assertEqual(stats, ("Backloggd", 1))
+
+
+class AdditionalSourcesTests(unittest.TestCase):
+    def test_steam_detail_and_supercheats_parsing(self) -> None:
+        screenshot = scrape_additional_sources.parse_steam_screenshot_detail(
+            """
+            <div class="apphub_AppName">Grand Theft Auto V</div>
+            <a href="https://images.example/original.jpg"><img id="ActualMedia"></a>
+            <div class="detailsStatRight">Jan 2, 2016 @ 11:01pm</div>
+            """,
+            "591490578",
+            "https://steamcommunity.com/sharedfiles/filedetails/?id=591490578",
+        )[0]
+        self.assertEqual(screenshot["title"], "Grand Theft Auto V — screenshot")
+        self.assertEqual(screenshot["published_at"], "2016-01-02T23:01:00")
+        self.assertEqual(screenshot["completeness"], "full")
+
+        cheat = scrape_additional_sources.parse_supercheats(
+            """
+            <a href='/members/StarFoxA'>StarFoxA</a> posted:
+            <i>Sep 5th 2007, ID#910</i><strong>Secret ID Modifier</strong>
+            <div id='sub910' class=arcodearea>Preserved code body</div>
+            """,
+            "https://www.supercheats.com/nintendods/pokemon-diamond/910/ar-codes/",
+        )[0]
+        self.assertEqual(cheat["published_at"], "2007-09-05T00:00:00")
+        self.assertEqual(cheat["body"], "Preserved code body")
+
+    def test_additional_database_is_imported_into_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "additional"
+            source = scrape_additional_sources.connect(source_root / "additional.sqlite3")
+            source.execute(
+                "INSERT INTO items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "gog:1", "gog", "forum-post", "1", "Recovered GOG post",
+                    "Preserved body", "StarFoxA", "2011-01-02", "https://www.gog.com/forum/x",
+                    "GOG Forums", "full", "[]", "{}", "20110102000000",
+                    "20110102000000", 1, "[]", "now",
+                ),
+            )
+            source.commit()
+            source.close()
+            catalog = root / "library.sqlite3"
+            build_library.build(root, catalog)
+            result = sqlite3.connect(catalog)
+            item = result.execute(
+                "SELECT source,title,body FROM items WHERE id='additional:gog:1'"
+            ).fetchone()
+            stats = result.execute(
+                "SELECT label,item_count FROM source_stats WHERE source='gog'"
+            ).fetchone()
+            result.close()
+            self.assertEqual(item, ("gog", "Recovered GOG post", "Preserved body"))
+            self.assertEqual(stats, ("GOG", 1))
 
 
 class FrontendTests(unittest.TestCase):

@@ -468,7 +468,13 @@ def import_giantbomb(db: sqlite3.Connection, root: Path) -> bool:
         if table_exists(source, "content_items")
         else 0
     )
-    if review_count == 0 and content_count == 0:
+    artifact_count = source.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0]
+    lead_count = (
+        source.execute("SELECT COUNT(*) FROM review_leads").fetchone()[0]
+        if table_exists(source, "review_leads")
+        else 0
+    )
+    if review_count == 0 and content_count == 0 and artifact_count == 0 and lead_count == 0:
         source.close()
         return False
     for row in source.execute("SELECT * FROM reviews ORDER BY reviewed_at,review_id"):
@@ -523,6 +529,126 @@ def import_giantbomb(db: sqlite3.Connection, root: Path) -> bool:
                 section="Giant Bomb",
                 metadata=metadata,
             )
+    recovered_reviews = {
+        row[0] for row in source.execute("SELECT review_id FROM reviews")
+    }
+    if lead_count:
+        for row in source.execute("SELECT * FROM review_leads ORDER BY reviewed_at,review_id"):
+            if row["review_id"] in recovered_reviews:
+                continue
+            body = row["excerpt"] or (
+                "The historical profile confirms this review, but its complete body "
+                "has not yet been recovered."
+            )
+            add_item(
+                db,
+                item_id=f"giantbomb:review-lead:{row['review_id']}",
+                source="giantbomb",
+                kind="review",
+                external_id=f"review-lead:{row['review_id']}",
+                title=f"{row['game_title']}: {row['headline']}",
+                body=body,
+                author="StarFoxA",
+                published_at=normalize_date(row["reviewed_at"]),
+                canonical_url=row["canonical_url"],
+                section="Giant Bomb",
+                completeness="excerpt" if row["excerpt"] else "metadata-only",
+                tags=[str(row["rating"])] if row["rating"] is not None else [],
+                metadata={
+                    "review_id": row["review_id"],
+                    "rating": row["rating"],
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
+                    "snapshot_count": row["snapshot_count"],
+                    "raw_paths": json.loads(row["raw_paths_json"]),
+                },
+            )
+    recovered_artifacts = {
+        (row["kind"], row["external_id"])
+        for row in source.execute("SELECT kind,external_id FROM content_items")
+    } if content_count else set()
+    for row in source.execute("SELECT * FROM artifacts ORDER BY kind,legacy_id"):
+        if (row["kind"], row["legacy_id"]) in recovered_artifacts:
+            continue
+        kind = "image-record" if row["kind"] == "image" else f"{row['kind']}-record"
+        body = (
+            f"Metadata-only {row['kind']} record from the historical StarFoxA profile. "
+            "The profile exposed this artifact URL, but a complete artifact-page capture "
+            "has not yet been recovered."
+        )
+        add_item(
+            db,
+            item_id=f"giantbomb:artifact:{row['artifact_id']}",
+            source="giantbomb",
+            kind=kind,
+            external_id=f"artifact:{row['artifact_id']}",
+            title=row["title"] or f"Giant Bomb {row['kind']} {row['legacy_id']}",
+            body=body,
+            author="StarFoxA",
+            published_at="",
+            canonical_url=row["url"],
+            section="Giant Bomb",
+            completeness="metadata-only",
+            metadata={
+                "legacy_id": row["legacy_id"],
+                "slug": row["slug"],
+                "observed_urls": json.loads(row["urls_json"]),
+                "first_seen": row["first_seen"],
+                "last_seen": row["last_seen"],
+                "snapshot_count": row["snapshot_count"],
+                "raw_paths": json.loads(row["raw_paths_json"]),
+            },
+        )
+    source.close()
+    db.commit()
+    return True
+
+
+def import_additional(db: sqlite3.Connection, root: Path) -> bool:
+    path = root / "additional" / "additional.sqlite3"
+    if not path.exists():
+        return False
+    source = open_source(path)
+    if source.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0:
+        source.close()
+        return False
+    for row in source.execute("SELECT * FROM items ORDER BY source,published_at,external_id"):
+        metadata = json.loads(row["metadata_json"])
+        metadata.update({
+            "first_seen": row["first_seen"],
+            "last_seen": row["last_seen"],
+            "snapshot_count": row["snapshot_count"],
+            "raw_paths": json.loads(row["raw_paths_json"]),
+        })
+        add_item(
+            db,
+            item_id=f"additional:{row['content_id']}",
+            source=row["source"],
+            kind=row["kind"],
+            external_id=row["external_id"],
+            title=row["title"],
+            body=row["body"],
+            author=row["author"],
+            published_at=normalize_date(row["published_at"]),
+            canonical_url=row["canonical_url"],
+            section=row["section"],
+            completeness=row["completeness"],
+            tags=json.loads(row["tags_json"]),
+            metadata=metadata,
+        )
+    for row in source.execute("SELECT * FROM assets ORDER BY source,asset_id"):
+        add_asset(
+            db,
+            asset_id=f"additional:{row['asset_id']}",
+            source=row["source"],
+            original_url=row["original_url"],
+            media_path=row["local_path"],
+            mime_type=row["mime_type"],
+            captured_at=normalize_date(row["captured_at"]),
+            sha256=row["sha256"],
+            byte_length=row["byte_length"],
+            item_ids=json.loads(row["item_ids_json"]),
+        )
     source.close()
     db.commit()
     return True
@@ -542,6 +668,17 @@ def build_stats(db: sqlite3.Connection) -> None:
             "Giant Bomb",
             "Reviews, blogs, user lists, and forum posts recovered from historical snapshots of the confirmed StarFoxA profile.",
         ),
+        "chipmusic": ("ChipMusic", "Forum posts from the ChipMusic community."),
+        "ds_fanboy": ("DS Fanboy", "Comments recovered from DS Fanboy."),
+        "fsu_coursework": ("FSU Coursework", "Preserved software projects from university coursework."),
+        "gog": ("GOG", "Posts from the GOG community forums."),
+        "gtfoutsider": ("WikiSider", "Third-party historical context from WikiSider."),
+        "itch_io": ("itch.io", "Comments from itch.io game pages."),
+        "math_stackexchange": ("Mathematics Stack Exchange", "Questions and follow-up comments from Mathematics Stack Exchange."),
+        "personal_site": ("Personal Site", "Preserved personal website content."),
+        "spriters_resource": ("The Spriters Resource", "Submitted sprite sheets and associated media."),
+        "steam": ("Steam", "Reviews and screenshots from the confirmed Steam profile."),
+        "supercheats": ("SuperCheats", "Game code submissions from SuperCheats."),
     }
     sources = {row[0] for row in db.execute("SELECT DISTINCT source FROM items")}
     sources.update(row[0] for row in db.execute("SELECT DISTINCT source FROM assets"))
@@ -584,11 +721,15 @@ def build(root: Path, output: Path) -> None:
             "photobucket": import_photobucket(db, root),
             "backloggd": import_backloggd(db, root),
             "giantbomb": import_giantbomb(db, root),
+            "additional": import_additional(db, root),
         }
         sources = [name for name, present in imported.items() if present]
         if not sources:
             raise RuntimeError(f"no supported archive databases found beneath {root}")
         build_stats(db)
+        sources = [
+            row[0] for row in db.execute("SELECT source FROM source_stats ORDER BY source")
+        ]
         metadata = {
             "schema_version": SCHEMA_VERSION,
             "generated_at": utc_now(),

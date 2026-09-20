@@ -51,9 +51,26 @@ python3 scrape_source_sweep.py --download --skip-wayback --skip-common-crawl
 Current Giant Bomb discovery: 103 attributed artifacts (15 blogs, 27 lists,
 and 61 image records). Captured artifact pages currently yield eight complete
 blogs, nineteen user lists, and seven forum posts, alongside ten complete
-reviews from 2008–12; all 44 records are searchable in the catalog. See
+reviews from 2008–12. The remaining review excerpt and every metadata-only
+profile artifact are also searchable and explicitly labeled, for 121 Giant
+Bomb records in the catalog. See
 [`GIANTBOMB_INVENTORY.md`](GIANTBOMB_INVENTORY.md) for coverage and recovery
 details.
+
+`scrape_additional_sources.py` promotes attributed material preserved by the
+breadth-first sweep into a normalized database while retaining capture paths,
+timestamps, and completeness labels:
+
+```bash
+python3 scrape_additional_sources.py
+python3 build_library.py
+```
+
+The current projection adds 42 records and 13 assets from Backloggd lists,
+ChipMusic, DS Fanboy, GOG, itch.io, Mathematics Stack Exchange, Steam,
+SuperCheats, The Spriters Resource, WikiSider context, FSU coursework, and the
+preserved personal site. See
+[`ADDITIONAL_SOURCES_INVENTORY.md`](ADDITIONAL_SOURCES_INVENTORY.md).
 
 ## Official NSider
 

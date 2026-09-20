@@ -207,9 +207,11 @@ def parse_review_links(source: str) -> list[dict[str, Any]]:
             review_id,
             {
                 "review_id": review_id,
+                "game_title": parsed.path.strip("/").split("/")[0].replace("-", " ").title(),
                 "headline": clean_text(raw_label),
                 "rating": None,
                 "reviewed_at": "",
+                "excerpt": "",
                 "urls": [],
             },
         )
@@ -218,6 +220,9 @@ def parse_review_links(source: str) -> list[dict[str, Any]]:
         if len(label) > len(record["headline"]):
             record["headline"] = label
         following = source[match.end() : match.end() + 2500]
+        excerpt = re.search(r"(?is)<p\b[^>]*>(.*?)</p>", following)
+        if excerpt and len(clean_text(excerpt.group(1))) > len(record["excerpt"]):
+            record["excerpt"] = clean_text(excerpt.group(1))
         rating = re.search(r"/star-(\d+)\.png", following, re.I)
         if rating:
             record["rating"] = int(rating.group(1))
@@ -542,6 +547,20 @@ def connect(path: Path) -> sqlite3.Connection:
             raw_paths_json TEXT NOT NULL,
             parsed_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS review_leads (
+            review_id TEXT PRIMARY KEY,
+            game_title TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            rating INTEGER,
+            reviewed_at TEXT NOT NULL,
+            excerpt TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            snapshot_count INTEGER NOT NULL,
+            raw_paths_json TEXT NOT NULL,
+            parsed_at TEXT NOT NULL
+        );
         """
     )
     columns = {row[1] for row in db.execute("PRAGMA table_info(artifacts)")}
@@ -611,15 +630,27 @@ def discover(
                     parsed["review_id"],
                     {
                         "review_id": parsed["review_id"],
+                        "game_title": parsed["game_title"],
                         "headline": "",
                         "rating": None,
                         "reviewed_at": "",
+                        "excerpt": "",
                         "urls": [],
+                        "first_seen": row["timestamp"],
+                        "last_seen": row["timestamp"],
+                        "raw_paths": [],
                     },
                 )
+                record["first_seen"] = min(record["first_seen"], row["timestamp"])
+                record["last_seen"] = max(record["last_seen"], row["timestamp"])
+                record["raw_paths"].append(row["raw_path"])
                 record["urls"].extend(parsed["urls"])
+                if parsed["game_title"]:
+                    record["game_title"] = parsed["game_title"]
                 if len(parsed["headline"]) > len(record["headline"]):
                     record["headline"] = parsed["headline"]
+                if len(parsed["excerpt"]) > len(record["excerpt"]):
+                    record["excerpt"] = parsed["excerpt"]
                 if parsed["rating"] is not None:
                     record["rating"] = parsed["rating"]
                 if parsed["reviewed_at"]:
@@ -643,6 +674,19 @@ def discover(
                     "confirmed",
                 ),
             )
+
+    db.execute("DELETE FROM review_leads")
+    now = utc_now()
+    for record in review_links.values():
+        db.execute(
+            "INSERT INTO review_leads VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record["review_id"], record["game_title"], record["headline"],
+                record["rating"], record["reviewed_at"], record["excerpt"],
+                record["urls"][0], record["first_seen"], record["last_seen"],
+                len(set(record["raw_paths"])), json.dumps(sorted(set(record["raw_paths"]))), now,
+            ),
+        )
 
     rows = sweep_db.execute(
         """SELECT c.timestamp,c.raw_path,t.id target_id,t.url
@@ -855,6 +899,7 @@ def export_jsonl(db: sqlite3.Connection, root: Path) -> None:
         ("artifacts", "artifacts.jsonl", "kind,legacy_id"),
         ("reviews", "reviews.jsonl", "reviewed_at,review_id"),
         ("content_items", "content_items.jsonl", "kind,published_at,external_id"),
+        ("review_leads", "review_leads.jsonl", "reviewed_at,review_id"),
     ):
         with (root / filename).open("w", encoding="utf-8") as output:
             for row in db.execute(f"SELECT * FROM {table} ORDER BY {order}"):
@@ -871,6 +916,7 @@ def status(db: sqlite3.Connection) -> dict[str, Any]:
             )
         },
         "reviews": db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
+        "review_leads": db.execute("SELECT COUNT(*) FROM review_leads").fetchone()[0],
         "content_items": db.execute("SELECT COUNT(*) FROM content_items").fetchone()[0],
         "content_by_kind": {
             row["kind"]: row["count"]

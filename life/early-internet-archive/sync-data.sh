@@ -12,6 +12,7 @@ RELEASE="${RELEASE:-early-internet-archive}"
 CLAIM="${CLAIM:-${RELEASE}-archive}"
 POD="${POD:-${RELEASE}-data-sync}"
 BUSYBOX_IMAGE="${BUSYBOX_IMAGE:-busybox:1.37.0}"
+SYNC_PATHS="${SYNC_PATHS:-.}"
 
 command -v helm >/dev/null || { echo "helm required" >&2; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required" >&2; exit 1; }
@@ -21,6 +22,16 @@ command -v tar >/dev/null || { echo "tar required" >&2; exit 1; }
   echo "catalog missing: run ./build_library.py before syncing" >&2
   exit 1
 }
+
+read -r -a SYNC_ITEMS <<< "$SYNC_PATHS"
+SYNC_ROOT="${DATA_ROOT%/}/"
+for item in "${SYNC_ITEMS[@]}"; do
+  [[ "$item" != /* && ! "$item" =~ (^|/)\.\.(/|$) ]] || {
+    echo "unsafe sync path: $item" >&2
+    exit 1
+  }
+  [[ -e "$DATA_ROOT/$item" ]] || { echo "sync path missing: $DATA_ROOT/$item" >&2; exit 1; }
+done
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
@@ -88,9 +99,9 @@ EOF
 
 kubectl -n "$NAMESPACE" wait --for=condition=Ready "pod/$POD" --timeout=180s
 
-LOCAL_BYTES="$(du -sb "$DATA_ROOT" | awk '{print $1}')"
-echo "==> Copying $(du -sh "$DATA_ROOT" | awk '{print $1}') into PVC $CLAIM"
-tar -C "$DATA_ROOT" -cf - . | kubectl -n "$NAMESPACE" exec -i "$POD" -- tar -C /archive -xof -
+LOCAL_BYTES="$(du -scb "${SYNC_ITEMS[@]/#/$SYNC_ROOT}" | tail -1 | awk '{print $1}')"
+echo "==> Copying ${SYNC_PATHS} into PVC $CLAIM"
+tar -C "$DATA_ROOT" -cf - -- "${SYNC_ITEMS[@]}" | kubectl -n "$NAMESPACE" exec -i "$POD" -- tar -C /archive -xof -
 
 LOCAL_CATALOG_SHA="$(sha256sum "$DATA_ROOT/library.sqlite3" | awk '{print $1}')"
 REMOTE_CATALOG_SHA="$(kubectl -n "$NAMESPACE" exec "$POD" -- sha256sum /archive/library.sqlite3 | awk '{print $1}')"

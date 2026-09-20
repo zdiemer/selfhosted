@@ -25,6 +25,13 @@ python3 build_library.py
 ./sync-data.sh
 ```
 
+For an incremental refresh after a source sweep, transfer only the rebuilt
+catalog and changed preservation directories:
+
+```bash
+SYNC_PATHS="library.sqlite3 additional source_sweep giantbomb" ./sync-data.sh
+```
+
 `sync-data.sh` creates the default claim when it does not exist, streams the
 local preservation tree into it, and verifies the copied catalog by SHA-256.
 It does not delete unrecognized files already on the claim. To target an
