@@ -1,0 +1,182 @@
+{{- if .Values.streaming.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "romm.fullname" . }}-webstation-setup
+data:
+  10-firmware.sh: |
+    #!/bin/sh
+    set -eu
+    python3 /setup/setup-webstation.py
+  setup-webstation.py: |
+    {{- .Files.Get "files/setup-webstation.py" | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "romm.fullname" . }}-webstation
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.streaming.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.streaming.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "romm.fullname" . }}-webstation
+spec:
+  selector:
+    app.kubernetes.io/name: romm-webstation
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "romm.fullname" . }}-webstation
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: romm-webstation
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: romm-webstation
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        logging.zachd/external-ingress: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        checksum/builder: {{ include (print $.Template.BasePath "/library-builder.yaml") . | sha256sum }}
+        checksum/env: {{ include (print $.Template.BasePath "/romm-env.yaml") . | sha256sum }}
+        checksum/setup: {{ .Files.Get "files/setup-webstation.py" | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.streaming.node }}
+      securityContext:
+        supplementalGroups: [992]
+      terminationGracePeriodSeconds: 90
+      initContainers:
+        - name: build-library
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: [python3, /builder/build.py]
+          volumeMounts:
+            - name: library
+              mountPath: /romm/library
+            - name: nas
+              mountPath: /romm/library/.nas
+              readOnly: true
+            - name: romm-config
+              mountPath: /romm/config/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: builder
+              mountPath: /builder
+              readOnly: true
+      containers:
+        - name: webstation
+          image: {{ .Values.streaming.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            # Same device-cgroup requirement as Jellyfin, until a GPU plugin exists.
+            privileged: true
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/Los_Angeles
+            - name: SUBFOLDER
+              value: /streaming/
+            - name: DRINODE
+              value: /dev/dri/renderD128
+            - name: BROKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "romm.fullname" . }}-env
+                  key: STREAMING_BROKER_SECRET
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /streaming/api/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /streaming/api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /streaming/api/health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.streaming.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: library
+              mountPath: /romm/library
+              readOnly: true
+            - name: nas
+              mountPath: /romm/library/.nas
+              readOnly: true
+            - name: dri
+              mountPath: /dev/dri
+            - name: shm
+              mountPath: /dev/shm
+            - name: setup
+              mountPath: /setup
+              readOnly: true
+            - name: setup
+              mountPath: /custom-cont-init.d/10-firmware.sh
+              subPath: 10-firmware.sh
+              readOnly: true
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ include "romm.fullname" . }}-webstation
+        - name: library
+          emptyDir: {}
+        - name: nas
+          persistentVolumeClaim:
+            claimName: {{ include "romm.fullname" . }}-library
+        - name: romm-config
+          configMap:
+            name: {{ include "romm.fullname" . }}-config
+        - name: builder
+          configMap:
+            name: {{ include "romm.fullname" . }}-library-builder
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+        - name: setup
+          configMap:
+            name: {{ include "romm.fullname" . }}-webstation-setup
+            defaultMode: 0555
+{{- end }}

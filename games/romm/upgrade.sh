@@ -2,7 +2,7 @@
 # Apply the current chart + values.local.yaml to the running RomM release.
 #
 # Flow:
-#   1. helm upgrade (Recreate strategy — SQLite + single data PVC means
+#   1. helm upgrade (Recreate strategy — single RWO data PVC means
 #      we can never have two pods up at once)
 #   2. Wait for rollout
 #   3. Print pod status
@@ -32,7 +32,10 @@ echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
 
 echo "==> Waiting for ${RELEASE} rollout"
-$K rollout status "deployment/${RELEASE}" --timeout=300s
+$K rollout status "deployment/${RELEASE}" --timeout=2100s
+if $K get "deployment/${RELEASE}-webstation" >/dev/null 2>&1; then
+  $K rollout status "deployment/${RELEASE}-webstation" --timeout=2100s
+fi
 
 echo "==> Pods"
 $K get pods -l app.kubernetes.io/instance="${RELEASE}"

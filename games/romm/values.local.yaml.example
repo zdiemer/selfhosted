@@ -6,6 +6,9 @@ smb:
   username: "roms-reader"        # dedicated read-only SMB user (see README)
   password: "CHANGE-ME"
 
+streaming:
+  brokerSecret: "" # Dedicated random secret shared with Webstation; stored in 1Password.
+
 romm:
   # Generate: openssl rand -hex 32
   authSecretKey: "CHANGE-ME-64-hex-chars"

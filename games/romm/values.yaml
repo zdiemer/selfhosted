@@ -1,6 +1,6 @@
 image:
   repository: rommapp/romm
-  tag: "5.2.0"
+  tag: "5.3.0"
   pullPolicy: IfNotPresent
 
 # RomM requires MariaDB. There is no SQLite option: ROMM_DB_DRIVER defaults to
@@ -98,6 +98,12 @@ config:
   skipFolders:
     - _psn
     - _unused
+    - _manual
+    - _disckeys
+    - _updates
+    - _dlc
+    - _cdn
+    - _nus
   # Platforms that keep no games at their folder root, so the builder has to
   # descend before linking. MAME is a full romset snapshot, not a game folder:
   #
@@ -112,57 +118,40 @@ config:
   # pinning it, so a 0.289 bump needs no chart change; highest version wins.
   platformSubdirs:
     MAME: "*/roms"
+    "Nintendo 3DS": "_decrypted"
+    "New Nintendo 3DS": "_decrypted"
+    "Wii U": "_decrypted"
   # Hashing reads every ROM in full. The playable set is 8.06 TB over a link that
   # sustains 107 MB/s, so this is a ~22h one-off — deliberately accepted, because
   # hashes are what Hasheous and RetroAchievements identify games BY. They're
   # cached in the DB afterwards, not recomputed on later scans.
   # It is only worth paying if something consumes the hashes: see romm.hasheous.
-  skipHashCalculation: false
+  # Index first; multi-terabyte disc systems must not be fully hashed to play.
+  skipHashCalculation: true
   # Folders that aren't game platforms, or that we don't want RomM walking.
   excludePlatforms:
-    # Everything RomM cannot PLAY IN THE BROWSER. RomM's EmulatorJS build ships a
-    # fixed table of 78 platform slugs (frontend bundle, object `mO`); anything
-    # outside it has no core, so it is a catalogue entry with no Play button.
-    # That rules out Dreamcast, MSX, Vectrex and Atari ST (no flycast/bluemsx/
-    # vecx/hatari in the build), every modern console (PS2 up, Xbox, Wii, Switch),
-    # the home micros (ZX Spectrum, BBC, Apple II), and the arcade BOARDS whose
-    # games MAME 2003 / FBNeo can't run (Naomi, Chihiro, Triforce, Atomiswave,
-    # TeknoParrot, Daphne laserdisc). The MAME folder itself stays.
+    # Systems without a configured browser or native streaming player.
     - J2ME
     - Flashpoint-Flash
-    - ZX Spectrum
     - Flashpoint-HTML5
     - Symbian
     - iOS
-    - Atari ST
     - Flashpoint-Shockwave
-    - PS2
-    - MSX
     - BBC Micro
     - Apple II
     - e-Reader
     - Flashpoint-Unity
-    - MSX2
-    - Wii
-    - Xbox
     - Playdate
-    - Xbox 360
     - Ouya
-    - PS3
-    - WiiWare
     - Flashpoint-Java
     - PC-88
     - Sharp X68000
-    - Nintendo 3DS
     - Visual Pinball
     - ZX81
     - Windows 3.x
-    - ScummVM
     - FM Towns
-    - Dreamcast
     - Mac OS
     - GP2X
-    - GameCube
     - TI-99-4A
     - Oric
     - TeknoParrot
@@ -184,19 +173,14 @@ config:
     - GP2X Wiz
     - Android
     - Naomi
-    - Intellivision
     - N-Gage 2.0
     - Dreamcast VMU
-    - SG-1000
     - N-Gage
     - Windows Mobile
-    - Odyssey 2
     - PC-6001
     - Zodiac
     - BREW
-    - Neo Geo CD
     - Namco System 2x6
-    - MSX Turbo R
     - SuperVision
     - Singe Arcade
     - CDTV
@@ -204,7 +188,6 @@ config:
     - DREAMM
     - Arcadia 2001
     - ExEn
-    - Vectrex
     - Triforce
     - Playdia
     - Atari 8-bit
@@ -220,17 +203,14 @@ config:
     - Naomi 2
     - GP32
     - Laserdisc Arcade
-    - Switch
     - American Laser Games
     - Chihiro
     - Apple Lisa
     - Sufami Turbo
     - Loopy
     - Risc PC
-    - PS4
     - Nuon
     - TI Calculators
-    - New Nintendo 3DS
     - Keitai
     - VideoNow XP
     - IBM OS2
@@ -243,7 +223,6 @@ config:
     - _romnas
     - PlayStation Mobile
     - Gizmondo
-    - Wii U
     - Sharp X1
     - Flashpoint
     - SNK
@@ -252,6 +231,30 @@ config:
     - Fire TV
   # your-folder-name: romm-platform-name, for folders RomM can't identify.
   platformMap:
+    "GameCube": ngc
+    "Wii": wii
+    "WiiWare": wii
+    "PS2": ps2
+    "PS3": ps3
+    "PS4": ps4
+    "Xbox": xbox
+    "Xbox 360": xbox360
+    "Wii U": wiiu
+    "Nintendo 3DS": 3ds
+    "New Nintendo 3DS": 3ds
+    "Switch": switch
+    "Dreamcast": dc
+    "ScummVM": scummvm
+    "Intellivision": intellivision
+    "Vectrex": vectrex
+    "Odyssey 2": odyssey-2
+    "SG-1000": sg1000
+    "Neo Geo CD": neo-geo-cd
+    "MSX": msx
+    "MSX2": msx2
+    "MSX Turbo R": msx2
+    "ZX Spectrum": zxs
+    "Atari ST": atari-st
     "3DO": 3do
     "Amiga": amiga
     "Amiga CD32": amiga-cd32
@@ -394,3 +397,79 @@ resources:
     # A scan of 167 platforms sat at 990Mi against the old 1Gi limit — it was one
     # big platform away from being OOM-killed mid-scan.
     memory: 3Gi
+
+# Native emulators share one GPU-backed desktop/session.
+streaming:
+  enabled: true
+  image: lscr.io/linuxserver/webstation:romm@sha256:d9dbd3d83de61cd899bc0a360a0f3ac1afa7b6799deffd1b0585b05a3e2b286e
+  node: zachd-ubuntu-6
+  brokerSecret: ''
+  storageClass: truenas-iscsi
+  size: 100Gi
+  resources:
+    requests:
+      cpu: '2'
+      memory: 4Gi
+    limits:
+      memory: 8Gi
+  platforms:
+    3do: retroarch
+    3ds: azahar
+    amiga: retroarch
+    arcade: retroarch
+    atari-st: retroarch
+    atari2600: retroarch
+    atari5200: retroarch
+    atari7800: retroarch
+    c64: retroarch
+    colecovision: retroarch
+    dc: flycast
+    dos: retroarch
+    fds: retroarch
+    gamegear: retroarch
+    gb: retroarch
+    gba: retroarch
+    gbc: retroarch
+    genesis: retroarch
+    intellivision: retroarch
+    jaguar: retroarch
+    lynx: retroarch
+    msx: retroarch
+    msx2: retroarch
+    n64: retroarch
+    nds: retroarch
+    neo-geo-cd: retroarch
+    neo-geo-pocket: retroarch
+    neo-geo-pocket-color: retroarch
+    nes: retroarch
+    ngc:
+      emulator: dolphin
+      memory_card_sync: true
+    odyssey-2: retroarch
+    ps2:
+      emulator: pcsx2
+      memory_card_sync: true
+    ps3: rpcs3
+    ps4: shadps4
+    psp: ppsspp
+    psx: duckstation
+    saturn: retroarch
+    scummvm: scummvm
+    sega32: retroarch
+    segacd: retroarch
+    sg1000: retroarch
+    sms: retroarch
+    snes: retroarch
+    supergrafx: retroarch
+    switch: eden
+    tg16: retroarch
+    turbografx-cd: retroarch
+    vectrex: retroarch
+    virtualboy: retroarch
+    wii: dolphin
+    wiiu: cemu
+    wonderswan: retroarch
+    wonderswan-color: retroarch
+    xbox: xemu
+    xbox360: xenia
+    zxs: retroarch

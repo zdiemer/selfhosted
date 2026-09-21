@@ -1,5 +1,15 @@
 # RomM — self-hosted ROM manager
 
+RomM 5.3.0 uses explicit filesystem templates. The chart renders
+`Roms/{platform}/{game}` and `_bios/{platform}` for the existing generated
+library; the removed `roms_folder` and `firmware_folder` settings are no longer
+sent to RomM. The chart's `romsFolder`/`firmwareFolder` values still control
+both the builder and these templates.
+
+Native emulator streaming is enabled on `zachd-ubuntu-6`. See
+[STREAMING.md](STREAMING.md) for supported platforms, indexing, firmware and
+save handling.
+
 Helm chart that runs [RomM](https://github.com/rommapp/romm) on our k3s
 cluster with the ROM library mounted **read-only over SMB** from the
 existing NAS share (the same one the Steam Deck uses). Friends browse and

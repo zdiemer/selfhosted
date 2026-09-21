@@ -1,12 +1,10 @@
 {{/*
 RomM's config.yml. Two settings here are not cosmetic at this library's scale:
 
-  skip_hash_calculation — RomM otherwise CRC/MD5/SHA1s every ROM it scans. The
-    share is 78 TB over SMB; hashing it would drag the whole library across the
-    network for no benefit we need.
+  skip_hash_calculation — controls the expensive initial hash scan over SMB.
 
-  roms_folder — the share already has a `Roms/` folder full of platforms, so
-    point RomM at it rather than reshaping 78 TB to suit the default.
+  structure — required by RomM 5.3; describes the builder's existing symlink
+    tree, preserving the paths already stored in the database.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -17,12 +15,24 @@ metadata:
 data:
   config.yml: |
     filesystem:
-      roms_folder: {{ .Values.config.romsFolder | quote }}
-      # BIOS lives at <platform>/_bios on this share. RomM's default is "bios", so
-      # it was finding nothing — and without a BIOS, half the disc-based cores
-      # (pcsx_rearmed, opera, same_cdi) can't boot a game at all.
-      firmware_folder: {{ .Values.config.firmwareFolder | quote }}
+      structure:
+        default: {{ printf "%s/{platform}/{game}" .Values.config.romsFolder | quote }}
+        # The builder links NAS firmware into this separate platform tree.
+        firmware: {{ printf "%s/{platform}" .Values.config.firmwareFolder | quote }}
       skip_hash_calculation: {{ .Values.config.skipHashCalculation }}
+    {{- if .Values.streaming.enabled }}
+    streaming:
+      enabled: true
+      containers:
+        - protocol: webstation
+          host: /streaming
+          subfolder: /streaming
+          broker_host: http://{{ include "romm.fullname" . }}-webstation:3000
+          library_path: /romm/library
+          label: Ubuntu 6
+          platforms:
+            {{- toYaml .Values.streaming.platforms | nindent 12 }}
+    {{- end }}
     exclude:
       {{- with .Values.config.excludePlatforms }}
       platforms:

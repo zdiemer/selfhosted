@@ -44,6 +44,17 @@ data:
     FLATTEN = set({{ .Values.config.flattenFolders | toJson }})
     SKIP    = set({{ .Values.config.skipFolders | toJson }})
     SUBDIRS = {{ .Values.config.platformSubdirs | toJson }}
+    # Filter auxiliary files only on the newly enabled disc-based platforms.
+    EXTENSIONS = {
+        "PS2": {".iso", ".bin", ".chd", ".cso", ".zso", ".gz", ".elf"},
+        "PS3": {".iso", ".pkg", ".self", ".elf", ".zip", ".7z"},
+        "Xbox": {".iso", ".xiso"},
+        "Xbox 360": {".iso", ".xex", ".zar"},
+        "GameCube": {".rvz", ".gcz", ".iso", ".gcm", ".ciso", ".chd", ".dol", ".elf"},
+        "Wii": {".rvz", ".gcz", ".iso", ".wbfs", ".ciso", ".chd", ".wad", ".dol", ".elf"},
+        "WiiWare": {".wad"},
+        "Switch": {".nsp", ".xci", ".nro", ".nso"},
+    }
     KEEP    = {"{{ .Values.config.firmwareFolder }}"}
 
     def _vkey(p):
@@ -70,6 +81,7 @@ data:
         src = os.path.join(SRC, plat)
         if not os.path.isdir(src):
             continue
+        bios = os.path.join(src, "{{ .Values.config.firmwareFolder }}")
         # Some platforms keep no games at their root — see config.platformSubdirs.
         # Descend to the real ROM dir before linking anything.
         pattern = SUBDIRS.get(plat)
@@ -84,7 +96,6 @@ data:
             sub_n += 1
         dst = os.path.join(DST, plat)
         os.makedirs(dst, exist_ok=True)
-        bios = os.path.join(src, "{{ .Values.config.firmwareFolder }}")
         if os.path.isdir(bios):
             link = os.path.join(FW, plat)
             bfiles = sorted(f for f in os.listdir(bios)
@@ -111,6 +122,16 @@ data:
                 os.symlink(bios, link); fw += 1
 
         for e in os.scandir(src):
+            if plat in EXTENSIONS and e.is_file() and os.path.splitext(e.name)[1].lower() not in EXTENSIONS[plat]:
+                continue
+            # Wii U's decrypted tree also holds updates/DLC, not standalone games.
+            if plat == "Wii U" and not e.name.startswith("00050000"):
+                continue
+            # Decrypted 3DS exports include firmware, applets, updates and DLC.
+            if plat in {"Nintendo 3DS", "New Nintendo 3DS"} and (
+                    e.name.startswith("[BIOS]") or any(tag in e.name for tag in
+                    ("(DLC)", "(Update)", "(System", "(Applet)"))):
+                continue
             # Dotfiles are never games. The NAS drops a .romnas-download.json
             # manifest in every platform folder, and RomM catalogued all 45 of
             # them as games.

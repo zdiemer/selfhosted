@@ -131,6 +131,15 @@ spec:
               mountPath: /romm/config/config.yml
               subPath: config.yml
               readOnly: true
+          # Large libraries can spend minutes migrating before HTTP starts.
+          # Suppress liveness checks during that work, not during normal use.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 180
           readinessProbe:
             httpGet:
               path: /

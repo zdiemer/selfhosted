@@ -26,6 +26,15 @@ spec:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
+          {{- if $.Values.streaming.enabled }}
+          - path: /streaming
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "romm.fullname" $ }}-webstation
+                port:
+                  number: 3000
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:
@@ -49,6 +58,15 @@ spec:
     - host: {{ . | quote }}
       http:
         paths:
+          {{- if $.Values.streaming.enabled }}
+          - path: /streaming
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "romm.fullname" $ }}-webstation
+                port:
+                  number: 3000
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:
@@ -85,6 +103,15 @@ spec:
     - host: {{ . | quote }}
       http:
         paths:
+          {{- if $.Values.streaming.enabled }}
+          - path: /streaming
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "romm.fullname" $ }}-webstation
+                port:
+                  number: 3000
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:
