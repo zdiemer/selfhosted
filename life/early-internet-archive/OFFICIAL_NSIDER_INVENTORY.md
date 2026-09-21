@@ -1,6 +1,6 @@
 # Official NSider inventory
 
-Capture date: 2026-09-19
+Capture completed: 2026-09-21
 
 ## Identity
 
@@ -52,7 +52,7 @@ collector host during this sweep, so no Common Crawl absence claim is made and
 the evidence-led recovery path remains Wayback. A future pass can still query
 the two legacy ARC collections for late copies or shutdown pages.
 
-## Initial preservation pass
+## Preservation passes
 
 The collector first preserved the definitive profile and complete CDX message
 inventory. It then sampled archived pages from the account's contemporary
@@ -73,13 +73,29 @@ preserved and parsed 216 raw pages containing 1,939 forum posts:
 | Power On RP (`poweron_rp`) | 26 | 260 |
 | Star Fox (`starfox`) | 10 | 100 |
 
-Four requests failed (one Wayback 404 and three transient connection refusals)
-and remain explicitly recorded for `--retry-failures`. The 1,939 parsed posts
-contained no post attributed to user ID `106819`, so the portable post export
-is presently empty. This is not evidence that the posts are absent from
-Wayback: it only means the deterministic sample did not contain the target ID.
-Failed fetches and negative matches remain in SQLite, so future runs advance
-to unseen URLs rather than starting over.
+Four requests failed (one Wayback 404 and three transient connection refusals).
+The 1,939 parsed posts contained no post attributed to user ID `106819`.
+
+The follow-up pass replaced blind hash ordering with a conservative targeted
+order derived from dated preserved pages. It exhausted all 6,710 captures on
+or after account registration from Power On and Star Fox, the account's
+documented primary board and namesake game board. Older roots with explicit
+page numbers remained eligible because later pages can contain newer replies;
+the ordering discarded nothing.
+
+Across both passes, the database now records 6,790 attempted pages. Of those,
+6,685 were successfully preserved and parsed into 59,437 post observations;
+105 fetch failures remain explicitly retryable. Two pages contain exact
+`STARFOXA` / user ID `106819` matches:
+
+| Post ID | Date | Board | Thread |
+|---|---|---|---|
+| `21498895` | 2007-07-02 1:36 PM | Power On | The 39th Official NSider Icon Election: Phase Three |
+| `22397922` | 2007-08-17 3:38 PM | Power On | Camp Hyrule 2007 CAMP AWARDS (Results posted! No, really...) |
+
+The complete post bodies and ten-message surrounding page contexts are stored
+for both results. Failed fetches and negative matches remain in SQLite, so
+future runs advance to unseen URLs rather than starting over.
 
 ## Local files
 
@@ -101,15 +117,18 @@ safe to interrupt and rerun.
 ```bash
 python3 scrape_official_nsider.py
 python3 scrape_official_nsider.py --limit 500
+python3 scrape_official_nsider.py --boards np_po,starfox --strategy targeted --limit 500
 python3 scrape_official_nsider.py --boards np_po,Nowplaying,poweron_rp,starfox
 python3 scrape_official_nsider.py --retry-failures --limit 100
 python3 scrape_official_nsider.py --status
 ```
 
-`--limit 0` removes the page-attempt ceiling. That is intentionally not the
-default: scanning the full public inventory is a large, rate-sensitive Wayback
-workload. A globally unavailable Internet Archive response stops the batch
-without marking an individual capture missing.
+The prioritized Power On and Star Fox queue is complete. `--retry-failures`
+revisits the 105 failed captures, while selecting other boards expands the
+sweep. `--strategy hash` restores the original board-wide deterministic order.
+`--limit 0` removes the page-attempt ceiling. A globally unavailable Internet
+Archive response stops the batch without marking an individual capture
+missing.
 
 ## Known limits
 

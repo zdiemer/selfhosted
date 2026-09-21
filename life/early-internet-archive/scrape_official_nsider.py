@@ -362,11 +362,48 @@ def board_for_url(url: str) -> str:
     return (urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("board.id") or [""])[0]
 
 
+def message_id_for_url(url: str) -> int | None:
+    value = (
+        urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("message.id")
+        or [""]
+    )[0]
+    return int(value) if value.isdigit() else None
+
+
+def targeted_candidate_key(row: dict[str, str]) -> tuple[int, int, int, str]:
+    """Put likely post-registration STARFOXA pages ahead of blind samples.
+
+    Lithium message IDs increased with time within each board. The cutoffs are
+    deliberately conservative bounds derived from dates parsed from preserved
+    pages: Power On was near 9.5M and Star Fox near 70K when the account was
+    registered in June 2005. Older thread roots with an explicit page remain a
+    second tier because a later page can contain post-registration replies.
+    Nothing is discarded; this only changes the resumable scan order.
+    """
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(row["original"]).query)
+    board = (query.get("board.id") or [""])[0].lower()
+    message_id = message_id_for_url(row["original"])
+    has_page = bool((query.get("page") or [""])[0])
+    cutoffs = {"np_po": 9_500_000, "starfox": 70_000}
+    cutoff = cutoffs.get(board)
+    if cutoff is None or (message_id is not None and message_id >= cutoff):
+        era_rank = 0
+    elif has_page:
+        era_rank = 1
+    else:
+        era_rank = 2
+    board_rank = {"np_po": 0, "starfox": 1}.get(board, 2)
+    page_rank = 1 if has_page else 0
+    stable = hashlib.sha256(row["original"].encode()).hexdigest()
+    return era_rank, board_rank, page_rank, stable
+
+
 def candidates(
     db: sqlite3.Connection,
     rows: Iterable[dict[str, str]],
     boards: set[str],
     retry_failures: bool,
+    strategy: str = "targeted",
 ) -> list[dict[str, str]]:
     attempted = {
         (row["timestamp"], row["original_url"]): row["result"]
@@ -383,10 +420,9 @@ def candidates(
         if previous and not (retry_failures and previous == "fetch_error"):
             continue
         selected.append(row)
-    return sorted(
-        selected,
-        key=lambda row: hashlib.sha256(row["original"].encode()).hexdigest(),
-    )
+    if strategy == "targeted":
+        return sorted(selected, key=targeted_candidate_key)
+    return sorted(selected, key=lambda row: hashlib.sha256(row["original"].encode()).hexdigest())
 
 
 def save_page(
@@ -507,6 +543,12 @@ def main() -> None:
     parser.add_argument("--boards", default=",".join(DEFAULT_BOARDS))
     parser.add_argument("--delay", type=float, default=1.0)
     parser.add_argument("--retry-failures", action="store_true")
+    parser.add_argument(
+        "--strategy",
+        choices=("targeted", "hash"),
+        default="targeted",
+        help="candidate ordering; targeted prioritizes likely post-registration pages",
+    )
     parser.add_argument("--seed-profile-html", type=Path)
     parser.add_argument("--seed-message-cdx", type=Path)
     parser.add_argument("--status", action="store_true")
@@ -523,7 +565,8 @@ def main() -> None:
         boards = {board.strip().lower() for board in args.boards.split(",") if board.strip()}
         set_meta(db, "cdx_inventory_count", len(rows))
         set_meta(db, "scan_boards", sorted(boards))
-        work = candidates(db, rows, boards, args.retry_failures)
+        set_meta(db, "scan_strategy", args.strategy)
+        work = candidates(db, rows, boards, args.retry_failures, args.strategy)
         if args.limit:
             work = work[: args.limit]
         for index, row in enumerate(work, 1):

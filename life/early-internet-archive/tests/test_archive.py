@@ -90,6 +90,20 @@ class CatalogBuilderTests(unittest.TestCase):
 
 
 class OfficialNsiderParserTests(unittest.TestCase):
+    def test_targeted_candidate_order_prioritizes_post_registration_ids(self) -> None:
+        prefix = "http://forums.nintendo.com/nintendo/board/message?board.id=np_po&message.id="
+        rows = [
+            {"original": prefix + "8000000"},
+            {"original": prefix + "8000000&page=2"},
+            {"original": prefix + "10000000&page=2"},
+            {"original": prefix + "10000000"},
+        ]
+        ordered = sorted(rows, key=scrape_official_nsider.targeted_candidate_key)
+        self.assertEqual(
+            [row["original"] for row in ordered],
+            [prefix + "10000000", prefix + "10000000&page=2", prefix + "8000000&page=2", prefix + "8000000"],
+        )
+
     def test_profile_identity_and_thread_posts(self) -> None:
         profile = """
         <title>View Profile for STARFOXA - Nintendo NSider Forums</title>

@@ -28,6 +28,26 @@ USERNAME = "Irock"
 USER_AGENT = "ZachDiemerPersonalArchive/1.0"
 START_TIMESTAMP = "20040101000000"
 END_TIMESTAMP = "20061231235959"
+PATTERN_LISTING_CAPTURES = {
+    1: "20220505204342",
+    2: "20220505204340",
+    3: "20220505204343",
+    4: "20220505221500",
+    5: "20220505233940",
+    6: "20220506010239",
+    7: "20220506022140",
+    8: "20220506033444",
+    9: "20220506044134",
+    10: "20220506054508",
+    11: "20220506064549",
+    12: "20220506074103",
+    13: "20220506083258",
+    14: "20220506092252",
+    15: "20220506101755",
+    16: "20220506110330",
+    17: "20220506115618",
+    18: "20220506125330",
+}
 
 
 def utc_now() -> str:
@@ -365,46 +385,96 @@ def preserve_pattern_pages(
         page_match = re.search(r"page-(\d+)", seed.name, re.I)
         page_number = int(page_match.group(1)) if page_match else 1
         capture_timestamp = "20061017203848" if page_number == 1 else "20220505190449"
-        raw = root / "raw" / "pattern-listings" / f"{capture_timestamp}--page-{page_number}.html.gz"
-        raw.parent.mkdir(parents=True, exist_ok=True)
-        if not raw.exists():
-            with gzip.open(raw, "wb", compresslevel=9) as output:
-                output.write(payload)
-        relative = str(raw.relative_to(root))
-        for pattern in parsed:
-            db.execute(
-                """INSERT INTO patterns(
-                       pattern_id,title,author_name,published_at,votes,score,detail_url,
-                       image_url,listing_capture_timestamp,listing_raw_path,recovered_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(pattern_id) DO UPDATE SET
-                       title=excluded.title,author_name=excluded.author_name,
-                       published_at=excluded.published_at,votes=excluded.votes,
-                       score=excluded.score,detail_url=excluded.detail_url,
-                       image_url=excluded.image_url,
-                       listing_capture_timestamp=excluded.listing_capture_timestamp,
-                       listing_raw_path=excluded.listing_raw_path,
-                       recovered_at=excluded.recovered_at""",
-                (
-                    pattern["pattern_id"], pattern["title"], pattern["author_name"],
-                    pattern["published_at"], pattern["votes"], pattern["score"],
-                    pattern["detail_url"], pattern["image_url"], capture_timestamp,
-                    relative, utc_now(),
-                ),
-            )
-            db.execute(
-                """INSERT OR REPLACE INTO pattern_observations(
-                       pattern_id,capture_timestamp,title,published_at,votes,score,
-                       listing_raw_path
-                   ) VALUES(?,?,?,?,?,?,?)""",
-                (
-                    pattern["pattern_id"], capture_timestamp, pattern["title"],
-                    pattern["published_at"], pattern["votes"], pattern["score"], relative,
-                ),
-            )
-            recovered += 1
+        recovered += store_pattern_page(
+            db, root, page_number, capture_timestamp, payload, parsed
+        )
     db.commit()
     return recovered
+
+
+def store_pattern_page(
+    db: sqlite3.Connection,
+    root: Path,
+    page_number: int,
+    capture_timestamp: str,
+    payload: bytes,
+    parsed: list[dict[str, Any]] | None = None,
+) -> int:
+    patterns = parsed if parsed is not None else parse_patterns_page(decode_html(payload))
+    if not patterns:
+        raise ValueError(f"pattern listing page {page_number} yielded no exact Irock rows")
+    raw = root / "raw" / "pattern-listings" / f"{capture_timestamp}--page-{page_number}.html.gz"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    if not raw.exists():
+        with gzip.open(raw, "wb", compresslevel=9) as output:
+            output.write(payload)
+    relative = str(raw.relative_to(root))
+    for pattern in patterns:
+        db.execute(
+            """INSERT INTO patterns(
+                   pattern_id,title,author_name,published_at,votes,score,detail_url,
+                   image_url,listing_capture_timestamp,listing_raw_path,recovered_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(pattern_id) DO UPDATE SET
+                   title=excluded.title,author_name=excluded.author_name,
+                   published_at=excluded.published_at,votes=excluded.votes,
+                   score=excluded.score,detail_url=excluded.detail_url,
+                   image_url=excluded.image_url,
+                   listing_capture_timestamp=excluded.listing_capture_timestamp,
+                   listing_raw_path=excluded.listing_raw_path,
+                   recovered_at=excluded.recovered_at""",
+            (
+                pattern["pattern_id"], pattern["title"], pattern["author_name"],
+                pattern["published_at"], pattern["votes"], pattern["score"],
+                pattern["detail_url"], pattern["image_url"], capture_timestamp,
+                relative, utc_now(),
+            ),
+        )
+        db.execute(
+            """INSERT OR REPLACE INTO pattern_observations(
+                   pattern_id,capture_timestamp,title,published_at,votes,score,
+                   listing_raw_path
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                pattern["pattern_id"], capture_timestamp, pattern["title"],
+                pattern["published_at"], pattern["votes"], pattern["score"], relative,
+            ),
+        )
+    db.commit()
+    return len(patterns)
+
+
+def recover_pattern_listing_captures(
+    db: sqlite3.Connection, root: Path, delay: float
+) -> tuple[int, int]:
+    recovered = errors = 0
+    for index, (page, timestamp) in enumerate(sorted(PATTERN_LISTING_CAPTURES.items()), 1):
+        exists = db.execute(
+            "SELECT 1 FROM pattern_observations WHERE capture_timestamp=? LIMIT 1",
+            (timestamp,),
+        ).fetchone()
+        if exists:
+            continue
+        original = (
+            "http://www.animalcrossingcommunity.com/patterns.asp?"
+            f"UserLogin=Irock&PatternName=&ListAll=True&PageNumber={page}&SortBy=5"
+        )
+        snapshot = f"https://web.archive.org/web/{timestamp}id_/{original}"
+        try:
+            payload = request_bytes(snapshot, retries=4)
+            count = store_pattern_page(db, root, page, timestamp, payload)
+            recovered += count
+            print(f"[pattern page {index}/{len(PATTERN_LISTING_CAPTURES)}] page {page}: {count}", flush=True)
+        except Exception as error:
+            errors += 1
+            print(
+                f"[pattern page {index}/{len(PATTERN_LISTING_CAPTURES)}] page {page}: "
+                f"{type(error).__name__}: {error}",
+                flush=True,
+            )
+        if index < len(PATTERN_LISTING_CAPTURES) and delay:
+            time.sleep(delay)
+    return recovered, errors
 
 
 def gif_payload(payload: bytes) -> bool:
@@ -638,6 +708,8 @@ def main() -> None:
     parser.add_argument("--retry-failures", action="store_true")
     parser.add_argument("--seed-pattern-pages", type=Path)
     parser.add_argument("--download-pattern-images", action="store_true")
+    parser.add_argument("--recover-pattern-pages", action="store_true")
+    parser.add_argument("--pattern-page-delay", type=float, default=8.0)
     parser.add_argument("--pattern-image-delay", type=float, default=2.5)
     parser.add_argument("--patterns-only", action="store_true")
     parser.add_argument("--status", action="store_true")
@@ -651,6 +723,11 @@ def main() -> None:
         if args.seed_pattern_pages:
             count = preserve_pattern_pages(db, args.root, args.seed_pattern_pages)
             print(f"recovered {count} pattern rows from seeded listing pages", flush=True)
+        if args.recover_pattern_pages:
+            recovered, errors = recover_pattern_listing_captures(
+                db, args.root, args.pattern_page_delay
+            )
+            print(f"pattern pages: {recovered} rows, {errors} errors", flush=True)
         if args.download_pattern_images:
             saved, errors = preserve_pattern_images(db, args.root, args.pattern_image_delay)
             print(f"pattern images: {saved} saved, {errors} errors", flush=True)

@@ -16,7 +16,7 @@ The strongest direct ACC evidence currently comes from the pattern gallery:
 
 - a 2006-10-17 gallery snapshot is filtered to `UserLogin=Irock` and reports
   369 patterns;
-- a 2022-05-05 capture of gallery page 2 reports 450 patterns;
+- a 2022-05-05/06 crawl preserves all 18 gallery pages and reports 450 patterns;
 - every recovered row has the exact `Irock` byline;
 - the preserved detail page for pattern `141733`, “Giga Bowser (Anicro),” says
   `By Irock` and gives the original timestamp `7/31/2006 9:28:54 PM`.
@@ -25,11 +25,11 @@ The strongest direct ACC evidence currently comes from the pattern gallery:
 
 The normalized ACC database currently contains:
 
-- 45 unique pattern records spanning 2006-07-08 through 2006-11-16;
-- 50 listing observations, retaining both old and later vote/score values for
-  the five patterns visible in both snapshots;
-- 44 original pattern GIFs recovered from the archived image endpoint;
-- compressed raw copies of both productive listing pages;
+- all 450 unique pattern records spanning 2005-06-04 through 2007-04-10;
+- 500 listing observations, retaining both old and later vote/score values
+  instead of overwriting the historical values;
+- 91 original pattern GIFs recovered from the archived image endpoint so far;
+- compressed raw copies of all 20 productive listing captures;
 - one archived full pattern-detail page retained in the research evidence.
 
 The recovered designs include Falco Lombardi, Fox McCloud, Dark Samus, Sonic,
@@ -37,9 +37,9 @@ Mario, Luigi, Zelda characters, Pokémon, Nintendo hardware, an Animal Crossing:
 Wild World box-art design, and many others. The public catalog projects each
 pattern as an attributed artifact and links its recovered GIF where available.
 
-One known GIF (`PatternID=141733`) remains retryable after archive throttling.
-The gallery totals show that at least 405 additional records existed beyond the
-45 whose listing rows are currently recoverable.
+The complete pattern metadata inventory is recovered. The image pass is
+resumable: 359 GIFs remain, including `PatternID=141733`, whose replay currently
+returns an HTML error instead of an image.
 
 ## Forum-post sweep
 

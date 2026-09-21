@@ -34,10 +34,10 @@ python3 scrape_acc.py --retry-failures --workers 1
 python3 scrape_acc.py --status
 ```
 
-It also preserves the archived Irock pattern gallery. The current recovery is
-45 unique pattern records, 50 historical score observations, and 44 original
-GIFs; archived gallery totals show 369 patterns in 2006 and 450 in the later
-capture. See [`ACC_INVENTORY.md`](ACC_INVENTORY.md) for the evidence, recovered
+It also preserves the archived Irock pattern gallery. All 450 pattern records
+are recovered, alongside 500 historical score observations and 91 original
+GIFs so far; the earlier snapshot reported 369 patterns before the gallery grew
+to 450. See [`ACC_INVENTORY.md`](ACC_INVENTORY.md) for the evidence, recovered
 designs, quantified gaps, and forum-scan progress.
 
 The Backloggd collector preserves the public profile and every review-list page
@@ -95,10 +95,14 @@ ID `106819` from the archived profile, preserves the complete Wayback CDX
 message inventory, and scans surviving thread pages in resumable deterministic
 batches. Each fetched page is stored as compressed raw evidence before parsing;
 matching posts and the surrounding page context are normalized into SQLite.
+The completed targeted Power On and Star Fox pass attempted 6,790 pages,
+parsed 59,437 post observations, and recovered two exact `STARFOXA` posts with
+ten-message context windows. Another 105 archive fetches remain retryable.
 
 ```bash
 python3 scrape_official_nsider.py
 python3 scrape_official_nsider.py --limit 500
+python3 scrape_official_nsider.py --boards np_po,starfox --strategy targeted --limit 500
 python3 scrape_official_nsider.py --status
 ```
 
