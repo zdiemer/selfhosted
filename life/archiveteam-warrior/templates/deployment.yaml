@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: archiveteam-warrior
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  # No spare-capacity surge requirement during updates; a gap is harmless.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: archiveteam-warrior
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: archiveteam-warrior
+      annotations:
+        checksum/shutdown: {{ .Files.Get "files/drain.py" | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: {{ .Values.priorityClassName }}
+      preemptionPolicy: Never
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      containers:
+        - name: warrior
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DOWNLOADER
+              value: {{ .Values.warrior.downloader | quote }}
+            - name: SELECTED_PROJECT
+              value: {{ .Values.warrior.selectedProject | quote }}
+            - name: CONCURRENT_ITEMS
+              value: {{ .Values.warrior.concurrentItems | quote }}
+          ports:
+            - name: http
+              containerPort: 8001
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          # Deliberately no liveness probe: a busy grab must not be killed.
+          lifecycle:
+            preStop:
+              exec:
+                command: [python, /opt/warrior-hooks/drain.py]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: hooks
+              mountPath: /opt/warrior-hooks
+              readOnly: true
+      # Keep upstream's data directory intact: it contains wget binaries.
+      # Work stays on the bounded, ephemeral container filesystem, not a PVC.
+      volumes:
+        - name: hooks
+          configMap:
+            name: {{ .Release.Name }}-hooks

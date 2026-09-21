@@ -1,6 +1,6 @@
 # priority-classes — cluster-wide scheduling priority
 
-Three PriorityClasses, one of which is the **globalDefault that every pod on this
+Four PriorityClasses, one of which is the **globalDefault that every pod on this
 cluster inherits**. No image, no workload: pure policy.
 
 | Class | Value | For |
@@ -8,6 +8,7 @@ cluster inherits**. No image, no workload: pure policy.
 | `platform-core` | 100000 | Stateful things whose eviction costs data or a slow recovery — databases, search, caches, game servers |
 | `platform-app` | 10000 | **globalDefault.** Anything that doesn't name a class |
 | `batch-worker` | 1000 | Interruptible queue workers. `preemptionPolicy: Never` — evictable, but never evicts |
+| `spare-compute` | -1000 | Volunteer work such as Archive Team Warrior. Below even unclassified pods; never preempts |
 
 ## Why it's here
 
@@ -17,9 +18,9 @@ move, **55 pods across 11 namespaces** ran under `platform-app` — only 15 of t
 talaria's. The other 40 were minecraft, web, docs, infra, discord, keda, games,
 auth, kube-system and headlamp.
 
-Nothing in this repo names a `priorityClassName`. Every chart here inherits
-`platform-app` silently, and would have kept inheriting it from a chart in
-another repo. Same story as [`infra/duckdns`](../duckdns/).
+Most charts here inherit `platform-app` silently. Archive Team Warrior explicitly
+uses `spare-compute`. The defaults would otherwise have kept coming from a chart
+in another repo. Same story as [`infra/duckdns`](../duckdns/).
 
 talaria still *uses* `platform-core` and `batch-worker` — its postgres,
 elasticsearch, redis and KEDA workers name them in seven places. It just no

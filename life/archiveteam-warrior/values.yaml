@@ -1,0 +1,28 @@
+image:
+  repository: atdr.meo.ws/archiveteam/warrior-dockerfile
+  tag: latest
+  pullPolicy: Always
+
+warrior:
+  downloader: zachd
+  selectedProject: auto
+  concurrentItems: 2
+
+priorityClassName: spare-compute
+terminationGracePeriodSeconds: 300
+
+# Requests reserve schedulable headroom; limits bound the volunteer workload.
+# Priority is not a CPU-utilization autoscaler. Tune requests to observed usage.
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+    ephemeral-storage: 5Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+    ephemeral-storage: 20Gi
+
+nodeSelector:
+  kubernetes.io/arch: amd64
+  kubernetes.io/os: linux

@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: archiveteam-warrior
+  policyTypes: [Ingress]
+  # Admin access through kubectl port-forward only. Direct project egress is
+  # unrestricted (HTTP, DNS, rsync, etc.); no shared proxy or VPN.
+  ingress: []

@@ -1,11 +1,11 @@
-# Cluster-wide scheduling priority. Three PriorityClasses, one of which is the
+# Cluster-wide scheduling priority. Four PriorityClasses, one of which is the
 # globalDefault that EVERY pod on the cluster inherits unless it names another.
 #
 # These lived in the sibling talaria project's chart, which meant an app repo
 # owned the default scheduling policy for every workload here — 55 pods across
-# 11 namespaces, only 15 of them talaria's. Nothing in this repo names a
-# priorityClassName; they all inherit `platform-app` silently. Moved here so the
-# dependency is where the dependents are.
+# 11 namespaces, only 15 of them talaria's. Most workloads inherit `platform-app`;
+# Warrior explicitly uses `spare-compute`. Moved here so the dependency is where
+# the dependents are.
 #
 # HOW KUBERNETES USES THESE: the priority admission controller stamps a pod's
 # numeric priority at admission time, from its priorityClassName or from the
@@ -28,6 +28,13 @@
 # `helm uninstall priority-classes` does exactly this. Don't, casually.
 
 priorityClasses:
+  # Spare-capacity volunteering; below even unclassified (priority 0) pods.
+  - name: spare-compute
+    value: -1000
+    globalDefault: false
+    preemptionPolicy: Never
+    description: "Spare-capacity volunteer work. Yields to applications; never preempts."
+
   # Stateful things whose eviction costs data or a long recovery: databases,
   # search indices, caches, game servers. Deliberately above everything else.
   - name: platform-core
@@ -36,7 +43,7 @@ priorityClasses:
     description: "Stateful services whose eviction loses state or takes a slow recovery (databases, search, caches, game servers)"
 
   # The globalDefault. Every pod that doesn't name a class lands here, which is
-  # currently every workload in this repo.
+  # the default for ordinary applications in this repo.
   - name: platform-app
     value: 10000
     globalDefault: true
@@ -49,4 +56,4 @@ priorityClasses:
     value: 1000
     globalDefault: false
     preemptionPolicy: Never
-    description: "Interruptible queue workers (KEDA-scaled). Lowest priority, never preempts."
+    description: "Interruptible queue workers (KEDA-scaled). Never preempts."

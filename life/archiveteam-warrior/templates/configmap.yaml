@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-hooks
+data:
+  drain.py: |
+    {{- .Files.Get "files/drain.py" | nindent 4 }}

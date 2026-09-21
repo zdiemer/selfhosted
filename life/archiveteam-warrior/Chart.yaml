@@ -1,0 +1,8 @@
+apiVersion: v2
+name: archiveteam-warrior
+description: Archive Team Warrior using preemptible spare cluster capacity
+type: application
+version: 0.1.0
+appVersion: "latest"
+maintainers:
+  - name: zachd
