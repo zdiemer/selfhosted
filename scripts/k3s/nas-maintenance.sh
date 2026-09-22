@@ -43,7 +43,7 @@ then restore them afterwards.
 OPTIONS:
   --start              Scale down and wait until nothing holds a NAS volume
   --finish             Wait for the NAS, then restore what --start scaled down
-  --status             Show what would be affected; change nothing
+  --status             Dry run: list what --start would touch; change nothing
   --skip-backup-check  Don't require a recent successful backup (--start only)
   -h, --help           Show this help
 
@@ -79,26 +79,49 @@ require_tools kubectl python3
 
 NAS_HOST="${NAS_HOST:-192.168.4.36}"
 
+# A VM carries either runStrategy or the older boolean spec.running; normalise
+# to a runStrategy so --finish can restore it the same way either way.
+vm_strategy() {
+    local rs running
+    rs="$(kubectl -n "$1" get vm "$2" -o jsonpath='{.spec.runStrategy}' 2>/dev/null)"
+    [[ -n "$rs" ]] && { echo "$rs"; return; }
+    running="$(kubectl -n "$1" get vm "$2" -o jsonpath='{.spec.running}' 2>/dev/null)"
+    [[ "$running" == "true" ]] && echo Always || echo Halted
+}
+
 # ------------------------------------------------------------------------------
 # Discovery
 # ------------------------------------------------------------------------------
 # Derived from the storage class, never hardcoded: a service added next month is
 # covered the day it gets a NAS volume, with no edit here.
 discover() {
-    kubectl get pvc -A -o json | python3 -c "
-import json, subprocess, sys
+    NAS_HOST="$NAS_HOST" python3 -c "
+import json, os, subprocess, sys
 
-d = json.load(sys.stdin)
+def get(*args):
+    return json.loads(subprocess.run(['kubectl', 'get', *args, '-o', 'json'],
+                      capture_output=True, text=True).stdout or '{}')
+
+# A claim is on the NAS if it came from a truenas-* class, or if it is bound to
+# a static PV that mounts the NAS directly (the SMB shares for RomM, CloudRetro
+# and the smitele corpus predate democratic-csi and have no storage class).
+host = os.environ['NAS_HOST']
+static = set()
+for pv in get('pv').get('items', []):
+    s, ref = pv['spec'], pv['spec'].get('claimRef') or {}
+    src = ((s.get('csi') or {}).get('volumeAttributes') or {}).get('source', '')
+    if (s.get('nfs') or {}).get('server') == host or src.startswith(f'//{host}/'):
+        static.add((ref.get('namespace'), ref.get('name')))
+
 nas = {(p['metadata']['namespace'], p['metadata']['name'])
-       for p in d['items']
-       if (p['spec'].get('storageClassName') or '').startswith('truenas')}
+       for p in get('pvc', '-A').get('items', [])
+       if (p['spec'].get('storageClassName') or '').startswith('truenas')
+       or (p['metadata']['namespace'], p['metadata']['name']) in static}
 if not nas:
     sys.exit(0)
 
 namespaces = sorted({ns for ns, _ in nas})
-pods = json.loads(subprocess.run(
-    ['kubectl', 'get', 'pods', '-A', '-o', 'json'],
-    capture_output=True, text=True).stdout or '{}')
+pods = get('pods', '-A')
 
 owners = set()
 for p in pods.get('items', []):
@@ -109,9 +132,7 @@ for p in pods.get('items', []):
         continue
     for r in (p['metadata'].get('ownerReferences') or []):
         if r['kind'] == 'ReplicaSet':
-            rs = json.loads(subprocess.run(
-                ['kubectl', '-n', ns, 'get', 'rs', r['name'], '-o', 'json'],
-                capture_output=True, text=True).stdout or '{}')
+            rs = get('-n', ns, 'rs', r['name'])
             dep = (rs.get('metadata', {}).get('ownerReferences') or [{}])[0]
             if dep.get('kind') == 'Deployment':
                 owners.add((ns, 'deployment', dep['name']))
@@ -119,15 +140,24 @@ for p in pods.get('items', []):
             owners.add((ns, 'statefulset', r['name']))
 
 # CronJobs have no pod between fires, so match them on their own spec.
-cjs = json.loads(subprocess.run(
-    ['kubectl', 'get', 'cronjobs', '-A', '-o', 'json'],
-    capture_output=True, text=True).stdout or '{}')
+cjs = get('cronjobs', '-A')
 for c in cjs.get('items', []):
     ns = c['metadata']['namespace']
     vols = c['spec']['jobTemplate']['spec']['template']['spec'].get('volumes') or []
     claims = {(v.get('persistentVolumeClaim') or {}).get('claimName') for v in vols}
     if any((ns, cl) in nas for cl in claims if cl):
         owners.add((ns, 'cronjob', c['metadata']['name']))
+
+# KubeVirt VMs: the virt-launcher pod belongs to a VMI, not a ReplicaSet, and
+# scaling is not a thing — the VM has to be halted. A dataVolume's PVC shares
+# its name. Empty if KubeVirt is not installed.
+for v in get('virtualmachines', '-A').get('items', []):
+    ns = v['metadata']['namespace']
+    vols = v['spec']['template']['spec'].get('volumes') or []
+    claims = {(vol.get('persistentVolumeClaim') or {}).get('claimName')
+              or (vol.get('dataVolume') or {}).get('name') for vol in vols}
+    if any((ns, cl) in nas for cl in claims if cl):
+        owners.add((ns, 'vm', v['metadata']['name']))
 
 for ns, kind, name in sorted(owners):
     print(f'{ns}\t{kind}\t{name}')
@@ -145,6 +175,8 @@ if [[ "$ACTION" == "status" ]]; then
         if [[ "$kind" == "cronjob" ]]; then
             cur="$(kubectl -n "$ns" get cronjob "$name" -o jsonpath='{.spec.suspend}' 2>/dev/null)"
             printf '  %-14s %-12s %-34s suspended=%s\n' "$ns" "$kind" "$name" "${cur:-false}"
+        elif [[ "$kind" == "vm" ]]; then
+            printf '  %-14s %-12s %-34s runStrategy=%s\n' "$ns" "$kind" "$name" "$(vm_strategy "$ns" "$name")"
         else
             cur="$(kubectl -n "$ns" get "$kind" "$name" -o jsonpath='{.spec.replicas}' 2>/dev/null)"
             printf '  %-14s %-12s %-34s replicas=%s\n' "$ns" "$kind" "$name" "${cur:-?}"
@@ -167,6 +199,14 @@ fi
 # Start
 # ------------------------------------------------------------------------------
 if [[ "$ACTION" == "start" ]]; then
+    # From inside the cluster this scales down its own pod mid-loop (the
+    # claude-workspace home is on the NAS), leaving a half-written state file on
+    # the very volume being unmounted. Run it from a laptop.
+    if [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
+        echo "FAIL: running inside the cluster — run --start from outside it (e.g. your laptop)." >&2
+        exit 1
+    fi
+
     # A maintenance window is exactly when you find out the backups were not
     # running. Check before taking anything down, not after.
     if [[ "$SKIP_BACKUP_CHECK" != "true" ]]; then
@@ -198,6 +238,12 @@ if [[ "$ACTION" == "start" ]]; then
             printf '%s\t%s\t%s\t%s\n' "$ns" "$kind" "$name" "${prev:-false}" >> "${STATE_FILE}.tmp"
             kubectl -n "$ns" patch cronjob "$name" -p '{"spec":{"suspend":true}}' >/dev/null
             printf '  suspended  %-14s %s\n' "$ns" "$name"
+        elif [[ "$kind" == "vm" ]]; then
+            prev="$(vm_strategy "$ns" "$name")"
+            printf '%s\t%s\t%s\t%s\n' "$ns" "$kind" "$name" "$prev" >> "${STATE_FILE}.tmp"
+            kubectl -n "$ns" patch vm "$name" --type merge \
+                -p '{"spec":{"running":null,"runStrategy":"Halted"}}' >/dev/null
+            printf '  halted     %-14s %-30s (was %s)\n' "$ns" "$name" "$prev"
         else
             prev="$(kubectl -n "$ns" get "$kind" "$name" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 1)"
             printf '%s\t%s\t%s\t%s\n' "$ns" "$kind" "$name" "${prev:-1}" >> "${STATE_FILE}.tmp"
@@ -278,13 +324,18 @@ if [[ "$ACTION" == "finish" ]]; then
     # that talk to them, so apps do not spend the first minute crash-looping.
     echo ""
     echo "=== Restoring ==="
-    for want_kind in statefulset deployment cronjob; do
+    for want_kind in statefulset deployment vm cronjob; do
         while IFS=$'\t' read -r ns kind name prev; do
             [[ -z "$ns" || "$kind" != "$want_kind" ]] && continue
             if [[ "$kind" == "cronjob" ]]; then
                 [[ "$prev" == "true" ]] && { printf '  left suspended %-14s %s\n' "$ns" "$name"; continue; }
                 kubectl -n "$ns" patch cronjob "$name" -p '{"spec":{"suspend":false}}' >/dev/null
                 printf '  unsuspended    %-14s %s\n' "$ns" "$name"
+            elif [[ "$kind" == "vm" ]]; then
+                [[ "$prev" == "Halted" ]] && { printf '  left halted    %-14s %s\n' "$ns" "$name"; continue; }
+                kubectl -n "$ns" patch vm "$name" --type merge \
+                    -p "{\"spec\":{\"runStrategy\":\"${prev}\"}}" >/dev/null
+                printf '  %-14s %-14s %s\n' "$prev" "$ns" "$name"
             else
                 kubectl -n "$ns" scale "$kind" "$name" --replicas="$prev" >/dev/null
                 printf '  scaled %-3s     %-14s %s\n' "$prev" "$ns" "$name"
