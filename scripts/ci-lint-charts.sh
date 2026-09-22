@@ -32,6 +32,8 @@ TEMPLATE_SKIP=(
   games/cloud-game
   # admin.password is `required` (op://homelab/games-smt-imagine).
   games/smt-imagine
+  # userPassword and sunshine.password are `required` (op://homelab/games-steam-headless).
+  games/steam-headless
   infra/actions-runner
   infra/cloudflared
   # secrets.smsApiKey / secrets.feedToken / sms.to all `fail` — a reminder

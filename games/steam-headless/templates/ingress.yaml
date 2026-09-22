@@ -1,0 +1,108 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "steam-headless.fullname" . }}
+{{- /*
+The pod is on the host network, so these Services' endpoints are
+192.168.4.22:<port> — plain node IPs, which Traefik on any node can reach.
+Two Services rather than one because the backend scheme (http vs https) and
+the ServersTransport are per-Service annotations.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-desktop
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "steam-headless.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: novnc
+      port: {{ .Values.novncPort }}
+      targetPort: {{ .Values.novncPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-sunshine
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ .Release.Namespace }}-{{ $fullname }}-sunshine@kubernetescrd
+spec:
+  selector:
+    {{- include "steam-headless.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.ingress.sunshineUiPort }}
+      targetPort: {{ .Values.ingress.sunshineUiPort }}
+---
+# Sunshine generates its own self-signed cert on first boot; there is nothing
+# to pin against, and the hop is node-local LAN.
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ $fullname }}-sunshine
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+spec:
+  insecureSkipVerify: true
+---
+# Same pattern as dev/guacamole: in this namespace, Authelia by plain URL.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-forwardauth
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: http://{{ .Values.auth.forwardAuth.autheliaService }}.{{ .Values.auth.forwardAuth.autheliaNamespace }}.svc.cluster.local:{{ .Values.auth.forwardAuth.autheliaPort }}{{ .Values.auth.forwardAuth.autheliaPath }}
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email
+---
+# Required annotations + ingressClassName: see infra/ingress-policy.
+# DELIBERATELY no Cloudflare hosts — a logged-in Steam desktop is not
+# something to put on the public internet.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ $fullname }}-forwardauth@kubernetescrd
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.desktopHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-desktop
+                port:
+                  number: {{ .Values.novncPort }}
+    - host: {{ .Values.ingress.sunshineHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-sunshine
+                port:
+                  number: {{ .Values.ingress.sunshineUiPort }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.desktopHost }}
+        - {{ .Values.ingress.sunshineHost }}
+{{- end }}

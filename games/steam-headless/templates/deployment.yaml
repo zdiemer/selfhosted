@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "steam-headless.fullname" . }}
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # hostNetwork ports and RWO local volumes: two copies can never coexist.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "steam-headless.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "steam-headless.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/init: {{ include (print $.Template.BasePath "/configmap-init.yaml") . | sha256sum }}
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.node | quote }}
+      # Upstream's compose uses network_mode: host. Moonlight's discovery
+      # (mDNS) and Sunshine's fixed TCP/UDP port set (47984-48010) want the
+      # node's own IP, and the README warns controllers do not work without it.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # No hostIPC (upstream's compose sets ipc: host): that exists for
+      # "secondary" containers sharing this X server. Everything here is in one
+      # container, so MIT-SHM works without reaching into the host's IPC.
+      # Steam and Xorg ignore SIGTERM for a while; let them go gracefully.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: steam-headless
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Privileged is upstream's amd+intel.privileged variant. The
+          # non-privileged one relies on docker's device_cgroup_rules
+          # (c 13:* rmw for dynamically created input devices), which has no
+          # Kubernetes equivalent, and there is no GPU device plugin here.
+          # The image's init runs as root and drops to PUID itself.
+          #
+          # Privileged also means udevd in here can rewrite host device nodes;
+          # see configmap-init.yaml for why no host /dev path is mounted.
+          securityContext:
+            privileged: true
+          command:
+            - /bin/bash
+            - -c
+            - install -m 0755 /opt/chart-init/*.sh /etc/cont-init.d/ && exec /entrypoint.sh
+          env:
+            - { name: NAME, value: SteamHeadless }
+            - { name: TZ, value: {{ .Values.timezone | quote }} }
+            - { name: USER_LOCALES, value: "en_US.UTF-8 UTF-8" }
+            - { name: DISPLAY, value: {{ .Values.display | quote }} }
+            - { name: PUID, value: {{ .Values.puid | quote }} }
+            - { name: PGID, value: {{ .Values.pgid | quote }} }
+            - { name: UMASK, value: "000" }
+            - { name: MODE, value: primary }
+            - { name: WEB_UI_MODE, value: vnc }
+            - { name: ENABLE_VNC_AUDIO, value: "true" }
+            - { name: PORT_NOVNC_WEB, value: {{ .Values.novncPort | quote }} }
+            - { name: ENABLE_STEAM, value: "true" }
+            - { name: STEAM_ARGS, value: "-silent" }
+            - { name: ENABLE_SUNSHINE, value: "true" }
+            - { name: SUNSHINE_USER, value: {{ .Values.sunshine.username | quote }} }
+            - { name: ENABLE_EVDEV_INPUTS, value: "true" }
+            # See values.yaml (forceDummyDisplay) before flipping this.
+            - { name: FORCE_X11_DUMMY_CONFIG, value: {{ .Values.forceDummyDisplay | quote }} }
+          envFrom:
+            - secretRef:
+                name: {{ include "steam-headless.fullname" . }}
+          volumeMounts:
+            - { name: home, mountPath: /home/default }
+            - { name: games, mountPath: /mnt/games }
+            - { name: x11, mountPath: /tmp/.X11-unix }
+            - { name: pulse, mountPath: /tmp/pulse }
+            - { name: shm, mountPath: /dev/shm }
+            - { name: init, mountPath: /opt/chart-init, readOnly: true }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: {{ include "steam-headless.fullname" . }}-home
+        - name: games
+          persistentVolumeClaim:
+            claimName: {{ include "steam-headless.fullname" . }}-games
+        - name: x11
+          emptyDir: {}
+        - name: pulse
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.persistence.shmSize }}
+        - name: init
+          configMap:
+            name: {{ include "steam-headless.fullname" . }}-init

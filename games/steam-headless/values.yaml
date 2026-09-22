@@ -1,0 +1,94 @@
+image:
+  repository: docker.io/josh5/steam-headless
+  # debian-1.0.2 (2026-09-14), built from the public repo's master (7206296).
+  # Includes the fix that installs the AMD userspace drivers for APUs (lspci
+  # lists them as "Display", not "VGA", and older builds skipped them —
+  # upstream issues #22/#145/#163).
+  #
+  # NOT the 2.44.* / `stable` tags on the same Docker Hub repo: those are a
+  # different image (Fedora + systemd + "SHUI" web setup, maintained by
+  # cverna) with no public source or docs yet. Tried on 2026-09-22; it ignores
+  # this chart's env vars and runs systemd as PID 1 on the host network.
+  # Revisit when it ships with a repo.
+  tag: "debian-1.0.2"
+  pullPolicy: IfNotPresent
+
+# Pinned by hostname, not by the media.zachd/vaapi label: the games PVC is
+# local-path (node-bound NVMe), and zachd-ubuntu-6's Radeon 680M (RDNA2, 12 CU)
+# is the only iGPU in the cluster worth gaming on. ubuntu-1's Vega 8 shares the
+# vaapi label but is too weak, so the label alone would be the wrong boundary.
+node: zachd-ubuntu-6
+
+# Headless Xorg's display number. Upstream's default; nothing else on the host
+# runs X.
+display: ":55"
+
+# Leave false. ubuntu-6's HDMI-A-1 reports a connected 1080p sink (a plug or
+# monitor is attached), so the image's own detection starts Xorg on amdgpu
+# with glamor and OpenGL renders on the 680M. Forcing the dummy config swaps
+# in the "dummy" DDX: Vulkan/Proton still find RADV, but every OpenGL client —
+# the Steam UI, native GL games — falls back to llvmpipe on the CPU (verified
+# with glxinfo, 2026-09-22). If that HDMI sink is ever unplugged the image
+# falls back to dummy on its own; fix it with a dummy plug, not this flag.
+forceDummyDisplay: false
+timezone: America/Los_Angeles
+
+# The container user. Steam, games and Sunshine all run as this uid.
+puid: 1000
+pgid: 1000
+
+sunshine:
+  username: admin
+  # password comes from values.local.yaml (sunshine.password)
+
+# noVNC desktop, used once to log in to Steam and add /mnt/games as a library
+# folder. Bound on the host network like everything else here.
+novncPort: 8083
+
+persistence:
+  # /home/default — Steam client, Proton prefixes, saves not in Steam Cloud,
+  # Sunshine's config and paired-client certs. Small and worth backing up.
+  home:
+    size: 50Gi
+    storageClass: local-path
+  # /mnt/games — the Steam library. Local NVMe on ubuntu-6 (834G free at
+  # deploy) because load times on NFS/iSCSI are exactly what you notice when
+  # streaming. local-path does not enforce the size; it is a statement of
+  # intent. Re-downloadable, so excluded from k8up.
+  games:
+    size: 400Gi
+    storageClass: local-path
+  # /dev/shm — Steam's CEF and Proton both want far more than the 64M default.
+  shmSize: 2Gi
+
+resources:
+  # ubuntu-6 sits at ~76% memory requested, so the request is what fits, not
+  # what a game needs. The limit is the real budget.
+  requests:
+    cpu: "1"
+    memory: 4Gi
+  limits:
+    memory: 16Gi
+
+# The two web UIs behind Traefik, so nothing needs the LAN IP. Tailnet-only
+# for free: infra/duckdns is in `tailnet` mode, so *.zachd.duckdns.org resolves
+# to a node's 100.x address. Moonlight's own stream CANNOT go this way — it is
+# UDP on fixed ports straight to the host that encodes — so remote clients add
+# ubuntu-6's Tailscale address as the Moonlight host (see README).
+ingress:
+  enabled: true
+  className: traefik
+  # noVNC desktop. Has no login of its own, so Authelia is the only door.
+  desktopHost: steam.zachd.duckdns.org
+  # Sunshine's web UI (PIN entry, settings). Sunshine serves HTTPS with a
+  # self-signed cert, so Traefik talks to it through an insecureSkipVerify
+  # ServersTransport; Sunshine's own login still applies behind Authelia.
+  sunshineHost: sunshine.zachd.duckdns.org
+  sunshineUiPort: 47990
+
+auth:
+  forwardAuth:
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth

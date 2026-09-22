@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "steam-headless.fullname" . }}-init
+  labels:
+    {{- include "steam-headless.labels" . | nindent 4 }}
+data:
+  # Sourced by the image's /entrypoint.sh ahead of its own cont-init scripts
+  # (the container command copies it into /etc/cont-init.d first, because the
+  # entrypoint sed -i's every script and a ConfigMap mount is read-only).
+  #
+  # WHY: the pod is on the host network, and kernel uevents are delivered to
+  # the init network namespace. With the host's /dev/dri and /dev/input
+  # bind-mounted in, the image's own udevd received the HOST's events and
+  # applied the container's rules to the host's device nodes. On 2026-09-22
+  # that deleted /dev/dri/card1 and regrouped renderD128 from render (992) to
+  # the container's 993 — which silently takes the GPU away from Jellyfin
+  # (supplementalGroups: [992]) whenever it runs on this node.
+  #
+  # So nothing from the host's /dev is mounted. The nodes are made here, in the
+  # container's private /dev tmpfs, from sysfs (privileged: the device cgroup
+  # allows them). Removing /run/udev makes 30-configure_udev.sh take upstream's
+  # "restricted container" path: udevd under `unshare --net` (no host uevents
+  # reach it) plus dumb-udev, which mknods Sunshine's virtual input devices
+  # into /dev/input as they appear.
+  05-private-dev-nodes.sh: |
+    print_header "Create private device nodes (chart: games/steam-headless)"
+    mkdir -p /dev/dri /dev/input
+    for sys in /sys/class/drm/card[0-9]*/dev /sys/class/drm/renderD*/dev; do
+        [[ -f "${sys}" ]] || continue
+        node="/dev/dri/$(basename "$(dirname "${sys}")")"
+        [[ -e "${node}" ]] && continue
+        IFS=: read -r major minor <"${sys}"
+        mknod -m 0666 "${node}" c "${major}" "${minor}"
+        print_step_header "Created ${node} (${major}:${minor})"
+    done
+    [[ -e /dev/uinput ]] || mknod -m 0666 /dev/uinput c 10 223
+    print_step_header "Forcing upstream's dumb-udev path (no host uevents)"
+    rm -rf /run/udev

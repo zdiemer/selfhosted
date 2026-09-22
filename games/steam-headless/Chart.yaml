@@ -1,0 +1,14 @@
+apiVersion: v2
+name: steam-headless
+description: Steam-Headless — Steam + Sunshine on a headless Xorg, streamed to Moonlight clients (iOS, TV, laptop). Pinned to the Radeon 680M node.
+type: application
+version: 0.1.0
+# appVersion tracks the image tag in values.yaml (image.tag).
+# renovate: image=docker.io/josh5/steam-headless
+appVersion: "debian-1.0.2"
+home: https://github.com/Steam-Headless/docker-steam-headless
+sources:
+  - https://github.com/Steam-Headless/docker-steam-headless
+  - https://github.com/LizardByte/Sunshine
+maintainers:
+  - name: zachd

@@ -1,0 +1,9 @@
+# Stored at op://homelab/games-steam-headless/values.local.yaml (see the secrets
+# CLI).
+
+# Container user password: sudo inside the container and the noVNC desktop.
+userPassword: "CHANGE-ME"
+
+sunshine:
+  # Sunshine web UI (https://<node>:47990), where Moonlight PINs are entered.
+  password: "CHANGE-ME"
