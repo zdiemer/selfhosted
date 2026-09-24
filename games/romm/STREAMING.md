@@ -38,28 +38,59 @@ ROM and save identity. The source NAS is never rewritten.
   and DLC directories. 3DS firmware, explicitly marked DLC and update entries
   are also excluded.
 - Old platform exclusions remain for systems without a configured player.
-- Initial indexing skips full-file hashing and remote metadata requests. Existing
-  metadata is retained; new entries initially use their filenames. Use an
-  **Unmatched** metadata scan to add descriptions/covers later. Full hashes can
-  be requested explicitly if needed; hashing all disc systems would read tens
-  of terabytes over SMB.
+- The first indexing pass skipped hashing and metadata. IGDB and Hasheous
+  matching are now enabled for new imports; both provider health checks passed.
+  File hashing is enabled for Hasheous. Existing unchanged hashes are cached.
+  Large disc collections can take days to hash over SMB.
+- RVZ/GCZ/WBFS and other opaque compressed disc formats use IGDB filename
+  matching; RomM 5.3.0 does not derive their original disc hashes. The backfill
+  skips those files. Dreamcast CHDs expose a lookup SHA-1 in their headers.
+  RomM excludes platforms such as PS3/PS4, Switch, Wii U and Xbox 360 from
+  ordinary file hashing. Hasheous matches are limited by its database coverage.
 
 The initial discovery found 195,517 candidates, including already indexed games.
-The redundant refresh of the old catalog was stopped, and 24 individual new
-platform scans were queued through RomM's normal RQ worker. GameCube, Wii,
-WiiWare, PS2, Dreamcast and 3DS are prioritized. Watch the task queue in RomM;
-queued work persists in its Valkey volume.
+The 24 new platform folders are listed in `match-streaming.py`. Work runs through
+RomM's serial RQ scan worker and persists in its Valkey volume. Watch the task
+queue in RomM for progress and failures.
 
-To queue missing platform folders again, run `index-streaming.py` inside the
-RomM container from `/backend` with `/src/.venv/bin/python`. It refuses if a
-library scan is already queued/running. Passing folder names explicitly retries
-a partially indexed platform, since it already has a database row. For example:
+`index-streaming.py` queues missing folders, with IGDB and Hasheous selected.
+It refuses to duplicate an existing library scan. Pass folder names explicitly
+to resume partial indexing. Existing entries keep their metadata; Quick scans
+only enrich newly discovered entries.
+
+`match-streaming.py` queues **Unmatched** scans using both providers, appending
+them after existing queued work. Run this for entries from the original hashless
+index. Then run it with `--hashes` to backfill eligible, already indexed games
+without a Hasheous ID in batches of 100. Those selected-ROM scans calculate
+missing hashes, reuse unchanged ones, and preserve existing provider matches.
+The hash plan is a snapshot of the catalog at invocation: run after discovery
+finishes to include every entry, or use normal indexing with hashing enabled
+for the remaining new entries. Stable job IDs prevent duplicate submissions
+while their RQ records remain; inspect failed jobs before retrying.
+
+Run the scripts inside the RomM container from `/backend` with its Python:
 
 ```bash
-kubectl -n games exec -i <romm-pod> -c romm -- \
-  sh -c 'cd /backend && /src/.venv/bin/python - "GameCube"' \
-  < games/romm/index-streaming.py
+# POD must be the application pod, not the database or Webstation pod.
+kubectl -n games exec -i "$POD" -c romm -- \
+  sh -c 'cd /backend && /src/.venv/bin/python -' \
+  < games/romm/match-streaming.py
+
+# Preview hash batches; omit --dry-run to enqueue.
+kubectl -n games exec -i "$POD" -c romm -- \
+  sh -c 'cd /backend && /src/.venv/bin/python - --hashes --dry-run' \
+  < games/romm/match-streaming.py
 ```
+
+IGDB matches may still need manual correction for ambiguous filenames. A
+completed scan does not mean every game has a provider match.
+
+September 21 backfill: 24 metadata scans, 19 resumed index jobs using both
+providers, and 139 hash batches covering 13,571 previously indexed games were
+submitted. GameCube matching was confirmed progressing. Live selected-ROM
+checks stored CRC/MD5/SHA-1 for Mega Man 9 (WiiWare) and a CHD lookup SHA-1 for
+18 Wheeler (Dreamcast); both received IGDB metadata and covers. Hasheous was
+reachable but returned no match for those two dumps.
 
 ## Firmware, saves and persistence
 

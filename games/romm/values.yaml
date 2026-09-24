@@ -121,13 +121,10 @@ config:
     "Nintendo 3DS": "_decrypted"
     "New Nintendo 3DS": "_decrypted"
     "Wii U": "_decrypted"
-  # Hashing reads every ROM in full. The playable set is 8.06 TB over a link that
-  # sustains 107 MB/s, so this is a ~22h one-off — deliberately accepted, because
-  # hashes are what Hasheous and RetroAchievements identify games BY. They're
-  # cached in the DB afterwards, not recomputed on later scans.
-  # It is only worth paying if something consumes the hashes: see romm.hasheous.
-  # Index first; multi-terabyte disc systems must not be fully hashed to play.
-  skipHashCalculation: true
+  # Hasheous needs file hashes. New imports calculate them; existing hashless
+  # entries need an explicit scoped hash scan. Large disc sets can take days.
+  # RomM caches unchanged hashes and excludes unsupported modern platforms.
+  skipHashCalculation: false
   # Folders that aren't game platforms, or that we don't want RomM walking.
   excludePlatforms:
     # Systems without a configured browser or native streaming player.

@@ -1,8 +1,9 @@
 """Queue missing platform indexes inside RomM, from /backend with its Python.
 
 Existing platforms are retained. Pass filesystem folder names as arguments to
-resume a partially indexed platform. No full-file hashes or remote metadata
-calls: enrich new entries later with an Unmatched scan if desired.
+resume a partially indexed platform. New entries calculate hashes and query
+IGDB plus Hasheous. Existing entries need match-streaming.py to backfill
+missing metadata and hashes.
 """
 import sys
 from config import SCAN_TIMEOUT, TASK_RESULT_TTL
@@ -15,8 +16,8 @@ from handler.scan_jobs import get_blocking_library_scans
 from pathlib import Path
 
 config = config_manager.get_config()
-if not config.SKIP_HASH_CALCULATION:
-    raise SystemExit('Enable skip_hash_calculation before this initial index')
+if config.SKIP_HASH_CALCULATION:
+    raise SystemExit('Disable skip_hash_calculation for Hasheous matching')
 running, queued = get_blocking_library_scans()
 if running or queued:
     raise SystemExit('A library scan is already running or queued; do not duplicate it')
@@ -28,7 +29,7 @@ folders.sort(key=lambda x: (priority.index(x) if x in priority else len(priority
 for folder in folders:
     job = scan_queue.enqueue(
         scan_platforms,
-        platform_ids=[], metadata_sources=[], scan_type=ScanType.QUICK,
+        platform_ids=[], metadata_sources=["igdb", "hasheous"], scan_type=ScanType.QUICK,
         roms_ids=[], platform_fs_slugs=[folder], launchbox_remote_enabled=False,
         on_failure=report_scan_failure,
         job_timeout=SCAN_TIMEOUT, result_ttl=TASK_RESULT_TTL,
