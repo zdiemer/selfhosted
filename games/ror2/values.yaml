@@ -1,0 +1,33 @@
+image:
+  repository: registry.zachd.duckdns.org/zdiemer/ror2-unofficial-dedicated-server
+  tag: "0.1.0-5"
+  pullPolicy: Always
+
+game:
+  # Existing read-only SMB PVC for //192.168.4.36/games.
+  existingClaim: romm-library
+  subPath: Roms/_steam/Risk of Rain 2
+  revision: "1"
+
+work:
+  persistence:
+    enabled: true
+    storageClass: truenas-iscsi
+    size: 16Gi
+
+server:
+  port: 7777
+  maxPlayers: 4
+
+service:
+  # DuckDNS resolves to a tailnet node; klipper-lb publishes UDP on all nodes.
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+
+resources:
+  requests:
+    cpu: 1000m
+    memory: 3Gi
+  limits:
+    cpu: "4"
+    memory: 6Gi
