@@ -11,7 +11,7 @@
 # stage compiles std-only Rust and pulls nothing from crates.io.
 # The pinned tag is the trust anchor, same as BAKERY_REF below.
 # renovate: datasource=github-releases depName=BrokkAi/muse-acp extractVersion=^v(?<version>.+)$
-ARG MUSE_ACP_VERSION=0.4.3
+ARG MUSE_ACP_VERSION=0.6.1
 # renovate: datasource=docker depName=rust
 ARG RUST_VERSION=1.98.1
 FROM rust:${RUST_VERSION}-slim-bookworm AS muse-acp-build
@@ -32,17 +32,17 @@ ARG TTYD_VERSION=1.7.7
 # Cluster tooling, all pinned static binaries:
 # kubectl tracks the cluster minor (v1.34.x) — bump after scripts/k3s/k3s-upgrade.sh.
 # renovate: datasource=github-tags depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=v1.36.3
+ARG KUBECTL_VERSION=v1.37.1
 # renovate: datasource=github-releases depName=helm/helm
-ARG HELM_VERSION=v3.21.3
+ARG HELM_VERSION=v3.22.0
 # tailscaled runs in-pod with userspace networking (no TUN, no root) so the
 # scripts/k3s maintenance scripts can `tailscale ssh root@<node>`.
 # renovate: datasource=github-releases depName=tailscale/tailscale extractVersion=^v(?<version>.+)$
-ARG TAILSCALE_VERSION=1.102.2
+ARG TAILSCALE_VERSION=1.102.4
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
 # renovate: datasource=github-releases depName=moby/buildkit
-ARG BUILDKIT_VERSION=v0.32.2
+ARG BUILDKIT_VERSION=v0.33.0
 # sops for repos that keep secrets encrypted in-git (talaria's
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
@@ -53,7 +53,7 @@ ARG SOPS_VERSION=v3.13.3
 # the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
 # the tailscale/docker/happy logins — no token is baked into the image.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.97.0
+ARG GH_VERSION=2.101.0
 # Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
 # harness served under /bakery's own subdomain (see README "Bakery surface").
 # It's a Bun monorepo (server + Vite web); there's no published image, so we
@@ -62,7 +62,7 @@ ARG GH_VERSION=2.97.0
 # gated); BAKERY_REF is pinned to the commit the v3 image was built from
 # (upstream cuts no release tags) — bump deliberately, same as the claude CLI.
 # renovate: datasource=npm depName=bun
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.2
 ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
@@ -103,7 +103,7 @@ ARG OP_VERSION=2.38.1
 # 0.14.6, and back it up first: k8up snapshots this PVC, but the Signal
 # registration is not re-creatable without a fresh SMS verify.
 # renovate: datasource=github-releases depName=AsamK/signal-cli extractVersion=^v(?<version>.+)$
-ARG SIGNAL_CLI_VERSION=0.14.6
+ARG SIGNAL_CLI_VERSION=0.14.8
 # The other coding agents. Each is a real CLI with its own agent loop and tools,
 # not a model id handed to claude — the messaging gateway drives them over ACP
 # (Agent Client Protocol) and Happy has had `happy codex` / `happy gemini` /
@@ -123,12 +123,12 @@ ARG SIGNAL_CLI_VERSION=0.14.6
 # `codex` has no acp subcommand (it has `app-server`, its own JSON-RPC), and
 # `muse` has `serve`, which is Meta's MSP rather than ACP.
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.154.0
+ARG CODEX_VERSION=0.157.1
 # ACP server for codex, from the agentclientprotocol org (the protocol's own).
 # renovate: datasource=npm depName=@agentclientprotocol/codex-acp
-ARG CODEX_ACP_VERSION=1.12.0
+ARG CODEX_ACP_VERSION=1.13.1
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.60.0
+ARG GEMINI_CLI_VERSION=0.61.0
 # Muse Code (Meta). Upstream only documents `curl https://dev.meta.ai/install.sh
 # | bash`, which drops a SELF-UPDATING launcher in ~/.local/bin — useless under a
 # read-only rootfs and unpinnable besides. But the channel endpoint
