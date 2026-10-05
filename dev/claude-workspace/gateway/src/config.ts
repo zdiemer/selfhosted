@@ -421,23 +421,31 @@ export const config = {
     maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
   },
   // Transcript health (router.ts transcriptHealth). A cold resume has to
-  // rebuild the session's jsonl tail into the context window, and past
-  // roughly 1.4MB the rebuild — and the auto-compaction the CLI tries as a
-  // rescue — both come back as API 400 "Prompt is too long", killing the
-  // thread. A live child never notices (its in-context management is not
-  // persisted), which is how a chat balloons for hours and then dies on the
-  // first message after its process exits. So: compact well before the wall,
-  // and once past saving, say so while there is still time to wrap up.
+  // rebuild the session's history into the context window, and once it no
+  // longer fits the rebuild comes back as API 400 "Prompt is too long",
+  // killing the thread. A live child never notices (its in-context management
+  // is not persisted), which is how a chat balloons for hours and then dies on
+  // the first message after its process exits. So: compact before the wall.
+  //
+  // This used to trigger on transcript bytes alone, at 1MB, which was both too
+  // eager and self-defeating. Bytes-per-token varies over 5x-37x with how much
+  // tool output a thread accumulated, so 1MB meant anywhere from 27k to 200k
+  // tokens; and a thread that compacted once then regrew past the old 1.4MB
+  // "past saving" cap was never offered a second compaction, because that cap
+  // only warned. Every compacted transcript on the PVC showed the same
+  // signature: one boundary at ~1.2MB, then megabytes of tail behind it.
   transcript: {
-    // Where the gateway queues a quiet `/compact` turn. Measured on the tail
-    // a resume would rebuild (claude.ts resumableBytes), not the file — the
-    // file never shrinks, compaction just adds a boundary to rebuild from.
-    compactBytes: envIntOrZero("GW_COMPACT_KB", 1024) * 1024,
-    // Past this, the compaction request itself no longer fits and the thread
-    // cannot be rescued, only warned about. Between the two thresholds a
-    // compact is still worth attempting; zero for compactBytes disables the
-    // auto-compact and leaves only the warning.
-    capBytes: envInt("GW_TRANSCRIPT_CAP_KB", 1440) * 1024,
+    // Where the gateway queues a quiet `/compact` turn, in context tokens as
+    // reported by the API (claude.ts resumableSize). Threads here have run to
+    // ~350k on opus-5 with a working resume, so this sits above the observed
+    // healthy range and below any current window. Zero disables the check.
+    compactTokens: envIntOrZero("GW_COMPACT_TOKENS_K", 400) * 1000,
+    // Backstop for what the token figure cannot see: a live child's in-context
+    // management is not persisted, so a cold rebuild can replay more than the
+    // last turn was billed for. Far from the token threshold on purpose —
+    // bytes are a weak proxy and this should fire only when they are the only
+    // evidence left. Zero disables it.
+    backstopBytes: envIntOrZero("GW_TRANSCRIPT_BACKSTOP_KB", 3072) * 1024,
   },
   // Read-only tools that never prompt; everything else goes through the
   // approval relay. Space-separated, claude --allowedTools syntax.

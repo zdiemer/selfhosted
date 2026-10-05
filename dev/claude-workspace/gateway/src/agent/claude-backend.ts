@@ -4,7 +4,7 @@ import {
   isRunning,
   isWaiting,
   latestSessionId,
-  resumableBytes,
+  resumableSize,
   runClaude,
   runningChats,
   stop,
@@ -33,7 +33,7 @@ export const claudeBackend: AgentBackend = {
   handOff,
   runningChats,
   latestSessionId,
-  resumableBytes,
+  resumableSize,
 
   // Aliases so a phone doesn't have to type a full model id.
   models: {

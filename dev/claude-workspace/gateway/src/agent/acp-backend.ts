@@ -107,7 +107,7 @@ export function makeAcpBackend(spec: ProviderSpec): AgentBackend {
     // no id therefore says "no sessions found" rather than silently handing
     // back claude's, and the transcript-health nudges stay quiet.
     latestSessionId: () => undefined,
-    resumableBytes: () => 0,
+    resumableSize: () => ({ bytes: 0, tokens: 0 }),
 
     // model and effort are whatever the agent last said it offers; the rest are
     // Claude Code flags with no ACP equivalent at all. Optimistic before the

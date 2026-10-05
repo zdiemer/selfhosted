@@ -510,5 +510,8 @@ test("a resumed session picks up the catalogue too", async () => {
 test("no transcript means no resume-by-default and no health nudge", () => {
   const b = backend();
   expect(b.latestSessionId("/home/node/code")).toBeUndefined();
-  expect(b.resumableBytes("/home/node/code", "any")).toBe(0);
+  expect(b.resumableSize("/home/node/code", "any")).toEqual({
+    bytes: 0,
+    tokens: 0,
+  });
 });

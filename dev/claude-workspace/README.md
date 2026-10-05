@@ -568,16 +568,31 @@ message late — on the reply that needed that context.) The transcript itself
 stays on the PVC under `~/.claude`, so `!resume <id>` can still reach it.
 
 Long threads are kept resumable rather than left to die. A cold resume rebuilds
-the session jsonl's tail into the context window, and past ~1.4MB the rebuild —
-and the auto-compaction the CLI tries as a rescue — both come back `Prompt is
-too long`, permanently. A live child never notices (its in-context trimming
-isn't persisted), so the thread balloons for hours and dies on the first
-message after its process exits. The gateway now measures that tail after every
-turn (`messaging.transcript`): past `compactKB` it queues a quiet `/compact`
-turn (announced as `⚙ … compacting in the background`); past `capKB`, where
-even compaction no longer fits, it warns to wrap up. And if a resume still
-comes back `Prompt is too long`, the run is retried once from a fresh session
-instead of delivering a dead thread's error forever.
+the thread into the context window, and once it no longer fits, that rebuild
+comes back `Prompt is too long`, permanently. A live child never notices (its
+in-context trimming isn't persisted), so the thread balloons for hours and dies
+on the first message after its process exits. So the gateway sizes the thread
+after every turn (`messaging.transcript`) and past `compactTokensK` queues a
+quiet `/compact` turn, announced as `⚙ … compacting in the background`. If a
+resume still comes back `Prompt is too long`, the run is retried once from a
+fresh session instead of delivering a dead thread's error forever.
+
+Two details that were wrong until v35, both of which made compaction useless on
+exactly the threads that needed it. It triggered on transcript bytes, but
+bytes-per-token runs **5x-37x** depending on how much tool output a thread
+accumulated, so the old 1MB trigger meant anywhere from 27k to 200k tokens —
+while threads here run to ~350k with a perfectly good resume. It now reads the
+`usage` block the API returns on each assistant entry, which states the context
+size instead of estimating it. And above a second byte threshold the old code
+declared a thread *past* compacting and only warned from then on, so nothing
+ever compacted twice: every compacted transcript on the PVC had one boundary at
+~1.2MB with megabytes of tail behind it, one at 11.3MB. A thread over the line
+is now always offered a compaction — if one genuinely no longer fits, the
+request fails and nothing is lost by having asked. `backstopKB` remains as a
+second trigger (3MB) for what tokens can't see: a cold rebuild can replay more
+than the live child was last billed for. A compaction that doesn't shrink the
+thread is called out, because `!clear` is then the move and the window for it is
+still open.
 
 Anything else is sent to claude. Replies are prefixed
 `[repo · session · auto|plan?]` in a 1:1, chunked to ~1.9k (Signal) / ~2.9k

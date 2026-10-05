@@ -565,15 +565,16 @@ spec:
               value: {{ .Values.messaging.background.waitSeconds | default 1800 | quote }}
             - name: GW_BACKGROUND_MAX_TURNS
               value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
-            # Transcript health thresholds (see values.yaml): auto-compact
-            # past compactKB (0 disables), warn past capKB.
+            # Transcript health thresholds (see values.yaml): auto-compact past
+            # compactTokensK of context, with backstopKB of transcript as the
+            # second trigger. Either at 0 disables that trigger.
             {{- with .Values.messaging.transcript }}
             # No `| default`: it would turn an explicit 0 ("don't compact")
             # into the fallback. An empty value falls back in config.ts.
-            - name: GW_COMPACT_KB
-              value: {{ .compactKB | quote }}
-            - name: GW_TRANSCRIPT_CAP_KB
-              value: {{ .capKB | quote }}
+            - name: GW_COMPACT_TOKENS_K
+              value: {{ .compactTokensK | quote }}
+            - name: GW_TRANSCRIPT_BACKSTOP_KB
+              value: {{ .backstopKB | quote }}
             {{- end }}
             - name: GW_ALLOWED_TOOLS
               value: {{ .Values.messaging.allowedTools | quote }}

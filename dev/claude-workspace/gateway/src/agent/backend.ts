@@ -1,5 +1,6 @@
 import type {
   BackgroundTask,
+  ResumableSize,
   RunHooks,
   RunOverrides,
   RunResult,
@@ -85,9 +86,11 @@ export interface AgentBackend {
    * the cross-surface handoff from a /term or Happy session. Undefined when a
    * backend keeps no discoverable transcript. */
   latestSessionId(cwd: string): string | undefined;
-  /** Transcript bytes a cold resume would have to rebuild, for the health
-   * warnings in router.ts. 0 when the backend exposes no transcript. */
-  resumableBytes(cwd: string, sessionId: string): number;
+  /** How big the thread has got, in tokens and in transcript bytes, for the
+   * health checks in router.ts. Zeroes when the backend exposes no
+   * transcript — which reads as healthy, correctly, since there is then
+   * nothing those checks could act on. */
+  resumableSize(cwd: string, sessionId: string): ResumableSize;
 
   /** Alias → model id, for typing shortcuts on a phone. claude's are the only
    * hardcoded ones left; an ACP agent tells us its real catalogue instead (see

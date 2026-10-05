@@ -667,25 +667,86 @@ export async function runClaude(
   }
 }
 
-/** Bytes of transcript a cold resume would have to rebuild into context: the
- * session jsonl's tail after its last compact boundary. The file itself only
- * ever grows — compaction appends a boundary rather than rewriting — so raw
- * size overstates a compacted thread; the tail is what has to fit back into
- * the window. 0 when the transcript doesn't exist yet. */
-export function resumableBytes(cwd: string, sessionId: string): number {
+/** How big a thread has got, in the two units worth having.
+ *
+ * `tokens` is the real one: every assistant entry carries the `usage` block the
+ * API returned, so the newest one states the context size at that point in the
+ * thread rather than estimating it. It already accounts for compaction — a
+ * post-compaction turn reports the summarised context, not the history behind
+ * it.
+ *
+ * `bytes` is the tail of the jsonl after the last compact boundary, kept only
+ * as a backstop for the case `tokens` cannot see: the live child's in-context
+ * management is not persisted, so a cold rebuild can replay more than the last
+ * turn was charged for. It is a weak signal — measured across the transcripts
+ * on this pod, bytes-per-token ranges over 5x-37x depending on how much tool
+ * output a thread accumulated — so thresholds on it belong far from where the
+ * token ones sit.
+ *
+ * Both 0 when the transcript doesn't exist yet. */
+export interface ResumableSize {
+  bytes: number;
+  tokens: number;
+}
+
+export function resumableSize(cwd: string, sessionId: string): ResumableSize {
   const p = path.join(
     config.home,
     ".claude/projects",
     cwd.replace(/[/.]/g, "-"),
     `${sessionId}.jsonl`,
   );
+  let text: string;
   try {
-    const text = fs.readFileSync(p, "utf8");
-    const boundary = text.lastIndexOf('"compact_boundary"');
-    return boundary < 0 ? text.length : text.length - boundary;
+    text = fs.readFileSync(p, "utf8");
   } catch {
-    return 0;
+    return { bytes: 0, tokens: 0 };
   }
+  const boundary = text.lastIndexOf('"compact_boundary"');
+  const bytes = boundary < 0 ? text.length : text.length - boundary;
+  return { bytes, tokens: contextTokens(text) };
+}
+
+/** Context size from the newest main-chain assistant entry's usage block.
+ * Scans backwards, since the answer is almost always in the last few lines, and
+ * gives up rather than parsing a whole 12MB transcript to find nothing.
+ * Sidechain entries are a subagent's own context, not this thread's, so they
+ * are skipped. 0 when no entry states a usage. */
+function contextTokens(text: string): number {
+  let end = text.length;
+  for (let seen = 0; seen < 200 && end > 0; seen++) {
+    const start = text.lastIndexOf("\n", end - 1);
+    const line = text.slice(start + 1, end).trim();
+    end = start;
+    if (!line || line.indexOf('"usage"') < 0) continue;
+    let rec: {
+      isSidechain?: boolean;
+      message?: {
+        usage?: {
+          input_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      };
+    };
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (rec.isSidechain) continue;
+    const u = rec.message?.usage;
+    if (!u || u.input_tokens == null) continue;
+    // The prompt the API actually billed: fresh input plus both halves of the
+    // cache. Output tokens are excluded — they are already counted as input on
+    // the next turn, which is the one being measured.
+    return (
+      u.input_tokens +
+      (u.cache_creation_input_tokens ?? 0) +
+      (u.cache_read_input_tokens ?? 0)
+    );
+  }
+  return 0;
 }
 
 /** Newest session jsonl for a cwd — claude names project dirs by munging

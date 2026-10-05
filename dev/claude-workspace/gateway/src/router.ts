@@ -736,47 +736,65 @@ async function drain(chatKey: string): Promise<void> {
 }
 
 // Transcript health: compact before a thread outgrows what a cold resume can
-// rebuild, and once it is past saving, say so while there is still time to
-// wrap up. The cooldown is in-memory rather than persisted — after a restart
-// the worst case is one repeated nudge.
+// rebuild. The cooldown and the last attempt are in-memory rather than
+// persisted — after a restart the worst case is one repeated nudge, or one
+// compaction offered to a thread that already had one.
 const nudgedAt = new Map<string, number>();
 const NUDGE_COOLDOWN_MS = 10 * 60_000;
+/** Context tokens at the last compaction this chat was sent, so a thread that
+ * compacts and keeps growing can be told apart from one compaction isn't
+ * helping. */
+const compactedAt = new Map<string, number>();
 
 function transcriptHealth(chatKey: string): void {
   const chat = getChat(chatKey);
   const agent = backendFor(chatKey);
   const sessionId = threadOf(chat, agent.id).sessionId;
   if (!sessionId) return;
-  // 0 for a backend that exposes no transcript on disk, which reads as healthy
-  // — the right answer, since there is nothing this could nudge about.
-  const bytes = agent.resumableBytes(chat.cwd, sessionId);
-  const { compactBytes, capBytes } = config.transcript;
-  if (bytes < capBytes && (!compactBytes || bytes < compactBytes)) return;
+  // Zeroes for a backend that exposes no transcript on disk, which reads as
+  // healthy — the right answer, since there is nothing this could act on.
+  const { bytes, tokens } = agent.resumableSize(chat.cwd, sessionId);
+  const { compactTokens, backstopBytes } = config.transcript;
+  const overTokens = compactTokens > 0 && tokens >= compactTokens;
+  const overBytes = backstopBytes > 0 && bytes >= backstopBytes;
+  if (!overTokens && !overBytes) return;
   const last = nudgedAt.get(chatKey) ?? 0;
   if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
   nudgedAt.set(chatKey, Date.now());
-  const mb = (bytes / 1048576).toFixed(1);
-  if (bytes >= capBytes) {
-    // Too big even for /compact — the compaction request itself would no
-    // longer fit. The thread keeps working while its child is alive; the
-    // first cold resume is what dies (and now recovers by starting over, see
-    // runQueued). Say so while wrapping up is still an option.
+
+  // Always try. The old code declared a thread past saving above a byte cap and
+  // only warned from then on, which is why nothing ever compacted twice — and
+  // the premise was wrong anyway: those threads were well inside the window. If
+  // a compaction genuinely no longer fits, the request fails and we are exactly
+  // where warning alone would have left us, so there is nothing to protect by
+  // not asking.
+  //
+  // It goes through the ordinary queue, so it hands off to a parked child —
+  // trimming the live thread, where the bloat actually accumulates — or spawns
+  // a short resume of its own.
+  const previous = compactedAt.get(chatKey);
+  compactedAt.set(chatKey, tokens);
+  enqueueScheduled(chatKey, { body: "/compact", quiet: true });
+
+  const size = overTokens
+    ? `~${Math.round(tokens / 1000)}k tokens`
+    : `~${(bytes / 1048576).toFixed(1)}MB of transcript`;
+  // A previous compaction that bought nothing — the thread is right back where
+  // it was, or higher — means this one probably won't either. Worth saying,
+  // because !clear is then the move and the window for it is still open.
+  if (previous !== undefined && tokens >= previous * 0.95) {
     void sendTo(
       chatKey,
-      `⚠ this thread's transcript (~${mb}MB) is past compacting — once the ` +
-        "current run ends it can't be resumed, and the next message will " +
-        "start fresh. Wrap up what matters now, or !clear at a good break.",
+      `⚠ this thread is at ${size} and the last compaction didn't shrink it. ` +
+        "Trying again, but if the next message can't resume it'll start " +
+        "fresh — !clear at a good break is the safer exit.",
     );
     return;
   }
-  // Still rescuable: a quiet /compact through the ordinary queue, so it hands
-  // off to a parked child (trimming the live thread, where the bloat actually
-  // accumulates) or spawns a short resume of its own.
   void sendTo(
     chatKey,
-    `⚙ thread transcript is ~${mb}MB — compacting in the background to keep it resumable`,
+    `⚙ thread is at ${size} — compacting in the background to keep it resumable`,
   );
-  enqueueScheduled(chatKey, { body: "/compact", quiet: true });
 }
 
 /**

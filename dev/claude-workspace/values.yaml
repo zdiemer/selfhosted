@@ -98,6 +98,20 @@ image:
   #      wake-up, background handoff) arrived as a bare [repo · sid · mode]
   #      banner because the CLI result event carries result: "". The gateway
   #      now falls back to the last non-empty assistant text in the stream.
+  # v35: transcript health actually keeps long threads alive. It triggered on
+  #      transcript bytes, which predict context size over a 5x-37x range
+  #      depending on how much tool output a thread accumulated — so the 1MB
+  #      trigger fired anywhere between 27k and 200k tokens, while threads
+  #      here run to ~350k and resume fine. It now reads the context size the
+  #      API reports on each assistant entry (messaging.transcript.
+  #      compactTokensK, with backstopKB as a byte backstop for what that
+  #      cannot see). And above a second byte cap the old code declared a
+  #      thread past compacting and warned from then on without ever trying,
+  #      so nothing compacted twice: every compacted transcript on the PVC had
+  #      one boundary at ~1.2MB and megabytes of tail behind it, one of them
+  #      11.3MB at 319k tokens — well inside the window the cap claimed it had
+  #      outgrown. A thread over the line is now always offered a compaction,
+  #      and a compaction that doesn't shrink it says so.
   # v32: claude is no longer the only agent in the image. codex
   #      (@openai/codex), gemini (@google/gemini-cli) and muse (Meta's Muse
   #      Code, plus the muse-acp adapter) are installed alongside it, each
@@ -175,7 +189,7 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v34"
+  tag: "v35"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -501,16 +515,23 @@ messaging:
     # bounds one park; this bounds the chain, so a run that starts a fresh
     # background task on every wake cannot loop on the subscription unasked.
     maxTurns: 10
-  # Transcript health. A cold resume rebuilds the session jsonl's tail (after
-  # its last compact boundary) into the context window; past ~1.4MB that
-  # rebuild — and the compaction that would rescue it — both come back as API
-  # 400 "Prompt is too long" and the thread is dead, which is how a chat that
-  # spent an evening reading rendered PNGs died on the first message after its
-  # process exited. Past compactKB the gateway queues a quiet `/compact` turn
-  # (0 disables); past capKB it can only warn to wrap up and !clear.
+  # Transcript health. A cold resume rebuilds the thread into the context
+  # window; once it no longer fits, that rebuild comes back as API 400 "Prompt
+  # is too long" and the thread is dead — which is how a chat that spent an
+  # evening reading rendered PNGs died on the first message after its process
+  # exited. Past compactTokensK the gateway queues a quiet `/compact` turn (0
+  # disables), and it keeps offering one as long as the thread stays over,
+  # rather than giving up above some second threshold.
+  #
+  # Tokens, not transcript bytes, because bytes-per-token runs 5x-37x depending
+  # on how much tool output a thread accumulated: the old 1024KB trigger meant
+  # anywhere from 27k to 200k tokens, and threads here run to ~350k with a
+  # working resume. backstopKB covers only what the token count cannot see — a
+  # live child's in-context management is not persisted, so a cold rebuild can
+  # replay more than the last turn was billed for (0 disables).
   transcript:
-    compactKB: 1024
-    capKB: 1440
+    compactTokensK: 400
+    backstopKB: 3072
   # Tools claude may use WITHOUT a chat prompt (read-only set). Everything
   # else round-trips "Claude wants: … reply 1/2/3". `!auto on` allows those
   # unprompted too — but a question or a plan still reaches the chat, because
