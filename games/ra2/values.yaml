@@ -1,0 +1,20 @@
+image:
+  repository: registry.zachd.duckdns.org/zdiemer/redalert2-recomp
+  tag: d37b81ae-2
+source:
+  repository: https://github.com/zdiemer/redalert2-recomp.git
+  commit: d37b81ae60faaf8131557468c6f5de43dd3cbafc
+nas:
+  existingClaim: romm-library
+  subPath: Roms/_steam/Command and Conquer Red Alert II
+  buildPath: /mnt/games/Roms/_steam/Command and Conquer Red Alert II
+ingress:
+  hosts:
+  - ra2.zachd.duckdns.org
+  - yuri.zachd.duckdns.org
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

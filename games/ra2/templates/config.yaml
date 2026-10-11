@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-assets
+data:
+  prepare-assets.py: |
+{{ .Files.Get "prepare-assets.py" | indent 4 }}

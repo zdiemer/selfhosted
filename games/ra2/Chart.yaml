@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ra2
+version: 0.1.0
+appVersion: "d37b81ae-2"
+description: Red Alert 2 and Yuri's Revenge static recompilation to WASM, tailnet only
