@@ -324,7 +324,7 @@ export const config = {
   // Model and reasoning depth for every headless run; `!model` / `!effort`
   // override per chat. Medium effort is the balance point for a surface where
   // replies are read on a phone over a bad connection.
-  model: process.env.GW_MODEL ?? "claude-opus-5",
+  model: process.env.GW_MODEL ?? "claude-opus-5-5",
   effort: process.env.GW_EFFORT ?? "medium",
   // The other coding agents, each driven over ACP (see agent/). Off by default
   // for the same reason groups are: every one of these spends a DIFFERENT
@@ -332,7 +332,7 @@ export const config = {
   // hand them three more. `!agent` only offers what is listed here.
   agents: {
     enabled: envList("GW_AGENTS"),
-    codexModel: process.env.GW_CODEX_MODEL ?? "gpt-5.4",
+    codexModel: process.env.GW_CODEX_MODEL ?? "gpt-6-astra",
     geminiModel: process.env.GW_GEMINI_MODEL ?? "gemini-3.8-pro",
     museModel: process.env.GW_MUSE_MODEL ?? "muse-spark-1.3",
   },

@@ -558,7 +558,7 @@ endpoint for the subscription counters, and the interactive `/usage` panel is a
 TUI this headless surface can't reach. So it counts **every** claude run in this
 pod (chat, tmux, Happy) and nothing you ran anywhere else.
 
-Runs default to **Opus 5 at medium effort** (`messaging.model` /
+Runs default to **Opus 5.5 at medium effort** (`messaging.model` /
 `messaging.effort`); `!model` and `!effort` override per chat and persist in the
 state file. `!clear` is `!new` under a name that reads right in a chat — it
 drops the session pointer so the next message starts cold, and kills a live run
@@ -716,6 +716,20 @@ standard mechanism that replaced the unstable `session/set_model`. On
 gateway selects against the `model` and `thought_level` categories at session
 start, with the same precedence claude uses — a schedule's pin beats the chat's
 `!model` beats `messaging.agents.*Model`.
+
+Model availability depends on the installed client as well as the account.
+The v36 image updates Codex to 0.163.0 and codex-acp to 2.2.2; both advertise
+`gpt-6.1-sol` for the workspace login. Codex still defaults to Astra; select
+`!model gpt-6.1-sol` to use Sol 6.1. Claude shortcuts now select Opus/Sonnet/
+Haiku 5.5 and Fable 5.1, and bare `!model` displays those shortcuts immediately.
+Explicit Claude IDs remain accepted, including older models.
+
+Happy's Claude/Codex model menus live in its phone/web client, not in the
+self-hosted relay. Updating the workspace's Happy CLI to 1.2.5 refreshes its
+backend dependencies, but an old phone app or cached web client still needs
+its own update to display the new rows. Existing explicit model selections
+are retained; select the new model after updating. Changing the relay alone
+does not refresh the picker.
 
 Because the agent publishes its own catalogue, bare `!model` lists **its real
 models** rather than anything hardcoded here, and a name it does not offer is

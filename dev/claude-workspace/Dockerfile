@@ -23,7 +23,8 @@ RUN apt-get update \
         https://github.com/BrokkAi/muse-acp /src \
  && cargo build --locked --release --manifest-path /src/Cargo.toml
 
-FROM node:22-bookworm-slim
+# Happy 1.2.5 includes happy-terminal, which requires Node >=24.
+FROM node:24-bookworm-slim
 
 # ttyd isn't packaged in bookworm; ship the static release binary. Pinned so
 # rebuilds are reproducible — bump deliberately (Renovate proposes, human merges).
@@ -123,10 +124,10 @@ ARG SIGNAL_CLI_VERSION=0.14.6
 # `codex` has no acp subcommand (it has `app-server`, its own JSON-RPC), and
 # `muse` has `serve`, which is Meta's MSP rather than ACP.
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.154.0
+ARG CODEX_VERSION=0.163.0
 # ACP server for codex, from the agentclientprotocol org (the protocol's own).
 # renovate: datasource=npm depName=@agentclientprotocol/codex-acp
-ARG CODEX_ACP_VERSION=1.12.0
+ARG CODEX_ACP_VERSION=2.2.2
 # renovate: datasource=npm depName=@google/gemini-cli
 ARG GEMINI_CLI_VERSION=0.60.0
 # Muse Code (Meta). Upstream only documents `curl https://dev.meta.ai/install.sh
@@ -211,7 +212,7 @@ COPY --from=muse-acp-build --chmod=0755 \
 # codex and gemini-cli are pinned like every other tool here; they are agents in
 # their own right, not models, and both Happy and the messaging gateway select
 # between them at runtime (see the agent ARGs above).
-RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.0 "bun@${BUN_VERSION}" \
+RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.5 "bun@${BUN_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \

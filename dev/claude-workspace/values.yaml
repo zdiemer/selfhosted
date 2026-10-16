@@ -189,7 +189,9 @@ image:
   #      prompt can't run twice. !stop cancels one; !status shows it.
   #      ⚠ the v23 GHCR tag was clobbered by an interim build during this
   #      change's integration — do not roll back to :v23; use :v24.
-  tag: "v35"
+  # v36: refresh Claude/Happy/Codex and the ACP adapter for Opus 5.5 and
+  #      Sol 6.1; show Claude shortcuts in !model. Happy requires Node 24.
+  tag: "v36"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -541,7 +543,7 @@ messaging:
     Bash(git status:*) Bash(git log:*) Bash(git diff:*) Bash(ls:*) Bash(rg:*)
   # Model and reasoning depth for every run. `!model` / `!effort` override per
   # chat at runtime; these are the defaults every chat starts from.
-  model: claude-opus-5
+  model: claude-opus-5-5
   effort: medium
   # The other coding agents (image v32+): codex, gemini, muse. `!agent <id>`
   # switches a chat between them and claude, and each keeps its own thread, so

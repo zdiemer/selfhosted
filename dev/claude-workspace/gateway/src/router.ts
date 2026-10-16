@@ -88,13 +88,6 @@ import {
 
 export { registerTransport, sendTo, type MsgRef, type Transport } from "./transport.ts";
 
-// Aliases accepted by !model, so a phone doesn't have to type a full model id.
-const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-5",
-  sonnet: "claude-sonnet-5",
-  haiku: "claude-haiku-4-5",
-  fable: "claude-fable-5",
-};
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 // One in-flight claude per chat; extra messages wait their turn. The inbound
@@ -1032,8 +1025,12 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
                   (c.name && c.name !== c.value ? ` — ${c.name}` : ""),
               )
               .join("\n")
-          : `usage: !model <model-id>|default\n` +
-            "(this agent's list appears after its first message)";
+          : Object.keys(agent.models).length
+            ? Object.entries(agent.models)
+                .map(([alias, id]) => `${alias} — ${id}`)
+                .join("\n") + "\nusage: !model <alias>|<model-id>|default"
+            : `usage: !model <model-id>|default\n` +
+              "(this agent's list appears after its first message)";
         return sendTo(
           chatKey,
           `model: ${current} (${agent.label} default ${fallback})\n${list}`,
