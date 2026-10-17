@@ -105,7 +105,11 @@ dig +short zachd.duckdns.org                                        # expect the
 and grants it a read-only `nodes` ClusterRole, so it can skip a node that isn't
 Ready. It walks `updater.tailnet.candidates` in order — stable, so the record
 doesn't flap between healthy nodes, but a dead lead node is skipped within one
-tick. Keep that list matching `kubectl get nodes`.
+tick. Keep that list matching `kubectl get nodes`. Readiness does not prove
+Tailscale access: an expired node key can leave Kubernetes healthy while every
+private hostname points at an unreachable address. `zachd-ubuntu-1` is excluded
+during maintenance for that reason; `zachd-ubuntu-2` is the preferred entry point.
+Re-add a repaired node only after verifying HTTPS from another tailnet device.
 
 **ACME is unaffected by the mode.** DNS-01 is outbound only: Traefik POSTs the
 TXT record to the DuckDNS API and lego verifies it via 1.1.1.1/8.8.8.8. The A
