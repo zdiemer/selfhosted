@@ -967,7 +967,9 @@ resources:
       cpu: 50m
       memory: 128Mi
     limits:
-      memory: 3Gi
+      # 3Gi was OOM-killed three times on 2026-10-17 under phone sessions;
+      # the node (61Gi allocatable) has room for 8Gi.
+      memory: 8Gi
   # Bakery server runs the coding agent (a hungry process); the Vite web is a
   # lighter dev server.
   bakeryServer:
