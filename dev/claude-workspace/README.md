@@ -724,12 +724,33 @@ The v36 image updates Codex to 0.163.0 and codex-acp to 2.2.2; both advertise
 Haiku 5.5 and Fable 5.1, and bare `!model` displays those shortcuts immediately.
 Explicit Claude IDs remain accepted, including older models.
 
-Happy's Claude/Codex model menus live in its phone/web client, not in the
-self-hosted relay. Updating the workspace's Happy CLI to 1.2.5 refreshes its
-backend dependencies, but an old phone app or cached web client still needs
-its own update to display the new rows. Existing explicit model selections
-are retained; select the new model after updating. Changing the relay alone
-does not refresh the picker.
+Happy iOS can still show an old bundled menu on its latest App Store release.
+Updating the CLI alone does not refresh that list. With
+`happy.modelCatalog.enabled`, a minute-by-minute CronJob publishes model choices
+in encrypted session metadata, which the **in-session** picker prefers over
+its bundled list. It adds Opus 5.5 and Sol 6.1 without changing the selected
+model or launching an agent turn. The initial **New Session** screen still
+uses the app's own catalog: open the session, wait up to a minute, then select
+the desired model before sending work.
+
+Edit `~/.happy/claude-models.json` and `~/.happy/codex-models.json` to customize
+the choices. Each file has `{"version":1,"models":[{"id":"model-id","name":"Display name"}]}`.
+If an override is absent, the job uses the examples in `happy-models/`.
+The refresher preserves other agent-provided choices and any saved selection.
+For a manual refresh, run
+`HAPPY_SERVER_URL=https://happy.zachd.duckdns.org node ~/.happy/refresh-claude-models.cjs`.
+The script also accepts `--dry-run` (read-only counts).
+
+Only this machine's locally recorded Claude/Codex sessions are eligible:
+Happy keeps their encryption keys in `~/.happy/sessions.json`. Old sessions
+whose local keys have expired cannot be refreshed; start/resume one through
+Happy so the daemon records its key. New sessions are refreshed automatically.
+Credentials, keys, and decrypted metadata remain in memory; only counts are
+logged. Updates use metadata version checks and an encrypted read-back, and
+never change session liveness or send messages. Protocol compatibility is
+checked against Happy 1.2.5; review the refresher when bumping that pin.
+The CronJob mounts home read-only, without `fsGroup`, and stays on the
+workspace node so it can share the RWO volume without changing permissions.
 
 Because the agent publishes its own catalogue, bare `!model` lists **its real
 models** rather than anything hardcoded here, and a name it does not offer is

@@ -1,0 +1,97 @@
+{{- if and .Values.happy.daemon.enabled .Values.happy.modelCatalog.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-model-catalog
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+data:
+  refresh-claude-models.cjs: |
+{{ .Files.Get "happy-models/refresh-claude-models.cjs" | indent 4 }}
+  claude-models.json: |
+{{ .Files.Get "happy-models/claude-models.json" | indent 4 }}
+  codex-models.json: |
+{{ .Files.Get "happy-models/codex-models.json" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-model-catalog
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.happy.modelCatalog.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 45
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 50
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: happy-model-catalog
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          # The home PVC is RWO; share the workspace's node. Do not set fsGroup:
+          # files already belong to uid 1000, and a recursive chmod damages
+          # credential permissions on this shared volume.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      {{- include "claude-workspace.selectorLabels" . | nindent 22 }}
+          containers:
+            - name: refresh
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["node", "/catalog/refresh-claude-models.cjs"]
+              env:
+                - name: HOME
+                  value: /home/node
+                - name: HAPPY_SERVER_URL
+                  value: {{ .Values.happy.serverUrl | quote }}
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: catalog
+                  mountPath: /catalog
+                  readOnly: true
+                - name: home
+                  mountPath: /home/node
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: catalog
+              configMap:
+                name: {{ include "claude-workspace.fullname" . }}-model-catalog
+            - name: home
+              persistentVolumeClaim:
+                claimName: {{ include "claude-workspace.fullname" . }}-home
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 32Mi
+{{- end }}

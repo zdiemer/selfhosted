@@ -345,6 +345,12 @@ happy:
   # allows it — but pairing must then be done by typing the URL, so it is a
   # break-glass value rather than the default.
   serverUrl: "https://happy.zachd.duckdns.org"
+  modelCatalog:
+    # Supply Claude/Codex choices to existing iOS session pickers. Local
+    # ~/.happy/{claude,codex}-models.json overrides the shipped catalogs.
+    # Does not change the iOS New Session screen or the selected model.
+    enabled: true
+    schedule: "* * * * *"
   daemon:
     # Run `happy daemon` as an always-on supervised sidecar so the Happy app
     # can spawn NEW sessions in any ~/code dir the moment the pod is up — no

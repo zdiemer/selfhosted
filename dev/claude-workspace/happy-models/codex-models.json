@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "models": [
+    { "id": "gpt-6.1-sol", "name": "Sol 6.1" },
+    { "id": "gpt-6-astra", "name": "Astra 6" },
+    { "id": "gpt-6-sol", "name": "Sol 6" },
+    { "id": "gpt-6-luna", "name": "Luna 6" },
+    { "id": "gpt-5.6-sol", "name": "Sol 5.6" },
+    { "id": "gpt-5.6-terra", "name": "Terra 5.6" },
+    { "id": "gpt-5.6-luna", "name": "Luna 5.6" }
+  ]
+}
