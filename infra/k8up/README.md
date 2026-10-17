@@ -105,6 +105,11 @@ durability.
 
 Maintenance runs Sunday after the last backup: prune at 06:00, check at 08:00.
 
+Backups default to a 1Gi memory limit. A schedule can override it with
+`memoryLimit`; the workspace uses 2Gi because restic approached the old ceiling
+while indexing its growing source and dependency trees during the October 17
+recovery run. This changes backup-process headroom, not which files are protected.
+
 Backups are **opt-out**, not opt-in (`skipWithoutAnnotation: false`). A new
 service is protected the day it lands rather than the day someone remembers. The
 cost is that anything enormous and re-acquirable must be excluded explicitly with

@@ -128,6 +128,8 @@ schedules:
   - name: claude
     namespace: claude
     schedule: "0 1 * * 4"
+    # The workspace file tree needs more restic indexing headroom.
+    memoryLimit: 2Gi
   - name: docs
     namespace: docs
     schedule: "0 3 * * 4"
