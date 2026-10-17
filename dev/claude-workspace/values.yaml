@@ -994,9 +994,12 @@ resources:
       # Was 4Gi to match `term`; on 2026-08-22 a pytest-xdist run (a dozen
       # python workers at ~250Mi each) on top of the session tipped it over,
       # OOM-killing bun mid-conversation. 6Gi leaves room for one test suite.
-      # Heavy image builds should still go to the in-cluster buildkitd
-      # (BUILDKIT_HOST) rather than run here.
-      memory: 6Gi
+      # On 2026-10-17 two parallel C builds of chrono-trigger-recomp (~36
+      # clang jobs over its generated code) tipped 6Gi over the same way;
+      # 16Gi fits a full-width native build beside the session. Heavy image
+      # builds should still go to the in-cluster buildkitd (BUILDKIT_HOST)
+      # rather than run here.
+      memory: 16Gi
   # The journal viewer reads a few hundred KB of markdown per request and holds
   # nothing between them — the only thing that grows is bun's own heap.
   journal:
