@@ -849,8 +849,10 @@ work lands — where before it sat on "I'll report back" until someone sent
 another message to nudge it. `!status` says `parked on …` in the meantime, and a
 message sent while a run is parked is handed straight to it rather than queued
 behind the wait, so the chat stays answerable. `messaging.background.waitSeconds`
-(1800) bounds one park and `messaging.background.maxTurns` (10) bounds the chain
-of wake-ups; whatever is still outstanding when either runs out dies with the
+(1800) bounds one park, or `agentWaitSeconds` (14400) while a subagent or
+workflow is among the outstanding tasks, and `messaging.background.maxTurns`
+(10) bounds the chain of wake-ups since the user last spoke; whatever is still
+outstanding when either runs out dies with the
 process, and the chat is told so rather than left waiting. Set `waitSeconds: 0`
 to go back to the first answer ending the run.
 

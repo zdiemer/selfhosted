@@ -414,10 +414,16 @@ export const config = {
     // the build or the migration that was the point of backgrounding it,
     // short enough that a wedged task doesn't hold the chat all day.
     waitMs: envIntOrZero("GW_BACKGROUND_WAIT_SECONDS", 1800) * 1000,
-    // Turns one message may grow into, wake-ups included. The wall clock
-    // above bounds one park; this bounds the chain, so a run that starts a
-    // fresh background task on every wake cannot spend the subscription in a
-    // loop nobody asked for.
+    // The park while a backgrounded subagent or workflow is outstanding. Half
+    // an hour fits a build, not an agent porting a dozen files: on 2026-10-17
+    // two of those were killed mid-work at exactly the 30m mark. An agent is
+    // still bounded — by its own turns, and by `!stop`.
+    agentWaitMs: envIntOrZero("GW_BACKGROUND_AGENT_WAIT_SECONDS", 14400) * 1000,
+    // Wake-ups in a row with no word from the user. The wall clock above
+    // bounds one park; this bounds the chain, so a run that starts a fresh
+    // background task on every wake cannot spend the subscription in a loop
+    // nobody asked for. A message handed to the parked run is somebody asking,
+    // so it starts the count again (handOff).
     maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
   },
   // Transcript health (router.ts transcriptHealth). A cold resume has to

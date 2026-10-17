@@ -191,7 +191,10 @@ image:
   #      change's integration — do not roll back to :v23; use :v24.
   # v36: refresh Claude/Happy/Codex and the ACP adapter for Opus 5.5 and
   #      Sol 6.1; show Claude shortcuts in !model. Happy requires Node 24.
-  tag: "v36"
+  # v37: a park on a backgrounded subagent or workflow waits
+  #      agentWaitSeconds (4h) rather than 30m, and a message handed to a
+  #      parked run resets the maxTurns count.
+  tag: "v37"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -519,9 +522,15 @@ messaging:
     # is killed with the process, and the chat is told so rather than left
     # waiting on a reply that is never coming.
     waitSeconds: 1800
-    # Turns one message may grow into, wake-ups included. The wall clock above
+    # The park while a backgrounded subagent or workflow is outstanding, in
+    # place of waitSeconds. An agent porting a dozen files runs for hours; on
+    # 2026-10-17 two were killed mid-work at exactly the 30m mark. Never
+    # shorter than waitSeconds, and ignored when waitSeconds is 0.
+    agentWaitSeconds: 14400
+    # Wake-ups in a row with no word from the user. The wall clock above
     # bounds one park; this bounds the chain, so a run that starts a fresh
     # background task on every wake cannot loop on the subscription unasked.
+    # A message handed to the parked run starts the count again.
     maxTurns: 10
   # Transcript health. A cold resume rebuilds the thread into the context
   # window; once it no longer fits, that rebuild comes back as API 400 "Prompt

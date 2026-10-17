@@ -563,6 +563,9 @@ spec:
             # background task to report back. 0 disables the wait entirely.
             - name: GW_BACKGROUND_WAIT_SECONDS
               value: {{ .Values.messaging.background.waitSeconds | default 1800 | quote }}
+            # The same wait while a subagent or workflow is outstanding.
+            - name: GW_BACKGROUND_AGENT_WAIT_SECONDS
+              value: {{ .Values.messaging.background.agentWaitSeconds | default 14400 | quote }}
             - name: GW_BACKGROUND_MAX_TURNS
               value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
             # Transcript health thresholds (see values.yaml): auto-compact past

@@ -126,6 +126,9 @@ interface LiveRun {
    * alone would have us close stdin in the gap and lose the wake. */
   wakePending: boolean;
   turns: number;
+  /** Turns since the user last spoke — what background.maxTurns bounds.
+   * `turns` keeps counting for onTurn; this one handOff resets. */
+  chain: number;
   /** Parked: the last turn is answered, stdin is still open, and we are
    * waiting for the CLI to wake itself. Idle, not busy — which is why a new
    * message can be handed straight to it (handOff). */
@@ -313,8 +316,27 @@ export function handOff(
   const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
   if (!run.child.stdin?.writable) return false;
   leaveWait(run);
+  run.chain = 0;
   run.child.stdin.write(userMessage(prompt));
   return true;
+}
+
+/** Task types that are an agent at work rather than a command running. */
+const AGENT_TASK_TYPES = new Set([
+  "local_agent",
+  "local_workflow",
+  "remote_agent",
+  "in_process_teammate",
+]);
+
+/** How long to stay parked on `tasks`: the agent wait if any of them is an
+ * agent, the ordinary one otherwise. Zero (don't park) stays zero — the agent
+ * wait only lengthens a park that is switched on. */
+export function parkWaitMs(tasks: BackgroundTask[]): number {
+  const { waitMs, agentWaitMs } = config.background;
+  if (!waitMs) return 0;
+  const agent = tasks.some((t) => AGENT_TASK_TYPES.has(t.task_type ?? ""));
+  return agent ? Math.max(waitMs, agentWaitMs) : waitMs;
 }
 
 function leaveWait(run: LiveRun): void {
@@ -485,6 +507,7 @@ export async function runClaude(
         tasks: [],
         wakePending: false,
         turns: 0,
+        chain: 0,
         waiting: false,
         idle: null,
         wakeupAt: null,
@@ -521,7 +544,7 @@ export async function runClaude(
           const stranded = run.tasks;
           endInput();
           if (stranded.length) hooks.onAbandon?.(stranded, "timeout");
-        }, config.background.waitMs);
+        }, parkWaitMs(run.tasks));
         // A parked run must never be the reason the gateway won't exit.
         run.idle.unref?.();
       };
@@ -605,6 +628,7 @@ export async function runClaude(
           // a wake-up with no text repeat the previous turn's answer.
           lastAssistant = "";
           run.turns++;
+          run.chain++;
           const turn = run.turns;
           const delivered = result;
           const pending = run.tasks;
@@ -617,7 +641,7 @@ export async function runClaude(
           // but not yet started the turn it cleared it for.
           const more = pending.length > 0 || run.wakePending;
           if (!more || !config.background.waitMs) endInput();
-          else if (turn >= config.background.maxTurns) {
+          else if (run.chain >= config.background.maxTurns) {
             endInput();
             if (pending.length) hooks.onAbandon?.(pending, "turns");
           } else enterWait();
