@@ -39,6 +39,39 @@ Enable hardware decode/encode for H.264 and HEVC, the common capability set.
 Leave AV1 off because the older Vega 8 cannot decode it in hardware. Setting
 `transcode.enabled: false` remains the CPU-only emergency fallback.
 
+## Preferred audio and subtitle language
+
+The four existing accounts prefer English audio and subtitles as of 2026-10-15:
+`AudioLanguagePreference: eng`, `PlayDefaultAudioTrack: false`, and
+`SubtitleLanguagePreference: eng`. These are runtime user settings, not Helm
+values; apply them to new accounts too. Preserve each user's other settings.
+Some multilingual files put Italian first or mark Italian as the default,
+including all ten episodes of *1883* and *Spider-Man: Brand New Day*. Preferring
+English avoids those flags when an English track exists. Clients can still
+override the server's selection or remember a manually selected track.
+
+*Billy the Kid* season 1 has Spanish-default audio and an English track in
+all eight episodes. The `masterncommander` account still selected Spanish on
+a previously played episode despite its English preference. Setting
+`RememberAudioSelections: false` for that account made the playback-info API
+select English for all eight episodes. Other accounts retain their existing
+remember-audio setting; subtitle memory and watch progress were not changed.
+
+*Noroi: The Curse* was a separate issue: the MIRCrew filename claimed English
+subtitles, but both embedded subtitle tracks were Italian. An English SRT
+sidecar was added from the [SUBDL VXT WEBRip release](https://subdl.com/subtitle/sd23577/noroi-the-curse/english),
+shifted 2.5 seconds earlier after comparing cue timing throughout the film,
+then the item was refreshed. Jellyfin's playback-info API confirmed English
+subtitles with Japanese audio for all four users; Spider-Man and an 1883
+sample selected English audio.
+
+Radarr and Sonarr now have `importExtraFiles: true` with
+`extraFileExtensions: srt,ass,ssa,vtt` so future imports retain separate
+subtitles. This does not fetch missing subtitles or guarantee that a release
+actually contains the languages advertised in its name. Before-change account
+and import configurations are backed up as `*-backup-*.json` in Jellyseerr's
+`/app/config` volume.
+
 ## Playback: what actually happens to a stream
 
 Worth knowing before chasing a playback bug, because the answer is rarely
