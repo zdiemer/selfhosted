@@ -194,7 +194,9 @@ image:
   # v37: a park on a backgrounded subagent or workflow waits
   #      agentWaitSeconds (4h) rather than 30m, and a message handed to a
   #      parked run resets the maxTurns count.
-  tag: "v37"
+  # v38: an unhandled promise rejection is logged instead of exiting the
+  #      gateway (a WhatsApp 428 mid-reconnect killed every live run).
+  tag: "v38"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

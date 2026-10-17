@@ -27,6 +27,17 @@ if (!isWithinCwdRoots(config.defaultCwd)) {
   process.exit(1);
 }
 
+// A rejection nobody awaited is logged, not fatal. Bun's default exits the
+// process, and this process is the parent of every live claude run: on
+// 2026-10-17 a WhatsApp drop (428) rejected one of Baileys' own internal sends
+// mid-reconnect, the gateway exited 1, and a two-hour background agent died
+// with it. The transports reconnect by themselves; a rejection a caller cares
+// about is awaited and handled there.
+process.on("unhandledRejection", (reason) => {
+  const e = reason as Error | undefined;
+  console.error(`unhandled rejection (kept running): ${e?.stack ?? String(reason)}`);
+});
+
 fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
 fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
 // The inbox is a cache of what people sent, not an archive; a week is plenty
