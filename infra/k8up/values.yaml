@@ -95,6 +95,11 @@ schedules:
   - name: talaria
     namespace: talaria
     schedule: "0 1 * * 1"
+    # K8up co-locates backups with PVC consumers on cordoned node1.
+    tolerations:
+      - key: node.kubernetes.io/unschedulable
+        operator: Exists
+        effect: NoSchedule
 
   # --- Tuesday -------------------------------------------------------------
   # Dumps its MariaDB via PreBackupPod first.
@@ -123,6 +128,11 @@ schedules:
   - name: media
     namespace: media
     schedule: "0 3 * * 3"
+    # K8up co-locates backups with PVC consumers on cordoned node1.
+    tolerations:
+      - key: node.kubernetes.io/unschedulable
+        operator: Exists
+        effect: NoSchedule
 
   # --- Thursday ------------------------------------------------------------
   - name: claude
@@ -184,6 +194,11 @@ schedules:
   - name: kube-system
     namespace: kube-system
     schedule: "30 1 * * 0"
+    # K8up co-locates backups with PVC consumers on cordoned node1.
+    tolerations:
+      - key: node.kubernetes.io/unschedulable
+        operator: Exists
+        effect: NoSchedule
   # crowdsec was missing from this list entirely until 2026-08-21, found while
   # planning the retirement of the node its volumes are pinned to. Both PVCs are
   # local-path with Delete reclaim and node affinity on a single node, so
@@ -197,6 +212,11 @@ schedules:
   - name: crowdsec
     namespace: crowdsec
     schedule: "0 2 * * 0"
+    # K8up co-locates backups with PVC consumers on cordoned node1.
+    tolerations:
+      - key: node.kubernetes.io/unschedulable
+        operator: Exists
+        effect: NoSchedule
 
 # ------------------------------------------------------------------------------
 # Repository maintenance

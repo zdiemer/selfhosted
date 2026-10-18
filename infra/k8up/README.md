@@ -187,13 +187,15 @@ holds, which is not a backup in the sense the rest of this document means.
 ## Gotchas that cost time here
 
 - **Cordoned PVC consumers can block backups.** K8up pins filesystem backup
-  jobs to the node hosting the PVC consumer. Happy and Rachel hit the four-hour
+  jobs to the node hosting the PVC consumer. Happy, Rachel, CrowdSec and kube-system hit the four-hour
   deadline after node1 was cordoned in October 2026. Their schedule entries now
   set a scoped `node.kubernetes.io/unschedulable:NoSchedule` toleration through
   a namespaced PodConfig, allowing backups while the node remains cordoned.
   PodConfig also carries the root security context and resource limits because
   it takes precedence over those fields on the Schedule. Remove the exception
-  when these workloads no longer need backups on a cordoned node.
+  when these workloads no longer need backups on a cordoned node. Media and
+  Talaria also have backed-up PVC consumers on node1, so their schedules carry
+  the same exception to prevent the next weekly run from failing.
 
 **`backupCommand` is a string, not a list.** It becomes the pod's
 `k8up.io/backupcommand` annotation and is shell-word-split, so a whole pipeline
