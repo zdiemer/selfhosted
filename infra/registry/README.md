@@ -112,6 +112,11 @@ kubectl -n infra scale deploy/registry --replicas=1
 
 Half-finished uploads are purged automatically after a week.
 
+The iSCSI volume was expanded online to 200 GiB on 2026-10-18 after reaching
+81.6% of 100 GiB. Usage after filesystem expansion was about 41% (80 GiB),
+with no image deletion or registry downtime. `persistence.size` records the
+new capacity; do not attempt to shrink the existing PVC on a later upgrade.
+
 ## Deploy
 
 ```sh

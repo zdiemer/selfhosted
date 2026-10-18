@@ -213,3 +213,19 @@ occurrence times rather than merely their presence.
 
 Parser/update regression checks:
 `python3 -m unittest discover -s scripts/k3s/tests -p test_resolv_conf.py`.
+
+## Laptop-6 crash-reporting memory guard
+
+On 2026-10-18, kubelet replayed a `SystemOOM` warning after restarting. The
+kernel log dates the actual kill of Apport PID 1502507 to September 24:
+Apport used about 6 GiB while processing a Celery/Python crash on this 8 GiB
+host. There were no new kernel OOM records on October 18. A separate orphaned
+Apport process had consumed one CPU core for 23 days; SIGTERM stopped it.
+
+On `zachd-ubuntu-laptop-6`, `/etc/default/apport` now has `enabled=0` and
+`apport.service` is disabled/stopped. Install
+`node-configs/zachd-ubuntu-laptop-6/90-no-host-coredumps.conf` into
+`/etc/sysctl.d/` and apply it with `sysctl -p` against that file. It discards
+core dumps rather than launching an unbounded host crash reporter or writing
+large core files. Kernel crash messages and container logs remain available;
+full core-dump debugging requires deliberately restoring a bounded handler.

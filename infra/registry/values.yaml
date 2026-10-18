@@ -46,7 +46,7 @@ persistence:
   # truenas-iscsi: RWO single-node attach, which pairs with the Recreate
   # strategy — two registries on one filesystem would corrupt the blob store.
   enabled: true
-  size: 50Gi
+  size: 200Gi
   storageClass: truenas-iscsi
   accessMode: ReadWriteOnce
 
