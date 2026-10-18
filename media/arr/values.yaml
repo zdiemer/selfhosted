@@ -237,12 +237,14 @@ resources:
       memory: 1Gi
   # It is a real Chrome. Idle it sits near 200Mi; a solve spikes hard and
   # briefly, so the limit is headroom for the spike, not the steady state.
+  # Four concurrent browser solves from Prowlarr/Talaria exceeded 2Gi.
+  # Reserve more baseline memory and budget roughly 1Gi per worker.
   flaresolverr:
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 1Gi
     limits:
-      memory: 2Gi
+      memory: 4Gi
   qbittorrent:
     requests:
       cpu: 100m

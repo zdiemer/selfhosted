@@ -71,6 +71,7 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 5
           # Chrome is slow to come up and a solve can block the event loop for
           # a while, so the liveness probe is deliberately loose — restarting
           # mid-solve just throws away work and re-queues the same challenge.
