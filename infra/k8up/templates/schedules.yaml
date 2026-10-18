@@ -21,6 +21,10 @@ spec:
     {{- include "k8up-wrapper.backend" $ | nindent 4 }}
   backup:
     schedule: "{{ .schedule }}"
+    {{- if .tolerations }}
+    podConfigRef:
+      name: backup-{{ .name }}
+    {{- end }}
     # Run as root. The k8up image defaults to uid 65532, which reads
     # group-readable files and silently SKIPS anything mode 0600 — while still
     # reporting the Backup Succeeded. Found 2026-08-21 adding the crowdsec
