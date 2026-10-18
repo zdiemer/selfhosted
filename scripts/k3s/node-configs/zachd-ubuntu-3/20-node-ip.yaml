@@ -1,0 +1,6 @@
+# Install at /etc/rancher/k3s/config.yaml.d/20-node-ip.yaml on zachd-ubuntu-3.
+# Explicitly use eno1's non-temporary ULA. Auto-detection previously selected
+# a rotating IPv6 privacy address that expired while kubelet was running.
+node-ip:
+  - 192.168.4.25
+  - fd35:ace4:a929:1:b20c:d1ff:fe66:8b0e

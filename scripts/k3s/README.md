@@ -164,3 +164,19 @@ The stage prefix is part of the value (`start-<hash>`,
 `reencrypt_finished-<hash>`), so servers mid-rotation differ legitimately. Compare
 the hash AFTER the prefix; if those match, only the stage is lagging and a
 restart settles it.
+
+### Node3 IPv6 address selection
+
+`node-configs/zachd-ubuntu-3/20-node-ip.yaml` is installed on node3 at
+`/etc/rancher/k3s/config.yaml.d/20-node-ip.yaml`. It pins K3s to its existing
+IPv4 address and eno1's non-temporary ULA IPv6 address. Automatic selection had
+chosen a rotating privacy address; after expiry, kubelet logged
+`failed to validate secondaryNodeIP` every ten seconds.
+
+Apply changes to this node-specific file with a K3s service restart on node3
+only, after checking the other control-plane nodes are healthy. Verify the
+Node's InternalIP addresses and fresh kubelet logs afterward. If the LAN ULA
+prefix or NIC changes, update this pin to a non-temporary address present on
+the host. Removing the file and restarting K3s restores automatic selection.
+
+K3s configuration reference: https://docs.k3s.io/installation/configuration
