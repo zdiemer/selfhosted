@@ -84,17 +84,22 @@ spec:
               path: /
               port: http
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /
               port: http
             periodSeconds: 10
+            timeoutSeconds: 5
+          # A database outage should remove readiness, not restart the app.
+          # Static content exercises the HTTP server without querying Postgres.
           livenessProbe:
             httpGet:
-              path: /
+              path: /static/base.css
               port: http
             periodSeconds: 30
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
