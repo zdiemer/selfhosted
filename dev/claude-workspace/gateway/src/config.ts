@@ -425,6 +425,10 @@ export const config = {
     // nobody asked for. A message handed to the parked run is somebody asking,
     // so it starts the count again (handOff).
     maxTurns: envInt("GW_BACKGROUND_MAX_TURNS", 10),
+    // The same bound while a subagent or workflow is outstanding. Its helpers
+    // finishing wake the parent too, so it needs room the loop guard above
+    // doesn't; the agent wait still bounds the park.
+    agentMaxTurns: envInt("GW_BACKGROUND_AGENT_MAX_TURNS", 50),
   },
   // Transcript health (router.ts transcriptHealth). A cold resume has to
   // rebuild the session's history into the context window, and once it no

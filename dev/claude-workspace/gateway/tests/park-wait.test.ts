@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { parkWaitMs } from "../src/claude.ts";
+import { chainLimit, parkWaitMs } from "../src/claude.ts";
 import { config } from "../src/config.ts";
 
 const saved = { ...config.background };
@@ -31,4 +31,15 @@ test("the agent park never shortens the ordinary one", () => {
 test("parking switched off stays off for agents too", () => {
   Object.assign(config.background, { waitMs: 0 });
   expect(parkWaitMs([agent])).toBe(0);
+});
+
+test("an agent among the tasks gets the agent turn budget", () => {
+  Object.assign(config.background, { maxTurns: 10, agentMaxTurns: 50 });
+  expect(chainLimit([bash])).toBe(10);
+  expect(chainLimit([bash, agent])).toBe(50);
+});
+
+test("the agent turn budget never shrinks the ordinary one", () => {
+  Object.assign(config.background, { maxTurns: 20, agentMaxTurns: 5 });
+  expect(chainLimit([agent])).toBe(20);
 });

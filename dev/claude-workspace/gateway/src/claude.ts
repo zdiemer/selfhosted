@@ -335,8 +335,21 @@ const AGENT_TASK_TYPES = new Set([
 export function parkWaitMs(tasks: BackgroundTask[]): number {
   const { waitMs, agentWaitMs } = config.background;
   if (!waitMs) return 0;
-  const agent = tasks.some((t) => AGENT_TASK_TYPES.has(t.task_type ?? ""));
-  return agent ? Math.max(waitMs, agentWaitMs) : waitMs;
+  return hasAgent(tasks) ? Math.max(waitMs, agentWaitMs) : waitMs;
+}
+
+/** How many wake-ups in a row a run may take on `tasks`: the agent budget if
+ * any of them is an agent, the ordinary one otherwise. An agent's own helpers
+ * finishing (a build, a watcher timing out) each wake the parent, so a long
+ * agent spends turns it never asked for; on 2026-10-18 nine such wakes ended
+ * a fixer mid-work at the old limit of 10. */
+export function chainLimit(tasks: BackgroundTask[]): number {
+  const { maxTurns, agentMaxTurns } = config.background;
+  return hasAgent(tasks) ? Math.max(maxTurns, agentMaxTurns) : maxTurns;
+}
+
+function hasAgent(tasks: BackgroundTask[]): boolean {
+  return tasks.some((t) => AGENT_TASK_TYPES.has(t.task_type ?? ""));
 }
 
 function leaveWait(run: LiveRun): void {
@@ -641,7 +654,7 @@ export async function runClaude(
           // but not yet started the turn it cleared it for.
           const more = pending.length > 0 || run.wakePending;
           if (!more || !config.background.waitMs) endInput();
-          else if (run.chain >= config.background.maxTurns) {
+          else if (run.chain >= chainLimit(pending)) {
             endInput();
             if (pending.length) hooks.onAbandon?.(pending, "turns");
           } else enterWait();

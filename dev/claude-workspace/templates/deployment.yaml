@@ -568,6 +568,8 @@ spec:
               value: {{ .Values.messaging.background.agentWaitSeconds | default 14400 | quote }}
             - name: GW_BACKGROUND_MAX_TURNS
               value: {{ .Values.messaging.background.maxTurns | default 10 | quote }}
+            - name: GW_BACKGROUND_AGENT_MAX_TURNS
+              value: {{ .Values.messaging.background.agentMaxTurns | default 50 | quote }}
             # Transcript health thresholds (see values.yaml): auto-compact past
             # compactTokensK of context, with backstopKB of transcript as the
             # second trigger. Either at 0 disables that trigger.

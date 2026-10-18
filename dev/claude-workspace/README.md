@@ -851,7 +851,8 @@ message sent while a run is parked is handed straight to it rather than queued
 behind the wait, so the chat stays answerable. `messaging.background.waitSeconds`
 (1800) bounds one park, or `agentWaitSeconds` (14400) while a subagent or
 workflow is among the outstanding tasks, and `messaging.background.maxTurns`
-(10) bounds the chain of wake-ups since the user last spoke; whatever is still
+(10, or `agentMaxTurns` 50 with an agent outstanding) bounds the chain of
+wake-ups since the user last spoke; whatever is still
 outstanding when either runs out dies with the
 process, and the chat is told so rather than left waiting. Set `waitSeconds: 0`
 to go back to the first answer ending the run.
