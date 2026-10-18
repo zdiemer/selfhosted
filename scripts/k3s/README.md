@@ -180,3 +180,36 @@ prefix or NIC changes, update this pin to a non-temporary address present on
 the host. Removing the file and restarting K3s restores automatic selection.
 
 K3s configuration reference: https://docs.k3s.io/installation/configuration
+
+## Bounded pod DNS upstreams
+
+`k3s-resolv-conf.py` generates `/etc/rancher/k3s/resolv.conf` from
+`/run/systemd/resolve/resolv.conf`, keeping at most three unique usable
+nameservers and preserving search domains/options. Loopback and link-local
+resolvers are excluded because ordinary pods cannot use the host's stub.
+Empty/invalid input leaves the previous good file intact; updates are atomic.
+Host DNS and Tailscale's resolver integration remain managed by systemd-resolved.
+
+Installed on `zachd-ubuntu`, `zachd-ubuntu-laptop`, `zachd-ubuntu-laptop-2`, and
+`zachd-ubuntu-laptop-6` after DHCP supplied four upstreams (eight entries on
+machines with two interfaces), causing recurring `DNSConfigForming` warnings.
+
+Install the Python script as `/usr/local/sbin/k3s-resolv-conf.py` (executable),
+and the matching `.service` and `.timer` files in `/etc/systemd/system/`.
+Install `k3s-resolv-conf-dependency.conf` as
+`/etc/systemd/system/k3s.service.d/30-resolv-conf.conf` on servers, or
+`/etc/systemd/system/k3s-agent.service.d/30-resolv-conf.conf` on agents.
+Copy `node-configs/common/30-resolv-conf.yaml` into
+`/etc/rancher/k3s/config.yaml.d/30-resolv-conf.yaml`.
+Run `systemctl daemon-reload`, start `k3s-resolv-conf.service`, and enable/start
+`k3s-resolv-conf.timer`. Restart the affected k3s services one node at a time
+and verify readiness and DNS before continuing. The timer follows DHCP/resolver
+changes every minute without another k3s restart.
+
+Verify with `systemctl status k3s-resolv-conf.timer`, the generated resolver
+file, and DNS queries from both host-network and ordinary cluster pods.
+Old warning events remain until Kubernetes expires them; check their latest
+occurrence times rather than merely their presence.
+
+Parser/update regression checks:
+`python3 -m unittest discover -s scripts/k3s/tests -p test_resolv_conf.py`.

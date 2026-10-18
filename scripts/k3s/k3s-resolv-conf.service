@@ -1,0 +1,9 @@
+[Unit]
+Description=Generate bounded upstream DNS configuration for k3s
+Wants=network-online.target
+After=network-online.target systemd-resolved.service
+Before=k3s.service k3s-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/k3s-resolv-conf.py

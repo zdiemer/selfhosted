@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep k3s upstream DNS synchronized with systemd-resolved
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+Unit=k3s-resolv-conf.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,2 @@
+# Generated from systemd-resolved's upstream list, capped at three unique servers.
+resolv-conf: /etc/rancher/k3s/resolv.conf
