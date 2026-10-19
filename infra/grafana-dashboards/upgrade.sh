@@ -323,8 +323,9 @@ rules = json.load(sys.stdin)
 r = rules[${i}]
 r['folderUID'] = '${FOLDER_UID}'
 cfg = json.load(open('${HERE}/notifications.json'))
-if cfg['enabled'] and r['uid'] != 'sh-sms-gateway-down':
-    r['notification_settings'] = {k: cfg[k] for k in ['receiver', 'group_wait', 'group_interval', 'repeat_interval']}
+sys.path.insert(0, '${HERE}')
+from notification_policy import notification_settings
+r['notification_settings'] = notification_settings(r, cfg)
 json.dump(r, sys.stdout)
 " >"$BODY"
     RUID="$(python3 -c "import json;print(json.load(open('${BODY}'))['uid'])")"

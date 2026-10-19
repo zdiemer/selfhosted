@@ -1,8 +1,10 @@
 {
-  "enabled": false,
+  "enabled": true,
   "receiver": "ntfy-primary",
   "url": "https://notify.diemer.codes/api/v1/grafana",
   "group_wait": "30s",
   "group_interval": "5m",
-  "repeat_interval": "4h"
+  "repeat_interval": "4h",
+  "critical_receiver": "critical-outages",
+  "email_user_role": "Admin"
 }

@@ -1,7 +1,8 @@
 # Notification routing and Cloudflare handoff
 
-Updated 2026-10-19. Local senders are live; Grafana Cloud delivery is staged
-until its public hostname is connected and activation passes.
+Updated 2026-10-19. Local senders and Grafana Cloud delivery are live.
+The public Cloudflare route is verified; critical alerts also use independent
+Grafana Cloud email to the existing sole Grafana administrator.
 
 ## Routes
 
@@ -11,7 +12,8 @@ until its public hostname is connected and activation passes.
 | CrowdSec non-routine remediation | ntfy `security` | SMS on publish failure; aggregate for 5 minutes or 20 alerts |
 | Owner's Talaria new/ending listings | ntfy `talaria` | SMS on publish failure; only configured recipient and listing templates |
 | SMS gateway monitoring | ntfy `alerts` | Durable relay queue if direct ntfy publish fails |
-| Grafana infrastructure rules | **Staged:** ntfy `alerts` | Relay selects SMS if ntfy publishing fails |
+| Grafana warning rules | ntfy `alerts` | Relay selects SMS if ntfy publishing fails |
+| Grafana critical infrastructure rules | ntfy `alerts` **and Grafana Cloud email** | Email does not depend on the home cluster, relay, phone, or tunnel |
 
 Subscribe to `alerts`, `security`, and optionally `talaria` on
 `https://ntfy.zachd.duckdns.org`. Routine CrowdSec scanners remain silent.
@@ -26,7 +28,7 @@ A lost publish response or crash between acceptance and commit can still cause
 an at-least-once duplicate. Neither transport bypasses a full cluster outage.
 The Android gateway still needs its at-home repair before SMS fallback can work.
 
-## Cloudflare setup (owner action)
+## Cloudflare setup (configured and verified)
 
 Add a **Published application route / Public hostname** to the existing home
 Cloudflare Tunnel:
@@ -50,9 +52,9 @@ The tunnel UI normally creates the DNS record with the hostname. If configuring
 DNS separately, point the proxied record at this tunnel's existing UUID target.
 No credential needs to be entered in Cloudflare.
 
-## Activate after the hostname works
+## Provisioning and reactivation
 
-The Grafana `ntfy-primary` contact point is already provisioned with its bearer
+The Grafana `ntfy-primary` contact point is active with its bearer
 credential from `op://homelab/infra-sms-relay/values.local.yaml`. Its URL is:
 
 `https://notify.diemer.codes/api/v1/grafana`
@@ -67,13 +69,38 @@ Activation first sends an authenticated invalid payload to the public URL and
 requires the application's specific 400 response, without queuing a message.
 It then enables the owned Grafana rules and persists `enabled: true` in
 `infra/grafana-dashboards/notifications.json`; commit and push that change.
-Subsequent dashboard upgrades retain the notification routing. Test the contact
-point from Grafana and confirm a real message reaches ntfy after activation.
+Subsequent dashboard upgrades retain the notification routing. The authenticated
+readiness request uses Grafana's User-Agent: Cloudflare rejected Python's default
+User-Agent with error 1010. A real Grafana Cloud webhook test also passed.
 
 The dedicated SMS gateway Grafana rule remains non-notifying: its existing
 local monitor owns notifications. The generic probe rule excludes `sms-gateway`,
 preventing a second alert for the same phone outage. Existing failed-Job rules
 already exclude failures superseded by successful CronJob runs or backups.
+
+## Independent critical email
+
+`critical-outages` has two integrations: the authenticated relay webhook and
+Grafana Cloud email. Critical node availability, disk, public probe, tunnel,
+log-delivery and missing-telemetry rules use this receiver. Warning rules use
+`ntfy-primary`. Both integrations send independently, including resolved events;
+email is a parallel critical safety copy, **not conditional on delivery failure**.
+Grafana only sees the relay's queue acknowledgement, not eventual ntfy/SMS
+success. This avoids depending on an unreachable relay to request escalation.
+Notification grouping waits 30 seconds, groups changes for 5 minutes, and repeats
+ongoing incidents every 4 hours. An alert transition/resolution may notify sooner.
+
+The email destination is resolved from the existing sole Grafana organization
+administrator. Provisioning refuses zero or multiple admin email candidates;
+review recipient selection if the organization's membership changes. Grafana
+Cloud handles SMTP; no home SMTP service or public Grafana ingress is needed.
+
+`Home cluster telemetry missing` evaluates `absent_over_time(up{cluster="home-k3s"}[10m])`
+in Grafana Cloud (with a zero-valued healthy result), then waits 2 minutes before
+firing. It detects loss of all cluster scrape heartbeats even when every local
+notification component is offline. Query errors/no data also alert. It requires
+Grafana Cloud and the recipient's email service to remain operational. Loss of
+only part of the cluster is handled by the existing infrastructure rules.
 
 ## Validation performed
 
@@ -85,6 +112,8 @@ already exclude failures superseded by successful CronJob runs or backups.
   each with `transport=ntfy`; no SMS fallback was selected.
 - Through Traefik, `/` returns 404, GET webhook 405, unauthenticated POST 401,
   another caller's key 403, malformed authenticated payload 400, oversized body
-  413. Public DNS/Cloudflare delivery remains pending the owner step above.
+  413. Public authenticated readiness passed; Grafana Cloud reported successful
+  webhook and email test deliveries. Email success is provider acceptance, not
+  confirmation that the owner read or received it in their inbox.
 - Database snapshot before migration is on the relay PVC at
   `/data/sms-relay-before-ntfy-20261019.db` (private message data; do not commit).

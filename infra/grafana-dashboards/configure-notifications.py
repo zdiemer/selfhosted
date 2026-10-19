@@ -11,6 +11,7 @@ import subprocess
 import urllib.request
 import urllib.error
 import yaml
+from notification_policy import notification_settings
 
 HERE = Path(__file__).resolve().parent
 
@@ -40,34 +41,48 @@ def main():
         # Authenticated malformed payload must reach the app and return its
         # specific 400 response, without queuing a test notification.
         request = urllib.request.Request(cfg['url'], data=b'{}', headers={
-            'Authorization': 'Bearer '+key, 'Content-Type':'application/json'})
+            'Authorization': 'Bearer '+key, 'Content-Type':'application/json', 'User-Agent':'Grafana'})
         try:
             urllib.request.build_opener(NoRedirect).open(request, timeout=15)
             raise RuntimeError('Webhook accepted invalid payload; refusing activation')
         except urllib.error.HTTPError as error:
             if error.code != 400 or json.loads(error.read()).get('detail') != 'invalid Grafana webhook':
                 raise RuntimeError('Public webhook is not ready; configure Cloudflare first') from None
+    # Derive the recipient from the existing sole Grafana administrator. Refuse
+    # ambiguity rather than silently mailing newly added organization members.
+    admins = [u['email'] for u in api('/api/org/users')
+              if u.get('role') == cfg['email_user_role'] and u.get('email')]
+    if len(admins) != 1:
+        raise RuntimeError('Expected exactly one Grafana administrator email')
     points = api('/api/v1/provisioning/contact-points')
-    exists = any(p['uid'] == cfg['receiver'] for p in points)
-    point = {'uid':cfg['receiver'], 'name':cfg['receiver'], 'type':'webhook',
-             'disableResolveMessage':False, 'settings':{'url':cfg['url'], 'httpMethod':'POST',
-             'authorization_scheme':'Bearer', 'authorization_credentials':key}}
-    api('/api/v1/provisioning/contact-points'+('/'+cfg['receiver'] if exists else ''),
-        point, 'PUT' if exists else 'POST')
-    print('Grafana contact point provisioned (credential redacted)')
+    existing = {p['uid'] for p in points}
+    webhook = {'url':cfg['url'], 'httpMethod':'POST',
+               'authorization_scheme':'Bearer', 'authorization_credentials':key}
+    desired = [
+        {'uid':cfg['receiver'], 'name':cfg['receiver'], 'type':'webhook', 'settings':webhook},
+        {'uid':'critical-outages-webhook', 'name':cfg['critical_receiver'],
+         'type':'webhook', 'settings':webhook},
+        {'uid':'critical-outages-email', 'name':cfg['critical_receiver'],
+         'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}},
+    ]
+    for point in desired:
+        point['disableResolveMessage'] = False
+        exists = point['uid'] in existing
+        api('/api/v1/provisioning/contact-points'+('/'+point['uid'] if exists else ''),
+            point, 'PUT' if exists else 'POST')
+    print('Grafana webhook and independent critical email provisioned (credentials redacted)')
     if args.activate:
         cfg['enabled'] = True
-        (HERE / 'notifications.json').write_text(json.dumps(cfg, indent=2)+'\n')
     if cfg['enabled']:
         rules = api('/api/v1/provisioning/alert-rules')
         owned = {r['uid'] for r in json.loads((HERE/'alerts/rules.json').read_text())}
         for rule in rules:
             if rule['uid'] not in owned:
                 continue
-            rule['notification_settings'] = ({'receiver':'unwired'} if rule['uid'] == 'sh-sms-gateway-down'
-                else {k:cfg[k] for k in ['receiver','group_wait','group_interval','repeat_interval']})
+            rule['notification_settings'] = notification_settings(rule, cfg)
             api('/api/v1/provisioning/alert-rules/'+rule['uid'],rule,'PUT')
-        print('Grafana rules now send through ntfy-primary')
+        (HERE / 'notifications.json').write_text(json.dumps(cfg, indent=2)+'\n')
+        print('Grafana routing active: warnings via relay; critical via relay and cloud email')
     else:
         print('STAGED: Cloudflare route and --activate are still required')
 

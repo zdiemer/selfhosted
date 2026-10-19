@@ -1,6 +1,6 @@
 # grafana-dashboards — dashboards and alerts as code
 
-Four dashboards and thirteen alert rules, pushed to Grafana Cloud over its HTTP
+Four dashboards and fifteen alert rules, pushed to Grafana Cloud over its HTTP
 API by `upgrade.sh`.
 
 **This project deploys nothing to the cluster.** There is no chart and no helm
@@ -86,8 +86,8 @@ and the presence of a uid.
 
 ## Alert delivery
 
-Fourteen rules evaluate in Grafana. Public notification delivery is staged until
-Cloudflare is connected and `configure-notifications.sh --activate` succeeds.
+Fifteen rules evaluate in Grafana. Public notification delivery is active through
+Cloudflare; critical infrastructure rules also send independent cloud email.
 Then infrastructure rules use `ntfy-primary`; the dedicated SMS gateway rule
 remains non-notifying because its local monitor already delivers those events.
 
@@ -147,8 +147,9 @@ healthy cluster, mark it.
 ```
 
 then open all four at 24h and 7d. In the Grafana UI, confirm under
-**Alerting → Alert rules** that the thirteen rules show health `ok`, and under
-**Contact points** that `unwired` is the webhook to `127.0.0.1:9`.
+**Alerting → Alert rules** that the fifteen rules show health `ok`. Under
+**Contact points**, verify `ntfy-primary` and the webhook/email integrations in
+`critical-outages`. The locally monitored SMS rule retains `unwired`.
 
 For an end-to-end check of the security dashboard, from outside the tailnet:
 
@@ -172,7 +173,7 @@ independent policies per namespace. Standalone and unresolved failures remain
 visible, even if a CronJob is suspended. History is retained rather than deleted.
 
 The dashboard still shows retained terminal failures as historical inventory.
-Notification routing remains `unwired`. Regression checks use the actual rule
+Warning notifications use `ntfy-primary`. Regression checks use the actual rule
 expression and Prometheus' engine:
 
 ```sh
@@ -197,3 +198,13 @@ then run `configure-notifications.sh --activate` and commit the enabled setting.
 This routes infrastructure alerts through ntfy with SMS fallback on publish
 failure. The local SMS gateway monitor remains the sole notification owner for
 that dependency. Dashboard upgrades honor this setting.
+
+### Critical outage email (2026-10-19)
+
+Notification routing is active through `notify.diemer.codes`. Critical
+infrastructure alerts use `critical-outages`, which sends the relay webhook and
+an independent Grafana Cloud email in parallel. Warnings use `ntfy-primary`.
+The SMS phone rule remains owned by the local monitor to avoid duplicate alerts.
+A cloud-evaluated missing-telemetry rule covers full home-cluster outages.
+Recipient selection, timings, tests, and Cloudflare settings are documented in
+[notification-routing.md](../../docs/notification-routing.md).
