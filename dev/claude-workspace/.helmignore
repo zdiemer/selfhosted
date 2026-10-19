@@ -8,3 +8,6 @@ build.sh
 upgrade.sh
 values.local.yaml
 values.local.tpl.yaml
+# Delegated profile secrets must stay out of packaged release charts too.
+values.*.local.yaml
+values.*.local.tpl.yaml
