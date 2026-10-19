@@ -320,6 +320,13 @@ Re-running it is safe: a configured runner (`C:\actions-runner\<repo>\.runner`
 exists, and the repo still knows about it) is left alone and only the service
 state is reconciled. `RUNNER_RECONFIGURE=1` forces re-registration.
 
+For an explicitly configured local service account, provisioning disables
+password expiry on that account. Its saved Windows service credential otherwise
+stops working when the password ages out (Service Control Manager event 7038),
+leaving jobs queued while the VM itself remains healthy. This applies to the
+actual service account on existing installs too; domain and built-in service
+accounts are excluded. The password itself and machine-wide policy are unchanged.
+
 ### Toolchains
 
 `windows-latest` ships with a compiler for everything; this guest ships with

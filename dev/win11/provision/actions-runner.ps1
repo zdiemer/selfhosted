@@ -414,6 +414,17 @@ foreach ($repo in $repos) {
   # config.cmd names the service after the scope, so this matches exactly one.
   $svc = Get-Service -Name "actions.runner.$owner-$repo.*" -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $svc) { throw "config.cmd reported success but installed no service for $owner/$repo" }
+  # This unattended runner uses a local account with a persisted service
+  # credential. Password aging otherwise stops CI with SCM error 7038 after
+  # 42 days. Reconcile the actual service account on existing installs too;
+  # leave domain and built-in service accounts under their own policies.
+  $serviceConfig = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'"
+  $serviceAccount = $serviceConfig.StartName -split '\\', 2
+  if ($serviceAccount.Count -eq 2 -and
+      ($serviceAccount[0] -eq '.' -or $serviceAccount[0] -eq $Env:COMPUTERNAME)) {
+    Set-LocalUser -Name $serviceAccount[1] -PasswordNeverExpires $true
+    Write-Host '==> Local runner service account password aging disabled'
+  }
   Set-Service -Name $svc.Name -StartupType Automatic
   if ($svc.Status -ne 'Running') { Start-Service -Name $svc.Name }
   Write-Host "==> $($svc.Name) is $((Get-Service -Name $svc.Name).Status)"
