@@ -157,3 +157,26 @@ subsequently completed successfully on both Windows and Linux, including lint,
 types, configuration validation, pytest and CLI smoke tests. The Windows suite
 ran for roughly 19 minutes, consistent with the previous successful run; it was
 slow rather than stalled. All three repositories' latest CI runs are green.
+
+## Talaria CI result-reporting investigation
+
+A later run, [39278429663](https://github.com/zdiemer/talaria/actions/runs/39278429663),
+remained `in_progress` after its runners exited. Retrieved job logs confirmed
+1,943 backend and 596 frontend tests passed, followed by cleanup. Normal and
+force cancellation said the run was not running/completed, while rerun returned
+"already running". The API responses were inconsistent.
+
+Added `workflow_dispatch` in Talaria commit `49ad790`, allowing independent
+manual validation runs. Its push triggered fresh run
+[39281760900](https://github.com/zdiemer/talaria/actions/runs/39281760900).
+Captured both runner logs before ARC cleaned them up. Both explicitly reported
+`Job result after all job steps finish: Succeeded`, submitted job completion
+with result `Succeeded`, and exited with code 0 at 16:01 UTC. The broker GET
+cancellation warnings occurred during shutdown after successful completion.
+REST and GraphQL still reported the fresh jobs as queued at the final check.
+
+Evidence points to GitHub result-reporting inconsistency; no execution failure,
+OOM, or premature ARC deletion was found. This does not establish a general
+GitHub outage. The external check status remains unresolved, despite successful
+execution. Private diagnostics are preserved under
+`~/.cache/talaria-ci-diagnostics/`; no runner logs or credentials are committed.
