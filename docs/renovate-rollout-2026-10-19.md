@@ -20,7 +20,7 @@ Dependabot PRs were left alone.
 | rachelfreeman | Next 16.3.8, Payload and all plugins 3.90.0, Sharp 0.35.5, Stripe 22.6.2, Node 22.23.3 | Full image builds and CI; two Ready app replicas and public HTTP 200 |
 | money | Vite 6.4.4, Node 22.23.3, uv 0.13.1 and refreshed Python dependency lock; Python 3.14 retained | 278 tests; full image build; live Python 3.14.8, HTTP 200, and Camoufox successfully opened about:blank |
 | selfhosted / claude-bridge | MCP 1.30.0 | 19 tests, image build, Ready, Minecraft log stream/whitelist refresh active |
-| selfhosted / claude-workspace | v40: MCP SDK 1.31.0, Bun 1.4.3, Tailscale 1.104.1, Helm 3.22.1, signal-cli 0.14.9 and other tools | Disposable image pod passed 171 gateway tests and binary version checks; delegated workspace Ready on v40 |
+| selfhosted / claude-workspace | v40: MCP SDK 1.31.0, Bun 1.4.3, Tailscale 1.104.1, Helm 3.22.1, signal-cli 0.14.9 and other tools | Disposable image pod passed 171 gateway tests and binary version checks; both workspaces Ready on v40 after Signal schema-marker repair |
 
 Talaria's frontend image now copies `.python-version` before generating its
 bindings. Without that pin, `uv` selected Python 3.15 in an otherwise Python
@@ -60,7 +60,12 @@ not exercised.
 
 RomNAS merged gdown, cryptography, Pydantic and Ruff updates. Local lint/types
 and 2,083 tests passed (21 skipped); Linux CI passed. Its Windows CI leg was
-still queued during the sweep, so Windows validation was not claimed.
+still queued at the follow-up check: its self-hosted `WIN11` runner is offline
+although the KubeVirt guest is Running. The Windows service is configured for
+automatic startup but cannot log on: Service Control Manager event 7038 reports
+that its local account password has expired. A service-start attempt confirmed
+the failure. No account password or expiration policy was changed; Windows
+validation is not claimed.
 SimpleScraper merged Python 3.15 and refreshed Playwright/greenlet/aiohttp locks;
 its environment resolves and source compiles. Neither has a standalone cluster
 service to restart.
@@ -99,3 +104,33 @@ A successful run ends with `VERIFIED: primary workspace v40 rollout completed`.
 The disposable image-check Job and rollout Job are automatically removed after
 their retention periods. Delegated local secret files are now excluded from
 future Helm chart packages as well as the primary local secret file.
+
+## Post-restart follow-up
+
+The independent rollout Job completed and Helm revision 73 is deployed. A
+follow-up found the Signal sidecar crash-looping while the other seven workspace
+containers and the delegated workspace were healthy. Binary-version and gateway
+unit checks had not exercised the persisted Signal account migration.
+
+Signal's SQLite database passed `integrity_check`, but `user_version` was 28
+while all version 29 and 30 changes already existed. The 0.14.9 migration tried
+to add `sticker.position` again and exited. Compared against the upstream
+[AccountDatabase migration](https://github.com/AsamK/signal-cli/blob/v0.14.9/lib/src/main/java/org/asamk/signal/manager/storage/AccountDatabase.java),
+the repair verified both integer sticker columns and their defaults, both BLOB
+columns, the unique storage-ID constraint, and the recipient PNI-signature
+column. It also verified version 31's blocked-at columns were absent.
+
+A consistent SQLite backup was saved with mode 0600 at
+`~/.local/state/upgrade-backups/signal-before-schema-marker-repair-20261019.db`.
+An exclusive transaction corrected only the version marker to 30, leaving the
+normal application migration responsible for version 31. No account records
+were deleted and no Signal relinking was required.
+
+The next automatic container restart completed the migration to schema 31;
+`integrity_check` remained `ok`. The primary workspace returned to 8/8 Ready,
+and gateway logs confirmed its connection to the Signal daemon. The delegated
+workspace remained 1/1 Ready without restarts. All ten nodes are Ready, no
+Deployment is below its requested available replica count, and the public
+Talaria, WhatNow and Kelsey endpoints returned HTTP 200 at the follow-up.
+All 11 repositories matched their upstream branches before this documentation
+commit; a fresh GitHub search returned zero open Renovate-labelled PRs.
