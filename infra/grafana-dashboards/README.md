@@ -110,7 +110,8 @@ do not fall through to the default notification policy. See
 | Public hostname unreachable | a probe has failed for 5m |
 | Cloudflare Tunnel has no connections | every `diemer.codes` host is down while the cluster looks fine |
 | Log delivery stalled | no logs reached Grafana Cloud in an hour |
-| Active series approaching the cap | above 8k of the 10k free tier |
+| Active series approaching the cap | above 8k of the 10k free allowance; separate from stored-series enforcement |
+| Grafana Cloud rejecting metric samples | any discarded samples for 5m, grouped by reason; independent usage datasource, email-only |
 | Elevated 5xx | >5% of a hostname's requests failing |
 
 **"CronJob overdue" is schedule-aware on purpose.** These CronJobs run anywhere

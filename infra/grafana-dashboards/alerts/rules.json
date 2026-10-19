@@ -882,7 +882,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "Active series are above 8k of the 10k free-tier cap. Once it is hit, Grafana Cloud refuses new series and the gaps look like broken exporters."
+      "summary": "Active series exceed the 8k warning budget against the 10k free allowance. Check the separate ingestion-rejection alert: stored-series limits can reject new series even below this budget."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -2009,6 +2009,87 @@
         "model": {
           "refId": "A",
           "expr": "home_arr_health_issues{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-metrics-ingestion-rejected",
+    "title": "Grafana Cloud rejecting metric samples",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s",
+      "notification_path": "email"
+    },
+    "annotations": {
+      "summary": "Grafana Cloud is rejecting metric samples; dashboards and alerts may have gaps.",
+      "description": "Read the reason label. per_user_series_limit counts stored series, including stale identities awaiting ingester compaction; reducing active usage does not free that capacity immediately. Avoid exporter identity changes and repeated rollouts. See infra/alloy/README.md."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__USAGE_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum by (reason) (grafanacloud_instance_samples_discarded_per_second)",
           "instant": true,
           "range": false,
           "editorMode": "code",

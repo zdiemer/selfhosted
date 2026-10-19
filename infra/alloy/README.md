@@ -214,6 +214,37 @@ gives p50/p95/p99 at full precision and **zero series cost**.
 > reads low forever. The keep-list excludes the metrics where `source` appears
 > *and* the cardinality is real (`cs_node_hits_*` above all) instead.
 
+### Grafana accepts scrapes locally but rejects new series
+
+Check the Grafana Cloud usage datasource, not just Alloy's remote-write error
+counter. On 2026-10-19 Prowlarr's local scrape was `up`, but its new pod identity
+was absent in Cloud. The usage metric
+`grafanacloud_instance_samples_discarded_per_second{reason="per_user_series_limit"}`
+confirmed rejection. Alloy reported no synchronous write failures.
+
+The free allowance (10k active series), the active-series limit, and the stored
+series limit are different. Inspect `grafanacloud_instance_metrics_limits`; this
+stack reported 15k for both `max_active_series_per_user` and
+`max_global_series_per_user`. A low current PromQL series count does not prove
+that stored capacity has been freed. Stale identities remain until ingester
+compaction; [Mimir's runbook](https://grafana.com/docs/mimir/latest/manage/mimir-runbooks/)
+notes this can take hours with default settings. Cloud timing is provider-owned.
+
+Keep the reduced allowlists and avoid repeated rollouts or relabeling instance
+identities while capacity is exhausted. Do not reuse an old pod's labels for a
+new pod to bypass the limit. Recovery requires all three checks:
+
+- Cloud discarded samples per second is zero for every reason.
+- `home_arr_health_issues{app="prowlarr"}` has both warning/error series, with
+  `time() - timestamp(...)` below 120 seconds.
+- The application-monitoring and ingestion-rejection alerts resolve; restart,
+  OOM and PVC metric families remain present.
+
+The ingestion-rejection alert queries Cloud's independent usage datasource and
+uses the existing email-only monitoring-failure route, so local metric rejection
+cannot hide its own failure. Never silence the missing-exporter alert merely
+because the local application is healthy.
+
 ## Deploy
 
 ```bash
