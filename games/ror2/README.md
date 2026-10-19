@@ -26,3 +26,11 @@ The plugin's direct-IP path does not check Steam tickets; keep this on the
 trusted tailnet during testing. Check startup with
 `kubectl -n games logs deployment/ror2-ror2 -f` and check the service with
 `kubectl -n games get service ror2-ror2`.
+
+The 0.1.1-1 image explicitly budgets Unity updates and rendering because this
+Proton build still initializes llvmpipe despite `-nographics`. Empty servers
+use 10 update FPS, connecting/connected clients use 60, and initialized servers
+render once per second. The 2026-10-19 rollout reached Ready with UDP 7777 bound,
+zero players/connections, and approximately 0.10 CPU cores over a 20-second
+measurement (previously 4 cores). A real-client join/run after this change still
+needs verification. Startup logs are cleared so readiness cannot match an old run.

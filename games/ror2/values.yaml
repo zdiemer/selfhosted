@@ -1,6 +1,6 @@
 image:
   repository: registry.zachd.duckdns.org/zdiemer/ror2-unofficial-dedicated-server
-  tag: "0.1.0-5"
+  tag: "0.1.1-1"
   pullPolicy: Always
 
 game:
@@ -18,6 +18,8 @@ work:
 server:
   port: 7777
   maxPlayers: 4
+  idleFrameRate: 10
+  activeFrameRate: 60
 
 service:
   # DuckDNS resolves to a tailnet node; klipper-lb publishes UDP on all nodes.
