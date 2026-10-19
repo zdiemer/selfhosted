@@ -189,3 +189,12 @@ expression and Prometheus' engine:
 ```sh
 PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_job_alert.py
 ```
+
+### SMS gateway monitoring
+
+`sh-sms-gateway-down` evaluates the authenticated phone connectivity probe in
+Grafana and keeps the existing non-notifying `unwired` receiver. ntfy resolves
+to Tailscale in public DNS, so Grafana Cloud cannot deliver a webhook directly.
+The independent `cluster-status-sms-monitor` CronJob sends outage and recovery
+notifications from inside the cluster to ntfy's `alerts` topic. See
+[SMS recovery](../../docs/sms-gateway-recovery.md) for probe semantics and timing.

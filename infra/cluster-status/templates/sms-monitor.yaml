@@ -1,0 +1,104 @@
+{{- if .Values.smsMonitor.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-sms-monitor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-sms-monitor-state
+data:
+  {{- $existing := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-sms-monitor-state" .Release.Name) }}
+  state: {{ if $existing }}{{ index $existing.data "state" | default "{}" | quote }}{{ else }}'{}'{{ end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-sms-monitor-code
+data:
+  monitor.py: |
+{{ .Files.Get "scripts/sms-monitor.py" | indent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-sms-monitor
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ printf "%s-sms-monitor-state" .Release.Name | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-sms-monitor
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-sms-monitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-sms-monitor
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-sms-monitor
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 45
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 50
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: {{ .Release.Name }}-sms-monitor
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: monitor
+              image: {{ .Values.collector.image }}
+              command: [python, /app/monitor.py]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 96Mi
+              env:
+                - name: STATE_CONFIGMAP
+                  value: {{ .Release.Name }}-sms-monitor-state
+                - name: PROBE_URL
+                  value: {{ .Values.smsMonitor.probeUrl | quote }}
+                - name: NTFY_URL
+                  value: {{ .Values.smsMonitor.ntfyUrl | quote }}
+                - name: NTFY_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.smsMonitor.ntfySecret }}
+                      key: pw-alerts
+              volumeMounts:
+                - name: code
+                  mountPath: /app
+                  readOnly: true
+          volumes:
+            - name: code
+              configMap:
+                name: {{ .Release.Name }}-sms-monitor-code
+{{- end }}

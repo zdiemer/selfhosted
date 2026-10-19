@@ -1026,5 +1026,85 @@
         }
       }
     ]
+  },
+  {
+    "uid": "sh-sms-gateway-down",
+    "title": "SMS phone gateway unavailable",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "Alerting",
+    "execErrState": "Alerting",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "SMS phone gateway is unavailable. The relay cannot reach the authenticated Android gateway API; SMS delivery may be stopped.",
+      "description": "Check the phone Wi-Fi address and local SMS Gateway server. See docs/sms-gateway-recovery.md. This check does not send a test SMS."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "probe_success{cluster=\"home-k3s\",instance=\"sms-gateway\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  1
+                ],
+                "type": "lt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

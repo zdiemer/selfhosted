@@ -139,10 +139,11 @@ cert is stale, or the ACL denies the publisher.
 
 ## Follow-ups
 
-- **Grafana alerts.** [`infra/grafana-dashboards`](../grafana-dashboards/) has
-  thirteen alert rules routing to a deliberate dead end. A contact point posting
-  to `https://ntfy.zachd.duckdns.org/alerts` as `alerts` is what this server was
-  stood up for; that change belongs in that chart.
+- **SMS gateway alerts are live** through the in-cluster
+  `cluster-status-sms-monitor` CronJob, publishing to `alerts`. Other Grafana
+  rules remain unwired. Public DNS for ntfy resolves to a Tailscale address;
+  Grafana Cloud cannot reach it directly. Future alert routing must account
+  for that rather than configuring an unreachable Cloud webhook.
 - **`scripts/notify-failure.sh`** currently goes through sms-relay. Most of what
   it reports is the cheap tier.
 - **Metrics.** `enable-metrics` is on at `:9090` on the Service, but

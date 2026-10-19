@@ -39,12 +39,26 @@ requeued during diagnosis.
    exhausted retries and will **not automatically resend**. Avoid bulk replay:
    old alerts and Talaria notifications may no longer be relevant.
 
-## Monitoring follow-up
+## Monitoring (implemented 2026-10-19)
 
-- Add handset connectivity monitoring and alerts for outbound delivery failures
-  or exhausted retries; queue depth alone misses messages already marked failed.
-- Keep handset availability separate from Kubernetes liveness/readiness: a
-  phone outage should not restart the relay that owns the durable queue.
-- Verify the alert destination works independently of this SMS gateway.
+- The relay exposes `/api/health/gateway`: authenticated GET to the configured
+  phone's `/`, with a three-second overall deadline. HTTP 200 means connected;
+  refusal, timeout, redirects, and non-200 responses return 503. No SMS is sent.
+- Alloy probes this endpoint as `instance="sms-gateway"` every four minutes.
+  Grafana's `sh-sms-gateway-down` rule fires after five minutes of failure
+  (plus scrape/evaluation latency); missing data and evaluation errors alert too.
+- The `cluster-status-sms-monitor` CronJob checks once per minute and sends
+  outage (after five minutes) and recovery notifications to ntfy's **alerts**
+  topic, with four-hour repeats. Durable ConfigMap state prevents duplicate
+  alerts on each run; publish failures remain retryable. Subscribe to `alerts` on
+  `https://ntfy.zachd.duckdns.org`. Grafana rules retain their non-notifying
+  receiver; the in-cluster job owns
+  delivery because public DNS for ntfy resolves to Tailscale, unreachable from
+  Grafana Cloud.
+- The status page's SMS relay check and catalog tile use this same endpoint,
+  so handset failure appears even when the pod is Ready.
+- Kubernetes liveness/readiness remains on `/api/health`; restarting the relay
+  cannot repair the handset. Phone connectivity does not prove carrier delivery.
+- Separate alerts for exhausted message retries remain a follow-up.
 
 Implementation details: [SMS relay README](../infra/sms-relay/README.md).

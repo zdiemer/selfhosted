@@ -207,7 +207,7 @@ per cycle, in series, inside the scrape loop:
 ```yaml
 serviceChecks:
   - name: SMS relay
-    url: http://sms-relay.infra.svc.cluster.local:8000/api/health
+    url: http://sms-relay.infra.svc.cluster.local:8000/api/health/gateway
     expectStatus: 200
     timeoutSeconds: 5
 ```
@@ -236,12 +236,12 @@ that makes leaving it on safe to forget about.
 
 Turn the whole section off with `publish.uptime: false`.
 
-**Why the phone itself isn't checked.** Probing the Android gateway directly
-would need its basic-auth credentials in this collector, and it would publish
-"the owner's phone is off the network" to the open internet — a fact about a
-person, not about the cluster. The relay's own health endpoint is the right
-altitude. (If that ever changes: the gateway app answers `/health` with a **500**
-and reports real status on `/` instead, so point any such check at `/`.)
+**SMS checks include the phone.** The relay's `/api/health/gateway` endpoint
+makes a bounded authenticated request to the handset and returns 503 when it
+cannot connect or the phone rejects it. Credentials remain in the relay. This
+check drives both the SMS catalog tile and the uptime row; a Ready relay pod
+cannot override a failed phone check. Kubernetes probes still use `/api/health`
+to keep queue processing available during handset outages.
 
 ## Why nothing serves from an API
 
@@ -563,3 +563,25 @@ stale figure is worse than none — so it shows the three series the page draws
 instead, which never go out of date. (`smite.diemer.codes` solves the same
 problem the other way, by rendering its card live from the last snapshot;
 nothing here can, because nothing here runs but nginx.)
+
+## SMS gateway notifications
+
+`cluster-status-sms-monitor` is a separate once-per-minute CronJob, so losing
+both the SMS relay and the status collector still leaves a notifier. It checks
+`/api/health/gateway`, notifies after five minutes down, repeats every four
+hours, and sends recovery once. It uses the write-only `alerts` password from
+`ntfy-seed` and publishes to the internal ntfy Service's `alerts` topic; no
+phone credentials or SMS contents are read. ntfy's external hostname resolves
+to Tailscale, so this path works without a Grafana Cloud webhook or new ingress.
+
+State lives in `cluster-status-sms-monitor-state`. Its ServiceAccount can only
+get/update that ConfigMap; it cannot read Secrets through the API. Overlapping
+Jobs are forbidden. State advances only after ntfy acknowledges publication,
+so failed notifications retry. A crash after publish but before state commit
+can produce a duplicate (at-least-once delivery). Missed monitoring runs do not
+establish uninterrupted connectivity; the check is sampled once per minute.
+Disable using `smsMonitor.enabled: false`. A cluster-wide outage still prevents
+this notifier from running.
+
+Run notifier regression tests with
+`python3 -m unittest discover -s infra/cluster-status/tests -v`.

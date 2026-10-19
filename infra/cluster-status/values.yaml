@@ -175,14 +175,9 @@ publish:
 # 200), timeoutSeconds (default 5). Keep timeouts well under
 # collector.intervalSeconds — checks run in series, inside the scrape loop.
 #
-# ⚠️ Probe the service, not its backend. sms-relay's own health endpoint is the
-# right target; the Android gateway phone behind it is deliberately NOT checked
-# here. That would need the gateway's basic-auth credentials in this collector,
-# and it would publish "the owner's phone is off the network" — a fact about a
-# person, not about the cluster. Still true now the page is tailnet-only: the
-# objection was never only about who could read it. If you ever do add it, note
-# the gateway app answers /health with a 500 and reports real status on /
-# instead.
+# SMS dependency checks stay in the relay, which holds handset credentials.
+# The status tile must reflect the phone, not just a healthy relay process.
+# Kubernetes readiness continues to use /api/health independently.
 #
 # Six checks at 3-5s each is up to ~25s of budget against a 15s interval if
 # every one of them hangs — which cannot happen unless the whole cluster is
@@ -194,7 +189,7 @@ serviceChecks:
     # Cluster-internal Service address, so the check works with no ingress,
     # no TLS, and no dependency on DNS or the tunnel being up. Same for all
     # of the below.
-    url: http://sms-relay.infra.svc.cluster.local:8000/api/health
+    url: http://sms-relay.infra.svc.cluster.local:8000/api/health/gateway
     expectStatus: 200
     timeoutSeconds: 5
   - name: Authelia
@@ -671,3 +666,11 @@ ingress:
   cloudflareHosts: []
   tls:
     enabled: true
+
+# ntfy is tailnet-only, so notifications originate inside the cluster rather
+# than Grafana Cloud. Independent of the SMS relay pod; persists deduplication.
+smsMonitor:
+  enabled: true
+  probeUrl: http://sms-relay.infra.svc.cluster.local:8000/api/health/gateway
+  ntfyUrl: http://ntfy.infra.svc.cluster.local/alerts
+  ntfySecret: ntfy-seed

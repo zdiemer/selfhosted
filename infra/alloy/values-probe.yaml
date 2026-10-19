@@ -80,6 +80,13 @@ alloy:
             # as an outage.
             preferred_ip_protocol: ip4
             ip_protocol_fallback: true
+        http_dependency:
+          prober: http
+          timeout: 5s
+          http:
+            valid_status_codes: [200]
+            follow_redirects: false
+            preferred_ip_protocol: ip4
         tcp_connect:
           prober: tcp
           timeout: 8s
@@ -87,6 +94,14 @@ alloy:
             preferred_ip_protocol: ip4
             ip_protocol_fallback: true
       `
+
+        // Authenticated handset check runs inside the relay; no phone secrets
+        // are copied into Alloy. A 503 is an outage, never a healthy edge.
+        target {
+          name    = "sms-gateway"
+          address = "http://sms-relay.infra.svc.cluster.local:8000/api/health/gateway"
+          module  = "http_dependency"
+        }
 
         // ---- Cloudflare Tunnel hostnames -----------------------------------
         // Taken from the live tunnel config (cloudflared logs its ingress rules
