@@ -6,6 +6,9 @@ metadata:
     {{- include "romm.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # RomM 5.4 can migrate a large library for 15–20 minutes at first start.
+  # Allow image preparation plus the 30-minute startup-probe budget.
+  progressDeadlineSeconds: 2400
   # Recreate because we share a single RWO data PVC; never two pods at once.
   strategy:
     type: Recreate

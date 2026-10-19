@@ -1,8 +1,9 @@
 # Version upgrade audit — 2026-10-19
 
 This audit compares deployed images, direct host checks, upstream releases and
-GitHub dependency dashboard issue #4. No runtime versions were changed during
-this audit. K3s remains at the freshly upgraded 1.35.9 while it is observed.
+GitHub dependency dashboard issue #4. The initial audit made no runtime changes;
+the subsequent authorized rollout is recorded below. K3s remains at the freshly
+upgraded 1.35.9 while it is observed.
 
 ## Coverage findings
 
@@ -89,3 +90,68 @@ migration. Keep the database patch separate from the application migration.
 - [Prowlarr releases](https://github.com/Prowlarr/Prowlarr/releases)
 - [FlareSolverr v3.5.2](https://github.com/FlareSolverr/FlareSolverr/releases/tag/v3.5.2)
 - [Recyclarr v8.8.0](https://github.com/recyclarr/recyclarr/releases/tag/v8.8.0)
+
+## Authorized rollout — 2026-10-19
+
+- All ten hosts: Tailscale 1.104.1, preserving node identities. Each host passed
+  Running/online, direct root SSH and Kubernetes Ready checks before advancing.
+  Only the Tailscale package was upgraded; no OS/kernel upgrades or reboots.
+  Laptop-2's apt-daily metadata refresh had been stuck for 52 days; stopping that
+  stale service released its lock. The apt timer remains enabled.
+- Both Cloudflared deployments: 2026.10.1, two Ready replicas each. Tunnel
+  connections registered and public requests to kelsey.green and talaria.deals
+  returned 200.
+- Prowlarr 2.6.5, Sonarr 4.0.20 and Radarr 6.4.4: sequential upgrades, with
+  authenticated version API checks after each. FlareSolverr v3.5.2 completed
+  a browser request to example.com with HTTP 200. Decluttarr v2.2.0 connected
+  successfully to Sonarr, Radarr and qBittorrent.
+- qBittorrent 5.2.4: version API passed and traffic exited through the Vancouver
+  VPN. A startup PIA token request timed out; restarting only the VPN
+  connection recovered port forwarding, and its assigned port matched the
+  qBittorrent listening port. Gluetun stays on the existing stable v3.41.3.
+- Recyclarr 8.8.0: CronJob image updated and a one-off `sync --preview` completed
+  against both services. The preview does not apply quality-profile changes.
+
+### Recovery material
+
+Both `media/pre-app-upgrades-20261019` and
+`games/pre-app-upgrades-20261019` K8up backups completed. Native arr backups
+were requested through each application's API, then archived and checked.
+RomM has a verified SQL dump (1,432,061,453 uncompressed bytes) and three Ready
+CSI snapshots: `romm-data-pre-540-20261019`, `romm-db-pre-540-20261019` and
+`romm-webstation-pre-540-20261019` in `games`. These recovery snapshots are
+retained deliberately. The database volume snapshot is crash-consistent; use
+the logical dump for an application-consistent database restore.
+
+Private archives and checksums are under
+`/home/node/.local/state/app-upgrades/20261019/` (directory 0700, files 0600).
+Tailscale state backups are host-local under `/var/backups/tailscale-pre-1.104.1/`.
+Do not commit these files. No full restore drill was performed.
+
+RomM's deployment progress deadline is now 2400 seconds, and its deploy script
+waits up to 2700 seconds, allowing its existing 30-minute startup probe budget
+plus image preparation time. Its MariaDB patch to 11.4.13 was applied separately
+and passed version and query checks before starting the 5.4.0 application.
+
+### Final RomM verification
+
+RomM 5.4.0 completed migrations between 04:13:01 and 04:19:44 UTC without a
+container restart. RomM, MariaDB and Webstation are Ready. Its local heartbeat
+and external HTTPS ingress returned 200. Database counts exactly matched the
+pre-upgrade baseline: 186,964 ROMs, 69 platforms and two users. The MariaDB
+backup-helper image was aligned to 11.4.13 for future scheduled dumps. No new
+CORS allowlist was needed for the configured same-origin frontend; interactive
+login, emulator launches and save/sync client flows were not exercised.
+
+All ten Kubernetes nodes remained Ready. All four changed Helm charts passed
+lint using their deployed values, and version pins match the running workloads.
+The temporary Recyclarr preview Job was removed; backup resources and recovery
+snapshots remain intentionally.
+
+### Remaining application health warnings
+
+Prowlarr reports unavailable upstream indexers and three missing definitions:
+Zamunda RIP, GamesTorrents and Torrent Oyun indir. Sonarr/Radarr also report
+upstream indexer failures, some lasting more than six hours. These definitions
+were retained rather than deleting user configuration during an upgrade. Their
+repair/removal is separate from the completed version rollout.

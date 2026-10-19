@@ -32,9 +32,9 @@ echo "==> helm upgrade ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade "$RELEASE" "$HERE" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) --cleanup-on-fail
 
 echo "==> Waiting for ${RELEASE} rollout"
-$K rollout status "deployment/${RELEASE}" --timeout=2100s
+$K rollout status "deployment/${RELEASE}" --timeout=2700s
 if $K get "deployment/${RELEASE}-webstation" >/dev/null 2>&1; then
-  $K rollout status "deployment/${RELEASE}-webstation" --timeout=2100s
+  $K rollout status "deployment/${RELEASE}-webstation" --timeout=2700s
 fi
 
 echo "==> Pods"

@@ -78,7 +78,7 @@ spec:
         - name: dump
           # Tracks games/romm's mariadb 11.4 server.
           # renovate: datasource=docker depName=mariadb
-          image: mariadb:11.4.12
+          image: mariadb:11.4.13
           command: ["sleep", "infinity"]
           envFrom:
             - secretRef:
