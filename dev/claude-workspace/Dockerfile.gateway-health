@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=registry.zachd.duckdns.org/zdiemer/claude-workspace:v40
+FROM ${BASE_IMAGE}
+COPY --chown=1000:1000 gateway/src/health.ts gateway/src/main.ts gateway/src/signal.ts gateway/src/whatsapp.ts /opt/messaging-gateway/src/

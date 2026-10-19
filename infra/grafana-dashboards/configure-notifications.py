@@ -65,6 +65,8 @@ def main():
         {'uid':'critical-outages-email', 'name':cfg['critical_receiver'],
          'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}},
     ]
+    desired.append({'uid':'notification-path-email', 'name':'notification-path-email',
+                    'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}})
     for point in desired:
         point['disableResolveMessage'] = False
         exists = point['uid'] in existing

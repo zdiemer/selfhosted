@@ -492,6 +492,41 @@ alloy:
         }
       }
 
+      // Dedicated, aggregate-only application health endpoints. No shell/UI ports.
+      discovery.relabel "home_health" {
+        targets = discovery.relabel.local_pods.output
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_monitoring_zachd_health_port"]
+          regex = "9105"
+          action = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_number"]
+          separator = "/"
+          regex = "messaging-gateway/.*|.*/9105"
+          action = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip"]
+          target_label = "__address__"
+          replacement = "$1:9105"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label = "pod"
+        }
+      }
+      prometheus.scrape "home_health" {
+        targets = discovery.relabel.home_health.output
+        forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+        scrape_interval = "60s"
+        scrape_timeout = "30s"
+      }
+
       // ---- kube-state-metrics ---------------------------------------------
       // CronJob success, backup freshness, pod restarts, PVC state. See
       // infra/kube-state-metrics — the allowlist there is the primary filter;

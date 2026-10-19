@@ -19,6 +19,8 @@ class RoutingTest(unittest.TestCase):
                     self.assertEqual(result, {'receiver': 'unwired'})
                 else:
                     expected = 'critical-outages' if rule['labels']['severity'] == 'critical' else 'ntfy-primary'
+                    if rule['labels'].get('notification_path') == 'email':
+                        expected = 'notification-path-email'
                     self.assertEqual(result['receiver'], expected)
                     self.assertEqual(result['repeat_interval'], '4h')
                 self.assertEqual(notification_settings(rule, cfg | {'enabled': False}), {'receiver': 'unwired'})

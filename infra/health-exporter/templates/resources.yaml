@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: health-exporter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: health-exporter
+rules:
+  - apiGroups: [k8up.io]
+    resources: [schedules, backups]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: health-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: health-exporter
+subjects:
+  - kind: ServiceAccount
+    name: health-exporter
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-exporter
+data:
+  exporter.py: |
+{{ .Files.Get "scripts/exporter.py" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: health-exporter}
+  template:
+    metadata:
+      labels: {app: health-exporter}
+      annotations:
+        monitoring.zachd/health-port: '9105'
+        checksum/code: {{ .Files.Get "scripts/exporter.py" | sha256sum }}
+    spec:
+      serviceAccountName: health-exporter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: exporter
+          image: {{ .Values.image }}
+          command: [python, /app/exporter.py]
+          env:
+            - name: BACKUP_NAMESPACES
+              value: {{ .Values.backupNamespaces | toJson | quote }}
+          ports: [{name: metrics, containerPort: 9105}]
+          resources:
+            requests: {cpu: 5m, memory: 24Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: code, mountPath: /app, readOnly: true}
+      volumes:
+        - name: code
+          configMap: {name: health-exporter}

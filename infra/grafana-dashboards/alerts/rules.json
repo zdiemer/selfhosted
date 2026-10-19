@@ -1186,5 +1186,876 @@
         }
       }
     ]
+  },
+  {
+    "uid": "sh-notification-delivery",
+    "title": "Notification delivery degraded",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s",
+      "notification_path": "email"
+    },
+    "annotations": {
+      "summary": "Notification delivery needs attention: ntfy unavailable, SMS fallback selected, messages queued over 10 minutes, or failures within the last hour. Delivered phone messages are not inferred from ntfy acceptance."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "label_replace((home_relay_oldest_pending_seconds{cluster=\"home-k3s\"} > bool 600), \"check\", \"queue\", \"\", \"\") or label_replace((home_relay_failed_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"failed\", \"\", \"\") or label_replace((home_relay_fallback_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"fallback\", \"\", \"\") or label_replace((home_ntfy_healthy{cluster=\"home-k3s\"} < bool 1), \"check\", \"ntfy\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-health-scrape",
+    "title": "Application health monitoring unavailable",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s",
+      "notification_path": "email"
+    },
+    "annotations": {
+      "summary": "An application health exporter is missing or cannot complete its check. Monitoring may be blind; inspect the affected target."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(up{cluster=\"home-k3s\",job=\"prometheus.scrape.home_health\"} == bool 0) or absent(home_ntfy_healthy{cluster=\"home-k3s\"}) or absent(home_relay_oldest_pending_seconds{cluster=\"home-k3s\"}) or absent(home_arr_health_issues{cluster=\"home-k3s\",app=\"sonarr\"}) or absent(home_arr_health_issues{cluster=\"home-k3s\",app=\"radarr\"}) or absent(home_arr_health_issues{cluster=\"home-k3s\",app=\"prowlarr\"}) or absent(home_gateway_connected{cluster=\"home-k3s\",namespace=\"claude\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-backup-freshness",
+    "title": "Weekly backup is overdue",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "No successful full namespace backup in nine days. Weekly cadence plus two days grace; inspect K8up schedules and repository."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "home_backup_age_seconds{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  777600
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-backup-observer",
+    "title": "Backup status collection failed",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Cannot read K8up backup/schedule status; backup freshness is unknown."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "1 - home_backup_collection_success{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-deployment-unavailable",
+    "title": "Deployment replicas unavailable",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Deployment has fewer available replicas than requested for ten minutes."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "kube_deployment_spec_replicas{cluster=\"home-k3s\"} - kube_deployment_status_replicas_available{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-statefulset-unavailable",
+    "title": "StatefulSet replicas unavailable",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "StatefulSet has fewer ready replicas than requested for ten minutes."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "kube_statefulset_replicas{cluster=\"home-k3s\"} - kube_statefulset_status_replicas_ready{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-daemonset-unavailable",
+    "title": "DaemonSet coverage incomplete",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "DaemonSet is missing ready pods on expected nodes for fifteen minutes."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "kube_daemonset_status_desired_number_scheduled{cluster=\"home-k3s\"} - kube_daemonset_status_number_ready{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-container-stuck",
+    "title": "Container repeatedly failing to start",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Container has remained in a startup failure state for ten minutes."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(max by(namespace,pod,container,reason) (kube_pod_container_status_waiting_reason{cluster=\"home-k3s\",reason=~\"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError\"})) or vector(0)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-container-oom",
+    "title": "Recurring container OOM kills",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "2m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Container restarted at least twice in thirty minutes and its last termination was OOMKilled. Inspect memory limits and workload growth."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(sum by(namespace,pod,container) (increase(kube_pod_container_status_restarts_total{cluster=\"home-k3s\"}[30m])) * on(namespace,pod,container) max by(namespace,pod,container) (kube_pod_container_status_last_terminated_reason{cluster=\"home-k3s\",reason=\"OOMKilled\"})) or vector(0)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  1
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-gateway-disconnected",
+    "title": "Messaging gateway disconnected",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Messaging transport disconnected for five minutes. WhatsApp reports its live session; Signal reports the local signal-cli connection. Check pairing and daemon receive errors."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "1 - home_gateway_connected{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-arr-health",
+    "title": "Arr application health warning",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Arr reports persistent health warnings/errors. Inspect System > Status for indexer, download-client, or configuration details. Routine downloads do not notify."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "home_arr_health_issues{cluster=\"home-k3s\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

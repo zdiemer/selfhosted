@@ -20,6 +20,9 @@ spec:
       {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 6 }}
   template:
     metadata:
+      annotations:
+        monitoring.zachd/health-port: "9105"
+        checksum/health-exporter: {{ $.Files.Get "scripts/health-exporter.py" | sha256sum }}
       labels:
         {{- include "arr.appSelectorLabels" (dict "root" $ "app" $name) | nindent 8 }}
         ingress.enabled: "true"
@@ -31,6 +34,26 @@ spec:
       # queue updates, import scans all run on timers).
       terminationGracePeriodSeconds: 60
       containers:
+        - name: health-exporter
+          image: python:3.15-alpine
+          command: [python, /app/exporter.py]
+          env:
+            - {name: ARR_APP, value: {{ $name | quote }}}
+            - {name: ARR_PORT, value: {{ $app.port | quote }}}
+          ports: [{name: metrics, containerPort: 9105}]
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 5m, memory: 24Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: health-exporter, mountPath: /app, readOnly: true}
         - name: {{ $name }}
           image: "{{ $app.image }}:{{ $app.tag }}"
           imagePullPolicy: IfNotPresent
@@ -74,6 +97,9 @@ spec:
           resources:
             {{- toYaml $.Values.resources.arr | nindent 12 }}
       volumes:
+        - name: health-exporter
+          configMap:
+            name: {{ include "arr.fullname" $ }}-health-exporter
         - name: config
           persistentVolumeClaim:
             claimName: {{ include "arr.fullname" $ }}-{{ $name }}-config

@@ -77,9 +77,9 @@ metricAllowlist:
   # count doesn't say better. It is kept at all because nothing else can answer
   # "how many pods are stuck Pending".
   #
-  # terminated_reason is NOT kept: waiting_reason covers the case you can still
-  # do something about (CrashLoopBackOff, ImagePullBackOff), and restarts_total
-  # covers the history.
+  # Last termination reason correlates OOMKilled with recent restart increments;
+  # waiting_reason covers current startup failures.
+  - kube_pod_container_status_last_terminated_reason
   - kube_pod_container_status_restarts_total
   - kube_pod_container_status_waiting_reason
   - kube_pod_status_phase

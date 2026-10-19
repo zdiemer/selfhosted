@@ -33,6 +33,7 @@ jobs:
       # push time — Grafana just creates a second copy of the dashboard.
       - run: scripts/ci-lint-dashboards.sh
       - run: python3 infra/grafana-dashboards/tests/test_notification_policy.py
+      - run: python3 -m unittest discover -s infra/health-exporter/tests -v
 
   shellcheck:
     runs-on: ubuntu-latest

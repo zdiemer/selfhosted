@@ -1,3 +1,4 @@
+import { setConnected } from "./health.ts";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -253,6 +254,7 @@ function connect(): void {
   });
 
   const retry = () => {
+    setConnected("signal", false);
     for (const p of pendingRpc.values())
       p.reject(new Error("signal-cli socket closed"));
     pendingRpc.clear();
@@ -261,6 +263,7 @@ function connect(): void {
   sock.once("close", retry);
   sock.on("error", (err) => console.error(`signal socket: ${err.message}`));
   sock.on("connect", () => {
+    setConnected("signal", true);
     console.log("signal: connected to signal-cli daemon");
     markReady("signal");
   });

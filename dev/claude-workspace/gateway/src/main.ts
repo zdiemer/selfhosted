@@ -1,3 +1,4 @@
+import { startHealth } from "./health.ts";
 // messaging-gateway: Signal/WhatsApp → headless `claude -p` in the
 // claude-workspace $HOME. See the chart README, "Messaging surface".
 import fs from "node:fs";
@@ -15,6 +16,8 @@ import { armSchedules } from "./schedules.ts";
 import { rearmWakeups } from "./wakeup.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
+
+startHealth({signal:config.signal.enabled, whatsapp:config.whatsapp.enabled});
 
 // A defaultCwd outside the allowed roots would put every new chat somewhere
 // `!cwd` refuses to go — a misconfiguration that would otherwise only surface

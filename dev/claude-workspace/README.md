@@ -1231,3 +1231,19 @@ leaving it empty preserves the tag's normal pull policy rather than caching a
 potentially stale mutable tag.
 
 Validation: `python3 -m unittest discover -s dev/claude-workspace/tests -v`.
+
+### Messaging health metrics
+
+The gateway exports aggregate enabled-transport connection state at private
+port 9105 `/metrics`. Only Alloy is admitted to this port by NetworkPolicy;
+no Service, public route, shell, account identifier or message data is exposed.
+Signal reports the local signal-cli connection, not a successful upstream send.
+WhatsApp reports live connection open/close events. Grafana alerts after five
+minutes disconnected, with a separate missing-exporter check.
+
+`messaging.image` allows a gateway-only image refresh while other containers
+keep the workspace image. Build `Dockerfile.gateway-health` from this directory,
+with `--build-arg BASE_IMAGE=<current workspace image>` when rebasing. The main
+Dockerfile also includes these gateway sources. Clear the override when a future
+full workspace image includes the changes. A normal Helm deployment still
+recreates the shared workspace pod; perform it from outside the pod.

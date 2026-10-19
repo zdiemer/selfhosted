@@ -465,6 +465,7 @@ journal:
   recent: 8
 
 messaging:
+  image: "registry.zachd.duckdns.org/zdiemer/claude-workspace:gateway-health-20261019-r2"
   # Signal/WhatsApp → headless `claude -p` in this pod's $HOME: the
   # low-bandwidth surface (airline free-messaging wifi passes Signal/WhatsApp
   # but not real traffic). Two extra containers: messaging-gateway (bun app

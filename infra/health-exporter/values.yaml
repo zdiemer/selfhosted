@@ -1,0 +1,18 @@
+backupNamespaces:
+- auth
+- claude
+- crowdsec
+- discord
+- docs
+- finance
+- games
+- happy
+- infra
+- kube-system
+- media
+- minecraft
+- rachel
+- talaria
+- web
+- whatnow
+image: python:3.15-alpine

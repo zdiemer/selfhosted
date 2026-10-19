@@ -19,6 +19,7 @@ spec:
       annotations:
         # Restart the pod when the messaging Secret's contents change — env
         # vars are frozen at container start.
+        monitoring.zachd/health-port: "9105"
         checksum/messaging: {{ include (print $.Template.BasePath "/messaging.yaml") . | sha256sum }}
       {{- end }}
       labels:
@@ -525,13 +526,14 @@ spec:
         # netpol changes. No probes: pre-pairing there is nothing healthy to
         # probe — same stance as tailscaled below.
         - name: messaging-gateway
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ .Values.messaging.image | default (printf "%s:%s" .Values.image.repository .Values.image.tag) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
             capabilities:
               drop: ["ALL"]
+          ports: [{name: gateway-metrics, containerPort: 9105}]
           command: ["bash", "-lc", "cd /opt/messaging-gateway && exec bun run src/main.ts"]
           env:
             - name: HOME

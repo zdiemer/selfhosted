@@ -1,6 +1,6 @@
 # grafana-dashboards — dashboards and alerts as code
 
-Four dashboards and fifteen alert rules, pushed to Grafana Cloud over its HTTP
+Four dashboards and twenty-six alert rules, pushed to Grafana Cloud over its HTTP
 API by `upgrade.sh`.
 
 **This project deploys nothing to the cluster.** There is no chart and no helm
@@ -86,7 +86,7 @@ and the presence of a uid.
 
 ## Alert delivery
 
-Fifteen rules evaluate in Grafana. Public notification delivery is active through
+Twenty-six rules evaluate in Grafana. Public notification delivery is active through
 Cloudflare; critical infrastructure rules also send independent cloud email.
 Then infrastructure rules use `ntfy-primary`; the dedicated SMS gateway rule
 remains non-notifying because its local monitor already delivers those events.
@@ -147,7 +147,7 @@ healthy cluster, mark it.
 ```
 
 then open all four at 24h and 7d. In the Grafana UI, confirm under
-**Alerting → Alert rules** that the fifteen rules show health `ok`. Under
+**Alerting → Alert rules** that the twenty-six rules show health `ok`. Under
 **Contact points**, verify `ntfy-primary` and the webhook/email integrations in
 `critical-outages`. The locally monitored SMS rule retains `unwired`.
 
@@ -208,3 +208,7 @@ The SMS phone rule remains owned by the local monitor to avoid duplicate alerts.
 A cloud-evaluated missing-telemetry rule covers full home-cluster outages.
 Recipient selection, timings, tests, and Cloudflare settings are documented in
 [notification-routing.md](../../docs/notification-routing.md).
+
+Application health and delivery-path alert thresholds are documented in
+[health-exporter](../health-exporter/README.md). Delivery-path failures use
+`notification-path-email`, independently of ntfy/SMS.

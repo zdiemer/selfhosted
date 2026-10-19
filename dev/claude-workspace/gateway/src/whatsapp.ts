@@ -1,3 +1,4 @@
+import { setConnected } from "./health.ts";
 import path from "node:path";
 import makeWASocket, {
   DisconnectReason,
@@ -181,11 +182,13 @@ async function connect(): Promise<void> {
       qrcode.generate(u.qr, { small: true });
     }
     if (u.connection === "open") {
+      setConnected("whatsapp", true);
       console.log("whatsapp: connected");
       reconnectDelay = RECONNECT_MIN_MS;
       markReady("wa");
     }
     if (u.connection === "close") {
+      setConnected("whatsapp", false);
       const code = (u.lastDisconnect?.error as any)?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) {
         console.error(

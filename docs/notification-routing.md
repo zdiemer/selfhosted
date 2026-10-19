@@ -117,3 +117,12 @@ only part of the cluster is handled by the existing infrastructure rules.
   confirmation that the owner read or received it in their inbox.
 - Database snapshot before migration is on the relay PVC at
   `/data/sms-relay-before-ntfy-20261019.db` (private message data; do not commit).
+
+## Additional coverage (2026-10-19)
+
+All five follow-up areas are configured: notification delivery health, weekly
+backup freshness, workload/OOM failures, messaging connections, and Arr health.
+See [health alert coverage](../infra/health-exporter/README.md) for thresholds,
+limitations, expected backup namespaces, and validation. Notification-path
+failures use a separate **email-only** contact point to avoid alert recursion.
+Routine download events are not published.
