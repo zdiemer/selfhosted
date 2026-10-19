@@ -1,0 +1,5 @@
+# Install at /etc/rancher/k3s/config.yaml.d/20-node-ip.yaml on zachd-ubuntu-5.
+# Pin enp4s0's stable ULA, not a rotating IPv6 privacy address.
+node-ip:
+  - 192.168.4.21
+  - fd35:ace4:a929:1:3a05:25ff:fe3a:5204

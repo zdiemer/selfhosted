@@ -20,7 +20,7 @@ chart directory.
 | [`restart.sh`](restart.sh) | Restart nodes. `--all` rolls agents first, draining/uncordoning each; `--service-only` restarts k3s rather than rebooting; `--force` skips the drain |
 | [`update.sh`](update.sh) | Rolling OS package updates, agents first. `--reboot` to auto-reboot when required. Warns when a reboot would change kernel, and refuses to do it unattended on a node that can't recover from a bad boot |
 | [`kernel.sh`](kernel.sh) | Kernel state per node and boot-failure recovery. `--report` for running vs installed kernels and which nodes are one reboot from changing; `--no-auto-kernel` to stop unattended-upgrades installing kernels; `--protect` for panic auto-reboot and a bounded recordfail wait; `--hold`/`--unhold` |
-| [`k3s-upgrade.sh`](k3s-upgrade.sh) | Rolling k3s version upgrade, agents then server. `--version <ver>`, or latest stable |
+| [`k3s-upgrade.sh`](k3s-upgrade.sh) | One-node, explicitly pinned upgrade. Default is read-only; `--prepare` stages verified binaries and off-node backups; `--execute` requires SSH and fresh recovery material. See [upgrade runbook](../../docs/k3s-upgrade.md) |
 | [`versions-report.sh`](versions-report.sh) | Weekly staleness report: pending apt/security updates, kernel drift, k3s vs stable channel, tailscale spread, reboot-guard coverage. Publishes to the `versions-report` ConfigMap (the status.diemer.codes "Pending Upgrades" panel) and the pinned GitHub issue; run by `scripts/systemd/selfhosted-versions-report.timer`. `--dry-run` prints the markdown. Report-only — acting on it is `update.sh`/`k3s-upgrade.sh`/`kernel.sh`. A tailscale package upgrade restarts tailscaled and can drop the very ssh session driving `update.sh`; apt is idempotent, re-run |
 | [`_common.sh`](_common.sh) | Shared helpers. Sourced, not executed |
 
@@ -49,7 +49,7 @@ of minutes; that's normal.
 ./cleanup.sh --all --report        # what's eating the disks?
 ./cleanup.sh --node zachd-ubuntu-3 --deep
 ./restart.sh --all --service-only  # bounce k3s everywhere, no reboots
-./k3s-upgrade.sh --version v1.31.4+k3s1
+./k3s-upgrade.sh --version v1.35.9+k3s1 --node zachd-ubuntu # read-only checks
 ```
 
 ## Why `--deep` spares images
@@ -180,6 +180,14 @@ prefix or NIC changes, update this pin to a non-temporary address present on
 the host. Removing the file and restarting K3s restores automatic selection.
 
 K3s configuration reference: https://docs.k3s.io/installation/configuration
+
+### Node5 IPv6 address selection
+
+`node-configs/zachd-ubuntu-5/20-node-ip.yaml` applies the same fix to node5,
+using enp4s0's stable ULA `fd35:ace4:a929:1:3a05:25ff:fe3a:5204` and IPv4
+`192.168.4.21`. Installed and verified on 2026-10-19 with a same-version K3s
+restart; the stale secondaryNodeIP warnings stopped. Follow the same
+control-plane health and address checks described above.
 
 ## Bounded pod DNS upstreams
 
