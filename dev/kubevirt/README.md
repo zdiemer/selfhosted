@@ -133,3 +133,35 @@ managing it.
 
 To actually remove it: delete the VMs, then the CRs, then the operator
 manifests, in that order.
+
+## Handler certificate compatibility workaround (KubeVirt 1.9)
+
+KubeVirt 1.9 still starts a legacy migration client certificate manager at
+`/etc/virt-handler/clientcertificates`, although the operator no longer mounts
+that identity. This produced a missing-file error every minute on each handler.
+The chart sets `customizeComponents.flags.handler.client-cert-file` and
+`client-key-file` to the existing `migrationservercertificates` mount. The
+operator continues to issue, rotate and project that migration certificate.
+No private keys are copied or stored in Git.
+
+Do not mount `kubevirt-virt-handler-certs` back into handlers: separating the
+API client identity from migration clients addresses CVE-2025-64434. All local
+handlers use the migration CN; this workaround does not restore compatibility
+with old peers requiring the API client identity. Remove these flags when a
+future KubeVirt version removes the legacy manager/flags, after reviewing its
+source and release notes.
+
+Changing these flags rolls the handler DaemonSet; running VM launcher pods
+remain in place. Verify the new pod arguments, certificate reload logs, KubeVirt
+availability and unchanged VMI UID/Ready condition. This is not a live-migration
+test of Windows or its storage.
+
+References:
+- https://github.com/kubevirt/kubevirt/issues/16264
+- https://github.com/kubevirt/kubevirt/blob/v1.9.0/cmd/virt-handler/virt-handler.go
+- https://github.com/kubevirt/kubevirt/security/advisories/GHSA-ggp9-c99x-54gp
+
+Verified on 2026-10-19 with Helm revision 2: all nine handlers rolled to Ready,
+all four certificate managers in each handler loaded successfully, and no
+missing-certificate errors recurred. `verify.sh` passed; Windows remained
+Running/Ready with the same VMI UID throughout. Live migration was not invoked.

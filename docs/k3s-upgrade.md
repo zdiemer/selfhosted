@@ -68,8 +68,10 @@ and allow add-on reconciliation to finish before advancing.
   The chart now has a reproducible pin in `infra/keda/upgrade.sh`.
 - KubeVirt 1.9 supports Kubernetes 1.34–1.36. CDI 1.66 release notes include
   Kubernetes 1.36 CI lanes. These do not prove VM migration health: existing
-  virt-handler certificate warnings still need investigation before relying
-  on live migration. Keep Windows on node1 for the in-place restart.
+  virt-handler missing-certificate warnings were subsequently addressed with
+  the migration-identity workaround documented in `dev/kubevirt/README.md`.
+  Live migration still requires a separate test. Windows stayed on node1 for
+  the in-place restart.
 - Democratic CSI 1.9.5 and its older sidecars do not provide a verified 1.35
   support matrix in the reviewed release notes. A disposable 1Gi iSCSI PVC
   was provisioned, written on node2 (already 1.35), detached and reattached

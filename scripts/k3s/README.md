@@ -189,6 +189,11 @@ using enp4s0's stable ULA `fd35:ace4:a929:1:3a05:25ff:fe3a:5204` and IPv4
 restart; the stale secondaryNodeIP warnings stopped. Follow the same
 control-plane health and address checks described above.
 
+Rechecked after the 1.35.9 upgrade on 2026-10-19: the configured ULA remains
+present and non-temporary, matches the Node InternalIP, and is reachable over
+IPv6 from node0. No secondaryNodeIP warnings appeared in the recent journal;
+no additional network changes or service restart were necessary.
+
 ## Bounded pod DNS upstreams
 
 `k3s-resolv-conf.py` generates `/etc/rancher/k3s/resolv.conf` from
