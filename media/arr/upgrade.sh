@@ -36,6 +36,9 @@ for d in prowlarr sonarr radarr qbittorrent flaresolverr decluttarr; do
   $K rollout status "deployment/${RELEASE}-${d}" --timeout=300s
 done
 
+echo "==> Enforcing executable and dangerous-file rejection"
+python3 "${HERE}/harden-downloads.py" --apply
+
 echo "==> Pods"
 $K get pods -l app.kubernetes.io/instance="${RELEASE}"
 
