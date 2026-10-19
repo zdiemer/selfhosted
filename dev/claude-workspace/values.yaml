@@ -358,6 +358,9 @@ happy:
     # Does not change the iOS New Session screen or the selected model.
     enabled: true
     schedule: "* * * * *"
+    # upgrade.sh resolves the current tag and stores this in Helm release values.
+    # Empty keeps direct Helm installs on the workspace's normal pull policy.
+    imageDigest: ""
   daemon:
     # Run `happy daemon` as an always-on supervised sidecar so the Happy app
     # can spawn NEW sessions in any ~/code dir the moment the pod is up — no

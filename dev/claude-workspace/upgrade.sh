@@ -62,8 +62,32 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 # infra/sms-relay). strategy: Recreate tears the pod down *before* the
 # replacement pulls, so a missing tag doesn't fail safe — it takes every
 # surface (term, Happy, bakery, messaging) down until someone notices.
-REPO="$(awk '/^  repository:/{gsub(/["'"'"']/,"",$2); print $2; exit}' "$VALUES")"
-TAG="$(awk '/^  tag:/{gsub(/["'"'"']/,"",$2); print $2; exit}' "$VALUES")"
+# Match Helm's base/profile/secret precedence when resolving the image. A
+# delegated profile may disable the catalog or override the image entirely.
+IMAGE_SETTINGS="$(sv_fd "$SECRET_STEM" | python3 -c '
+import sys, yaml
+from pathlib import Path
+def merge(dst, src):
+    for key, value in (src or {}).items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            merge(dst[key], value)
+        else:
+            dst[key] = value
+values = {}
+for filename in sys.argv[1:]:
+    if filename:
+        merge(values, yaml.safe_load(Path(filename).read_text()))
+merge(values, yaml.safe_load(sys.stdin))
+print(values["image"]["repository"])
+print(values["image"]["tag"])
+happy = values.get("happy", {})
+print("true" if happy.get("daemon", {}).get("enabled") and happy.get("modelCatalog", {}).get("enabled") else "false")
+' "$VALUES" "${PROFILE_VALUES:-}")"
+mapfile -t IMAGE_FIELDS <<< "$IMAGE_SETTINGS"
+REPO="${IMAGE_FIELDS[0]}"
+TAG="${IMAGE_FIELDS[1]}"
+CATALOG_ENABLED="${IMAGE_FIELDS[2]}"
+MANIFEST_HEADERS="$(sv_mktemp manifest-headers)"
 if [[ "$REPO" == registry.zachd.duckdns.org/* && -n "$TAG" ]] && command -v curl >/dev/null && command -v python3 >/dev/null; then
   echo "==> Verifying ${REPO}:${TAG} exists"
   REG_HOST="${REPO%%/*}"
@@ -83,7 +107,7 @@ PY
   if [[ -z "$BASIC" ]]; then
     echo "    skipped (no credential for ${REG_HOST} in ~/.docker/config.json — cannot verify)" >&2
   else
-    CODE="$(curl -sL -o /dev/null -w '%{http_code}' -H "Authorization: Basic ${BASIC}" \
+    CODE="$(curl --max-time 30 -sL -D "$MANIFEST_HEADERS" -o /dev/null -w '%{http_code}' -H "Authorization: Basic ${BASIC}" \
             -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
             "https://${REG_HOST}/v2/${IMG_PATH}/manifests/${TAG}" || echo 000)"
     if [[ "$CODE" != "200" ]]; then
@@ -118,7 +142,7 @@ PY
     # so a missing index type reads as "image was never pushed" and blocks a
     # perfectly good deploy. Docker produces an OCI *index* by default now
     # (v7 was the first tag built that way), which is exactly how this was found.
-    CODE="$(curl -sL -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${TOKEN}" \
+    CODE="$(curl --max-time 30 -sL -D "$MANIFEST_HEADERS" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${TOKEN}" \
             -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
             "https://ghcr.io/v2/${IMG_PATH}/manifests/${TAG}" || echo 000)"
     if [[ "$CODE" != "200" ]]; then
@@ -129,6 +153,21 @@ PY
     echo "    ok"
   fi
 fi
+
+# A digest-pinned catalog can reuse the node's cache without resolving a
+# mutable workspace tag each minute. Refresh this pin on EVERY upgrade, even
+# when the tag is unchanged. The main workspace retains its Always policy.
+# Fail before touching Helm if the enabled catalog cannot be pinned safely.
+CATALOG_DIGEST=""
+if [[ "$CATALOG_ENABLED" == true ]]; then
+  CATALOG_DIGEST="$(awk '/^HTTP\// {digest=""} tolower($1) == "docker-content-digest:" {gsub("\r", "", $2); digest=$2} END {print digest}' "$MANIFEST_HEADERS")"
+  if [[ ! "$CATALOG_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    echo "ERROR: no valid image digest returned for ${REPO}:${TAG}; refusing an unpinned model-catalog upgrade." >&2
+    exit 1
+  fi
+  echo "==> Pinning model-catalog to ${REPO}@${CATALOG_DIGEST}"
+fi
+VALUE_ARGS+=(--set-string "happy.modelCatalog.imageDigest=${CATALOG_DIGEST}")
 
 # Recover from a half-written release record before trying to add to it.
 #

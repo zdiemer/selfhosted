@@ -1210,3 +1210,24 @@ The model-catalog CronJob has a 180-second total Job deadline (including pod
 startup), with `concurrencyPolicy: Forbid`. A delayed run skips overlapping
 minute ticks instead of being killed after 50 seconds. Its API request timeouts
 and no-retry policy remain bounded; recurring failures still alert.
+
+### Model-catalog image cache
+
+`upgrade.sh` resolves the workspace tag's registry manifest digest during its
+existing image preflight and stores it as `happy.modelCatalog.imageDigest` in
+Helm release values. The catalog uses `repository@sha256:...` with `IfNotPresent`,
+so its minute-by-minute runs reuse the cached image without generating registry
+authentication challenges. The workspace Deployment keeps its mutable tag and
+`Always` policy.
+
+Run `upgrade.sh` after publishing a workspace image, including when reusing the
+same tag: each upgrade resolves a fresh digest. Restarting only the workspace
+pod does not update the catalog pin. Image garbage collection remains safe:
+`IfNotPresent` pulls the pinned image again when it is absent from the node.
+The enabled catalog makes the upgrade fail before Helm changes anything if the
+registry does not return a valid digest. Disabled profiles need no pin. Direct
+Helm callers can supply `--set-string happy.modelCatalog.imageDigest=sha256:...`;
+leaving it empty preserves the tag's normal pull policy rather than caching a
+potentially stale mutable tag.
+
+Validation: `python3 -m unittest discover -s dev/claude-workspace/tests -v`.

@@ -20,6 +20,7 @@ jobs:
       - run: scripts/ci-lint-charts.sh
       - run: scripts/check-appversion-drift.sh
       - run: python3 -m unittest discover -s media/arr/tests -v
+      - run: python3 -m unittest discover -s dev/claude-workspace/tests -v
       # The availability conventions (root README) fail silently by nature — a
       # `preferred` spread the scheduler declines and a PDB that permanently
       # blocks a drain both render without complaint. This inspects the rendered

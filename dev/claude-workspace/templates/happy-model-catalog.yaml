@@ -57,8 +57,18 @@ spec:
                       {{- include "claude-workspace.selectorLabels" . | nindent 22 }}
           containers:
             - name: refresh
+              {{- $digest := .Values.happy.modelCatalog.imageDigest | default "" }}
+              {{- if $digest }}
+              {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}
+              {{- fail "happy.modelCatalog.imageDigest must be a sha256 digest" }}
+              {{- end }}
+              image: "{{ .Values.image.repository }}@{{ $digest }}"
+              imagePullPolicy: IfNotPresent
+              {{- else }}
+              # Direct Helm callers without a pin must still resolve mutable tags.
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- end }}
               command: ["node", "/catalog/refresh-claude-models.cjs"]
               env:
                 - name: HOME
