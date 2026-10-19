@@ -35,9 +35,13 @@ set -a; . "$ENV_FILE"; set +a
 : "${SMS_RELAY_KEY:?SMS_RELAY_KEY missing from ${ENV_FILE}}"
 : "${ALERT_TO:?ALERT_TO missing from ${ENV_FILE}}"
 
-# The last few journal lines are what makes the text actionable rather than
-# merely alarming. Trimmed hard: this is going to a phone.
-DETAIL="$(journalctl --user -u "$UNIT" -n 6 --no-pager -o cat 2>/dev/null | tail -c 400 || true)"
+# Scope diagnostics to this invocation so a successful/interleaved run cannot
+# hide the actual error. Manager exit-code boilerplate is not the cause.
+INVOCATION="$(systemctl --user show "$UNIT" -p InvocationID --value 2>/dev/null || true)"
+JOURNAL_ARGS=(-u "$UNIT")
+[[ "$INVOCATION" =~ ^[0-9a-f]{32}$ ]] && JOURNAL_ARGS=("_SYSTEMD_INVOCATION_ID=$INVOCATION")
+DETAIL="$(journalctl --user "${JOURNAL_ARGS[@]}" -n 120 --no-pager -o cat 2>/dev/null \
+  | python3 "$(dirname "$0")/lib/failure-detail.py" || true)"
 BODY="$(printf '%s failed on %s\n\n%s' "$UNIT" "$(hostname -s)" "${DETAIL:-no journal output}")"
 
 # One text per unit per hour. The sync timer runs every 15 minutes, and a

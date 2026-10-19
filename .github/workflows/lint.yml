@@ -19,6 +19,7 @@ jobs:
       - uses: azure/setup-helm@v4.3.1
       - run: scripts/ci-lint-charts.sh
       - run: scripts/check-appversion-drift.sh
+      - run: python3 -m unittest discover -s scripts/tests -v
       - run: python3 -m unittest discover -s infra/cluster-status/tests -v
       - run: python3 -m unittest discover -s media/arr/tests -v
       - run: python3 -m unittest discover -s dev/claude-workspace/tests -v

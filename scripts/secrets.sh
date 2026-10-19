@@ -493,10 +493,39 @@ inject_to() {
 # touch the real file.
 inject_probe() {
   local tpl="$1" out="$2"
-  op inject -i "$tpl" -o "$out" -f >/dev/null 2>&1 || return 1
+  timeout 45s op inject -i "$tpl" -o "$out" -f >/dev/null 2>&1 || return 1
   grep -q '{{ *op://' "$out" && return 1
   python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$out" 2>/dev/null || return 1
   return 0
+}
+
+# Read-only check retries. Keep these separate from sync/write operations:
+# retrying a failed lookup is safe; repeating a vault mutation is not.
+check_probe() {
+  local tpl="$1" out="$2" attempt ref value failure
+  for attempt in 1 2 3; do
+    failure=""
+    if ! inject_probe "$tpl" "$out"; then
+      failure="UNRESOLVABLE (lookup or YAML validation failed)"
+    else
+      while IFS= read -r ref; do
+        [[ -n "$ref" ]] || continue
+        if ! value="$(timeout 45s op read "$ref" 2>/dev/null)"; then
+          failure="READ FAILED $ref"; break
+        elif [[ -z "$value" ]]; then
+          failure="EMPTY FIELD $ref"; break
+        fi
+      done < <(grep -oE 'op://[^ }"]+' "$tpl" | sort -u)
+      unset value
+    fi
+    if [[ -z "$failure" ]]; then
+      [[ $attempt -eq 1 ]] || echo "  recovered after ${attempt} attempts: $tpl"
+      return 0
+    fi
+    [[ $attempt -eq 3 ]] || sleep "$((attempt * 2))"
+  done
+  echo "  $failure (3 attempts)"
+  return 1
 }
 
 # ------------------------------------------------------------ sync markers
@@ -565,26 +594,24 @@ cmd_check() {
     || note "no selfhosted checkout found — only the standalone clones under ${EXTERNAL_BASE} are checked"
 
   local tmp rc=0 n=0; tmp="$(scratch)"
-  local logical tpl out ref empty
+  local logical tpl out
+  local -a failures=()
   while IFS=$'\t' read -r logical tpl out; do
     [[ -n "$logical" ]] || continue
     n=$((n + 1))
-    if ! inject_probe "$tpl" "$tmp/probe"; then
-      echo "  UNRESOLVABLE  $logical"; rc=1; continue
+    if check_probe "$tpl" "$tmp/probe"; then
+      echo "  ok            $logical"
+    else
+      echo "  FAILED        $logical"
+      failures+=("$logical")
+      rc=1
     fi
-    # A ref that resolves to empty is the one way op inject can reintroduce the
-    # silent-empty-secret failure this repo has been bitten by before.
-    empty=0
-    while IFS= read -r ref; do
-      [[ -n "$ref" ]] || continue
-      [[ -n "$(op read "$ref" 2>/dev/null)" ]] || { echo "  EMPTY FIELD   $ref"; empty=1; }
-    done < <(grep -oE 'op://[^ }"]+' "$tpl" | sort -u)
-    [[ $empty -eq 1 ]] && rc=1 || echo "  ok            $logical"
   done < <(discover_pairs)
   rm -f "$tmp/probe"
   # The journal only keeps the last few lines for the failure text, so the count
   # is what tells you a "passing" run actually looked at everything.
   note "${n} chart(s) checked"
+  [[ $rc -eq 0 ]] || note "FAILED secrets check: ${failures[*]}"
   return $rc
 }
 

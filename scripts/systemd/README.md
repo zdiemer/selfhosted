@@ -135,3 +135,20 @@ scripts/secrets.sh restore                 # unpack files/ back into the repo
 
 Needs `~/.config/selfhosted/backup-age.key`. If that is gone too, transcribe it
 from the paper copy — that copy is the primary recovery path.
+
+### Intermittent secrets-check failures (2026-10-19)
+
+The node's retained logs showed isolated failures for different vault items
+(October 2, 4, 9, and 13), followed by passing checks. All 42 configured files
+were resolving on October 19. The original check failed on a single lookup
+and mislabelled a failed `op read` as an empty field; the SMS tail then omitted
+the actionable line in favor of systemd's exit-status boilerplate.
+
+Each template check now gets up to three read-only attempts, with 2/4-second
+backoff and 45-second per-CLI-call timeouts. Persistent missing references,
+invalid YAML, empty values, and failed reads still fail the unit. Final output
+names failed files; alert diagnostics prefer error lines from the failed
+invocation. No vault values are logged. Existing hourly SMS deduplication is
+unchanged. This does not repair the separate Android gateway outage.
+
+Tests: `python3 -m unittest discover -s scripts/tests -v`.
