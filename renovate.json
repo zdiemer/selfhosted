@@ -1,12 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "selfhosted: helm-values covers image.repository/tag pairs in values.yaml; the custom managers cover everything the annotation comments mark — CHART_VERSION pins in upgrade.sh, ARG pins in Dockerfiles, combined repo:tag image strings in values/templates, and Chart.yaml appVersion (same depName as the values tag, so both land in one PR). Deliberately unmanaged: minecraft MODRINTH/MODS (unsortable IDs, moves with the client pack), claude-code@latest, OP_VERSION/BAKERY_REF, kelsey-green's git-sync deploy branch, and everything ghcr.io/zdiemer/*.",
-  "extends": ["local>zdiemer/selfhosted//renovate/default"],
+  "description": "selfhosted: helm-values covers image.repository/tag pairs in values.yaml; the custom managers cover everything the annotation comments mark \u2014 CHART_VERSION pins in upgrade.sh, ARG pins in Dockerfiles, combined repo:tag image strings in values/templates, and Chart.yaml appVersion (same depName as the values tag, so both land in one PR). Deliberately unmanaged: minecraft MODRINTH/MODS (unsortable IDs, moves with the client pack), claude-code@latest, OP_VERSION/BAKERY_REF, kelsey-green's git-sync deploy branch, and everything ghcr.io/zdiemer/*.",
+  "extends": [
+    "local>zdiemer/selfhosted//renovate/default"
+  ],
   "customManagers": [
     {
       "customType": "regex",
       "description": "CHART_VERSION pins in values-only upgrade.sh scripts",
-      "managerFilePatterns": ["/(^|/)upgrade\\.sh$/"],
+      "managerFilePatterns": [
+        "/(^|/)upgrade\\.sh$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s*\\nCHART_VERSION=\"\\$\\{CHART_VERSION:-(?<currentValue>[^}\"]+)\\}\""
       ]
@@ -14,7 +18,9 @@
     {
       "customType": "regex",
       "description": "github-release *_VERSION pins in upgrade.sh (KubeVirt/CDI ship operator YAML, not a helm chart)",
-      "managerFilePatterns": ["/(^|/)upgrade\\.sh$/"],
+      "managerFilePatterns": [
+        "/(^|/)upgrade\\.sh$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=github-releases depName=(?<depName>\\S+)\\s*\\n[A-Z_]+_VERSION=\"\\$\\{[A-Z_]+:-(?<currentValue>[^}\"]+)\\}\""
       ],
@@ -23,7 +29,9 @@
     {
       "customType": "regex",
       "description": "ARG *_VERSION pins in Dockerfiles",
-      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "managerFilePatterns": [
+        "/(^|/)Dockerfile$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\nARG [A-Z_]+=(?<currentValue>\\S+)"
       ],
@@ -32,7 +40,9 @@
     {
       "customType": "regex",
       "description": "Annotated combined repo:tag image strings in values files and templates",
-      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/\\.ya?ml$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*image:\\s*\"?[a-z0-9.\\-/]+:(?<currentValue>[A-Za-z0-9][\\w.\\-]*)\"?"
       ]
@@ -40,60 +50,112 @@
     {
       "customType": "regex",
       "description": "Chart.yaml appVersion mirrors the chart's primary image tag (scripts/check-appversion-drift.sh enforces the convention)",
-      "managerFilePatterns": ["/(^|/)Chart\\.yaml$/"],
+      "managerFilePatterns": [
+        "/(^|/)Chart\\.yaml$/"
+      ],
       "matchStrings": [
         "# renovate: image=(?<depName>\\S+)\\s*\\nappVersion: \"?(?<currentValue>[^\"\\s]+)\"?"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Split string image/tag pairs in values files (arr stack); permits explanatory comments between the keys",
+      "managerFilePatterns": [
+        "/(^|/)values[^/]*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "(?:^|\\n)[ \\t]*image:[ \\t]*[\"\\']?(?<depName>[a-z0-9][a-z0-9.\\-/]*)[\"\\']?[ \\t]*\\r?\\n(?:[ \\t]*#[^\\r\\n]*\\r?\\n)*[ \\t]*tag:[ \\t]*[\"\\']?(?<currentValue>[A-Za-z0-9][A-Za-z0-9_.-]*)[\"\\']?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Annotated standalone tag shared by image strings (vmlab)",
+      "managerFilePatterns": [
+        "/(^|/)values[^/]*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n[ \\t]*tag:[ \\t]*[\"\\']?(?<currentValue>[A-Za-z0-9][A-Za-z0-9_.-]*)[\"\\']?"
+      ]
     }
   ],
   "packageRules": [
     {
-      "description": "KubeVirt and CDI move together — CDI is built against a KubeVirt release",
-      "matchPackageNames": ["kubevirt/kubevirt", "kubevirt/containerized-data-importer"],
+      "description": "KubeVirt and CDI move together \u2014 CDI is built against a KubeVirt release",
+      "matchPackageNames": [
+        "kubevirt/kubevirt",
+        "kubevirt/containerized-data-importer"
+      ],
       "groupName": "kubevirt"
     },
     {
       "description": "arr stack moves together",
-      "matchFileNames": ["media/arr/**"],
+      "matchFileNames": [
+        "media/arr/**"
+      ],
       "groupName": "arr stack"
     },
     {
       "description": "buildkit lockstep: infra/buildkit image tag + claude-workspace buildctl ARG must match",
-      "matchPackageNames": ["moby/buildkit"],
+      "matchPackageNames": [
+        "moby/buildkit"
+      ],
       "groupName": "buildkit"
     },
     {
       "description": "claude-workspace tool binaries in one PR",
-      "matchFileNames": ["dev/claude-workspace/Dockerfile"],
+      "matchFileNames": [
+        "dev/claude-workspace/Dockerfile"
+      ],
       "groupName": "claude-workspace tools"
     },
     {
       "description": "minecraft deploys only in player-offline windows; PRs on demand via the dashboard",
-      "matchFileNames": ["minecraft/**"],
-      "labels": ["renovate", "needs-offline-window"],
+      "matchFileNames": [
+        "minecraft/**"
+      ],
+      "labels": [
+        "renovate",
+        "needs-offline-window"
+      ],
       "dependencyDashboardApproval": true
     },
     {
       "description": "claude-mod gradle pins move with the mod build, by hand; fabric/mojang maven registries aren't resolvable anyway",
-      "matchManagers": ["gradle"],
-      "matchFileNames": ["minecraft/claude-mod/**"],
+      "matchManagers": [
+        "gradle"
+      ],
+      "matchFileNames": [
+        "minecraft/claude-mod/**"
+      ],
       "enabled": false
     },
     {
-      "description": "jellyfin server bumps can strand the Intro Skipper plugin — its builds are pinned to an exact server version (media/jellyfin/README.md)",
-      "matchFileNames": ["media/jellyfin/**"],
-      "labels": ["renovate", "needs-plugin-check"]
+      "description": "jellyfin server bumps can strand the Intro Skipper plugin \u2014 its builds are pinned to an exact server version (media/jellyfin/README.md)",
+      "matchFileNames": [
+        "media/jellyfin/**"
+      ],
+      "labels": [
+        "renovate",
+        "needs-plugin-check"
+      ]
     },
     {
-      "description": "romm targets the mariadb 11.4 LTS series (prebackuppod dump image tracks it) — offer patches, not the next minor series",
-      "matchPackageNames": ["mariadb"],
+      "description": "romm targets the mariadb 11.4 LTS series (prebackuppod dump image tracks it) \u2014 offer patches, not the next minor series",
+      "matchPackageNames": [
+        "mariadb"
+      ],
       "allowedVersions": "<11.5"
     },
     {
       "description": "prebackuppod dump-image majors follow the app DB major, manually (pg_dump/mariadb-dump must match their servers)",
-      "matchFileNames": ["infra/k8up/templates/prebackuppods.yaml"],
-      "matchUpdateTypes": ["major"],
+      "matchFileNames": [
+        "infra/k8up/templates/prebackuppods.yaml"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
     }
   ]
