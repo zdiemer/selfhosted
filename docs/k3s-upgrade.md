@@ -62,20 +62,24 @@ Talaria and Paperless backup jobs report success, but their application data
 has not been restored as part of this preparation; refresh database backups
 at the actual maintenance window.
 
-## Remaining execution gate
+## Direct access verification
 
-Direct access verification on 2026-10-19 confirmed root SSH to nine nodes,
-including all three servers, and the read-only upgrade preflight passes over
-SSH. Laptop-2 remains NeedsLogin: its old watchdog restarted Tailscale every
-two minutes while authorization was pending, replacing the login URL. The
-existing `scripts/k3s/tailscale-watchdog.sh` fix is now installed on all ten
-hosts; authentication states no longer trigger restarts. Host daemon PIDs
-were unchanged when the new watchdog ran. Laptop-2's current authorization
-must complete before its worker upgrade; login links are ephemeral and are
-not stored here. Existing privileged registry configuration pods provide
-preparation access but depend on Kubernetes. The script deliberately does not accept
-`--execute --transport pod` and checks direct access to all control-plane
-members. A working host console remains useful if networking fails.
+Direct root SSH is verified on all ten nodes as of 2026-10-19, and the
+read-only upgrade preflight passes over SSH. Laptop-2's renewed authorization
+completed: it reports Running/online, no health warnings, and an empty AuthURL.
+Root SSH returned UID 0 and the expected hostname. Its daemon PID remained
+unchanged across authorization, confirming the watchdog no longer interrupts
+login.
+
+The existing `scripts/k3s/tailscale-watchdog.sh` fix is installed on all ten
+hosts. It preserves authentication states instead of restarting Tailscale
+when an identity check is pending. The previous watchdog invalidated laptop-2's
+login links every two minutes.
+
+Tailscale SSH checks can expire; recheck direct access immediately before the
+upgrade window. The script rejects `--execute --transport pod` and verifies
+direct access to all control-plane members. A host console remains useful if
+networking fails. No K3s upgrade was performed during access verification.
 
 ## Commands
 
