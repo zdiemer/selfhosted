@@ -9,6 +9,14 @@ is thrown away), no /media mount, no ingress. Nothing outside the cluster
 should reach an endpoint that fetches arbitrary URLs on request.
 */}}
 {{- if .Values.flaresolverr.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arr.fullname" . }}-flaresolverr-runner
+data:
+  runner.py: |
+{{ .Files.Get "files/flaresolverr-runner.py" | indent 4 }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,6 +33,8 @@ spec:
       {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/runner: {{ .Files.Get "files/flaresolverr-runner.py" | sha256sum }}
       labels:
         {{- include "arr.appSelectorLabels" (dict "root" . "app" "flaresolverr") | nindent 8 }}
     spec:
@@ -35,6 +45,7 @@ spec:
         - name: flaresolverr
           image: "{{ .Values.flaresolverr.image }}:{{ .Values.flaresolverr.tag }}"
           imagePullPolicy: IfNotPresent
+          command: ["/usr/bin/dumb-init", "--", "python", "-u", "/opt/flaresolverr-runner/runner.py"]
           env:
             - name: TZ
               value: {{ .Values.timezone }}
@@ -46,6 +57,8 @@ spec:
               value: "0.0.0.0"
             - name: PORT
               value: {{ .Values.flaresolverr.port | quote }}
+            - name: MAX_BROWSER_REQUESTS
+              value: {{ .Values.flaresolverr.maxBrowserRequests | quote }}
             # A solved challenge is reusable, so sessions are cached rather
             # than spawning a browser per query. They still expire — a stale
             # clearance cookie fails the same as no cookie.
@@ -63,21 +76,23 @@ spec:
           # Chrome wants somewhere real to put its shared memory; the default
           # 64Mi /dev/shm is the classic renderer-crash-under-load footgun.
           volumeMounts:
+            - name: runner
+              mountPath: /opt/flaresolverr-runner
+              readOnly: true
             - name: dshm
               mountPath: /dev/shm
           readinessProbe:
             httpGet:
-              path: /
+              path: /health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 5
-          # Chrome is slow to come up and a solve can block the event loop for
-          # a while, so the liveness probe is deliberately loose — restarting
-          # mid-solve just throws away work and re-queues the same challenge.
+          # The wrapper reserves HTTP workers for /health even when all browser
+          # slots are busy. Keep a generous startup window for Chromium.
           livenessProbe:
             httpGet:
-              path: /
+              path: /health
               port: http
             initialDelaySeconds: 120
             periodSeconds: 60
@@ -86,6 +101,9 @@ spec:
           resources:
             {{- toYaml .Values.resources.flaresolverr | nindent 12 }}
       volumes:
+        - name: runner
+          configMap:
+            name: {{ include "arr.fullname" . }}-flaresolverr-runner
         - name: dshm
           emptyDir:
             medium: Memory

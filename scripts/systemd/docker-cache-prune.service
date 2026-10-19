@@ -1,0 +1,12 @@
+[Unit]
+Description=Prune Docker caches unused for seven days
+After=docker.service
+ConditionPathExists=/var/run/docker.sock
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/bin/docker builder prune --all --force --filter until=168h --keep-storage 10GB
+ExecStart=/usr/bin/docker image prune --all --force --filter until=168h
+TimeoutStartSec=30min

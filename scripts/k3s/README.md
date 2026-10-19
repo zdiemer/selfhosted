@@ -275,3 +275,22 @@ normal list cleanup can otherwise remove other repositories' indexes.
 
 Timeout semantics: [systemd.service](https://www.freedesktop.org/software/systemd/man/257/systemd.service.html)
 and [APT configuration](https://manpages.ubuntu.com/manpages/noble/man5/apt.conf.5.html).
+
+### Docker build-cache retention on the original node
+
+On 2026-10-19, the separate Docker daemon on `zachd-ubuntu` had no containers
+but held roughly 73 GiB of disposable old build cache. Cleaning cache/images
+unused for seven days reduced root usage from 76% to 43% (126 GiB free).
+`../systemd/docker-cache-prune.{service,timer}` is installed on that node:
+weekly, low I/O priority, keep recent cache and a 10 GB build-cache target.
+It does not prune volumes or containers and does not touch K3s containerd.
+
+Node2's main consumer was a 41 GiB anonymous BuildKit cache belonging to an
+exited/OOM-killed Talaria builder container. Removed that specific exited
+container through `k3s crictl rm`, plus unused CRI images. After restarting the
+idle builder with an explicit pod cache volume, root usage fell from 78% to
+32% (71 GiB free). Talaria's `scripts/docker/setup-buildx.sh` now configures
+an explicit 24 GiB emptyDir cache and BuildKit GC (2.048 GB reserved,
+20.48 GB minimum node free space, 8.192 GB reclaimable-cache maximum).
+Active build data is not reclaimed by GC. The backend builder is updated live;
+other builders receive the same policy when setup runs next.

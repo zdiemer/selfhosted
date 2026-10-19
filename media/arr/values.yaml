@@ -57,6 +57,9 @@ flaresolverr:
   port: 8191
   logLevel: info
   sessionTtlMinutes: 10
+  # Preserve the upstream four-browser ceiling while reserving HTTP threads
+  # for health checks. Excess work receives 503 + Retry-After, not a long queue.
+  maxBrowserRequests: 4
   # /dev/shm for Chrome. The container default of 64Mi is where renderers
   # start dying once more than one solve is in flight.
   shmSize: 256Mi

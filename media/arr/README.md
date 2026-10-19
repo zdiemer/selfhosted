@@ -35,3 +35,20 @@ in memory and sent through stdin, never logged or placed in command arguments.
 This is file-type filtering, not a malware scanner. Exclusions apply to newly
 added torrents and do not remove already downloaded files. Re-run the script
 when adding indexers so new entries receive the same rejection policy.
+
+### FlareSolverr overload handling
+
+The runner in `files/flaresolverr-runner.py` preserves upstream startup and
+logging while limiting `/v1` requests to `flaresolverr.maxBrowserRequests`
+(default 4). Waitress has four additional HTTP threads so `/health` does not
+queue behind long browser challenges. Overload returns HTTP 503 with
+`Retry-After: 5` and a FlareSolverr error body. Clients should retry later;
+this does not make unsupported Cloudflare challenges solvable.
+
+The wrapper is mounted from a checksummed ConfigMap. Both probes use the
+quiet `/health` endpoint. Regression tests cover saturation, health availability,
+exceptions and abandoned responses:
+
+```sh
+python3 -m unittest discover -s media/arr/tests -v
+```
