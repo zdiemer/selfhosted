@@ -1,13 +1,13 @@
 # K3s upgrade runbook
 
-Prepared 2026-10-19. No K3s version upgrade has been executed.
+Completed 2026-10-19: all ten nodes run `v1.35.9+k3s1`, Ready and uncordoned.
 
 ## Target and order
 
-Pin `v1.35.9+k3s1` for the first rollout. Node2 already runs 1.35.4, ahead of
-all three 1.34 servers. Upgrade servers one at a time: `zachd-ubuntu`,
-`zachd-ubuntu-5`, `zachd-ubuntu-3`. After all servers pass, use laptop-6 as the
-worker canary, then laptop, laptop-2, node4, node2, node1, node6.
+The completed rollout pinned `v1.35.9+k3s1`. Before the rollout, node2 ran
+1.35.4, ahead of all three 1.34 servers. Servers were upgraded one at a time:
+`zachd-ubuntu`, `zachd-ubuntu-5`, `zachd-ubuntu-3`. After all servers passed, laptop-6 was the
+worker canary, followed by laptop, laptop-2, node4, node2, node1, node6.
 
 Observe for 24–48 hours before separately planning 1.36.5. Do not follow the
 moving stable channel or skip a minor. Do not combine OS/kernel updates,
@@ -19,6 +19,39 @@ containers normally survive this; brief API interruptions remain possible.
 A full drain would strand node-pinned Postgres, Elasticsearch, Steam Headless,
 and GPU workloads and move many single-attach iSCSI volumes unnecessarily.
 No reboot or killall script is part of this workflow.
+
+## Completed rollout evidence
+
+The service restarts completed sequentially during approximately 03:08–03:19
+UTC on 2026-10-19. No hosts were rebooted or drained.
+
+- All ten nodes reached the target version, Ready without pressure and
+  uncordoned. All three local API and etcd health checks passed; deployments,
+  StatefulSets and DaemonSets settled. The upgrade lock was removed.
+- Existing pods showed no container restart increases against the baseline.
+- DNS, public HTTPS and direct Traefik HTTPS checks passed. Paperless returned
+  its expected authentication redirect; the registry enforced authentication,
+  and an authenticated CRI image pull on upgraded node5 succeeded.
+- Talaria PostgreSQL queries passed; all five ScaledObjects were Ready with
+  metrics available. The syncer HPA retained its 900-second scale-down
+  stabilization and one-pod-per-300-second limit. Windows remained Running/Ready.
+- Disposable iSCSI provisioning, write, detach and cross-node read tests passed
+  before the upgrade, after the servers, and after all workers. Test pods,
+  PVCs and backing PVs were removed; the temporary DNS smoke pod was removed.
+- Node3's final five-minute journal check showed no fsync-stall, leader-loss,
+  panic or fatal messages. Its leader handoff at the intentional service stop
+  was expected; long-term disk separation remains a separate project.
+
+The first server paused at the workload gate while metrics-server rolled out.
+Bundled Traefik chart downloads also returned 404 when the API service routed
+requests to servers still running the old version. The exact new Traefik and
+Traefik-CRD chart archives were copied from upgraded node0 to the other two
+servers over SSH and checksum-verified. Helm retries then completed, including
+an app-chart retry after the CRDs became ready. Traefik 3.7.13, CoreDNS 1.14.7
+and metrics-server 0.9.0 settled. Full health and application checks passed
+before node0 was manually uncordoned and its retained lock cleared. Future
+rollouts should account for chart availability across mixed-version servers
+and allow add-on reconciliation to finish before advancing.
 
 ## Preparation evidence
 
@@ -49,18 +82,23 @@ Private recovery data lives outside Git:
   tar archives of the existing binaries, `/etc/rancher/k3s`, systemd units and
   drop-ins, server tokens/credential files, plus the fresh node0 snapshot
   `pre-upgrade-20261019-zachd-ubuntu-1792373615`; SHA256SUMS records integrity.
-- `/home/node/.local/state/k3s-upgrade/20261019-staged/`: per-server preparation
-  manifests and fresh snapshot/token/config/binary archives. Each manifest
+- `/home/node/.local/state/k3s-upgrade/20261019-staged/`: preparation manifests
+  and recovery archives for all ten nodes, including server snapshots and
+  tokens. Each manifest
   identifies its host staging directory and binary/archive checksums.
 
 These paths are on the NAS-backed workspace PVC, off the nodes' local disks;
 files/directories are private (0600/0700). They contain credentials and must
-never be committed. Confirm that the NAS recovery copies can be retrieved
-without a working cluster before a disaster restore. Preparation archives
-are not a substitute for database/PVC backups or a tested restore. Existing
-Talaria and Paperless backup jobs report success, but their application data
-has not been restored as part of this preparation; refresh database backups
-at the actual maintenance window.
+never be committed. Recovery archive retrieval through direct node5 SSH was
+verified without using the Kubernetes API. Recheck retrieval before a disaster
+restore. Preparation archives are not a substitute for database/PVC backups
+or a tested restore.
+
+Fresh K8up backups named `pre-k3s-135-20261019` completed before the first
+service restart: Paperless (`docs`) at 02:18:00 UTC and Talaria at 03:07:37 UTC.
+Both reported `Completed=True`; Talaria's logical dump was allowed to finish
+before maintenance began. The backup resources remain for recovery/history.
+A full application-data restore was not performed during this upgrade.
 
 ## Direct access verification
 
