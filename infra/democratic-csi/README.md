@@ -195,3 +195,31 @@ should reschedule onto another node and come back Ready:
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
 kubectl uncordon <node>
 ```
+
+### Ubuntu raw-block publish reconciliation
+
+The post-renderer applies `patch-block-publish.js` to the **iSCSI node driver**
+using an init container with the same pinned image as the driver. v1.9.5's
+`NodePublishVolume` assumes a raw-block bind mount has devtmpfs source `dev`;
+on these Ubuntu hosts the source is `udev`. After kubelet restarted, the running
+Windows VM kept its disk but kubelet repeatedly rejected its valid existing
+publish mount. Re-mounting a running VM's disk is unnecessary and risky.
+
+Both paths already pass the driver's mounted-path checks. The replacement then
+requires both to be block devices with identical `stat.rdev` identities. It
+rejects different disks and non-block files rather than merely accepting any
+mount from devtmpfs. Missing paths also fail closed. The source transformation
+requires exactly one matching upstream statement; review or remove the patch
+when updating the driver. It mounts only the patched module from an emptyDir;
+it does not alter the image or host files.
+
+Run `node --test infra/democratic-csi/test-block-publish.js` from the repo root.
+The October 19 rollout was canaried on node1, checking the VM identity, readiness,
+and guest agent while waiting past kubelet's two-minute retry interval. Never
+unmount or detach a live VM disk merely to clear this error.
+
+Verified rollout result: all ten patched iSCSI plugins Ready, no new node1
+`MapVolume.MapPodDevice` failures after the canary, original VMI UID preserved,
+and guest-agent connectivity retained. Historical warning events remain until
+Kubernetes expires them; their count stopped increasing. Helm release revision
+8 contains the patched template, so pod recreation retains the fix.

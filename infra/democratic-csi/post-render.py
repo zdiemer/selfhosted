@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helm post-renderer: give the CSI node-registrar liveness probe a usable timeout.
+"""Helm post-renderer: registrar probe budget and iSCSI block-publish identity fix.
 
 WHY THIS EXISTS. The chart hardcodes the driver-registrar liveness probe in
 templates/node.yaml with no timeoutSeconds and exposes no value to set one, so
@@ -28,10 +28,19 @@ one-second budget was both too often and too strict.
 
 Remove this the day the chart accepts a value for it -- and send that upstream.
 
+The iSCSI DaemonSet also gets an init container using the exact driver image.
+It patches the block NodePublishVolume check into an emptyDir and mounts only
+that module into the driver. The original check hardcodes devtmpfs source "dev";
+Ubuntu reports "udev", causing valid existing mounts to fail reconciliation.
+The replacement checks that both mounted paths are block devices with identical
+rdev values. See patch-block-publish.js and test-block-publish.js. No host mount
+or volume contents are modified by this patch.
+
 Only DaemonSet documents are re-serialised; every other rendered document is
 passed through byte for byte.
 """
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -53,6 +62,31 @@ def patch(doc):
             if probe.get(key) != value:
                 probe[key] = value
                 changed = True
+    if doc.get("metadata", {}).get("name", "").endswith("-iscsi-node"):
+        driver = next(c for c in spec["containers"] if c["name"] == "csi-driver")
+        patch_source = Path(__file__).with_name("patch-block-publish.js").read_text()
+        volume = {"name": "block-publish-patch", "emptyDir": {}}
+        init = {
+            "name": "patch-block-publish",
+            "image": driver["image"],
+            "command": ["node", "-e", patch_source.replace(
+                "if (require.main === module)", "if (true)"
+            )],
+            "resources": {"requests": {"cpu": "10m", "memory": "32Mi"},
+                          "limits": {"memory": "128Mi"}},
+            "volumeMounts": [{"name": volume["name"], "mountPath": "/driver-patch"}],
+        }
+        mount = {"name": volume["name"],
+                 "mountPath": "/home/csi/app/src/driver/index.js",
+                 "subPath": "index.js", "readOnly": True}
+        for key, item in [("volumes", volume), ("initContainers", init)]:
+            entries = spec.setdefault(key, [])
+            entries[:] = [entry for entry in entries if entry["name"] != item["name"]]
+            entries.append(item)
+        mounts = driver.setdefault("volumeMounts", [])
+        mounts[:] = [entry for entry in mounts if entry["name"] != mount["name"]]
+        mounts.append(mount)
+        changed = True
     return changed
 
 
