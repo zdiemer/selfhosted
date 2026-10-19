@@ -204,3 +204,26 @@ in the deployed pod. Money is Ready with HTTP 200 on `/api/health`.
 A final remote check found a newer Smitele commit, `36ac9a6`, published after the
 initial pin audit. That application change is outside these two pin updates;
 its recorded revision remains `194b754` pending separate rollout validation.
+
+## Epic wishlist recovery
+
+Gamedex commit `18d8c28` replaces the old Epic Store GraphQL wishlist request
+with the current frontend's platform REST API, using the existing launcher
+OAuth token and the already-installed `curl_cffi` browser TLS client. Ordinary
+`requests` received a Cloudflare 403; the legacy GraphQL resolver returned
+`notLoggedIn` even after establishing a website session. The platform API
+returned the account's complete 10-item wishlist; titles resolve through the
+Epic catalog API. No new credentials or persistent browser cookies are needed.
+
+Invalid, partial, or failed snapshots now raise a sanitized wishlist-stage
+error, preserving cached entries instead of replacing them with an empty list.
+Eleven regression tests pass, including preservation after a second-page
+failure and continued execution of other sync stages. The tests also run in
+CI; [run 39306225691](https://github.com/zdiemer/gamedex/actions/runs/39306225691)
+passed.
+
+Deployed `epic-wishlist-20261019`, Helm revision 590, image index digest
+`sha256:3ef13936d21bd7d0e54bee494d2decd38f6b70cface42647cbd8745d726c4588`.
+The new pod is Ready and `/api/health` returns HTTP 200. Its normal background
+sync saved all 10 wishlist entries and completed at 18:55 UTC with account
+status `linked` and no error. Advanced the selfhosted Gamedex pin accordingly.
