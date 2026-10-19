@@ -30,7 +30,9 @@ bitmagnet:
 
   # Extra environment passed straight to the container. See
   # https://bitmagnet.io/setup/configuration.html
-  extraEnv: {}
+  extraEnv:
+    # Keep discovery running without saturating shared NAS random I/O.
+    DHT_CRAWLER_SCALING_FACTOR: "2"
 
 postgres:
   image:
@@ -43,10 +45,17 @@ postgres:
   password: ""
   service:
     port: 5432
+  # Budgeted for a 2Gi container; leave room for backends and OS cache.
+  settings:
+    shared_buffers: 512MB
+    effective_cache_size: 1536MB
+    max_wal_size: 2GB
+    checkpoint_timeout: 15min
+    checkpoint_completion_target: "0.9"
   resources:
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 1Gi
     # The crawler writes constantly and the index grows into the millions of
     # rows; this is the pod that actually needs memory here, not bitmagnet.
     limits:

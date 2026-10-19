@@ -65,6 +65,28 @@ kubectl -n media patch pvc bitmagnet-postgres \
 
 Set `persistence.postgres.size` to match afterwards.
 
+## Disk I/O budget
+
+The crawler scaling factor is **2** (upstream default 10). Discovery stays
+active with less concurrency against the shared NAS. Postgres has a 1Gi memory
+request and 2Gi limit, with 512MB shared buffers and a 1536MB planner cache
+estimate. Checkpoints use a 15-minute timeout, 2GB WAL budget and 0.9 completion
+target. These settings live in `postgres.settings` and are passed as server
+arguments by the chart.
+
+After the October 19 rollout, both pods landed on node5. Laptop I/O pressure
+fell, but placement changed as well as the crawler settings; monitor node5 and
+the NAS before attributing the improvement to database tuning. No indexed data
+was removed. The historical growth estimate above predates the lower crawl rate.
+
+To confirm discovery without scanning the large tables:
+
+```bash
+kubectl -n media exec deploy/bitmagnet -- wget -qO- http://localhost:3333/metrics
+```
+
+`bitmagnet_dht_crawler_persisted_total` should increase between samples.
+
 ## Egress
 
 Deliberately outside both of the cluster's egress arrangements:

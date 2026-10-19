@@ -49,6 +49,11 @@ spec:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          args:
+            {{- range $key, $value := .Values.postgres.settings }}
+            - "-c"
+            - {{ printf "%s=%v" $key $value | quote }}
+            {{- end }}
           # Endpoint removal races SIGTERM, so bitmagnet can still be handed
           # this pod's address while it is shutting down.
           lifecycle:
