@@ -6,6 +6,10 @@ this repo and 1Password. Assessed 2026-09-17, just after zachd-ubuntu-6 was
 removed, from the live cluster (read-only kubectl) and this repo. Node names,
 memory figures and pins will drift; re-check before relying on any one line.
 
+For the 2026-10-19 plan to separate Talaria PostgreSQL and etcd disk I/O on
+node3, see [Node3 PostgreSQL storage separation](node3-postgres-storage-separation.md).
+That plan does not remove PostgreSQL's single-node dependency.
+
 ## Summary
 
 - **Nodes you can lose at once:** worst case 1, best case about 4.
