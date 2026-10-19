@@ -64,15 +64,16 @@ at the actual maintenance window.
 
 ## Remaining execution gate
 
-Direct access investigation on 2026-10-19 found that the workspace reaches
-the hosts, but Tailscale SSH waits for an interactive identity check. Nine
-hosts report Running/online with no Tailscale health warnings. Laptop-2 is
-separately in NeedsLogin after its node key expired; it needs node
-reauthorization. Authentication links are ephemeral and are not stored here.
-Existing privileged registry configuration pods provide working preparation
-access, but depend on Kubernetes. Complete the workspace SSH check and
-laptop-2 reauthorization, then verify direct root SSH to all ten nodes before
-starting an upgrade. The script deliberately does not accept
+Direct access verification on 2026-10-19 confirmed root SSH to nine nodes,
+including all three servers, and the read-only upgrade preflight passes over
+SSH. Laptop-2 remains NeedsLogin: its old watchdog restarted Tailscale every
+two minutes while authorization was pending, replacing the login URL. The
+existing `scripts/k3s/tailscale-watchdog.sh` fix is now installed on all ten
+hosts; authentication states no longer trigger restarts. Host daemon PIDs
+were unchanged when the new watchdog ran. Laptop-2's current authorization
+must complete before its worker upgrade; login links are ephemeral and are
+not stored here. Existing privileged registry configuration pods provide
+preparation access but depend on Kubernetes. The script deliberately does not accept
 `--execute --transport pod` and checks direct access to all control-plane
 members. A working host console remains useful if networking fails.
 
