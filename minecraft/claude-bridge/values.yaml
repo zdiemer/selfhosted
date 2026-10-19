@@ -45,7 +45,7 @@
 # node's cached copy, so a rebuild would silently roll nothing.
 image:
   repository: registry.zachd.duckdns.org/zdiemer/claude-bridge
-  tag: "0.1.0"
+  tag: "renovate-20261019"
   pullPolicy: Always
 
 # ----------------------------------------------------------------------------

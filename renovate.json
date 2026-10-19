@@ -157,6 +157,27 @@
         "major"
       ],
       "enabled": false
+    },
+    {
+      "description": "kubectl follows the deployed K3s minor; update this bound with the cluster",
+      "matchPackageNames": [
+        "kubernetes/kubernetes"
+      ],
+      "allowedVersions": "<1.36"
+    },
+    {
+      "description": "buildctl stays on the deployed BuildKit daemon series until both are upgraded together",
+      "matchPackageNames": [
+        "moby/buildkit"
+      ],
+      "allowedVersions": "<0.33"
+    },
+    {
+      "description": "Apartment Watch is retired; retained source is reference only",
+      "matchFileNames": [
+        "web/apartment-watch/**"
+      ],
+      "enabled": false
     }
   ]
 }

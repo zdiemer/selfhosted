@@ -198,7 +198,7 @@ image:
   #      gateway (a WhatsApp 428 mid-reconnect killed every live run).
   # v39: a run parked on a subagent or workflow may take agentMaxTurns (50)
   #      wake-ups in a row instead of maxTurns (10).
-  tag: "v39"
+  tag: "v40"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

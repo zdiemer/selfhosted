@@ -22,8 +22,8 @@
 # A buyer who reaches Stripe and abandons must not take a painting off sale.
 
 image:
-  repository: ghcr.io/zdiemer/rachelfreeman
-  tag: "0.22.0"
+  repository: registry.zachd.duckdns.org/zdiemer/rachelfreeman
+  tag: "renovate-20261019"
   pullPolicy: IfNotPresent
 
 # The GHCR package is PRIVATE here, unlike the rest of this repo — see the note

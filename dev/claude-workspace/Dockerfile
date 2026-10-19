@@ -31,9 +31,9 @@ FROM node:24-bookworm-slim
 # renovate: datasource=github-releases depName=tsl0922/ttyd
 ARG TTYD_VERSION=1.7.7
 # Cluster tooling, all pinned static binaries:
-# kubectl tracks the cluster minor (v1.34.x) — bump after scripts/k3s/k3s-upgrade.sh.
+# kubectl tracks the cluster minor (v1.35.x) — bump after scripts/k3s/k3s-upgrade.sh.
 # renovate: datasource=github-tags depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=v1.37.1
+ARG KUBECTL_VERSION=v1.35.9
 # renovate: datasource=github-releases depName=helm/helm
 ARG HELM_VERSION=v3.22.1
 # tailscaled runs in-pod with userspace networking (no TUN, no root) so the
@@ -43,7 +43,7 @@ ARG TAILSCALE_VERSION=1.104.1
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
 # renovate: datasource=github-releases depName=moby/buildkit
-ARG BUILDKIT_VERSION=v0.34.0
+ARG BUILDKIT_VERSION=v0.32.2
 # sops for repos that keep secrets encrypted in-git (talaria's
 # secrets.prod.yaml); age support is built in, no age binary needed.
 # Key expected at ~/.age/keys.txt via SOPS_AGE_KEY_FILE (see README).
