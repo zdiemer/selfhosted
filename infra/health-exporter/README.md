@@ -55,3 +55,21 @@ correlation of restart count with last exit reason, not an exact OOM event count
 Run `python3 -m unittest discover -s infra/health-exporter/tests -v`,
 `python3 infra/grafana-dashboards/tests/test_notification_policy.py`, and
 `scripts/ci-lint-dashboards.sh`. Live metrics were verified in Grafana Cloud.
+
+### Activation record, 2026-10-19
+
+All 26 Grafana rules evaluated with health `ok`; all new metric families arrived
+in Grafana Cloud. Relay tests passed (51), gateway tests passed (172), and both
+repository CI runs passed. The email-only contact point accepted its test.
+Sonarr reported Internet Archive and Uindex indexer warnings during validation;
+the alert reports these existing conditions rather than suppressing them.
+
+The gateway was updated in place because the operational session lives in the
+same workspace pod. Helm was upgraded while the Deployment was paused, and its
+owning ReplicaSet template was reconciled to the verified image/metrics changes
+before resuming. The live messaging Secret matched the running environment; only
+its historical checksum differed. Deployment rollout status passed, both
+transports reported connected, and the Deployment was left unpaused. Current
+pod port metadata still predates the metrics port; Alloy selects the gateway
+container explicitly, so scraping works now and after normal pod recreation.
+Future Helm changes retain their normal Recreate behavior.
