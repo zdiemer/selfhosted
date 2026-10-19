@@ -64,10 +64,15 @@ at the actual maintenance window.
 
 ## Remaining execution gate
 
-Tailscale SSH timed out on all ten nodes from this workspace. Existing
-privileged registry configuration pods provide working preparation access,
-but depend on Kubernetes. Establish direct root SSH access from the execution
-machine before starting an upgrade. The script deliberately does not accept
+Direct access investigation on 2026-10-19 found that the workspace reaches
+the hosts, but Tailscale SSH waits for an interactive identity check. Nine
+hosts report Running/online with no Tailscale health warnings. Laptop-2 is
+separately in NeedsLogin after its node key expired; it needs node
+reauthorization. Authentication links are ephemeral and are not stored here.
+Existing privileged registry configuration pods provide working preparation
+access, but depend on Kubernetes. Complete the workspace SSH check and
+laptop-2 reauthorization, then verify direct root SSH to all ten nodes before
+starting an upgrade. The script deliberately does not accept
 `--execute --transport pod` and checks direct access to all control-plane
 members. A working host console remains useful if networking fails.
 
