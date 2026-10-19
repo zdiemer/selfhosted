@@ -52,3 +52,33 @@ exceptions and abandoned responses:
 ```sh
 python3 -m unittest discover -s media/arr/tests -v
 ```
+
+## Indexer and import repair (2026-10-19)
+
+These settings live in the applications' persistent databases, not Helm values:
+
+- AnimeTosho's generic Torznab preset used `https://feed.animetosho.org`, which
+  no longer resolved. Set its base URL to `https://feed.animetosho.net`; keep
+  `/api` as the API path. Prowlarr and Sonarr tests passed with that address.
+- Internet Archive's direct Prowlarr searches timed out repeatedly. Assign the
+  existing `pia` tag to route it through gluetun's HTTP proxy. Its Prowlarr and
+  Sonarr and Radarr tests passed through that route.
+- nekoBT's API returned HTTP 500, including through PIA. Disabled it while
+  retaining the configuration for a later recovery test.
+- Removed the already-disabled Zamunda RIP, GamesTorrents, and Torrent Oyun
+  indir records: their definitions no longer exist in Prowlarr.
+- KickAss passed a fresh test. Torrent Downloads passed its basic test but its
+  actual TV query hit Cloudflare (HTTP 403 through PIA too), and FlareSolverr
+  timed out. Disabled it with its original configuration retained. Saving a
+  validated indexer clears its stale failure backoff; running a test alone can
+  leave it unchanged.
+- Sonarr's stuck executable release was removed from the downloader and
+  blocklisted. qBittorrent had excluded its sole file (priority zero, zero bytes
+  downloaded). The lower-quality duplicate was ignored in Sonarr, retaining
+  its downloaded files and the existing 1080p library episode. No replacement
+  download was triggered by this cleanup.
+
+After changing Prowlarr, sync its applications and check `/api/v1/health` plus
+Sonarr/Radarr `/api/v3/health`. Validate searches through the downstream app too:
+a responding indexer homepage does not establish that its search API works.
+Run `harden-downloads.py` afterward to verify executable rejection remains set.
