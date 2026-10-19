@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "receiver": "ntfy-primary",
+  "url": "https://notify.diemer.codes/api/v1/grafana",
+  "group_wait": "30s",
+  "group_interval": "5m",
+  "repeat_interval": "4h"
+}

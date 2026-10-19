@@ -84,27 +84,16 @@ dashboard** instead of updating the existing one, and you end up with six copies
 of "Edge Traffic" and no idea which is live. CI enforces both the JSON parsing
 and the presence of a uid.
 
-## Alerts are defined but deliberately not delivered
+## Alert delivery
 
-Thirteen rules in `alerts/rules.json`, evaluating live — you can watch them go
-Pending and Firing in the Grafana UI — but every one routes to a contact point
-named `unwired`, a webhook pointed at `http://127.0.0.1:9/` (the standard
-discard port: refused instantly, on loopback, no DNS, no packet leaves the
-machine).
+Fourteen rules evaluate in Grafana. Public notification delivery is staged until
+Cloudflare is connected and `configure-notifications.sh --activate` succeeds.
+Then infrastructure rules use `ntfy-primary`; the dedicated SMS gateway rule
+remains non-notifying because its local monitor already delivers those events.
 
-That contact point has to exist. Without it, rules fall through to Grafana's
-**default** notification policy, which on a Cloud stack means email — so
-"I only defined the rules" would quietly start mailing on the first firing rule.
-
-**To make them live**, change one block in `upgrade.sh` to point at sms-relay
-and re-run:
-
-```json
-{ "url": "https://sms-relay.zachd.duckdns.org/api/v1/messages", "httpMethod": "POST" }
-```
-
-plus an `X-API-Key` header — matching `scripts/notify-failure.sh`, which is how
-the systemd timers already text on failure.
+The `unwired` receiver is retained for staged and locally owned rules so they
+do not fall through to the default notification policy. See
+[the Cloudflare handoff](../../docs/notification-routing.md) for activation.
 
 ### The rules
 
@@ -198,3 +187,13 @@ to Tailscale in public DNS, so Grafana Cloud cannot deliver a webhook directly.
 The independent `cluster-status-sms-monitor` CronJob sends outage and recovery
 notifications from inside the cluster to ntfy's `alerts` topic. See
 [SMS recovery](../../docs/sms-gateway-recovery.md) for probe semantics and timing.
+
+### ntfy routing activation
+
+The public receiver is provisioned as `ntfy-primary`, with credentials from the
+SMS relay vault item. It remains staged while `notifications.json` has
+`enabled: false`. Follow [the Cloudflare handoff](../../docs/notification-routing.md),
+then run `configure-notifications.sh --activate` and commit the enabled setting.
+This routes infrastructure alerts through ntfy with SMS fallback on publish
+failure. The local SMS gateway monitor remains the sole notification owner for
+that dependency. Dashboard upgrades honor this setting.

@@ -585,3 +585,9 @@ this notifier from running.
 
 Run notifier regression tests with
 `python3 -m unittest discover -s infra/cluster-status/tests -v`.
+
+The monitor now falls back to the durable relay queue if its direct ntfy publish
+fails, using the dedicated `sms-relay-monitor` Secret and a stable event key.
+The relay retries ntfy, then selects SMS; it does not send both after a successful
+publish. Grafana's dedicated SMS rule remains non-notifying after public webhook
+activation, preserving a single owner for phone-connectivity notifications.

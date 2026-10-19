@@ -153,3 +153,10 @@ cert is stale, or the ACL denies the publisher.
 - **Blackbox probe.** `ntfy.zachd.duckdns.org` isn't in alloy's probe list.
 - **Web push** (browser notifications with the tab closed) needs a VAPID
   keypair in `web-push-*` config. Not wired; the phone apps cover it.
+
+## Active notification routing (2026-10-19)
+
+Systemd failures publish to `alerts`, CrowdSec to `security`, and the owner's
+Talaria listing alerts to `talaria`, via the durable relay with SMS fallback.
+Grafana's public webhook is staged pending Cloudflare. See
+[notification routing and activation](../../docs/notification-routing.md).

@@ -12,7 +12,7 @@ driving it:
 | `selfhosted-trading-watchdog` | Mon–Fri 17:00 | dead-man's switch: fail (→ SMS) if the trading agent's journal repo stopped moving (see `scripts/trading-watchdog.sh`) |
 
 All fail loudly: `OnFailure=selfhosted-alert@%n.service` texts through
-`infra/sms-relay`. A scheduled job that fails silently is worse than no job,
+`infra/sms-relay` (now ntfy `alerts` first, SMS fallback on publish failure). A scheduled job that fails silently is worse than no job,
 because you stop checking.
 
 ## Why these exist

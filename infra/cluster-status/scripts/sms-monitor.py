@@ -64,10 +64,25 @@ def main():
             'Priority': 'default' if recovered else 'high',
             'Tags': 'white_check_mark' if recovered else 'warning',
         })
-        with urllib.request.urlopen(req, timeout=10) as response:
-            receipt = json.load(response)
-            if not receipt.get('id') or receipt.get('event') != 'message':
-                raise RuntimeError('ntfy did not acknowledge notification')
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                receipt = json.load(response)
+                if not receipt.get('id') or receipt.get('event') != 'message':
+                    raise RuntimeError('ntfy did not acknowledge notification')
+        except (OSError, ValueError, RuntimeError):
+            if not os.environ.get('SMS_RELAY_KEY'):
+                raise
+            # Central relay retries ntfy once, then selects durable SMS fallback.
+            # Preserve this event's identity across failed monitor Job retries.
+            key = f"sms-monitor-{previous.get('failed_since', 0)}-{notification}-{int(time.time() // 14400)}"
+            fallback = urllib.request.Request(os.environ['SMS_RELAY_URL'] + '/api/v1/messages',
+                data=json.dumps({'to':os.environ['ALERT_TO'], 'body':body,
+                                 'idempotency_key':key}).encode(),
+                headers={'X-API-Key':os.environ['SMS_RELAY_KEY'], 'Content-Type':'application/json'})
+            with urllib.request.urlopen(fallback, timeout=10) as response:
+                if response.status != 202:
+                    raise RuntimeError('fallback not queued')
+            print('fallback=queued', flush=True)
         print('notification=' + notification, flush=True)
     # Persist only after ntfy accepts the message: failures remain retryable.
     # ResourceVersion detects concurrent updates; CronJob overlap is forbidden.

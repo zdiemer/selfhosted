@@ -62,3 +62,10 @@ requeued during diagnosis.
 - Separate alerts for exhausted message retries remain a follow-up.
 
 Implementation details: [SMS relay README](../infra/sms-relay/README.md).
+
+## Notification migration
+
+Systemd/CrowdSec/Talaria notifications now use ntfy first, with SMS as fallback
+only when publication fails. Grafana activation awaits Cloudflare; see
+[notification routing](notification-routing.md). The unavailable handset still
+prevents SMS fallback delivery until repaired.

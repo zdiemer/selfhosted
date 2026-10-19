@@ -660,7 +660,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "probe_success{cluster=\"home-k3s\"}",
+          "expr": "probe_success{cluster=\"home-k3s\",instance!=\"sms-gateway\"}",
           "instant": true,
           "range": false,
           "editorMode": "code",

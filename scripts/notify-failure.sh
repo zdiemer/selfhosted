@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Text me when a systemd unit fails. Wired up as OnFailure= on the secret and
+# Notify when a systemd unit fails. The relay routes selfhosted-timers to ntfy
+# alerts first, with SMS fallback on publish failure. Wired as OnFailure= on secret and
 # submodule timers.
 #
 # WHY
@@ -44,7 +45,7 @@ DETAIL="$(journalctl --user "${JOURNAL_ARGS[@]}" -n 120 --no-pager -o cat 2>/dev
   | python3 "$(dirname "$0")/lib/failure-detail.py" || true)"
 BODY="$(printf '%s failed on %s\n\n%s' "$UNIT" "$(hostname -s)" "${DETAIL:-no journal output}")"
 
-# One text per unit per hour. The sync timer runs every 15 minutes, and a
+# One notification per unit per hour. The sync timer runs every 15 minutes, and a
 # persistent failure would otherwise send 96 messages a day — which is exactly
 # how an alert becomes something you mute. sms-relay dedupes on
 # idempotency_key (a repeat POST returns the original message instead of
@@ -70,7 +71,7 @@ req = urllib.request.Request(
 )
 try:
     with urllib.request.urlopen(req, timeout=20) as r:
-        print(f"notify-failure: sms-relay accepted ({r.status})", file=sys.stderr)
+        print(f"notify-failure: notification relay accepted ({r.status})", file=sys.stderr)
 except urllib.error.HTTPError as e:
     sys.exit(f"notify-failure: sms-relay returned {e.code}: {e.read()[:200]!r}")
 except Exception as e:

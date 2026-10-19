@@ -46,7 +46,7 @@ class Transitions(unittest.TestCase):
 
 
 class Delivery(unittest.TestCase):
-    def run_monitor(self, state, healthy, fail_publish=False):
+    def run_monitor(self, state, healthy, fail_publish=False, fallback=False):
         saved = []
         published = []
         def request(req, **kwargs):
@@ -61,6 +61,11 @@ class Delivery(unittest.TestCase):
                 if fail_publish:
                     raise urllib.error.URLError('ntfy unavailable')
                 return io.BytesIO(b'{"id":"test","event":"message"}')
+            if req.full_url == 'http://relay/api/v1/messages':
+                response = io.BytesIO(b'{"messages":[]}')
+                response.status = 202
+                published.append(req)
+                return response
             if req.method == 'GET':
                 return io.BytesIO(json.dumps({'metadata': {'resourceVersion': '1'},
                     'data': {'state': json.dumps(state)}}).encode())
@@ -68,10 +73,12 @@ class Delivery(unittest.TestCase):
             return io.BytesIO(b'{}')
         env = {'STATE_CONFIGMAP': 'state', 'PROBE_URL': 'http://relay/health',
                'NTFY_URL': 'http://ntfy/alerts', 'NTFY_PASSWORD': 'test'}
+        if fallback:
+            env.update(SMS_RELAY_KEY='key', SMS_RELAY_URL='http://relay', ALERT_TO='+12025550101')
         with patch.dict('os.environ', env), patch.object(Path, 'read_text', return_value='test'), \
              patch('ssl.create_default_context'), patch('urllib.request.urlopen', side_effect=request), \
              patch('time.time', return_value=1300):
-            if fail_publish:
+            if fail_publish and not fallback:
                 with self.assertRaises(urllib.error.URLError):
                     monitor.main()
             else:
@@ -87,6 +94,13 @@ class Delivery(unittest.TestCase):
         saved, published = self.run_monitor({'failed_since': 1000}, False, True)
         self.assertEqual(len(published), 1)
         self.assertEqual(saved, [])
+
+    def test_ntfy_failure_queues_deduplicated_fallback(self):
+        saved, published = self.run_monitor({'failed_since': 1000}, False, True, True)
+        self.assertEqual(len(published), 2)
+        fallback = json.loads(published[1].data)
+        self.assertEqual(fallback['idempotency_key'], 'sms-monitor-1000-down-0')
+        self.assertTrue(json.loads(saved[0]['data']['state'])['notified'])
 
     def test_recovery_publishes_before_clearing_state(self):
         saved, published = self.run_monitor({'failed_since': 1000, 'notified': True}, True)

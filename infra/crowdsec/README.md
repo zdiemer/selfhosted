@@ -31,3 +31,13 @@ pod wildcard also included certificate Jobs. `poll_without_inotify: true` follow
 Kubernetes' rotating symlink targets, as recommended by the file datasource.
 The existing parsers, scenarios, whitelists, decisions and notification settings
 are preserved. Do not hide parse failures with a blanket filter.
+
+## Notification routing
+
+Non-routine remediation notifications still call the durable relay with the
+existing `crowdsec` API key; its recipient-scoped policy now publishes to ntfy's
+`security` topic first and selects SMS only after publish failure. The HTTP
+plugin aggregates for five minutes or 20 alerts; the existing summary format
+reports the first event and additional count. Routine scanner suppressions are
+unchanged. Configuration remains in the `infra-crowdsec` vault item; no second
+SMS notifier was added. See [routing](../../docs/notification-routing.md).

@@ -38,6 +38,12 @@ config:
       type: http
       name: sms_relay
       log_level: info
+      # Aggregate non-routine alerts; relay routes this caller to ntfy security
+      # and uses SMS only if publishing fails.
+      group_wait: 5m
+      group_threshold: 20
+      max_retry: 3
+      timeout: 10s
       # Cluster-local Service: sms-relay is tailnet-only, but the LAPI runs in
       # this cluster and reaches the ClusterIP directly — no ingress, no TLS, no
       # dependency on the tunnel or DuckDNS.

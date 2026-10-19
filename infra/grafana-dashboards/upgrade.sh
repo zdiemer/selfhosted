@@ -290,22 +290,9 @@ done
 # Rules are matched by uid — an existing uid is a PUT, a new one a POST — so
 # re-running this converges rather than duplicating.
 if [[ -f "$ALERT_FILE" ]]; then
-  # THE CONTACT POINT IS DELIBERATELY A DEAD END, and it has to exist.
-  #
-  # Every rule sets notification_settings.receiver = "unwired". Without that
-  # receiver, rules fall through to Grafana's DEFAULT notification policy, which
-  # on a Cloud stack means email — so "I only defined the rules, nothing is
-  # wired up" would quietly start mailing on the first firing rule.
-  #
-  # 127.0.0.1:9 is the standard discard port: the connection is refused
-  # instantly, on the loopback interface, with no DNS lookup and no packet
-  # leaving the machine. Rules evaluate and show their state in the UI;
-  # notifications go nowhere.
-  #
-  # TO MAKE IT LIVE, change this one block to sms-relay and re-run:
-  #   "url": "https://sms-relay.zachd.duckdns.org/api/v1/messages"
-  #   plus an X-API-Key header — matching scripts/notify-failure.sh, which is
-  #   how the systemd timers already text on failure.
+  # Staged and locally owned rules retain an explicit non-notifying receiver.
+  # configure-notifications.sh provisions the authenticated public receiver;
+  # notifications.json controls whether infrastructure rules use it.
   echo "==> ensuring the 'unwired' contact point exists"
   CP_BODY="$(sv_mktemp cp-body)"; TMP_FILES+=("$CP_BODY")
   cat >"$CP_BODY" <<'JSON'
@@ -317,12 +304,14 @@ if [[ -f "$ALERT_FILE" ]]; then
   "settings": { "url": "http://127.0.0.1:9/", "httpMethod": "POST" }
 }
 JSON
-  if [[ "$(api_code GET /api/v1/provisioning/contact-points/unwired)" == "200" ]]; then
+  if api GET /api/v1/provisioning/contact-points | python3 -c 'import json,sys; sys.exit(not any(c["uid"] == "unwired" for c in json.load(sys.stdin)))'; then
     api PUT /api/v1/provisioning/contact-points/unwired "$CP_BODY" >/dev/null
   else
     api POST /api/v1/provisioning/contact-points "$CP_BODY" >/dev/null
   fi
-  echo "    ok: notifications route to a discard port, not to you"
+  echo "    ok: non-notifying receiver retained for staged/local rules"
+
+  "${HERE}/configure-notifications.sh"
 
   echo "==> provisioning alert rules"
   RULE_COUNT="$(python3 -c "import json;print(len(json.load(open('${ALERT_FILE}'))))")"
@@ -333,6 +322,9 @@ import json, sys
 rules = json.load(sys.stdin)
 r = rules[${i}]
 r['folderUID'] = '${FOLDER_UID}'
+cfg = json.load(open('${HERE}/notifications.json'))
+if cfg['enabled'] and r['uid'] != 'sh-sms-gateway-down':
+    r['notification_settings'] = {k: cfg[k] for k in ['receiver', 'group_wait', 'group_interval', 'repeat_interval']}
 json.dump(r, sys.stdout)
 " >"$BODY"
     RUID="$(python3 -c "import json;print(json.load(open('${BODY}'))['uid'])")"

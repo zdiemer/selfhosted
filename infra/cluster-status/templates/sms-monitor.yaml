@@ -88,6 +88,18 @@ spec:
                   value: {{ .Values.smsMonitor.probeUrl | quote }}
                 - name: NTFY_URL
                   value: {{ .Values.smsMonitor.ntfyUrl | quote }}
+                - name: SMS_RELAY_URL
+                  value: http://sms-relay.infra.svc.cluster.local:8000
+                - name: SMS_RELAY_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: sms-relay-monitor
+                      key: api-key
+                - name: ALERT_TO
+                  valueFrom:
+                    secretKeyRef:
+                      name: sms-relay-monitor
+                      key: recipient
                 - name: NTFY_PASSWORD
                   valueFrom:
                     secretKeyRef:
