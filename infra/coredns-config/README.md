@@ -149,3 +149,12 @@ Client IP, query name, response code. That is the whole payload the audit needs.
 - **No NetworkPolicy on the collector.** Deliberate. RBAC is the control that matters for a pod holding cluster-wide `pods/log`, a netpol wouldn't reduce that, and a wrong egress rule would break the audit silently rather than loudly.
 - **No negative zone filter.** `log` takes zones to include, and "everything except cluster.local" is not expressible. Internal service lookups are dropped in `infra/alloy` instead, where a regex can say "not internal".
 - **One ConfigMap, one owner.** Anything else that ever needs to extend the Corefile adds a key to this chart rather than creating its own object — there is only one `coredns-custom`, and the last writer would win.
+
+## Empty-import warnings
+
+The chart always provides comment-only `empty.override` and `empty.server`
+files so both K3s import globs match, even with optional features disabled.
+These files add no DNS directives. The 2026-10-19 rollout passed the CoreDNS
+parser canary and internal/external DNS lookups, with no empty-import warnings.
+The deploy check uses an explicitly namespaced pod, bounded retries and saved
+pod logs instead of relying on attachment to a short-lived container.

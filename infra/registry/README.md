@@ -126,3 +126,22 @@ new capacity; do not attempt to shrink the existing PVC on a later upgrade.
 The probe image (`zdiemer/registry-probe:<timestamp>`) is a one-file scratch
 image; it is the smallest thing that proves the whole path, and it is cheap to
 leave behind.
+
+## Authentication checks and logging
+
+Verified 2026-10-19: the existing workspace credential and managed registry
+credential both returned 200 on `/v2/`, anonymous access returned 401, a small
+image push succeeded over HTTPS, and all ten nodes pulled that image through
+CRI. The probe manifest was then deleted. No credential rotation was needed.
+A containerd 401 challenge followed by a successful retry is normal Basic auth
+negotiation; it is not evidence of a stale password.
+
+The default registry log level is `warn`, with the separate combined access
+log disabled. This removes probe requests and successful-request chatter while
+retaining auth warnings and errors. Initial auth challenges and missing-blob
+checks during a push can still appear; diagnose the final operation result.
+Override `registry.extraConfig.log` temporarily when detailed tracing is needed.
+
+Helm's retained volume setting was corrected from 50Gi to the existing 200Gi
+capacity. When deploying with `--reuse-values`, explicitly preserve 200Gi or
+later approved expansions; Kubernetes rejects a request to shrink the PVC.

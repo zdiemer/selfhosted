@@ -233,10 +233,19 @@ fi
 # or a kubernetes plugin that never goes ready both look healthy from the
 # Deployment's point of view. Ask it a real question, internal and external.
 echo "==> Verifying resolution"
-RESOLVE_OUT="$(kubectl run "coredns-config-verify-$$" --rm -i --restart=Never \
-  --pod-running-timeout=60s --image=busybox:1.36 --command -- sh -c \
-  'nslookup kubernetes.default.svc.cluster.local >/dev/null 2>&1 && echo INTERNAL_OK;
-   nslookup api.ipify.org >/dev/null 2>&1 && echo EXTERNAL_OK' 2>/dev/null || true)"
+VERIFY="coredns-config-verify-$$"
+kubectl -n "$NAMESPACE" run "$VERIFY" --restart=Never --image=busybox:1.37.0 \
+  --command -- sh -c \
+  'for attempt in 1 2 3 4 5; do
+     if nslookup kubernetes.default.svc.cluster.local && nslookup api.ipify.org; then
+       echo INTERNAL_OK; echo EXTERNAL_OK; exit 0
+     fi
+     sleep 3
+   done
+   exit 1' >/dev/null
+kubectl -n "$NAMESPACE" wait "pod/$VERIFY" --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s || true
+RESOLVE_OUT="$(kubectl -n "$NAMESPACE" logs "$VERIFY" 2>/dev/null || true)"
+kubectl -n "$NAMESPACE" delete pod "$VERIFY" --ignore-not-found --wait=false >/dev/null
 
 if ! grep -q INTERNAL_OK <<<"$RESOLVE_OUT"; then
   echo "FAIL: cluster DNS is not resolving after the restart. Rolling back."

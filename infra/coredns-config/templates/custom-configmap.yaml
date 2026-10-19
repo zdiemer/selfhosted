@@ -1,4 +1,3 @@
-{{- if or .Values.dnsLogging.enabled .Values.internalNames.enabled }}
 {{/*
 The ONE object this chart owns.
 
@@ -13,10 +12,9 @@ from INSIDE the `.:53` server block, which is where a `log` directive has to
 go. Files matching `*.server` are imported at top level and would be read as a
 new server block instead — same content, and CoreDNS would fail to parse it.
 
-Each feature renders its own `*.override` key, and the ConfigMap exists if any
-of them is on. Absence is the off state, so turning the last one off removes
-the object; upgrade.sh notices that transition and restarts CoreDNS for it,
-because CoreDNS keeps its parsed config until it is replaced.
+Each feature renders its own `*.override` key. Comment-only placeholders keep
+both import globs populated even when features are off, avoiding repeated
+empty-glob warnings without changing DNS behavior.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -26,6 +24,10 @@ metadata:
   labels:
     {{- include "coredns-config.labels" . | nindent 4 }}
 data:
+  empty.override: |
+    # Keep the optional override import populated when features are disabled.
+  empty.server: |
+    # No additional server blocks. Keep the optional server import populated.
 {{- if .Values.dnsLogging.enabled }}
   egress-audit.override: |
     # Managed by the coredns-config Helm chart. See infra/coredns-config.
@@ -61,5 +63,4 @@ data:
         name regex (.*)\.{{ $zone }}\.$ {{ .Values.internalNames.service }}
         answer auto
     }
-{{- end }}
 {{- end }}

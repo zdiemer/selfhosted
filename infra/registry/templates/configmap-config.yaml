@@ -13,7 +13,7 @@ data:
   config.yml: |
     {{- $cfg := dict
       "version" "0.1"
-      "log" (dict "level" "info" "fields" (dict "service" "registry"))
+      "log" (dict "level" "warn" "accesslog" (dict "disabled" true) "fields" (dict "service" "registry"))
       "storage" (dict
         "filesystem" (dict "rootdirectory" "/var/lib/registry")
         "delete" (dict "enabled" .Values.registry.deleteEnabled)
