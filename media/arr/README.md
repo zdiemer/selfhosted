@@ -60,9 +60,12 @@ These settings live in the applications' persistent databases, not Helm values:
 - AnimeTosho's generic Torznab preset used `https://feed.animetosho.org`, which
   no longer resolved. Set its base URL to `https://feed.animetosho.net`; keep
   `/api` as the API path. Prowlarr and Sonarr tests passed with that address.
-- Internet Archive's direct Prowlarr searches timed out repeatedly. Assign the
-  existing `pia` tag to route it through gluetun's HTTP proxy. Its Prowlarr and
-  Sonarr and Radarr tests passed through that route.
+- Internet Archive was initially working through the `pia` proxy, but later
+  failed repeated Prowlarr tests through both direct and proxied routes. Raw
+  archive.org API requests still work; the .NET indexer requests time out.
+  Disabling HTTP/2 did not resolve it and was reverted. The indexer is now
+  disabled, with its configuration retained, and that state is synced to
+  Sonarr/Radarr. Re-enable only after an actual Prowlarr test succeeds.
 - nekoBT's API returned HTTP 500, including through PIA. Disabled it while
   retaining the configuration for a later recovery test.
 - Removed the already-disabled Zamunda RIP, GamesTorrents, and Torrent Oyun

@@ -19,6 +19,7 @@ metadata:
     {{- include "authelia.labels" . | nindent 4 }}
 spec:
   forwardAuth:
+    maxResponseBodySize: 1048576 # Bound Authelia responses; silence Traefik warning spam.
     address: http://{{ include "authelia.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/api/authz/forward-auth
     trustForwardHeader: true
     authResponseHeaders:

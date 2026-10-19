@@ -41,3 +41,17 @@ plugin aggregates for five minutes or 20 alerts; the existing summary format
 reports the first event and additional count. Routine scanner suppressions are
 unchanged. Configuration remains in the `infra-crowdsec` vault item; no second
 SMS notifier was added. See [routing](../../docs/notification-routing.md).
+
+### ForwardAuth warning noise (2026-10-19)
+
+A sustained parser failure ratio came from Traefik service warnings mixed into
+its access-log stream: every config reload warned about ForwardAuth middleware
+without `maxResponseBodySize`. Every owned middleware now caps authentication
+response bodies at 1 MiB. All 17 live middleware resources were patched and
+their source templates updated (including Money, SMS relay and diemer.codes).
+The recent parser-failure rate returned to zero without weakening the parser,
+whitelisting arbitrary malformed access logs, or raising the alert threshold.
+
+The limit is on the authentication server's **response**, not uploaded files
+or the upstream application's response. Authelia redirects still work.
+See [Traefik's ForwardAuth options](https://doc.traefik.io/traefik/v3.7/middlewares/http/forwardauth/).

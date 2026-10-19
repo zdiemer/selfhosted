@@ -181,15 +181,23 @@ fallback the previous rule just set.
 
 ### The metrics side
 
-Each of the nine scrape jobs carries its own keep-list. Measured contributions:
+Each scrape job carries its own keep-list. Historical baseline contributions
+(the actual count changes with pod and job churn):
 
 | Job | Series | Note |
 |---|---|---|
 | node-exporter | ~1,800 | ~180 of ~570 exported, ×10 nodes |
-| kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded` phases dropped here |
-| Traefik | ~800 | `*_bucket` dropped |
+| kube-state-metrics | ~2,000 | of 2,481 exported; `Running`/`Succeeded`/`Unknown` phases dropped here |
+| Traefik | reduced from ~1,100 | Only entrypoint request/byte counters, open connections, and certificate expiry retained |
 | CoreDNS, kubelet, cloudflared, k8up, Alloy, CrowdSec | ~700 | |
 | blackbox probes | ~85 | 6 metrics × 14 targets |
+
+The Traefik allowlist preserves every family referenced by the dashboards and
+alert rules. Per-service counters and histogram sums/counts are omitted; access
+logs retain service-level detail. Keep the existing kube-state-metrics instance
+identity during reductions: changing it creates a second set of active series
+until the old identity expires. Check pod phase, restart, and OOM metric presence
+after any change, alongside current series and Grafana Cloud active usage.
 
 `*_bucket` stays dropped, and there is now a strictly better source for
 percentiles than re-enabling it: the access log carries a per-request `Duration`,

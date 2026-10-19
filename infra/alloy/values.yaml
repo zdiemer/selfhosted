@@ -430,20 +430,12 @@ alloy:
 
       prometheus.relabel "traefik" {
         forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-
-        // Histogram buckets are the bulk of Traefik's series count and the free
-        // tier allows 10k. They stay dropped — and unlike when this rule was
-        // written, there is now a strictly better source for percentiles: the
-        // access log carries a per-request `Duration`, so
-        //
-        //   quantile_over_time(0.95, {app="traefik"} | json | unwrap Duration [5m])
-        //
-        // gives p50/p95/p99 at ZERO series cost. Re-enabling buckets would buy
-        // nothing and cost hundreds of series.
+        // Access logs supply per-service detail and latency. Keep only the
+        // entrypoint counters, connections and certificates used by dashboards.
         rule {
           source_labels = ["__name__"]
-          regex         = ".*_bucket"
-          action        = "drop"
+          regex = "traefik_(entrypoint_(requests_total|requests_bytes_total|responses_bytes_total)|open_connections|tls_certs_not_after)"
+          action = "keep"
         }
       }
 
@@ -556,13 +548,12 @@ alloy:
       prometheus.relabel "kube_state_metrics" {
         forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 
-        // `Running` and `Succeeded` are ~150 series that say nothing a Pending
-        // count doesn't say better. Only the phases that mean something is
-        // wrong are worth a series each.
+        // Pending/Failed support the pod overview. Running/Succeeded/Unknown
+        // are unused by the dashboards and rules; do not ship those series.
         rule {
           source_labels = ["__name__", "phase"]
           separator     = "/"
-          regex         = "kube_pod_status_phase/(Running|Succeeded)"
+          regex         = "kube_pod_status_phase/(Running|Succeeded|Unknown)"
           action        = "drop"
         }
       }
