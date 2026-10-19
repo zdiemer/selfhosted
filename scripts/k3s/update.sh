@@ -104,7 +104,7 @@ for i in "${!TARGET_NAMES[@]}"; do
 
     echo "--- Running apt upgrade ---"
     if ! run_on_node_sudo "$hostname" \
-        "apt-get update && apt-get upgrade -y"; then
+        "timeout --kill-after=30s 30m apt-get update && apt-get upgrade -y"; then
         echo "[ERROR] Package upgrade failed on $hostname" >&2
         exit 1
     fi

@@ -242,3 +242,36 @@ On `zachd-ubuntu-laptop-6`, `/etc/default/apport` now has `enabled=0` and
 core dumps rather than launching an unbounded host crash reporter or writing
 large core files. Kernel crash messages and container logs remain available;
 full core-dump debugging requires deliberately restoring a bounded handler.
+
+## APT reliability
+
+Run `scripts/k3s/apt-harden.sh --all` (or explicit node names) after joining nodes.
+It preserves allowed origins, kernel exclusions and reboot policy, and configures:
+
+- HTTP/HTTPS connection and idle timeouts of 30 seconds, with three retries.
+- A 30-minute `apt-daily.service` deadline. This service only refreshes indexes
+  and downloads packages; the deadline must **not** be copied to the installation
+  service, where killing dpkg can leave packages partially configured.
+- Strict index-refresh errors, periodic outcome logging, and an explicit
+  `apt-get check` preflight for `apt-daily-upgrade.service` so a broken cache is
+  reported as a failed unit rather than a successful no-op.
+
+The timer running successfully is not proof that updates installed: inspect
+`/var/log/unattended-upgrades/unattended-upgrades.log` and the age of
+`/var/lib/apt/periodic/unattended-upgrades-stamp` and `update-stamp`. Investigate
+stamps older than three days. The long-running `unattended-upgrade-shutdown
+--wait-for-signal` process is normal; it is not an installation stuck in progress.
+
+Before stopping anything, inspect its cgroup, children, journal and `lslocks`.
+Stop a proven stuck metadata-only `apt-daily.service` through systemd; never
+remove lock files or blindly kill apt/dpkg. Preserve evidence for crashes, run
+`dpkg --audit` and `apt-get check`, then refresh full indexes and validate with
+`unattended-upgrade --dry-run`. Use `systemctl start apt-daily.service` followed
+by `systemctl start apt-daily-upgrade.service` to retry overdue scheduled work.
+
+When refreshing one repository with `Dir::Etc::sourcelist`/`sourceparts`, also set
+`APT::Get::List-Cleanup=0` or restore full indexes immediately afterward: the
+normal list cleanup can otherwise remove other repositories' indexes.
+
+Timeout semantics: [systemd.service](https://www.freedesktop.org/software/systemd/man/257/systemd.service.html)
+and [APT configuration](https://manpages.ubuntu.com/manpages/noble/man5/apt.conf.5.html).

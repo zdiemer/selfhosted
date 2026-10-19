@@ -47,7 +47,7 @@ TAILSCALE_LATEST="$(curl -fsSL https://api.github.com/repos/tailscale/tailscale/
 # One ssh round-trip per node, kernel.sh-style pipe-separated record:
 #   apt_pending|apt_security|reboot_required|kernel_running|kernel_newest|k3s|tailscale|ts_apt
 COLLECT='
-apt-get update -qq >/dev/null 2>&1 || true
+timeout --kill-after=10s 60s apt-get update -qq >/dev/null 2>&1 || true
 sim="$(apt-get -s dist-upgrade 2>/dev/null)"
 pending="$(grep -c "^Inst " <<<"$sim" || true)"
 security="$(grep -c "^Inst .*-security" <<<"$sim" || true)"
