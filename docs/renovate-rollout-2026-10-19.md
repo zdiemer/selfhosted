@@ -180,3 +180,27 @@ OOM, or premature ARC deletion was found. This does not establish a general
 GitHub outage. The external check status remains unresolved, despite successful
 execution. Private diagnostics are preserved under
 `~/.cache/talaria-ci-diagnostics/`; no runner logs or credentials are committed.
+
+## Submodule pin follow-up
+
+Updated Talaria from `30dd048` to `49ad790` (bounded BuildKit cache and manual CI
+trigger). Its shell script passes `bash -n`; the live builder already has the
+24 GiB cache volume and matching garbage-collection settings.
+
+Updated Money's nested SimpleScraper pin from `6d43cef` to `ea6bee1`, recorded in
+Money commit `9d5db86`. SimpleScraper's source is unchanged; its standalone build
+and lockfile updates do not change Money's Python 3.14 runtime. All 278 Money
+backend tests passed, as did chart lint and the lightweight image build.
+
+Runtime validation exposed an existing Chromium mismatch: Camoufox changed
+Playwright after Chromium was installed. Money now installs Chromium after all
+Python browser dependencies. Built and deployed
+`submodule-20261019-browserfix` (image index digest
+`sha256:f053a30d2c3ea151c44c9a98f88c95e689cabd4e8533c01d77abfe9428ffa472`),
+Helm revision 111. Chromium and Camoufox both launched and rendered a local test
+page under the production security settings, first in an isolated pod and then
+in the deployed pod. Money is Ready with HTTP 200 on `/api/health`.
+
+A final remote check found a newer Smitele commit, `36ac9a6`, published after the
+initial pin audit. That application change is outside these two pin updates;
+its recorded revision remains `194b754` pending separate rollout validation.
