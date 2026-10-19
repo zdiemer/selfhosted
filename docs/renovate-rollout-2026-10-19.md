@@ -64,8 +64,8 @@ still queued at the follow-up check: its self-hosted `WIN11` runner is offline
 although the KubeVirt guest is Running. The Windows service is configured for
 automatic startup but cannot log on: Service Control Manager event 7038 reports
 that its local account password has expired. A service-start attempt confirmed
-the failure. No account password or expiration policy was changed; Windows
-validation is not claimed.
+the failure. At that checkpoint no account policy was changed and Windows validation
+was not claimed. The subsequent CI repair is recorded below.
 SimpleScraper merged Python 3.15 and refreshed Playwright/greenlet/aiohttp locks;
 its environment resolves and source compiles. Neither has a standalone cluster
 service to restart.
@@ -134,3 +134,26 @@ Deployment is below its requested available replica count, and the public
 Talaria, WhatNow and Kelsey endpoints returned HTTP 200 at the follow-up.
 All 11 repositories matched their upstream branches before this documentation
 commit; a fresh GitHub search returned zero open Renovate-labelled PRs.
+
+## CI follow-up
+
+Talaria's latest CI run [39208458732](https://github.com/zdiemer/talaria/actions/runs/39208458732)
+passed both backend and frontend jobs. Kelsey's latest build/publish run
+[39208243995](https://github.com/zdiemer/kelsey-dot-green/actions/runs/39208243995)
+also passed. The failure notifications corresponded to earlier commits: Talaria's
+eight type errors and Kelsey's missing `libatomic.so.1` were already fixed.
+
+For RomNAS, the Windows runner's actual local service account had expired.
+Disabled password aging for that account, retaining its existing password, and
+started the runner service. GitHub reported it online and immediately dispatched
+the queued Windows job. Provisioning now reconciles this setting for local
+runner service accounts on existing installations too; domain and built-in
+accounts and machine-wide policy are excluded. The new PowerShell block passed
+the Windows parser and was executed successfully on the guest. The prevention
+fix is committed as `61d74df` in selfhosted.
+
+RomNAS CI run [39208561396](https://github.com/zdiemer/romnas/actions/runs/39208561396)
+subsequently completed successfully on both Windows and Linux, including lint,
+types, configuration validation, pytest and CLI smoke tests. The Windows suite
+ran for roughly 19 minutes, consistent with the previous successful run; it was
+slow rather than stalled. All three repositories' latest CI runs are green.
