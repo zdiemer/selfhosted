@@ -81,7 +81,7 @@ data is a five-minute fix.
 ./upgrade.sh
 ```
 
-No secrets, no `values.local.yaml`. `upgrade.sh` **fails the deploy** above 3000
+No secrets, no `values.local.yaml`. `upgrade.sh` **fails the deploy** above 5500
 series — a chart bump that re-enables default collectors, or an allowlist typo,
 both show up there and nowhere else until the stack starts refusing writes.
 
@@ -103,3 +103,9 @@ count(kube_cronjob_info{cluster="home-k3s"})                    # expect ~12+
 (time() - kube_cronjob_status_last_successful_time) / 3600      # hours since success
 kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} > 0
 ```
+
+2026-10-19: the fleet has grown to roughly 450 pods. The raw exporter now
+produces about 4.8k series; its guard is 5500. This is distinct from Cloud active
+series: Alloy drops unused pod phases, and rollout overlap temporarily duplicates
+instances. Job owner/start/completion and terminal failure metrics support the
+recovery-aware alert. The old failed-pod-attempt family was removed.

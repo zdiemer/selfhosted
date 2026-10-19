@@ -82,6 +82,16 @@
   ],
   "packageRules": [
     {
+      "description": "CrowdSec runtime must match the source tag of the temporary partial-line backport; remove this pin with the custom image (infra/crowdsec/README.md)",
+      "matchFileNames": [
+        "infra/crowdsec/image/Dockerfile"
+      ],
+      "matchPackageNames": [
+        "crowdsecurity/crowdsec"
+      ],
+      "enabled": false
+    },
+    {
       "description": "KubeVirt and CDI move together \u2014 CDI is built against a KubeVirt release",
       "matchPackageNames": [
         "kubevirt/kubevirt",

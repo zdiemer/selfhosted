@@ -23,6 +23,12 @@
 # k3s runs containerd — the raw-log parser needs to know (docker vs cri format).
 container_runtime: containerd
 
+# Upstream #4678 fixes lost/truncated lines at EOF; not yet in a stable release.
+# Same v1.7.8 base, only the crowdsec binary receives that one-line backport.
+image:
+  repository: registry.zachd.duckdns.org/zdiemer/crowdsec
+  tag: v1.7.8-complete-lines1
+
 # ---------------------------------------------------------------------------
 # Where decisions go
 # ---------------------------------------------------------------------------
@@ -174,10 +180,18 @@ agent:
   # Traefik is the cluster's single ingress choke point, so this one program is
   # a complete record of external HTTP — but only across nodes the agent
   # actually runs on. See the toleration below for why that is not automatic.
-  acquisition:
-    - namespace: kube-system
-      podName: traefik-*
-      program: traefik
+  acquisition: []
+  additionalAcquisition:
+    - source: file
+      filenames:
+        # Only the ingress container: exclude traefik-certs Jobs and init logs.
+        - /var/log/containers/traefik-*_kube-system_traefik-*.log
+      force_inotify: true
+      # Kubernetes rotates the target behind this symlink.
+      poll_without_inotify: true
+      labels:
+        type: containerd
+        program: traefik
   env:
     - name: COLLECTIONS
       value: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios"

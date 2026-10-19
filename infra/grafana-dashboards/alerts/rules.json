@@ -329,7 +329,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "A Job ran and failed. Distinct from 'overdue' \u2014 this one executed."
+      "summary": "A Job reached terminal failure without a later successful CronJob run or full namespace backup. Retained recovered failures and failed retry pods do not fire."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -344,7 +344,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum by (namespace, job_name) (kube_job_status_failed{cluster=\"home-k3s\"})",
+          "expr": "(((max by (namespace, job_name) (kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}) == 1) unless on (namespace, job_name) ((max by (namespace, job_name) (kube_job_status_start_time{cluster=\"home-k3s\"}) * on (namespace, job_name) group_left(owner_name) max by (namespace, job_name, owner_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"CronJob\",owner_is_controller=\"true\"})) < on (namespace, owner_name) group_left() label_replace(max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cluster=\"home-k3s\"}), \"owner_name\", \"$1\", \"cronjob\", \"(.+)\"))) unless on (namespace, job_name) ((max by (namespace, job_name) (kube_job_status_start_time{cluster=\"home-k3s\"}) and on (namespace, job_name) max by (namespace, job_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"})) < on (namespace) group_left() max by (namespace) (kube_job_status_completion_time{cluster=\"home-k3s\"} and on (namespace, job_name) max by (namespace, job_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"})))) or on (namespace, job_name) (0 * max by (namespace, job_name) (kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}))",
           "instant": true,
           "range": false,
           "editorMode": "code",

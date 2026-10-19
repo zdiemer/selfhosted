@@ -170,3 +170,22 @@ curl -s -o /dev/null https://status.diemer.codes/wp-login.php
 
 Both should appear on **Security & Intrusion** → *Known-bad path probes* within
 a minute, and the source IP in *Top source IPs by 4xx*.
+
+### Job failure recovery (2026-10-19)
+
+`sh-job-failed` uses the terminal `kube_job_failed` condition, not failed pod
+attempts. A successful retry in the same Job no longer fires. A retained failed
+CronJob run clears after its owner's last successful run is later than its start.
+K8up Backup Jobs clear after a later successful full backup in the same namespace;
+prebackup hooks cannot clear them. This assumes the current single full-namespace
+backup policy; split the join by backup policy/repository before adding multiple
+independent policies per namespace. Standalone and unresolved failures remain
+visible, even if a CronJob is suspended. History is retained rather than deleted.
+
+The dashboard still shows retained terminal failures as historical inventory.
+Notification routing remains `unwired`. Regression checks use the actual rule
+expression and Prometheus' engine:
+
+```sh
+PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_job_alert.py
+```

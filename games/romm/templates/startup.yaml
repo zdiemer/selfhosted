@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "romm.fullname" . }}-startup
+  labels:
+    {{- include "romm.labels" . | nindent 4 }}
+data:
+  start-romm.py: |
+{{ .Files.Get "files/start-romm.py" | indent 4 }}

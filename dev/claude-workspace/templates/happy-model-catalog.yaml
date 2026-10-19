@@ -28,7 +28,9 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 50
+      # Includes scheduling and registry checks as well as API work. Forbid
+      # skips overlapping ticks; a slow run must not die at the next minute.
+      activeDeadlineSeconds: 180
       template:
         metadata:
           labels:

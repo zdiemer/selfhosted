@@ -1205,3 +1205,8 @@ instance is scoped to.
 - The chart holds no secrets at all, so `values.local.yaml` is just the
   ingress toggle. (The relay's master secret lives in `dev/happy-server`'s
   values.local.yaml, not here.)
+
+The model-catalog CronJob has a 180-second total Job deadline (including pod
+startup), with `concurrencyPolicy: Forbid`. A delayed run skips overlapping
+minute ticks instead of being killed after 50 seconds. Its API request timeouts
+and no-retry policy remain bounded; recurring failures still alert.

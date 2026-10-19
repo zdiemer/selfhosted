@@ -362,7 +362,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "__PROM_UID__" },
-          "expr": "sum by (namespace) (kube_job_status_failed{cluster=\"$cluster\"} > 0)",
+          "expr": "sum by (namespace) (kube_job_failed{cluster=\"$cluster\",condition=\"true\"} == 1)",
           "legendFormat": "{{namespace}}"
         }
       ],

@@ -18,6 +18,7 @@ spec:
   template:
     metadata:
       annotations:
+        checksum/startup: {{ include (print $.Template.BasePath "/startup.yaml") . | sha256sum }}
         # Restart pod when rendered env Secret changes (e.g. new scraper key).
         checksum/env: {{ include (print $.Template.BasePath "/romm-env.yaml") . | sha256sum }}
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
@@ -87,6 +88,7 @@ spec:
         - name: romm
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/src/.venv/bin/python3", "/startup/start-romm.py"]
           # Endpoint removal races SIGTERM, so Traefik can still route here
           # while the app is shutting down — including mid-download of a ROM,
           # or mid-save-write from an EmulatorJS session.
@@ -101,6 +103,9 @@ spec:
             - secretRef:
                 name: {{ include "romm.fullname" . }}-env
           volumeMounts:
+            - name: startup
+              mountPath: /startup
+              readOnly: true
             # The symlink tree. Its targets live under /nas, so the share has to be
             # visible in this container too or every link would dangle.
             - name: library
@@ -159,6 +164,9 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: startup
+          configMap:
+            name: {{ include "romm.fullname" . }}-startup
         - name: nas
           persistentVolumeClaim:
             claimName: {{ include "romm.fullname" . }}-library

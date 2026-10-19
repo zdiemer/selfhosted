@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Apply infra/crowdsec — the upstream crowdsec/crowdsec chart with our values.
-# Detection-only: agents parse the Traefik access log, the LAPI records
-# decisions, nothing enforces them. See values.yaml for the full rationale.
+# Agents parse Traefik logs and LAPI serves decisions to the Traefik bouncer.
 #
 # Console enrollment is optional; if a values.local.yaml (or its 1Password
-# template) is present it is layered on. Nothing here is load-bearing for
-# ingress — a bad deploy breaks detection, not traffic.
+# template) is present it is layered on. Preserve the existing notifier and
+# bouncer credentials when updating acquisition.
 
 set -euo pipefail
 
@@ -48,6 +47,9 @@ helm upgrade --install "$RELEASE" crowdsec/crowdsec --cleanup-on-fail \
 
 echo "==> waiting for the LAPI"
 kubectl -n "$NAMESPACE" rollout status deployment/crowdsec-lapi --timeout=180s
+
+echo "==> waiting for every agent"
+kubectl -n "$NAMESPACE" rollout status daemonset/crowdsec-agent --timeout=600s
 
 echo "==> acquisition check (want non-zero traefik lines once traffic flows)"
 kubectl -n "$NAMESPACE" exec deploy/crowdsec-lapi -- cscli metrics 2>/dev/null | head -30 || \

@@ -296,3 +296,14 @@ and (if needed) `smb.sharePath` to select a subfolder of the share.
 - Docs: <https://docs.romm.app>
 - EmulatorJS: <https://emulatorjs.org>
 - SMB CSI driver: <https://github.com/kubernetes-csi/csi-driver-smb>
+
+### MariaDB docstring compatibility (2026-10-19)
+
+RomM 5.4.0's MariaDB driver contains an invalid `\*` escape in a docstring.
+Python 3.14 repeatedly warns when workers import this un-cached module.
+`files/start-romm.py`, mounted from a ConfigMap, escapes just that exact line
+before handing off to `/docker-entrypoint.sh /init`. The upstream entrypoint
+must run: it generates nginx's port/configuration before starting services.
+The change preserves the module's Python AST and does not suppress warnings or
+change database behavior. It is a no-op when the dependency corrects the line;
+remove the wrapper once the upstream image incorporates that correction.

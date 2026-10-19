@@ -19,9 +19,11 @@ CHART_VERSION="${CHART_VERSION:-8.4.1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
-# Above this, something has gone wrong with the allowlist. ~1.5k is the design
-# target; 3000 is generous headroom that still fires long before the 10k cap.
-BUDGET="${BUDGET:-3000}"
+# Above this, check the allowlist or fleet growth. The original ~1.5k design
+# target is historical; the current 450-pod fleet exports ~4.8k raw series.
+# Alloy filters phase values before shipping. Keep this raw-export guard at 5500
+# and check total Cloud usage separately; raw series are not billing usage.
+BUDGET="${BUDGET:-5500}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
@@ -41,7 +43,7 @@ kubectl -n "$NAMESPACE" rollout status deployment/"$RELEASE" --timeout=180s
 # THE CHECK THAT MATTERS. A chart bump that re-enables default collectors, or
 # an allowlist typo (KSM silently ignores names it doesn't recognise), both
 # show up here and nowhere else until the stack starts refusing writes.
-echo "==> series count (design target ~1.5k, fails above ${BUDGET})"
+echo "==> series count (raw exporter, fails above ${BUDGET})"
 kubectl -n "$NAMESPACE" port-forward "deploy/${RELEASE}" 18080:8080 >/dev/null 2>&1 &
 PF=$!
 trap 'kill $PF 2>/dev/null || true' EXIT
