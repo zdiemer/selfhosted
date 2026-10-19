@@ -198,7 +198,12 @@ image:
   #      gateway (a WhatsApp 428 mid-reconnect killed every live run).
   # v39: a run parked on a subagent or workflow may take agentMaxTurns (50)
   #      wake-ups in a row instead of maxTurns (10).
-  tag: "v40"
+  # v40: Renovate image refresh (Claude Code 2.1.303).
+  # v41: one claude per chat. A second run for a chat stops the first, a run
+  #      on its way out no longer unregisters the run that replaced it, and a
+  #      CLI still up exitGraceSeconds after its input ended is stopped (two
+  #      CLIs resuming one session both merged and pushed on 2026-10-19).
+  tag: "v41"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -544,6 +549,10 @@ messaging:
     # own helpers finishing wake the parent, and on 2026-10-18 nine such
     # wakes ended a fixer mid-work at 10.
     agentMaxTurns: 50
+    # How long a claude may stay up after the gateway ends its input before
+    # it is stopped. A CLI that outlives its input can still wake on its own
+    # background work and act, with nobody reading its replies.
+    exitGraceSeconds: 60
   # Transcript health. A cold resume rebuilds the thread into the context
   # window; once it no longer fits, that rebuild comes back as API 400 "Prompt
   # is too long" and the thread is dead — which is how a chat that spent an

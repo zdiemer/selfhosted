@@ -857,6 +857,12 @@ outstanding when either runs out dies with the
 process, and the chat is told so rather than left waiting. Set `waitSeconds: 0`
 to go back to the first answer ending the run.
 
+A chat has **one claude at a time**. Starting a run for a chat that still has
+one registered stops the old one first, and a CLI still up
+`messaging.background.exitGraceSeconds` (60) after its input ended is stopped.
+Two CLIs resuming one session append to the same transcript and act on the same
+wake-ups: on 2026-10-19 both copies of a chat merged the same branch and pushed.
+
 A run has **no wall-clock timeout**. The old 30-minute cap killed exactly the
 runs that were working — a long build, a migration, a research sweep, or one
 parked on an approval — and threw away the answer they had already earned.

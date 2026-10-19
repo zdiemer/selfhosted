@@ -1,0 +1,34 @@
+#!/usr/bin/env bun
+// Stands in for the claude CLI in tests/single-run.test.ts: one turn per
+// stdin line, in stream-json. FAKE_CLAUDE_PARK=1 reports a background task
+// after each turn, so the gateway parks; FAKE_CLAUDE_LINGER=1 ignores the
+// end of stdin and stays up, the way a CLI holding its own background work
+// can. Each start is appended to $FAKE_CLAUDE_LOG.
+import fs from "node:fs";
+
+const log = process.env.FAKE_CLAUDE_LOG;
+if (log) fs.appendFileSync(log, `start ${process.pid}\n`);
+const say = (ev: object) => process.stdout.write(JSON.stringify(ev) + "\n");
+const session = "fake-session";
+
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  let nl: number;
+  while ((nl = buf.indexOf("\n")) >= 0) {
+    buf = buf.slice(nl + 1);
+    say({ type: "system", subtype: "init", session_id: session });
+    if (process.env.FAKE_CLAUDE_PARK === "1")
+      say({
+        type: "system",
+        subtype: "background_tasks_changed",
+        session_id: session,
+        tasks: [{ task_id: "b1", task_type: "local_bash", description: "build" }],
+      });
+    say({ type: "result", result: "ok", session_id: session, is_error: false });
+  }
+});
+process.stdin.on("end", () => {
+  if (process.env.FAKE_CLAUDE_LINGER === "1") setInterval(() => {}, 1000);
+  else process.exit(0);
+});

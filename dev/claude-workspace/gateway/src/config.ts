@@ -429,6 +429,9 @@ export const config = {
     // finishing wake the parent too, so it needs room the loop guard above
     // doesn't; the agent wait still bounds the park.
     agentMaxTurns: envInt("GW_BACKGROUND_AGENT_MAX_TURNS", 50),
+    /** How long a claude gets to exit by itself once its input has ended,
+     * before it is stopped. Long enough to kill its own tasks and flush. */
+    exitGraceMs: envInt("GW_EXIT_GRACE_SECONDS", 60) * 1000,
   },
   // Transcript health (router.ts transcriptHealth). A cold resume has to
   // rebuild the session's history into the context window, and once it no

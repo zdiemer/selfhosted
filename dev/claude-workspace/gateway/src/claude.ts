@@ -314,7 +314,14 @@ export function handOff(
   const run = running.get(chatKey);
   if (!run?.waiting) return false;
   const prompt = contextPrefix ? `${contextPrefix}\n\n${message}` : message;
-  if (!run.child.stdin?.writable) return false;
+  if (!run.child.stdin?.writable) {
+    // Parked but deaf. The caller starts a fresh run, which stops this one.
+    console.warn(
+      `claude ${chatKey}: parked pid ${run.child.pid} has no writable stdin; ` +
+        "handing off failed",
+    );
+    return false;
+  }
   leaveWait(run);
   run.chain = 0;
   run.child.stdin.write(userMessage(prompt));
@@ -350,6 +357,16 @@ export function chainLimit(tasks: BackgroundTask[]): number {
 
 function hasAgent(tasks: BackgroundTask[]): boolean {
   return tasks.some((t) => AGENT_TASK_TYPES.has(t.task_type ?? ""));
+}
+
+/** SIGTERM, then SIGKILL if it is still there a few seconds later. */
+function stopChild(child: ChildProcess): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  const hard = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }, 5_000);
+  hard.unref?.();
 }
 
 function leaveWait(run: LiveRun): void {
@@ -504,6 +521,20 @@ export async function runClaude(
     if (chat.plan) args.push("--permission-mode", "plan");
   }
 
+  // One live claude per chat, ever. A second one resuming the same session is
+  // two processes appending to one transcript and acting on the same wake-ups
+  // — on 2026-10-19 both copies merged the same branch and pushed. drain()
+  // should never get here with a run still registered; if it does, the old
+  // child is one nobody can talk to any more, so it goes rather than lingers.
+  const stale = running.get(chatKey);
+  if (stale) {
+    console.warn(
+      `claude ${chatKey}: starting a run with pid ${stale.child.pid} still ` +
+        `registered (waiting=${stale.waiting}); stopping it first`,
+    );
+    stopChild(stale.child);
+  }
+
   acquireSlot();
   // Recorded on the PVC so the next boot can tell this chat its run was cut
   // off mid-flight (main.ts). Cleared in the finally below, including on crash.
@@ -526,6 +557,10 @@ export async function runClaude(
         wakeupAt: null,
       };
       running.set(chatKey, run);
+      console.log(
+        `claude ${chatKey}: pid ${child.pid} started` +
+          (resumeId ? ` (resume ${resumeId.slice(0, 8)})` : ""),
+      );
 
       let err = "";
       let result: RunResult | null = null;
@@ -544,10 +579,23 @@ export async function runClaude(
       });
       child.stdin!.write(userMessage(prompt));
 
-      /** Stop feeding the process, which is how it is asked to exit. */
-      const endInput = (): void => {
+      /** Stop feeding the process, which is how it is asked to exit. A CLI
+       * that is still up a minute later is told again, harder: it can no
+       * longer be reached, and left alone it keeps waking on its own
+       * background work and acting with nobody reading. */
+      const endInput = (why: string): void => {
         leaveWait(run);
+        console.log(`claude ${chatKey}: pid ${child.pid} input ended (${why})`);
         if (child.stdin?.writable) child.stdin.end();
+        const linger = setTimeout(() => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          console.warn(
+            `claude ${chatKey}: pid ${child.pid} still up ${config.background.exitGraceMs / 1000}s ` +
+              "after its input ended; stopping it",
+          );
+          stopChild(child);
+        }, config.background.exitGraceMs);
+        linger.unref?.();
       };
 
       /** Park until the CLI wakes itself, or until we give up on it. */
@@ -555,7 +603,7 @@ export async function runClaude(
         run.waiting = true;
         run.idle = setTimeout(() => {
           const stranded = run.tasks;
-          endInput();
+          endInput("park timed out");
           if (stranded.length) hooks.onAbandon?.(stranded, "timeout");
         }, parkWaitMs(run.tasks));
         // A parked run must never be the reason the gateway won't exit.
@@ -653,9 +701,9 @@ export async function runClaude(
           // `wakePending` covers the gap where it has already cleared the list
           // but not yet started the turn it cleared it for.
           const more = pending.length > 0 || run.wakePending;
-          if (!more || !config.background.waitMs) endInput();
+          if (!more || !config.background.waitMs) endInput("nothing pending");
           else if (run.chain >= chainLimit(pending)) {
-            endInput();
+            endInput("turn limit");
             if (pending.length) hooks.onAbandon?.(pending, "turns");
           } else enterWait();
         }
@@ -677,10 +725,17 @@ export async function runClaude(
           }, config.claudeTimeoutMs)
         : null;
 
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         if (timer) clearTimeout(timer);
         leaveWait(run);
-        running.delete(chatKey);
+        // Only our own entry. A run that was replaced (see `stale` above) must
+        // not, on its way out, unregister the run that replaced it — that is
+        // what lets the next message start a third.
+        if (running.get(chatKey) === run) running.delete(chatKey);
+        console.log(
+          `claude ${chatKey}: pid ${child.pid} closed (code ${code}` +
+            (signal ? `, ${signal}` : "") + `, ${run.turns} turns)`,
+        );
         if (buf.trim()) handleLine(buf);
         // No result event means the run died before finishing — killed by
         // !stop, the timeout, or a SIGTERM from a redeploy. Say what happened
