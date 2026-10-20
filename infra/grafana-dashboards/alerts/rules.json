@@ -250,7 +250,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "A CronJob's next scheduled run passed over an hour ago and never happened. Covers renovate, duckdns, money and the smitele-bot collectors."
+      "summary": "A CronJob scheduled run is over an hour late with no subsequent successful completion. Check scheduling and active jobs."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -265,7 +265,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "(time() - kube_cronjob_next_schedule_time{cluster=\"home-k3s\"}) and on(namespace, cronjob) (kube_cronjob_spec_suspend{cluster=\"home-k3s\"} == 0)",
+          "expr": "(((time() - kube_cronjob_next_schedule_time{cluster=\"home-k3s\"}) unless on(namespace, cronjob) (kube_cronjob_status_last_successful_time{cluster=\"home-k3s\"} >= on(namespace, cronjob) kube_cronjob_next_schedule_time{cluster=\"home-k3s\"})) or (0 * kube_cronjob_next_schedule_time{cluster=\"home-k3s\"})) and on(namespace, cronjob) (kube_cronjob_spec_suspend{cluster=\"home-k3s\"} == 0)",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1198,8 +1198,7 @@
     "execErrState": "Error",
     "labels": {
       "severity": "critical",
-      "cluster": "home-k3s",
-      "notification_path": "email"
+      "cluster": "home-k3s"
     },
     "annotations": {
       "summary": "Notification delivery needs attention: ntfy unavailable, SMS fallback selected, messages queued over 10 minutes, or failures within the last hour. Delivered phone messages are not inferred from ntfy acceptance."
@@ -1278,8 +1277,7 @@
     "execErrState": "Error",
     "labels": {
       "severity": "critical",
-      "cluster": "home-k3s",
-      "notification_path": "email"
+      "cluster": "home-k3s"
     },
     "annotations": {
       "summary": "An application health exporter is missing or cannot complete its check. Monitoring may be blind; inspect the affected target."
@@ -1835,7 +1833,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "Container restarted at least twice in thirty minutes and its last termination was OOMKilled. Inspect memory limits and workload growth."
+      "summary": "At least two container restarts were observed in thirty minutes and its last termination was OOMKilled. Inspect memory limits and workload growth."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -1850,7 +1848,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "(sum by(namespace,pod,container) (increase(kube_pod_container_status_restarts_total{cluster=\"home-k3s\"}[30m])) * on(namespace,pod,container) max by(namespace,pod,container) (kube_pod_container_status_last_terminated_reason{cluster=\"home-k3s\",reason=\"OOMKilled\"})) or vector(0)",
+          "expr": "(max by(namespace,pod,container) (max_over_time(kube_pod_container_status_restarts_total{cluster=\"home-k3s\"}[30m]) - min_over_time(kube_pod_container_status_restarts_total{cluster=\"home-k3s\"}[30m])) * on(namespace,pod,container) max by(namespace,pod,container) (kube_pod_container_status_last_terminated_reason{cluster=\"home-k3s\",reason=\"OOMKilled\"})) or vector(0)",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -2069,8 +2067,7 @@
     "execErrState": "Error",
     "labels": {
       "severity": "critical",
-      "cluster": "home-k3s",
-      "notification_path": "email"
+      "cluster": "home-k3s"
     },
     "annotations": {
       "summary": "Grafana Cloud is rejecting metric samples; dashboards and alerts may have gaps.",
@@ -2090,6 +2087,87 @@
         "model": {
           "refId": "A",
           "expr": "sum by (reason) (grafanacloud_instance_samples_discarded_per_second)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-ntfy-unreachable",
+    "title": "ntfy unavailable \u2014 email fallback",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "OK",
+    "execErrState": "OK",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s",
+      "notification_path": "email"
+    },
+    "annotations": {
+      "summary": "ntfy has failed its direct health check for five minutes; email fallback is active.",
+      "description": "Check ntfy and the notification relay, then review firing Grafana alerts. Missing telemetry or datasource errors alone do not trigger email."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(max(home_ntfy_healthy{cluster=\"home-k3s\"}) == bool 0) or vector(0)",
           "instant": true,
           "range": false,
           "editorMode": "code",

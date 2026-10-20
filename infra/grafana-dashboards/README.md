@@ -111,7 +111,7 @@ do not fall through to the default notification policy. See
 | Cloudflare Tunnel has no connections | every `diemer.codes` host is down while the cluster looks fine |
 | Log delivery stalled | no logs reached Grafana Cloud in an hour |
 | Active series approaching the cap | above 8k of the 10k free allowance; separate from stored-series enforcement |
-| Grafana Cloud rejecting metric samples | any discarded samples for 5m, grouped by reason; independent usage datasource, email-only |
+| Grafana Cloud rejecting metric samples | any discarded samples for 5m, grouped by reason; independent usage datasource, ntfy/SMS |
 | Elevated 5xx | >5% of a hostname's requests failing |
 
 **"CronJob overdue" is schedule-aware on purpose.** These CronJobs run anywhere
@@ -200,16 +200,15 @@ This routes infrastructure alerts through ntfy with SMS fallback on publish
 failure. The local SMS gateway monitor remains the sole notification owner for
 that dependency. Dashboard upgrades honor this setting.
 
-### Critical outage email (2026-10-19)
+### Conditional email fallback (2026-10-20)
 
-Notification routing is active through `notify.diemer.codes`. Critical
-infrastructure alerts use `critical-outages`, which sends the relay webhook and
-an independent Grafana Cloud email in parallel. Warnings use `ntfy-primary`.
-The SMS phone rule remains owned by the local monitor to avoid duplicate alerts.
-A cloud-evaluated missing-telemetry rule covers full home-cluster outages.
-Recipient selection, timings, tests, and Cloudflare settings are documented in
-[notification-routing.md](../../docs/notification-routing.md).
+All application and infrastructure alerts use `ntfy-primary`, including critical,
+telemetry and ingestion-rejection alerts. Only `sh-ntfy-unreachable` routes to
+`notification-path-email`, after a direct unhealthy ntfy check persists for five
+minutes. Missing telemetry and query errors do not trigger email. Recovery
+notifications remain enabled. The former parallel critical email integration is
+removed. See [notification-routing.md](../../docs/notification-routing.md).
 
-Application health and delivery-path alert thresholds are documented in
-[health-exporter](../health-exporter/README.md). Delivery-path failures use
-`notification-path-email`, independently of ntfy/SMS.
+The CronJob overdue rule accounts for subsequent successful catch-up runs.
+Recurring OOM detection uses observed counter differences, avoiding fractional
+extrapolation that incorrectly classified one restart as more than one.

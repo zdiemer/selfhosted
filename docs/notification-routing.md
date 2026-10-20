@@ -1,8 +1,8 @@
 # Notification routing and Cloudflare handoff
 
-Updated 2026-10-19. Local senders and Grafana Cloud delivery are live.
-The public Cloudflare route is verified; critical alerts also use independent
-Grafana Cloud email to the existing sole Grafana administrator.
+Updated 2026-10-20. Local senders and Grafana Cloud delivery are live.
+Grafana email is now conditional on ntfy explicitly failing its health check
+for five minutes. Critical severity alone never causes email.
 
 ## Routes
 
@@ -13,7 +13,8 @@ Grafana Cloud email to the existing sole Grafana administrator.
 | Owner's Talaria new/ending listings | ntfy `talaria` | SMS on publish failure; only configured recipient and listing templates |
 | SMS gateway monitoring | ntfy `alerts` | Durable relay queue if direct ntfy publish fails |
 | Grafana warning rules | ntfy `alerts` | Relay selects SMS if ntfy publishing fails |
-| Grafana critical infrastructure rules | ntfy `alerts` **and Grafana Cloud email** | Email does not depend on the home cluster, relay, phone, or tunnel |
+| Grafana critical infrastructure rules | ntfy `alerts` | SMS fallback on publish failure |
+| ntfy unavailable for 5m | Grafana Cloud email | Only explicit unhealthy ntfy checks; not missing telemetry |
 
 Subscribe to `alerts`, `security`, and optionally `talaria` on
 `https://ntfy.zachd.duckdns.org`. Routine CrowdSec scanners remain silent.
@@ -78,29 +79,22 @@ local monitor owns notifications. The generic probe rule excludes `sms-gateway`,
 preventing a second alert for the same phone outage. Existing failed-Job rules
 already exclude failures superseded by successful CronJob runs or backups.
 
-## Independent critical email
+## Grafana delivery and grouping
 
-`critical-outages` has two integrations: the authenticated relay webhook and
-Grafana Cloud email. Critical node availability, disk, public probe, tunnel,
-log-delivery and missing-telemetry rules use this receiver. Warning rules use
-`ntfy-primary`. Both integrations send independently, including resolved events;
-email is a parallel critical safety copy, **not conditional on delivery failure**.
-Grafana only sees the relay's queue acknowledgement, not eventual ntfy/SMS
-success. This avoids depending on an unreachable relay to request escalation.
-Notification grouping waits 30 seconds, groups changes for 5 minutes, and repeats
-ongoing incidents every 4 hours. An alert transition/resolution may notify sooner.
+Owned infrastructure rules use `ntfy-primary`. The compatibility receiver
+`critical-outages` retains only its webhook integration; the unconditional email
+integration has been removed. Grafana sees a queue acknowledgement, not eventual
+ntfy delivery. Grouping waits 30 seconds, groups changes for 5 minutes, and
+repeats ongoing incidents every 4 hours. Recovery notifications are enabled.
 
-The email destination is resolved from the existing sole Grafana organization
-administrator. Provisioning refuses zero or multiple admin email candidates;
-review recipient selection if the organization's membership changes. Grafana
-Cloud handles SMTP; no home SMTP service or public Grafana ingress is needed.
+The fallback email destination is the existing sole Grafana administrator.
+Provisioning refuses zero or multiple admin email candidates. Grafana Cloud
+handles SMTP; no home SMTP service or public Grafana ingress is needed.
 
-`Home cluster telemetry missing` evaluates `absent_over_time(up{cluster="home-k3s"}[10m])`
-in Grafana Cloud (with a zero-valued healthy result), then waits 2 minutes before
-firing. It detects loss of all cluster scrape heartbeats even when every local
-notification component is offline. Query errors/no data also alert. It requires
-Grafana Cloud and the recipient's email service to remain operational. Loss of
-only part of the cluster is handled by the existing infrastructure rules.
+`Home cluster telemetry missing` still detects loss of cluster scrape heartbeats,
+but it now uses ntfy/SMS. It cannot deliver through a fully unavailable home
+notification path. Only the explicit ntfy-unreachable rule can trigger email;
+see the conditional policy below.
 
 ## Validation performed
 
@@ -124,5 +118,34 @@ All five follow-up areas are configured: notification delivery health, weekly
 backup freshness, workload/OOM failures, messaging connections, and Arr health.
 See [health alert coverage](../infra/health-exporter/README.md) for thresholds,
 limitations, expected backup namespaces, and validation. Notification-path
-failures use a separate **email-only** contact point to avoid alert recursion.
+failures use ntfy/SMS; explicit ntfy unavailability alone uses email.
 Routine download events are not published.
+
+
+## Conditional email policy (2026-10-20)
+
+This replaces the parallel critical-email configuration introduced on October 19.
+All owned application, infrastructure, delivery-degradation and telemetry alerts
+use `ntfy-primary` (with the existing relay SMS fallback). The local SMS monitor
+continues to own its non-notifying Grafana rule.
+
+Only `sh-ntfy-unreachable` uses `notification-path-email`. It requires the direct
+ntfy health metric to report unhealthy for five minutes; a missing metric or
+Grafana query error does not count as evidence that ntfy is unreachable. This
+sends one notification-path outage email, not a copy of every application alert.
+The email directs the owner to the current firing alerts; recovery messages stay
+enabled. The legacy unconditional `critical-outages-email` integration is removed.
+
+Consequently, a total cluster/telemetry outage alone will no longer email the
+owner. This is intentional under the requested strict ntfy-unavailable policy;
+an independently measured ntfy reachability probe would be needed to extend
+coverage without treating missing data as failure.
+
+The CronJob overdue rule clears a missed scheduled run after a subsequent
+successful completion (including a recorded catch-up run). It is a missed-run
+check, not a general data-freshness guarantee: a stuck scheduling timestamp
+requires separate scheduling/freshness investigation. The OOM rule uses observed
+restart-counter differences over thirty minutes, deduplicated across exporters,
+rather than extrapolated `increase() > 1`. One OOM must not trigger a recurring
+OOM notification. The last exit reason still cannot prove that every restart
+in the window was an OOM.

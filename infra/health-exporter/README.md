@@ -34,19 +34,21 @@ Rules live in `infra/grafana-dashboards/alerts/rules.json`:
 
 | Condition | Threshold/pending | Destination |
 |---|---|---|
-| Notification degradation | ntfy down, queue older than 10m, recent failure/fallback; 5m pending | Grafana Cloud email only |
-| Missing health exporter | 10m | Grafana Cloud email only |
-| Weekly backup stale | 9 days; 15m pending | ntfy/SMS plus critical email |
+| Notification degradation | ntfy down, queue older than 10m, recent failure/fallback; 5m pending | ntfy/SMS |
+| ntfy explicitly unhealthy | 5m | Grafana Cloud email only |
+| Missing health exporter | 10m | ntfy/SMS |
+| Weekly backup stale | 9 days; 15m pending | ntfy/SMS |
 | Backup status collection unavailable | 10m | ntfy/SMS |
 | Deployment/StatefulSet replicas missing | 10m | ntfy/SMS |
 | DaemonSet coverage missing | 15m | ntfy/SMS |
 | Startup failure / CrashLoop | 10m | ntfy/SMS |
-| Recurring OOM | restart increase >1 in 30m, last exit OOMKilled; 2m pending | ntfy/SMS |
+| Recurring OOM | observed restart count delta >1 in 30m, last exit OOMKilled; 2m pending | ntfy/SMS |
 | Messaging transport disconnected | 5m | ntfy/SMS |
 | Arr health warning/error | 15m | ntfy/SMS |
 
-Existing four-hour repeat and recovery notifications apply. Delivery failures use
-email only to avoid recursively queuing alerts into a broken relay. Historical
+Existing four-hour repeat and recovery notifications apply. Only the dedicated
+ntfy-unreachable rule uses email, after five minutes of explicit unhealthy checks.
+Missing telemetry alone never triggers email. Other delivery failures use ntfy/SMS. Historical
 failed messages outside the one-hour window do not page indefinitely. OOM is a
 correlation of restart count with last exit reason, not an exact OOM event count.
 

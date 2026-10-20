@@ -62,8 +62,6 @@ def main():
         {'uid':cfg['receiver'], 'name':cfg['receiver'], 'type':'webhook', 'settings':webhook},
         {'uid':'critical-outages-webhook', 'name':cfg['critical_receiver'],
          'type':'webhook', 'settings':webhook},
-        {'uid':'critical-outages-email', 'name':cfg['critical_receiver'],
-         'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}},
     ]
     desired.append({'uid':'notification-path-email', 'name':'notification-path-email',
                     'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}})
@@ -72,7 +70,10 @@ def main():
         exists = point['uid'] in existing
         api('/api/v1/provisioning/contact-points'+('/'+point['uid'] if exists else ''),
             point, 'PUT' if exists else 'POST')
-    print('Grafana webhook and independent critical email provisioned (credentials redacted)')
+    # Retire the unconditional email integration while retaining its webhook.
+    if 'critical-outages-email' in existing:
+        api('/api/v1/provisioning/contact-points/critical-outages-email', method='DELETE')
+    print('Grafana webhook and ntfy-unavailable email fallback provisioned')
     if args.activate:
         cfg['enabled'] = True
     if cfg['enabled']:
@@ -84,7 +85,7 @@ def main():
             rule['notification_settings'] = notification_settings(rule, cfg)
             api('/api/v1/provisioning/alert-rules/'+rule['uid'],rule,'PUT')
         (HERE / 'notifications.json').write_text(json.dumps(cfg, indent=2)+'\n')
-        print('Grafana routing active: warnings via relay; critical via relay and cloud email')
+        print('Grafana routing active: all application alerts via relay; email only for confirmed ntfy unavailability')
     else:
         print('STAGED: Cloudflare route and --activate are still required')
 

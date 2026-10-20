@@ -145,7 +145,9 @@ checks after reducing series volume, rather than repeated Prowlarr restarts.
 ## Notifications and independent failure detection
 
 Use the existing [notification routing](notification-routing.md): ntfy first,
-SMS on publish failure, and independent Grafana Cloud email for critical failures.
+SMS on publish failure, and Grafana Cloud email only when ntfy is explicitly
+unavailable. This reflects the stricter email policy agreed on 2026-10-20;
+critical severity or missing telemetry alone must not trigger email.
 SMS availability must be verified before treating it as a working fallback.
 
 Successful repairs write an incident report without paging. Escalations contain
@@ -169,8 +171,9 @@ an in-cluster timer alone cannot provide this guarantee.
 Controller, cluster, model-provider, authentication, or notification-path failure
 means automatic repair is unavailable and warrants escalation through the
 external path. Do not route watchdog notifications through the failed agent.
-Keep the independent email route and watchdog configuration outside worker
-authority. A complete cluster outage cannot be reported reliably by an agent
+Keep the conditional email route and watchdog configuration outside worker
+authority. Before activation, define how the external watchdog proves ntfy
+unavailability independently while respecting that email condition. A complete cluster outage cannot be reported reliably by an agent
 inside that cluster.
 
 ## Credentials, isolation and audit

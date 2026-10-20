@@ -1,4 +1,4 @@
-"""Routing checks: only critical infrastructure alerts get independent email."""
+"""Routing checks: only confirmed ntfy unavailability gets email."""
 import json
 from pathlib import Path
 import sys
@@ -18,8 +18,8 @@ class RoutingTest(unittest.TestCase):
                 if rule['uid'] == 'sh-sms-gateway-down':
                     self.assertEqual(result, {'receiver': 'unwired'})
                 else:
-                    expected = 'critical-outages' if rule['labels']['severity'] == 'critical' else 'ntfy-primary'
-                    if rule['labels'].get('notification_path') == 'email':
+                    expected = 'ntfy-primary'
+                    if rule['uid'] == 'sh-ntfy-unreachable':
                         expected = 'notification-path-email'
                     self.assertEqual(result['receiver'], expected)
                     self.assertEqual(result['repeat_interval'], '4h')

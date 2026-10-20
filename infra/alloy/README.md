@@ -241,8 +241,8 @@ new pod to bypass the limit. Recovery requires all three checks:
   OOM and PVC metric families remain present.
 
 The ingestion-rejection alert queries Cloud's independent usage datasource and
-uses the existing email-only monitoring-failure route, so local metric rejection
-cannot hide its own failure. Never silence the missing-exporter alert merely
+uses the ntfy/SMS route. Its independent datasource can detect local ingestion
+rejection; email is reserved for explicitly unhealthy ntfy checks. Never silence the missing-exporter alert merely
 because the local application is healthy.
 
 ## Deploy
