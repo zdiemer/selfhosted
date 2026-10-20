@@ -85,3 +85,22 @@ After changing Prowlarr, sync its applications and check `/api/v1/health` plus
 Sonarr/Radarr `/api/v3/health`. Validate searches through the downstream app too:
 a responding indexer homepage does not establish that its search API works.
 Run `harden-downloads.py` afterward to verify executable rejection remains set.
+
+### Unreliable RSS sources (2026-10-20)
+
+TorrentByte and kickasstorrents.ws repeatedly timed out solving Cloudflare
+challenges during scheduled RSS polling, causing downstream timeout and backoff
+warnings. Tokyo Toshokan repeatedly returned a feed that Sonarr reported could
+not cover its previous polling window. Fresh connection tests passed for all
+three, so their indexers remain enabled.
+
+Prowlarr's **Search only (unreliable RSS)** application profile disables RSS
+for these three sources while retaining automatic and interactive searches and
+the Standard profile's minimum of three seeders. Full application sync carries
+this setting to Sonarr/Radarr. Other sources continue supplying scheduled RSS;
+releases unique to these three now require a search. Searches can still encounter
+upstream challenge failures. Restore the Standard profile after sustained
+successful feed queries, not merely a successful connection test.
+
+The hardening script explicitly selects each application container; the
+health-exporter sidecar also mounts the config but does not contain `curl`.

@@ -16,9 +16,7 @@ PORTS = {'sonarr': 8989, 'radarr': 7878, 'prowlarr': 9696, 'qbittorrent': 8080}
 class API:
     def __init__(self, app):
         self.app = app
-        self.command = ['kubectl', '-n', NAMESPACE, 'exec', '-i', f'deploy/{RELEASE}-{app}']
-        if app == 'qbittorrent':
-            self.command += ['-c', 'qbittorrent']
+        self.command = ['kubectl', '-n', NAMESPACE, 'exec', '-i', f'deploy/{RELEASE}-{app}', '-c', app]
         self.command += ['--']
         self.key = None
         if app != 'qbittorrent':
