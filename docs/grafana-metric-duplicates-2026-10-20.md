@@ -93,3 +93,79 @@ sum(rate(prometheus_remote_storage_samples_failed_total[5m]))
 Do not drop distinguishing metric labels or raise the rejection threshold merely
 to clear this alert. A clean scrape or HTTP 200 does not by itself prove that Mimir
 retained every sample.
+
+## Follow-up: isolate traffic, not just inspect it
+
+Further investigation on the same day used the cumulative
+`grafanacloud_instance_samples_discarded` metric. It continued to increase by
+approximately two each minute; this was not merely an unchanged rate gauge.
+
+A TLS-verified relay was configured to return retryable HTTP 503 responses for
+exactly 120 seconds, automatically reopening afterward. All eleven collectors
+were verified on that endpoint before each hold. Their WAL/queues retained the
+samples. No alert rules were paused for these tests.
+
+- First hold: approximately **19:38:52–19:40:52 UTC**. The relay's forwarded-request
+  count stayed at 39 throughout the hold. The Cloud counter advanced from 2,273
+  at the 19:39:48 usage sample to 2,275 at 19:40:48, an interval fully inside the
+  hold. The queues subsequently drained and writes returned HTTP 200.
+- Second hold: approximately **19:44:57–19:46:57 UTC**. The forwarded-request count
+  stayed at 243 during the hold. The discard count continued to advance.
+- At **19:46:51–19:46:53**, before that second hold ended, 128 metric families were
+  checked individually for samples newer than **19:45:12**. Only `GRAFANA_ALERTS`
+  remained fresh: the ingestion-rejection and SMS-phone-down rules. No observed
+  Alloy metric family remained fresh during the hold.
+
+For the freshness check, query `timestamp(metric_name) > cutoff` separately for
+each metric family. Do not put `label_replace` before `timestamp`: that produces
+an expression-evaluation timestamp and falsely makes old samples look fresh.
+A broad `timestamp({__name__=~".+"})` also fails when dropping metric names creates
+identical label sets.
+
+These tests strongly narrow the investigation away from the eleven observed
+Alloy streams. They do not establish a specific hosted writer as the cause:
+provider-side accounting latency, other writers, and hosted processing still
+need to be accounted for. `GRAFANA_ALERTS` is a candidate, not a proven culprit.
+
+A temporary pending diagnostic rule was also created with a 24-hour pending
+period and automatic five-minute deletion. Adding its history series did not
+produce a sustained increase above the original discard rate. One interval rose
+by four and a later interval by zero, so the isolated increase is not proof of
+causation. A separate, short-lived firing diagnostic used the existing
+non-notifying `unwired` receiver and automatic cleanup to test firing-state
+history independently. Neither test established a sustained increase; both
+diagnostic rules were deleted. Do not infer that all alert-history samples are
+duplicated merely because the two real alert series were the only fresh series
+during the Alloy hold. Both original alert rules remain enabled. All eleven
+collectors were verified healthy on their original direct endpoint afterward,
+and the relay, gate file, and temporary TLS key/certificate were removed.
+
+### Broken managed ingestion-log panel
+
+The built-in dashboard `cdn9jukg55bswb` references the deleted datasource
+`grafanacloud-maroonmulberry1632-usage-insights` in its error-details panel. The
+working datasource is `grafanacloud-usage-insights`. The attempted narrow repair
+was rejected with `Cannot save provisioned dashboard`; the managed dashboard
+was not modified. Its query can be run in Explore against the working datasource:
+
+```logql
+{instance_type="metrics", instance_id="3438530"}
+|~ "error while ingesting|failed to process sample due to error|failed to process exemplar due to error|failed to push aggregation result|the sample has been rejected"
+```
+
+The query returned older series-limit failures, but no details identifying the
+current duplicate-timestamp source. Include this broken datasource reference in
+the prepared support request as a separate, concrete dashboard defect.
+
+### Repeat notification explained
+
+The ingestion alert returned to `Alerting` at **19:32:40 UTC**, five minutes after
+its earlier restoration at **19:27:40**. The subsequent notification was triggered
+by the diagnostic pause/resume resetting the pending period; the rejection rate
+had not spiked. Avoid further pause/resume tests of that production rule.
+
+Final cleanup verification at approximately **19:59 UTC** confirmed both original
+rules enabled and neither diagnostic rule present. Cloud still reported
+`sample_duplicate_timestamp` rejections (counter 2,313; rate 0.04167/s, or about
+2.5/minute). This remains unresolved; the diagnostic cleanup is not a fix for
+rejected samples.
