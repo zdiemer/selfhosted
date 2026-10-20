@@ -2006,7 +2006,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "home_arr_health_issues{cluster=\"home-k3s\"}",
+          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\"})",
           "instant": true,
           "range": false,
           "editorMode": "code",

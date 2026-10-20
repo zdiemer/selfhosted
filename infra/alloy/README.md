@@ -232,8 +232,12 @@ stream while the discard rate is nonzero and compare timestamp/label pairs
 before changing relabel rules. Never drop distinguishing labels to hide it.
 
 The follow-up [2026-10-20 investigation](../../docs/grafana-metric-duplicates-2026-10-20.md)
-checked serialized batches and actual Cloud-bound payloads. The offending metric
-remains unidentified; the document includes a prepared, unsent support request.
+traced the duplicates to `GRAFANA_ALERTS`: the Arr health alert overwrote the
+exporter's severity label, collapsing warning and error series into one alert
+instance. Opposing transitions at the same timestamp generated conflicting
+history samples. Summing source severities before applying the alert's routing
+severity fixes the collision. When Alloy captures are clean, inspect the
+`grafanacloud-alert-state-history` logs for repeated timestamps and fingerprints.
 
 ### Grafana accepts scrapes locally but rejects new series
 

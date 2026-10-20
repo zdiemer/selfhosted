@@ -1,9 +1,97 @@
 # Grafana Cloud duplicate-sample investigation — 2026-10-20
 
-Status: unresolved. The observed Alloy requests do not explain the Cloud discard
-counter. Do not claim this is a confirmed Cloud bug or suppress the discard alert.
+Status: **resolved**. Fix deployed at **23:43:29 UTC**; the ingestion alert
+returned to Normal at **23:48:40 UTC**. The Arr health
+alert overwrote the source metric's `severity` label, collapsing warning and error
+series into the same alert instance. Post-deployment verification is recorded below.
+The earlier investigation notes are retained as historical evidence.
 
-## Observations
+## Root cause and repair
+
+`home_arr_health_issues` emits one series per application and source severity.
+Prowlarr and Radarr each had `severity="warning"` with value 1 and
+`severity="error"` with value 0. The `sh-arr-health` rule queried both directly
+and then assigned its routing label `severity="warning"` to both results.
+
+The alert-state history datasource revealed 120 Normal-to-Pending and 120
+Pending-to-Normal transitions over an hour: two applications, every minute. Each
+opposing pair had the **same timestamp and fingerprint**, not merely similar
+labels. Grafana's history writer emits a pending `GRAFANA_ALERTS` sample and a
+stale marker for the same series at that timestamp. This explains why the
+ingestion counter increased while Alloy was held and why adding a healthy
+diagnostic alert did not reproduce it. It also prevented the Arr rule from
+reliably completing its 15-minute pending period.
+
+The fixed expression combines the source severities before Grafana adds its
+routing severity:
+
+```promql
+sum without (severity) (home_arr_health_issues{cluster="home-k3s"})
+```
+
+The threshold, pending period, routing, and enabled state are unchanged. Four
+Prometheus-engine regression cases cover healthy, warning-only, error-only, and
+combined-severity inputs, including a second application to check separation:
+
+```sh
+PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_arr_health_alert.py
+```
+
+All 27 Prometheus-backed alert queries were checked against live data after
+applying their configured label overrides: none produced colliding identities.
+The remaining Loki-backed rule returned no current instances.
+
+### Post-deployment verification
+
+The discard counter stopped at **2,792** (first flat reading at 23:44:48 UTC).
+At **23:48:05 UTC**, the reported duplicate-discard rate was **zero**. Prowlarr
+and Radarr retained the same pending start time, **23:43:40**, across successive
+evaluations instead of resetting every minute. The original ingestion alert was
+left enabled throughout and returned to **Normal at 23:48:40 UTC** through normal
+evaluation. Six consecutive counter readings from 23:43:48 through 23:48:48
+remained at 2,792.
+
+The regression cases pass with the repaired expression and fail with the
+original expression. No collector relabeling or alert suppression is part of
+the repair.
+
+### Additional checks that led to the finding
+
+- Adaptive Metrics rules and segments are empty. The working read endpoints are
+  `/api/plugin-proxy/grafana-adaptive-metrics-app/rules`, `/segments`, and
+  `/v2/segments/default/rules` (the last two use the same plugin prefix).
+  The existing Admin service-account credential can read them; no new scopes
+  were granted. The previously attempted `/resources/aggregations/rules` route
+  was not the route used by the installed frontend.
+- A single calibration request at **23:38:42 UTC** sent 32 identical samples in
+  one explicitly diagnostic series, expecting 31 discards. It returned HTTP 200;
+  the counter rose from 2,751 to 2,784 at **23:39:48**, accounting for the 31
+  synthetic discards plus the normal two. Exclude this intentional pulse when
+  interpreting incident volume. The retained sample belongs to
+  `selfhosted_diagnostic_duplicate_calibration{diagnostic="20261020-accounting-delay"}`;
+  no continuing writer or job was created.
+- A planned four-minute hold was cancelled **before its gate activated** when
+  the conflicting state-history transitions were found. Both ConfigMaps were
+  restored, all eleven runtime endpoints verified direct and healthy, and the
+  relay and temporary TLS files removed.
+- The deployed Grafana commit is `ba35f5126fe58b2ab365a9e69bfe3cff27b7e9e3`
+  (version `13.3.0-37680305507`). Its
+  [history writer](https://github.com/grafana/grafana/blob/ba35f5126fe58b2ab365a9e69bfe3cff27b7e9e3/pkg/services/ngalert/state/historian/prometheus.go)
+  emits active and stale samples for state transitions. The Mimir build reported
+  revision `e58bddf0`; its distributor counts repeated timestamps inside a series
+  within a request under `sample_duplicate_timestamp`.
+
+The decisive query was against **grafanacloud-alert-state-history**, not the
+metric ingestion logs:
+
+```logql
+{from="state-history"} | json | ruleUID="sh-arr-health"
+```
+
+Group the returned entries by timestamp and fingerprint to expose conflicting
+transitions hidden by an ordinary instant metric query.
+
+## Earlier observations (before the root cause was found)
 
 - Metrics tenant `3438530`, stack `1757153`, region `prod-us-west-0`;
   endpoint `prometheus-prod-67-prod-us-west-0.grafana.net`.
@@ -38,10 +126,10 @@ counter. Do not claim this is a confirmed Cloud bug or suppress the discard aler
   Metrics aggregation rules was denied because the available ingestion credential
   lacks the required scope. No additional permissions were granted.
 
-## What remains unknown
+## Earlier unknowns (subsequently resolved above)
 
-The affected metric, the originating write client, and whether the duplicate is
-introduced inside the hosted write pipeline remain unknown. A mirror uses its own
+At this stage, the affected metric, the originating write client, and whether the
+duplicate was introduced inside the hosted write pipeline were unknown. A mirror uses its own
 queue; the TLS relay addresses that limitation for the observed capture window,
 not for every historical request or other writer into this tenant.
 
@@ -52,7 +140,7 @@ temporary TLS key/certificate removed. Both alert rules are enabled. Temporary m
 failures during decoder development were confined to the mirror; do not interpret
 those diagnostic-endpoint counters as original Cloud failures.
 
-## Prepared Grafana support request (not submitted)
+## Archived Grafana support draft (not submitted; source now identified)
 
 Please identify the metric and originating client behind
 `sample_duplicate_timestamp` discards for tenant `3438530` / stack `1757153`.

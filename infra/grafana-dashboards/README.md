@@ -181,6 +181,18 @@ expression and Prometheus' engine:
 PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_job_alert.py
 ```
 
+The Arr health rule sums the exporter's warning/error counts with
+`sum without (severity)` before assigning the alert's routing severity. Querying
+both source severities directly collapses them into one alert identity when the
+rule overrides `severity`, causing contradictory transitions and duplicate
+`GRAFANA_ALERTS` timestamps. See the
+[investigation](../../docs/grafana-metric-duplicates-2026-10-20.md). Run its regression
+checks with:
+
+```sh
+PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_arr_health_alert.py
+```
+
 ### SMS gateway monitoring
 
 `sh-sms-gateway-down` evaluates the authenticated phone connectivity probe in
