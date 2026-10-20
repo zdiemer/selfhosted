@@ -231,6 +231,10 @@ discard alert remains enabled. If it recurs, capture the remote-write debug
 stream while the discard rate is nonzero and compare timestamp/label pairs
 before changing relabel rules. Never drop distinguishing labels to hide it.
 
+The follow-up [2026-10-20 investigation](../../docs/grafana-metric-duplicates-2026-10-20.md)
+checked serialized batches and actual Cloud-bound payloads. The offending metric
+remains unidentified; the document includes a prepared, unsent support request.
+
 ### Grafana accepts scrapes locally but rejects new series
 
 Check the Grafana Cloud usage datasource, not just Alloy's remote-write error
