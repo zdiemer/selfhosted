@@ -104,3 +104,11 @@ successful feed queries, not merely a successful connection test.
 
 The hardening script explicitly selects each application container; the
 health-exporter sidecar also mounts the config but does not contain `curl`.
+
+Application sync is scoped by `sync-sonarr` and `sync-radarr` tags. Existing
+indexers retain both memberships except Torrentsome/Torrenttip (Radarr only)
+and LimeTorrents (Sonarr only): their other app's category validation repeatedly
+returned no results and retried failed indexer creation on every sync. Existing
+proxy tags are retained. **Give new indexers the appropriate sync tags** or they
+will remain available only in Prowlarr. Restore an excluded membership after
+its movie/TV category query returns usable results.
