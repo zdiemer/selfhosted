@@ -56,6 +56,26 @@ def alive(record, pod_uid):
             identity(record.get("pid", 0)) == record["identity"])
 
 
+def refresh_metadata(record, saved):
+    """Fail closed if server state cannot be checked, including archival."""
+    result = subprocess.run(
+        ["node", str(pathlib.Path(__file__).with_name("happy-metadata.mjs")), record["sessionId"]],
+        capture_output=True, text=True, timeout=20)
+    if result.returncode:
+        raise ValueError("Happy recovery metadata lookup unavailable")
+    try:
+        metadata = json.loads(result.stdout)["metadata"]
+        if not isinstance(metadata, dict):
+            raise ValueError()
+    except (ValueError, KeyError, TypeError):
+        raise ValueError("Happy recovery metadata response invalid") from None
+    # The server owns current transcript/path/lifecycle state. The live hook
+    # remains the source for busy status and user-selected settings.
+    record = {**record, "metadata": metadata}
+    saved = {**saved, "metadata": metadata}
+    return record, saved
+
+
 def launch_spec(record, saved, token, environ):
     """Pure adapter, pinned/tested against Happy 1.2.5's buildResumeLaunch."""
     metadata = {**saved.get("metadata", {}), **{k: v for k, v in record["metadata"].items() if v}}
@@ -122,7 +142,8 @@ def capture_legacy(root, home, container):
         if not metadata:
             continue
         pending.setdefault(session_id, {
-            "record": {"sessionId": session_id, "container": container, "busy": True,
+            # The old marker proves liveness, not that a turn was unfinished.
+            "record": {"sessionId": session_id, "container": container, "busy": False,
                        "metadata": {k: metadata.get(k) for k in
                                     ("path", "host", "flavor", "claudeSessionId", "codexThreadId")},
                        "updatedAt": marker["at"] * 1000, "state": "restarting"},
@@ -214,6 +235,7 @@ def run():
             attempts_before = entry["attempts"]
             try:
                 saved = read(home / ".happy/sessions.json").get("sessions", {}).get(session_id, {})
+                record, saved = refresh_metadata(record, saved)
                 # Honor a deliberate archive even if it happened after our boot snapshot.
                 if saved.get("metadata", {}).get("lifecycleState") in ("archiveRequested", "archived"):
                     del pending[session_id]
@@ -234,7 +256,7 @@ def run():
                 children[session_id] = child
                 entry["launched"] = {"pid": child.pid, "identity": identity(child.pid), "podUid": pod_uid}
                 write(ledger_file, pending)
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 entry["attempts"] = attempts_before + 1
                 entry["retryAt"] = time.time() + 60
                 # No arguments, credentials or environment in errors/logs.

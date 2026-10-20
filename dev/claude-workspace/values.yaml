@@ -205,7 +205,8 @@ image:
   #      CLIs resuming one session both merged and pushed on 2026-10-19).
   # v42: durable jobs, task tracking, and gateway/Happy restart recovery.
   # Requires a full image build (includes the pinned Happy recovery hook).
-  tag: "v42"
+  # v43: resolve Happy transcript metadata from server and await Codex resume.
+  tag: "v43"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 

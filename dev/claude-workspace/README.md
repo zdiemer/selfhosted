@@ -1258,6 +1258,17 @@ instance is scoped to.
     1.2.5 and fails if the expected version or hook changes. A supervisor runs in
     both containers; retries retain the original identity and never create a fresh
     conversation as a fallback.
+  - Recovery fetches and decrypts current server metadata before launching.
+    Happy's local `sessions.json` can contain only startup metadata, before a
+    Codex thread ID exists; it is a credential cache, not an authoritative
+    transcript inventory. Server-side archives are honored as well.
+    Codex reconnect acknowledgments wait for `thread/resume` to succeed, and
+    resume requests omit returned turn history (`excludeTurns`) to avoid large
+    transcripts timing out. The transcript itself remains intact.
+  - The old pre-hook restart marker proves only that sessions were live.
+    Those sessions reconnect idle; only the newer hook's recorded busy state
+    authorizes an automatic continuation prompt. Happy skips existing messages
+    on reconnect, so messages sent while disconnected may need to be resent.
   - **Restart notices** (`happy.restartNotice.enabled`) remain separate. The
     ConfigMap preStop hook sends a best-effort deploy notice; the next boot reports
     automatic restoration, or manual `happy resume` instructions when recovery is

@@ -34,6 +34,7 @@ export async function install(session, callback) {
   try { settings = JSON.parse(process.env.HAPPY_WORKSPACE_SETTINGS ?? "{}"); } catch {}
   delete process.env.HAPPY_WORKSPACE_SETTINGS;
   let thinking = false;
+  let awaitingRecovery = Boolean(token && prompt);
   let recoveryCount = Number(process.env.HAPPY_WORKSPACE_RECOVERY_COUNT ?? 0);
   delete process.env.HAPPY_WORKSPACE_RECOVERY_COUNT;
   const startedAt = Date.now();
@@ -51,7 +52,7 @@ export async function install(session, callback) {
       sessionId: session.sessionId, container: process.env.WORKSPACE_CONTAINER ?? "happy-daemon",
       podUid: process.env.WORKSPACE_POD_UID, pid: process.pid, identity: identity(),
       state: ["archived", "archiveRequested"].includes(metadata.lifecycleState) ? "stopped" : state,
-      busy: thinking || subagents.size > 0, mode, settings, recoveryCount,
+      busy: awaitingRecovery || thinking || subagents.size > 0, mode, settings, recoveryCount,
       updatedAt: Date.now(), metadata: {
         path: metadata.path, host: metadata.host, flavor: metadata.flavor,
         claudeSessionId: metadata.claudeSessionId ?? previous.metadata?.claudeSessionId,
@@ -63,7 +64,7 @@ export async function install(session, callback) {
   const keepAlive = session.keepAlive.bind(session);
   session.keepAlive = (busy, currentMode) => {
     thinking = busy;
-    if (!busy && !subagents.size && Date.now() - startedAt > 60_000) recoveryCount = 0;
+    if (!awaitingRecovery && !busy && !subagents.size && Date.now() - startedAt > 60_000) recoveryCount = 0;
     mode = currentMode;
     save();
     return keepAlive(busy, currentMode);
@@ -91,6 +92,18 @@ export async function install(session, callback) {
   heartbeat.unref();
   save("running", true);
   if (token && /^[a-f0-9-]{36}$/.test(token)) {
+    // onUserMessage is registered before Codex's thread/resume can fail.
+    // Do not acknowledge that early callback as a successful restoration.
+    if (session.getMetadata()?.flavor === "codex" && !session.workspaceRecoveryReady) {
+      await new Promise(resolve => {
+        const ready = sessionId => {
+          if (sessionId !== session.sessionId) return;
+          process.off("workspace-recovery-ready", ready);
+          resolve();
+        };
+        process.on("workspace-recovery-ready", ready);
+      });
+    }
     const receipt = path.join(root, "receipts", token + ".json");
     if (!fs.existsSync(receipt)) {
       if (prompt) {
@@ -102,5 +115,7 @@ export async function install(session, callback) {
       }
       atomic(receipt, { sessionId: session.sessionId, deliveredAt: Date.now() });
     }
+    awaitingRecovery = false;
+    save("running", true);
   }
 }

@@ -5,6 +5,8 @@ import pathlib
 import tempfile
 import time
 import unittest
+from unittest.mock import patch as mock_patch
+import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -57,6 +59,30 @@ class HappyRecoveryTests(unittest.TestCase):
         _, _, env = recovery.launch_spec(self.record, self.saved, "token", {})
         self.assertEqual(env["HAPPY_WORKSPACE_RESUME_PROMPT"], "")
 
+    def test_server_metadata_supplies_missing_thread_and_overrides_stale_path(self):
+        metadata = {"path": str(self.root), "flavor": "codex", "codexThreadId": "actual-thread"}
+        record = {**self.record, "metadata": {"path": "/stale", "flavor": "codex"}}
+        with mock_patch.object(recovery.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"metadata": metadata}))) as run:
+            record, saved = recovery.refresh_metadata(record, self.saved)
+        args, cwd, _ = recovery.launch_spec(record, saved, "token", {})
+        self.assertIn("actual-thread", args)
+        self.assertEqual(cwd, str(self.root))
+        self.assertTrue(record["busy"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 20)
+
+    def test_metadata_lookup_fails_closed_and_retains_archive_state(self):
+        for response in [subprocess.CompletedProcess([], 1, ""),
+                         subprocess.CompletedProcess([], 0, "not json")]:
+            with mock_patch.object(recovery.subprocess, "run", return_value=response):
+                with self.assertRaises(ValueError):
+                    recovery.refresh_metadata(self.record, self.saved)
+        with mock_patch.object(recovery.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, '{"metadata":{"lifecycleState":"archived"}}')):
+            record, saved = recovery.refresh_metadata(self.record, self.saved)
+        self.assertEqual(record["metadata"]["lifecycleState"], "archived")
+        self.assertEqual(saved["metadata"]["lifecycleState"], "archived")
+
     def test_missing_transcript_or_key_does_not_start_fresh(self):
         for record, saved in [(self.record, {}), ({**self.record, "metadata": {"flavor": "claude"}}, self.saved)]:
             with self.assertRaises(ValueError):
@@ -84,15 +110,20 @@ class HappyRecoveryTests(unittest.TestCase):
         }})
         recovery.capture_legacy(self.root, home, "happy-daemon")
         self.assertEqual(list(recovery.read(self.root / "happy-daemon-pending.json")), ["wanted"])
+        self.assertFalse(recovery.read(self.root / "happy-daemon-pending.json")["wanted"]["record"]["busy"])
 
     def test_patch_is_version_checked_and_idempotent(self):
         (self.root / "dist").mkdir()
         (self.root / "package.json").write_text('{"version":"1.2.5"}')
         for extension in ["mjs", "cjs"]:
-            (self.root / "dist" / ("types-test." + extension)).write_text(patch.NEEDLE + "\n  }")
+            (self.root / "dist" / ("types-test." + extension)).write_text(
+                patch.NEEDLE + "\n  }\n" + patch.RESUME_NEEDLE)
+            (self.root / "dist" / ("index-test." + extension)).write_text(patch.READY_NEEDLE)
         patch.patch(self.root)
         patch.patch(self.root)
         self.assertIn("workspace-recovery-hook-v1", (self.root / "dist/types-test.mjs").read_text())
+        self.assertIn("excludeTurns: true", (self.root / "dist/types-test.mjs").read_text())
+        self.assertIn("workspace-recovery-ready-v1", (self.root / "dist/index-test.mjs").read_text())
         (self.root / "package.json").write_text('{"version":"future"}')
         with self.assertRaises(RuntimeError):
             patch.patch(self.root)
