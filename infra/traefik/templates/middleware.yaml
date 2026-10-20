@@ -1,6 +1,6 @@
 {{/*
 Edge-wide rate limit, applied at the websecure ENTRYPOINT (helmchartconfig.yaml
-names it under ports.websecure.middlewares), so it covers every router in the
+names it under ports.websecure.http.middlewares), so it covers every router in the
 cluster without touching any per-app Ingress. Entrypoint middlewares are static
 config, so allowCrossNamespace is not involved — but the reference and this
 object must move in lockstep: if the entrypoint names a middleware that does

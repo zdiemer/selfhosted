@@ -1,24 +1,8 @@
-# CrowdSec — detection over the Traefik access log. DETECTION ONLY, today.
-#
-# These are values for the upstream crowdsec/crowdsec chart (no local Chart.yaml
-# — upgrade.sh drives `helm upgrade crowdsec/crowdsec` directly, same wrapper
-# pattern as minecraft/).
-#
-#     traefik pod stdout ──/var/log/containers──▶ agent DaemonSet (parse, match
-#     scenarios) ──▶ LAPI (decisions, PVC-backed) ──▶ nobody, yet
-#
-# WHY NO BOUNCER. The obvious enforcement point — Traefik's CrowdSec plugin —
-# fetches from plugins.traefik.io at every Traefik pod start. With Recreate
-# strategy and a single replica, a failed fetch turns any routine restart into
-# an extended cluster-wide ingress outage. Not worth it. When enforcement is
-# wanted, the right bouncer is Cloudflare's (blocks at the CF edge, zero
-# Traefik involvement) — once DuckDNS is tailnet-only, Cloudflare is the only
-# public HTTP path, so edge blocking is complete coverage anyway.
-#
-# Decisions are still made and visible (`cscli alerts list`, `cscli metrics`
-# in the lapi pod, or the console if enrolled) — they just don't block. That
-# is the point: see what detection fires for a few weeks before letting it
-# cut anyone off.
+# CrowdSec detects suspicious requests in Traefik access logs.
+# Agents send decisions to LAPI; infra/traefik attaches the bouncer to the
+# websecure entrypoint to enforce bans. Verify live middleware arguments and
+# recent bouncer polling after Traefik upgrades; a decision alone proves no block.
+# This directory uses the upstream crowdsec/crowdsec chart via upgrade.sh.
 
 # k3s runs containerd — the raw-log parser needs to know (docker vs cri format).
 container_runtime: containerd

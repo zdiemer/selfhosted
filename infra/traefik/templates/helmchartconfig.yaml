@@ -91,16 +91,17 @@ spec:
       default:
         defaultCertificate:
           secretName: {{ .Values.defaultCertificate.secretName }}
-    {{- if or .Values.httpsRedirect.enabled .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled }}
+    {{- if or .Values.httpsRedirect.enabled .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled (and .Values.crowdsec.enabled .Values.crowdsec.entrypoint) }}
     ports:
       {{- if .Values.httpsRedirect.enabled }}
       web:
-        redirections:
-          entryPoint:
-            to: websecure
-            scheme: https
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
       {{- end }}
-      {{- if or .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled }}
+      {{- if or .Values.forwardedHeaders.trustedIPs .Values.rateLimit.enabled (and .Values.crowdsec.enabled .Values.crowdsec.entrypoint) }}
       websecure:
         {{- with .Values.forwardedHeaders.trustedIPs }}
         {{- /*
@@ -128,13 +129,14 @@ spec:
           being 403'd itself — it would be denied service and denying it to
           others at the same time.
         */}}
-        middlewares:
-          {{- if and .Values.crowdsec.enabled .Values.crowdsec.entrypoint }}
-          - {{ .Values.helmChart.namespace }}-crowdsec-bouncer@kubernetescrd
-          {{- end }}
-          {{- if .Values.rateLimit.enabled }}
-          - {{ .Values.helmChart.namespace }}-edge-ratelimit@kubernetescrd
-          {{- end }}
+        http:
+          middlewares:
+            {{- if and .Values.crowdsec.enabled .Values.crowdsec.entrypoint }}
+            - {{ .Values.helmChart.namespace }}-crowdsec-bouncer@kubernetescrd
+            {{- end }}
+            {{- if .Values.rateLimit.enabled }}
+            - {{ .Values.helmChart.namespace }}-edge-ratelimit@kubernetescrd
+            {{- end }}
         {{- end }}
       {{- end }}
     {{- end }}

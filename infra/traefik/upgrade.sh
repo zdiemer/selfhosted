@@ -118,6 +118,9 @@ assert v.get("tlsStore", {}).get("default", {}).get("defaultCertificate", {}).ge
 # one replica and made every change here an outage.
 assert v.get("persistence", {}).get("enabled") is False, \
     "persistence must stay disabled; a PVC here re-pins Traefik to one node"
+for port, settings in v.get("ports", {}).items():
+    assert "middlewares" not in settings and "redirections" not in settings, \
+        f"{port}: Traefik chart 40 requires middleware/redirect settings under http"
 print("==> valuesContent parses; safety assertions pass")
 ' || { echo "rendered valuesContent is not valid — refusing to apply"; exit 1; }
 
@@ -171,6 +174,19 @@ if [[ "$REDEPLOY" == "1" ]]; then
   echo "==> waiting for helm-controller to apply the config"
   kubectl -n "$HCC_NS" wait --for=condition=complete job/helm-install-traefik --timeout=300s \
     || echo "    (no helm-install job completed in time; checking the deployment anyway)" >&2
+  # A completed old Job or an unchanged Deployment is not proof that the new
+  # overlay landed. Check the actual arguments before trusting rollout status.
+  echo "==> waiting for the expected entrypoint protections"
+  landed=0
+  for _ in $(seq 1 60); do
+    if python3 "$HERE/verify-runtime.py" <(render_hcc) \
+      <(kubectl -n "$HCC_NS" get deploy traefik -o json) 2>/dev/null; then
+      landed=1
+      break
+    fi
+    sleep 5
+  done
+  [[ "$landed" == "1" ]] || { echo "FAIL: expected entrypoint protections did not land"; exit 1; }
   echo "==> waiting for Traefik to come back"
   kubectl -n "$HCC_NS" rollout status deployment/traefik --timeout=300s
 
@@ -180,6 +196,10 @@ if [[ "$REDEPLOY" == "1" ]]; then
   kubectl -n "$HCC_NS" get pods -l app.kubernetes.io/name=traefik \
     -o jsonpath='    pod: {.items[0].metadata.name}{"\n"}'
 fi
+
+python3 "$HERE/verify-runtime.py" <(render_hcc) \
+  <(kubectl -n "$HCC_NS" get deploy traefik -o json)
+echo "==> live middleware chain and redirect match the rendered overlay"
 
 echo "==> access log sample (empty until the next request arrives)"
 kubectl -n "$HCC_NS" logs deploy/traefik --tail=3 2>/dev/null || true

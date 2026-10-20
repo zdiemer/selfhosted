@@ -216,3 +216,21 @@ is on a ReadWriteOnce local-path volume, so two pods can never hold it at once.
 It is a single point of failure for all ingress *and* all TLS in the cluster.
 Fixing it needs RWX storage or a different cert store — a real project, not a
 values change.
+# Entrypoint enforcement after chart upgrades
+
+Traefik chart 40 moved middleware and redirect configuration beneath each
+port's `http` key. The old `ports.websecure.middlewares` setting rendered
+without an error but did not attach CrowdSec or the edge rate limiter. Use
+`ports.websecure.http.middlewares` and `ports.web.http.redirections`.
+
+`upgrade.sh` now rejects the old layout and verifies the actual Deployment
+arguments against the rendered overlay before accepting a rollout. CI covers
+the default chain, CrowdSec without the other port options, and missing live
+enforcement. For a chart upgrade, also render the overlay through the exact
+new upstream chart: linting the wrapper alone cannot validate `valuesContent`.
+
+Enforcement requires more than healthy pods or recorded CrowdSec decisions.
+Check fresh `cscli bouncers list` polling, then use a temporary ban for a
+reserved test address through a trusted proxy hop. Verify 200 before the ban,
+403 on every replica while an unbanned control still gets 200, and recovery
+after deleting the test decision. Do not ban a real client or proxy for a test.

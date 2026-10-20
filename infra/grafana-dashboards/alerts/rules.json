@@ -408,7 +408,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "CrowdSec crossed more scenario thresholds in 15 minutes than a normal day produces. Detection only \u2014 nothing was blocked."
+      "summary": "CrowdSec recorded more than 20 scenario overflows in a rolling 15-minute window for at least 5 minutes. A source can trigger multiple scenarios; this is not a count of attackers or successful compromises. Traefik is configured to enforce ban decisions; verify bouncer polling and blocked responses separately."
     },
     "notification_settings": {
       "receiver": "unwired"
