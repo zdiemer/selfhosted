@@ -29,7 +29,7 @@ echo "==> Bundling the secrets CLI into the build context"
 OUT="$CLI" "${ROOT}/scripts/build-secrets-cli.sh" >/dev/null
 trap 'rm -f "$CLI"' EXIT INT TERM
 
-if command -v docker >/dev/null; then
+if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
   echo "==> Building ${IMAGE} (docker)"
   docker build -t "${IMAGE}" "${HERE}"
 
