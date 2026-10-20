@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.ts";
+import type { Recovery } from "./recovery.ts";
 
 /**
  * One agent's threads in a chat. Each backend keeps its own: switching to codex
@@ -54,6 +55,7 @@ export interface ChatState {
    * the *next* process can see it: a true here after a boot means the pod went
    * down mid-run, which is what the restart notice reports. */
   inFlight?: boolean;
+  recovery?: Recovery;
   /** A ScheduleWakeup the model armed and the gateway now owes it (wakeup.ts,
    * where this shape is PendingWakeup — duplicated here because importing it
    * would be a cycle). On the PVC for the same reason the session id is: a

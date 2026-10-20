@@ -16,6 +16,8 @@ import { armSchedules } from "./schedules.ts";
 import { rearmWakeups } from "./wakeup.ts";
 import { startSignal } from "./signal.ts";
 import { startWhatsApp } from "./whatsapp.ts";
+import { pollJobs } from "./jobs.ts";
+import { handleJobCompletion, resumeInterrupted } from "./router.ts";
 
 startHealth({signal:config.signal.enabled, whatsapp:config.whatsapp.enabled});
 
@@ -119,6 +121,8 @@ console.log(
 
 // Fires per surface as each one finishes connecting — sending before that is
 // sending into a socket that isn't open yet.
+// Recovery is independent of notice suppression and claims records before notices.
+onTransportReady(resumeInterrupted);
 announceRestart();
 // Wake-ups that were pending when the last process died re-arm per surface,
 // after its transport can actually deliver the reply. Overdue ones fire now.
@@ -127,5 +131,10 @@ announceRestart();
 onTransportReady((prefix) => {
   rearmWakeups(prefix);
   armSchedules(prefix);
+  const poll = () => void pollJobs(prefix, async (job, text) => {
+    await sendTo(job.chatKey, text);
+  }, handleJobCompletion);
+  poll();
+  setInterval(poll, 5000).unref();
 });
 installShutdownHandler();

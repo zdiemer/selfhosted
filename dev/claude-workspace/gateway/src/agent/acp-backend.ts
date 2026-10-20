@@ -159,11 +159,11 @@ async function runAcp(
   // front of the first message of a session instead — the same text, one turn
   // later than claude gets it. Only on a fresh session: repeating it every turn
   // would spend context saying the same thing.
-  const resumeId = run_?.session
+  const resumeId = run_?.resumeId ?? (run_?.session
     ? run_.fresh
       ? undefined
       : resumeIdForSlot(thread, run_.session)
-    : thread.sessionId;
+    : thread.sessionId);
 
   const parts = [contextPrefix, message].filter(Boolean);
   if (!resumeId && config.systemPrompt) parts.unshift(acpSystemPrompt());
@@ -229,6 +229,7 @@ async function runAcp(
     // Both session/new and session/load publish the agent's config options, so
     // a resumed thread can still change model.
     let options: ConfigOption[] | undefined;
+    if (run_?.resumeId && !client.capabilities.loadSession) throw new Error("backend cannot resume the interrupted session");
     if (resumeId && client.capabilities.loadSession) {
       try {
         const res = await client.request<{ configOptions?: ConfigOption[] }>(
@@ -237,7 +238,8 @@ async function runAcp(
         );
         sessionId = resumeId;
         options = res?.configOptions;
-      } catch {
+      } catch (error) {
+        if (run_?.resumeId) throw error;
         sessionId = undefined; // the thread is gone on their side; start over
       }
     }
@@ -375,6 +377,7 @@ function persistSession(
   sessionId: string,
   run_?: RunOverrides,
 ): void {
+  if (run_?.resumeId) return;
   const chat = getChat(chatKey);
   updateChat(
     chatKey,

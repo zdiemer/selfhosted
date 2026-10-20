@@ -70,7 +70,11 @@ data:
         fi
         FIRST="${IDS%% *}"
         MSG="Workspace back up."
+        {{- if .Values.happy.autoResume.enabled }}
+        MSG="${MSG} Restoring interrupted sessions automatically."
+        {{- else }}
         [[ -n "$FIRST" ]] && MSG="${MSG} Resume with: happy resume ${FIRST}"
+        {{- end }}
         # The relay is reached over the public URL and the daemon has only just
         # started; retry rather than lose the notice to a few seconds of DNS.
         for _ in 1 2 3 4 5 6; do

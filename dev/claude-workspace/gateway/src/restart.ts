@@ -1,8 +1,9 @@
 import { deliveryKey, isGroupChat, laneOf } from "./chat.ts";
-import { runningChats, stop } from "./claude.ts";
+import { runningChats, stop } from "./agent/index.ts";
+import { beginShutdown, isRecoveryClaimed } from "./recovery.ts";
 import { config } from "./config.ts";
 import { activeStatus } from "./router.ts";
-import { allChats, lastBootNotice, recordBootNotice, updateChat } from "./state.ts";
+import { getChat, allChats, lastBootNotice, recordBootNotice, updateChat } from "./state.ts";
 import { onTransportReady, sendTo } from "./transport.ts";
 
 // Redeploying this chart is a `Recreate` rollout: the old pod is torn down
@@ -15,6 +16,11 @@ const UP = "✓ gateway back up";
 const INTERRUPTED =
   "⚠ gateway restarted and your last run was cut off partway. " +
   'Say "continue" to pick it up from where it stopped.';
+
+function getChatRecovery(chatKey: string): boolean {
+  const r = getChat(chatKey).recovery;
+  return Boolean(r && isRecoveryClaimed(r.id));
+}
 
 /** Chats worth telling. Groups are excluded: a room does not need the bot's
  * deployment lifecycle, and nobody in it is waiting on a run. */
@@ -50,7 +56,9 @@ export function announceRestart(): void {
 
     for (const { chatKey, inFlight } of chats) {
       const lane = laneOf(chatKey);
-      if (lane) {
+      if (config.autoResume.enabled && getChatRecovery(chatKey)) {
+        void sendTo(chatKey, "↻ gateway back up — resuming the interrupted conversation");
+      } else if (lane) {
         // A schedule lane shares its chat's phone, which gets its own notice.
         // Only a cut-off run is news, and "continue" would be wrong advice:
         // typed into the chat it reaches the chat's thread, not this one.
@@ -85,6 +93,7 @@ export function installShutdownHandler(): void {
   const handle = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    beginShutdown();
     console.log(`${signal}: shutting down`);
 
     const chats = runningChats();

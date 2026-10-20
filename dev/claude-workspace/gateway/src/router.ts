@@ -1,4 +1,7 @@
 import fs from "node:fs";
+import { beginRecovery, patchRecovery, clearRecovery, takeRecoveries, recoveryPrompt, isShuttingDown, type Recovery } from "./recovery.ts";
+import { jobsFor, findJob, describeJob, jobLog, cancelJob, retryJobReport, type Job } from "./jobs.ts";
+import { nativeTasksFor, describeNativeTask, findNativeTask, taskDetails, taskActionPrompt, isActiveTask } from "./native-tasks.ts";
 import path from "node:path";
 import { attachmentPreamble, extractSendMarkers } from "./attachments.ts";
 import {
@@ -13,6 +16,7 @@ import { replyPrefix } from "./chunk.ts";
 import {
   type BackgroundTask,
   describeTasks,
+  jobContext,
   type RunOverrides,
   type RunResult,
 } from "./claude.ts";
@@ -50,6 +54,7 @@ import {
   getChat,
   listSessions,
   sessionName,
+  resumeIdForSlot,
   switchSession,
   threadOf,
   threadPatch,
@@ -94,6 +99,9 @@ const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 // ref rides along so the reaction can be moved from 🕒 to 👀 to ✅ on the
 // message that asked for it, rather than on whatever arrived most recently.
 interface Queued {
+  source?: "recovery" | "job" | "task";
+  recovery?: Recovery;
+  onComplete?: (handled: boolean) => void;
   body: string;
   ref?: MsgRef;
   /** Paths of files that came with this message. */
@@ -120,7 +128,8 @@ let droppedLog = 0;
 function enqueueScheduled(chatKey: string, item: Queued): void {
   const queue = queues.get(chatKey) ?? [];
   if (queue.length >= config.queueDepth) {
-    void sendTo(chatKey, "⚠ queue full — scheduled wake-up dropped");
+    item.onComplete?.(false);
+    if (!item.onComplete) void sendTo(chatKey, "⚠ queue full — scheduled wake-up dropped");
     return;
   }
   queue.push(item);
@@ -128,6 +137,35 @@ function enqueueScheduled(chatKey: string, item: Queued): void {
   if (queue.length === 1 && (!isRunning(chatKey) || isWaiting(chatKey)))
     void drain(chatKey);
 }
+
+/** Durable completion remains pending on disk until delivery finishes. */
+export function handleJobCompletion(job: Job, body: string): Promise<boolean> {
+  return new Promise((resolve) => enqueueScheduled(job.chatKey, {
+    body, wakeup: true, source: "job",
+    run: { cwd: job.cwd, session: job.session, resumeId: job.sessionId, agent: "claude" },
+    onComplete: resolve,
+  }));
+}
+const activeRecoveries = new Map<string, string>();
+export function resumeInterrupted(prefix: string): void {
+  for (const { chatKey, record, run } of takeRecoveries(prefix)) {
+    if (pendingWakeup(chatKey) && pendingWakeup(chatKey)!.at <= Date.now()) cancelWakeup(chatKey);
+    enqueueScheduled(chatKey, {
+      source: "recovery", recovery: record, run, wakeup: true,
+      body: recoveryPrompt(record, nativeTasksFor(chatKey).map(describeNativeTask).join("\n")),
+    });
+  }
+}
+function forgetRecovery(chatKey: string): void {
+  activeRecoveries.delete(chatKey);
+  clearRecovery(chatKey);
+}
+
+const completionCallbacks = new Map<string, (handled: boolean) => void>();
+// Status.begin() awaits network I/O before agent.run registers the process.
+// A second inbound message in that window must not start a competing CLI.
+const startingRuns = new Set<string>();
+const drainingRuns = new Set<string>();
 
 // A wake-up firing is a message from the schedule, not from the person. It
 // enters the same per-chat queue an inbound message does — so it hands off to
@@ -181,6 +219,7 @@ const NOTIFY_MARKER = /^\s*\[\[notify\]\]\s*$/i;
  * notification saying there was no reason to send a phone notification. So
  * the marker is what actually sends, and a turn that forgets it is silent. */
 function preambleFor(item: Queued): string {
+  if (item.source) return `[Gateway ${item.source} event for this originating conversation.]`;
   if (!item.wakeup) return "";
   if (!item.schedName) return WAKEUP_PREAMBLE;
   return (
@@ -462,7 +501,14 @@ export function handleInbound(
 const NO_CAPTION = "(the user sent this with no caption)";
 
 async function drain(chatKey: string): Promise<void> {
+  if (isShuttingDown() || startingRuns.has(chatKey)) return;
+  // A child can close while its last delivery is still in flight. Its router
+  // cleanup must finish before a new run takes ownership of this chat.
+  if (drainingRuns.has(chatKey) && !isWaiting(chatKey)) return;
   const queue = queues.get(chatKey);
+  while (queue?.[0]?.recovery && getChat(chatKey).recovery?.id !== queue[0].recovery?.id) {
+    queue.shift()?.onComplete?.(false);
+  }
   if (!queue?.length) return;
   // Re-entrancy guard. drain() used to be reachable only when nothing was
   // running; it is now also called for a parked run, so a mid-turn call (the
@@ -475,11 +521,16 @@ async function drain(chatKey: string): Promise<void> {
   // ending this one and killing the tasks with it.
   if (isWaiting(chatKey)) {
     const item = queue[0];
+    const parkedAgent = allBackends().find((backend) => backend.isWaiting(chatKey))!;
+    const targetAgent = item.run?.agent ?? backendFor(chatKey).id;
+    const targetSession = item.run?.resumeId ??
+      (item.run ? undefined : threadOf(getChat(chatKey), targetAgent).sessionId);
     // A pinned run is never handed to a parked one: the parked run is some
     // other thread's context (or last firing's session), and injecting a
     // scheduled prompt there is exactly the cross-thread leak pinning exists
     // to prevent. Wait the park out and try again.
-    if (item.run) {
+    if (parkedAgent.id !== targetAgent || !targetSession ||
+        jobContext(chatKey).sessionId !== targetSession) {
       setTimeout(() => void drain(chatKey), 60_000);
       return;
     }
@@ -490,13 +541,24 @@ async function drain(chatKey: string): Promise<void> {
       .filter(Boolean)
       .join("\n\n");
     if (
-      backendFor(chatKey).handOff(
+      parkedAgent.handOff(
         chatKey,
         item.body || NO_CAPTION,
         handOffPreamble,
       )
     ) {
       queue.shift();
+      const context = jobContext(chatKey);
+      const recovery = beginRecovery(chatKey, {
+        agent: parkedAgent.id, cwd: context.cwd, session: context.session,
+        sessionId: context.sessionId, prompt: item.body,
+        pendingUserReply: !item.quiet,
+      }, item.recovery);
+      activeRecoveries.set(chatKey, recovery.id);
+      if (item.onComplete) {
+        completionCallbacks.set(chatKey, item.onComplete);
+        scheduledRuns.delete(chatKey);
+      }
       if (item.quiet) quietTurn.add(chatKey);
       deliveryRefs.set(chatKey, item.ref);
       awaitingReply.set(chatKey, !item.wakeup && !item.quiet);
@@ -517,20 +579,41 @@ async function drain(chatKey: string): Promise<void> {
     setTimeout(() => void drain(chatKey), 3000);
     return;
   }
+  startingRuns.add(chatKey);
+  drainingRuns.add(chatKey);
   const item = queue.shift()!;
   const { body: message, ref, files, wakeup, run: runOverrides } = item;
   // Resolved once, here, rather than per use: a `!agent` landing mid-run must
   // not move this run's backend out from under it. The next message picks up
   // the new one.
-  const agent = backendFor(chatKey);
+  const agent = runOverrides?.agent ? backendById(runOverrides.agent) : backendFor(chatKey);
+  if (!agent) {
+    startingRuns.delete(chatKey);
+    drainingRuns.delete(chatKey);
+    item.onComplete?.(false);
+    await sendTo(chatKey, `Cannot resume: backend ${runOverrides?.agent} is not enabled.`);
+    return;
+  }
+  const currentThread = threadOf(getChat(chatKey), agent.id);
+  const recovery = beginRecovery(chatKey, {
+    agent: agent.id, cwd: runOverrides?.cwd ?? getChat(chatKey).cwd,
+    session: runOverrides?.session ?? sessionName(currentThread),
+    sessionId: runOverrides?.resumeId ?? (runOverrides?.fresh ? undefined :
+      runOverrides?.session ? resumeIdForSlot(currentThread, runOverrides.session) : currentThread.sessionId),
+    prompt: item.recovery?.prompt ?? message,
+    pendingUserReply: item.recovery?.pendingUserReply ?? !item.quiet,
+  }, item.recovery);
+  activeRecoveries.set(chatKey, recovery.id);
   const supports = agent.supportsFor(chatKey);
   // Say when the grant lapsed rather than just quietly prompting again — the
   // difference between "auto is off now" and "why is it suddenly asking me?".
   if (autoExpired(getChat(chatKey))) {
     updateChat(chatKey, { auto: false, autoUntil: undefined });
-    await sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again");
+    void sendTo(chatKey, "⏱ auto mode expired — mutations will prompt again")
+      .catch((error) => console.warn(`auto expiry notice: ${String(error)}`));
   }
   react(chatKey, ref, config.reactions.working);
+  if (item.onComplete) completionCallbacks.set(chatKey, item.onComplete);
   if (item.quiet) quietTurn.add(chatKey);
   deliveryRefs.set(chatKey, ref);
   awaitingReply.set(chatKey, !wakeup && !item.quiet);
@@ -559,9 +642,10 @@ async function drain(chatKey: string): Promise<void> {
     group || item.quiet || item.schedName ? undefined : createStatus(chatKey);
   if (status) {
     statuses.set(chatKey, status);
-    await status.begin();
   }
   try {
+    if (status) await status.begin();
+    if (isShuttingDown() || activeRecoveries.get(chatKey) !== recovery.id) return;
     // The attachment preamble goes in front of the group context, so the
     // files are the first thing the run reads about.
     const preamble = [
@@ -571,8 +655,12 @@ async function drain(chatKey: string): Promise<void> {
     ]
       .filter(Boolean)
       .join("\n\n");
-    const final = await agent.run(chatKey, message || NO_CAPTION, preamble, {
+    if (!item.recovery) patchRecovery(chatKey, recovery.id, { prompt: [preamble, message].filter(Boolean).join("\n\n") });
+    const runningPromise = agent.run(chatKey, message || NO_CAPTION, preamble, {
       onEvent: (ev) => {
+        const recoveryId = activeRecoveries.get(chatKey);
+        if (recoveryId && ev.session_id && getChat(chatKey).recovery?.sessionId !== ev.session_id)
+          patchRecovery(chatKey, recoveryId, { sessionId: ev.session_id });
         // A new turn on a run that already answered once — the CLI woke itself
         // for a finished background task, or was handed a second message. The
         // previous turn's status was collapsed into its receipt, so the
@@ -592,6 +680,7 @@ async function drain(chatKey: string): Promise<void> {
         status?.onEvent(ev);
       },
       onTurn: async (result, turn, pending) => {
+        if (isShuttingDown()) return;
         // A resumed thread answering "Prompt is too long" is dead: by the
         // time this text comes back the CLI's own rescue (auto-compact,
         // retry) has already failed, and nothing said to the thread can ever
@@ -650,8 +739,10 @@ async function drain(chatKey: string): Promise<void> {
         // reading "(no result text)" is noise on a phone. A turn that answers
         // a real message still goes out, so silence never eats a reply.
         const unprompted = !awaitingReply.get(chatKey);
+        // An empty intermediate turn has not answered the user. Preserve the
+        // reaction and completion acknowledgment until an actual answer lands.
+        if (!result.text.trim() && !result.isError) return;
         awaitingReply.set(chatKey, false);
-        if (!result.text && !result.isError && unprompted) return;
         // A gateway schedule fires on a clock, not because anyone asked, so
         // its text ships only when it says so with the marker. An error still
         // speaks: a run that crashed cannot be trusted to have opted in, and
@@ -673,6 +764,10 @@ async function drain(chatKey: string): Promise<void> {
           delivered = { ...result, text: marked.text };
         }
         await deliver(chatKey, delivered, group, runOverrides);
+        const recoveryId = activeRecoveries.get(chatKey);
+        if (recoveryId) patchRecovery(chatKey, recoveryId, { pendingUserReply: false });
+        completionCallbacks.get(chatKey)?.(!result.isError && Boolean(result.text.trim()));
+        completionCallbacks.delete(chatKey);
         // If this turn parked the run and something is queued behind it, the
         // park is a chance to answer it — handleInbound only kicks drain for
         // the first message, so a second one that arrived during the last park
@@ -680,6 +775,7 @@ async function drain(chatKey: string): Promise<void> {
         if (isWaiting(chatKey) && queues.get(chatKey)?.length)
           void drain(chatKey);
       },
+      onIdle: () => { if (queues.get(chatKey)?.length) void drain(chatKey); },
       onSelfWake: () => {
         // The parked child's own ScheduleWakeup timer fired in-process. The
         // gateway's persisted copy of that wake-up is spent — the wake turn's
@@ -699,6 +795,8 @@ async function drain(chatKey: string): Promise<void> {
         );
       },
     }, runOverrides);
+    startingRuns.delete(chatKey);
+    const final = await runningPromise;
     // A run that died mid-turn never reached onTurn, so nothing above has
     // collapsed its status. Left alone, the ticker keeps editing and rolling
     // "working…" messages for a process that is gone — which is what made a
@@ -706,7 +804,11 @@ async function drain(chatKey: string): Promise<void> {
     if (status?.active) await status.finish(false, final.aborted ? "stopped" : "");
     // And nothing has answered the message that started it. Say how it ended,
     // so the thread doesn't just go quiet (the old "claude exited 143").
+    if (isShuttingDown()) return;
     if (final.aborted) await deliver(chatKey, final, group, runOverrides);
+    else if (awaitingReply.get(chatKey)) await deliver(chatKey, {
+      ...final, text: "The agent ended without an answer. Your message was not completed.", isError: true,
+    }, group, runOverrides);
     // The dead-resume retry: the pointer is already cleared and the user
     // told, so put the message back at the head and let the finally's drain
     // run it again — this time with no session to resume.
@@ -718,6 +820,16 @@ async function drain(chatKey: string): Promise<void> {
     react(chatKey, deliveryRefs.get(chatKey), config.reactions.error);
     await sendTo(chatKey, `⚠ gateway error: ${String(err)}`);
   } finally {
+    if (!isShuttingDown()) {
+      const recoveryId = activeRecoveries.get(chatKey);
+      if (recoveryId) clearRecovery(chatKey, recoveryId);
+    }
+    activeRecoveries.delete(chatKey);
+    startingRuns.delete(chatKey);
+    drainingRuns.delete(chatKey);
+    completionCallbacks.get(chatKey)?.(false);
+    completionCallbacks.delete(chatKey);
+    awaitingReply.delete(chatKey);
     statuses.delete(chatKey);
     deliveryRefs.delete(chatKey);
     scheduledRuns.delete(chatKey);
@@ -821,7 +933,7 @@ async function deliver(
   // Only a 1:1 honours a send marker. In a group the members are not on the
   // personal allowlist and claude has no filesystem there anyway — but the
   // marker is parsed from text, and text is the one thing a room can steer.
-  const text = result.text || "(no result text)";
+  const text = result.text.trim() ? result.text : "The agent ended without an answer.";
   const outbound =
     config.attachments.enabled && !group
       ? extractSendMarkers(text)
@@ -942,6 +1054,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       );
     case "!new":
     case "!clear": {
+      forgetRecovery(chatKey);
       // Drops the session pointer, so the next message starts a run with no
       // history. The old transcript stays on the PVC under ~/.claude — this
       // forgets it, it doesn't delete it, and `!resume <id>` can still reach it.
@@ -1269,6 +1382,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
               : "usage: !stop (no schedules report here)",
           );
         const key = laneKey(chatKey, arg);
+        forgetRecovery(key);
         const killed = [
           stop(key) ? `${arg} run` : "",
           cancelWakeup(key) ? `${arg} wake-up` : "",
@@ -1283,6 +1397,7 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       // Also the no-model lever on a wake-up loop: the polite way out is the
       // model calling ScheduleWakeup with stop, but the impolite way must not
       // require a model that is misbehaving to cooperate.
+      forgetRecovery(chatKey);
       const killed = [
         stop(chatKey) ? agent.label.toLowerCase() : "",
         stopBash(chatKey) ? "bash" : "",
@@ -1339,6 +1454,48 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
       // its own remainder and !more just keeps working.
       return sendReply(chatKey, rest);
     }
+    case "!jobs":
+      return sendTo(chatKey, jobsFor(chatKey).slice(0, 20).map(describeJob).join("\n") || "no tracked jobs");
+    case "!tasks": {
+      const tasks = nativeTasksFor(chatKey);
+      const active = tasks.filter(isActiveTask);
+      const recent = tasks.filter((task) => !isActiveTask(task));
+      const shown = arg === "all" ? tasks.slice(0, 30) : [...active, ...recent.slice(0, 5)];
+      return sendReply(chatKey, shown.length
+        ? `${active.length} active · ${recent.length} finished/interrupted\n` +
+          shown.map(describeNativeTask).join("\n") + "\n!task @id for details · !tasks all for history"
+        : "no recorded CLI tasks");
+    }
+    case "!task": {
+      const [id, action] = arg.split(/\s+/);
+      try {
+        const task = findNativeTask(chatKey, id ?? "");
+        if (!action) return sendReply(chatKey, taskDetails(task));
+        if (action !== "cancel" && action !== "resume") return sendTo(chatKey, "usage: !task @id [cancel|resume]");
+        if (action === "resume" && isActiveTask(task)) return sendTo(chatKey, "Task is still active; resuming it would duplicate work.\n" + describeNativeTask(task));
+        if (action === "cancel" && !isActiveTask(task)) return sendTo(chatKey, "Task is already stopped.\n" + describeNativeTask(task));
+        if (!task.cwd) return sendTo(chatKey, "This older task record has no originating directory; open its conversation before resuming it.");
+        enqueueScheduled(task.chatKey, { body: taskActionPrompt(task, action), source: "task",
+          run: { agent: "claude", cwd: task.cwd, session: task.session, resumeId: task.sessionId } });
+        return sendTo(chatKey, `${action === "cancel" ? "Cancellation" : "Resume"} request queued for @${id.replace(/^@/, "")} in its originating conversation.`);
+      } catch (error) { return sendTo(chatKey, String(error)); }
+    }
+    case "!job": {
+      const [id, action] = arg.split(/\s+/);
+      try {
+        const job = findJob(chatKey, id);
+        if (action === "cancel") {
+          cancelJob(job);
+          return sendTo(chatKey, `Cancellation requested for ${job.id.slice(0, 8)}; !job ${job.id.slice(0, 8)} shows the outcome.`);
+        }
+        if (action === "report") {
+          retryJobReport(job);
+          return sendTo(chatKey, `Report queued for ${job.id.slice(0, 8)}; the command will not be rerun.`);
+        }
+        if (action) return sendTo(chatKey, "usage: !job <id> [cancel|report]");
+        return sendReply(chatKey, `${describeJob(job)}\ncwd: ${job.cwd}\n${jobLog(job) || "(no output yet)"}`);
+      } catch (error) { return sendTo(chatKey, String(error)); }
+    }
     case "!status": {
       const q = queues.get(chatKey)?.length ?? 0;
       const wake = pendingWakeup(chatKey);
@@ -1371,6 +1528,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
               ? [`lane ${lane}: ${parts.join(", ")} (!stop ${lane})`]
               : [];
           }),
+          ...nativeTasksFor(chatKey).filter(isActiveTask).map(describeNativeTask),
+          `jobs: ${jobsFor(chatKey).length} tracked (!jobs; !job <id> [cancel])`,
           `cwd: ${chat.cwd}`,
           `agent: ${agent.label}${
             allBackends().length > 1 ? " (!agent to switch)" : ""
@@ -1420,8 +1579,8 @@ async function handleCommand(chatKey: string, body: string): Promise<unknown> {
           "!more shows the rest of a reply that was cut short\n" +
           "!use <name> / !sessions — several threads in one chat\n" +
           "!bash <cmd> shell in the current cwd, no model · !usage [days] tokens\n" +
-          "Long jobs run in the background: you get a reply now and a second " +
-          "one when they finish. !status shows what a chat is parked on\n" +
+          "!jobs / !job <id> [cancel] — durable jobs, logs, and explicit cancellation. !stop stops the conversation, not these jobs.\n" +
+          "!tasks [all] / !task @id [cancel|resume] — agent progress, details and recovery\n" +
           "!lock locks the chat now; a 6-digit code unlocks it. !bash and !auto " +
           "need a code from the last few minutes\n" +
           "During a permission prompt: 1 allow · 2 deny · 3 allow all like it\n" +

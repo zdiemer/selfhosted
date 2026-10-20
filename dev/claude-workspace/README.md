@@ -836,8 +836,42 @@ brokerage MCP) authenticates identically headless. `--strict-mcp-config`
 still stands: project servers are merged in deliberately, the global block
 stays interactive-only, and the `gw` approval relay always wins its name.
 
-**Background work survives the answer.** A long job — a build, a migration, a
-test suite — can be started as a background task, and Claude Code wakes *itself*
+**Tracked shell jobs.** Long builds, migrations and test suites use
+`mcp__gw__job_start` (with the same shell approval policy as Bash). A detached
+worker owns the command, independently of the Claude process. `!jobs` lists
+recent jobs; `!job <id>` shows status and the log tail; `!job <id> cancel`
+requests cancellation of the command's process group. IDs can be abbreviated
+when unique. `!stop` stops the conversation, not these jobs.
+
+Job specifications, statuses, output and delivery receipts live under
+`$GW_STATE_DIR/jobs/<id>/` on the PVC. Logs are capped at 10 MiB per job, with
+eight active jobs allowed per chat. Completed records are retained for manual
+inspection; they are not automatically pruned. A worker survives the launching
+conversation or gateway *process* exiting, but **not a container/pod restart**.
+The next gateway reconciles missing workers as interrupted using boot ID and
+process start time, rather than trusting reusable PIDs. Commands are never
+automatically replayed. Jobs may name a checkpoint file that their command
+maintains with progress and safe resume instructions.
+
+Completion first sends a job receipt, then queues a model turn against the
+exact originating Claude transcript. Switching chat sessions does not redirect
+it or change the selected session. Delivery is at-least-once: failed sends or
+turns remain pending, and a crash after send but before acknowledgment may
+repeat the same job ID. The job itself is not rerun. Review logs/checkpoints
+before asking to resume interrupted work. Model handling gets three attempts
+with backoff; after that the pending outcome remains available and
+`!job <id> report` explicitly retries the report without rerunning the command.
+These MCP tools currently belong to
+the Claude backend; ACP backends retain their foreground-only contract.
+
+**CLI-managed background tasks.** Subagents still depend on the parent CLI.
+`!tasks` shows active tasks and recent outcomes with stable short aliases,
+elapsed time, tool usage and progress. `!tasks all` includes older history;
+`!task @alias` shows session IDs, output paths and details. Add `cancel` or
+`resume` to ask the originating conversation to stop or recover that task.
+The harness can inspect the same records with `task_list` and `task_read`.
+Interrupted records survive a restart. The harness asks agents to save checkpoints
+and transcript/agent IDs; recovery uses those checkpoints rather than restoring an agent's in-memory state. Claude Code wakes *itself*
 when one reports back. It can only do that while its process is still up, and
 `claude -p <prompt>` closes stdin, which the CLI reads as "that was the whole
 conversation": it tore the run down at end of turn and killed the task with it
@@ -862,6 +896,11 @@ one registered stops the old one first, and a CLI still up
 `messaging.background.exitGraceSeconds` (60) after its input ended is stopped.
 Two CLIs resuming one session append to the same transcript and act on the same
 wake-ups: on 2026-10-19 both copies of a chat merged the same branch and pushed.
+Prompts carry UUIDs and use `--replay-user-messages` acknowledgments. A stale
+result emitted during resume cannot answer a prompt the CLI has not consumed,
+close its input, or start the shutdown timer. A continuation interrupted after
+an earlier successful reply is reported as interrupted, rather than returning
+the cached success.
 
 A run has **no wall-clock timeout**. The old 30-minute cap killed exactly the
 runs that were working — a long build, a migration, a research sweep, or one
@@ -896,13 +935,21 @@ both ends:
   time-boxed (`messaging.restartNotice.shutdownGraceSeconds`) — the pod's
   termination grace period is the real ceiling and being killed mid-send is a
   normal outcome here, not something to handle.
-- On boot, once each transport is actually connected, chats active in the last
-  `restartNotice.withinMinutes` (default 60) get `✓ gateway back up`. A chat
-  whose run was cut off is told that instead, and can say "continue" to pick it
-  up: the session id was persisted at run start, so the partial transcript on
-  the PVC is still reachable through `--resume`. Suppressed entirely if the
-  last notice was under `dedupeMinutes` ago, so a crash-looping pod doesn't
-  become a message per restart. Groups are never notified.
+- On boot, once each transport connects, `messaging.autoResume.enabled`
+  (default true) resumes interrupted conversations against their original
+  backend, working directory and transcript, including parked background work.
+  The recovery prompt checks files, task status and checkpoints before continuing;
+  it does not blindly rerun commands. Explicit `!stop` and `!clear` cancel recovery.
+  Groups are excluded. Default limits are three recovery attempts and 24 hours
+  (`maxAttempts`, `maxAgeHours`); beyond those, resume manually.
+- Restart notices remain independently controlled by `messaging.restartNotice`.
+  Recent chats get a boot notice, and recovering chats are told they are resuming.
+  Notice deduplication never suppresses recovery. Disabling auto-resume retains
+  the manual “continue” behavior.
+
+Recovery needs the PVC state and native transcripts. A container restart still
+kills its shell workers; the resumed conversation inspects their interrupted job
+records before deciding what work remains.
 
 ### Group chats
 
@@ -1192,20 +1239,29 @@ instance is scoped to.
     interactive `happy` defers to the running daemon. This holds only while
     every container runs the same happy version (they share one image) — a
     mismatch makes them kill and replace each other.
-  - **Restarts** (`happy.restartNotice.enabled`): a deploy kills phone-spawned
-    sessions, and they used to just vanish from the app. A `preStop` hook now
-    pushes "restarting for a deploy" via `happy notify`, and the next boot
-    pushes that it's back with a `happy resume <id>` for the session that
-    dropped. It only fires when a session was genuinely live — the hook filters
-    `sessions.json` on `lifecycleState: running` **and** `host == $HOSTNAME`,
-    because every record left by a dead pod still says `running` (the process
-    never got to update it), so without the host check a quiet restart would
-    report twenty interrupted sessions. Liveness is recorded in a marker at
-    shutdown rather than inferred at boot, which also means SIGKILL, an
-    eviction or a node failure skips preStop and you get no notice — best
-    effort, deliberately. The script is a ConfigMap mounted at
-    `/etc/claude-workspace`, so it changes with a `helm upgrade` rather than an
-    image rebuild.
+  - **Automatic recovery** (`happy.autoResume.enabled`, default true): sessions
+    observed in either `term` or `happy-daemon` reconnect after container restart,
+    preserving both the Happy conversation ID and Claude/Codex transcript ID.
+    Idle sessions reconnect without a prompt; working sessions receive a prompt
+    to inspect progress and continue. Terminal sessions return as remote sessions;
+    this does not recreate their tmux interface. Other Happy backends are not yet
+    supported by this recovery path.
+  - A heartbeat and per-container recovery ledger under
+    `~/.happy/workspace-recovery` distinguish live sessions from historical entries.
+    Explicitly stopped/archived sessions are not relaunched. Default limits are
+    three consecutive attempts and 24 hours (`happy.autoResume.maxAttempts` and
+    `maxAgeHours`). Existing encryption material stays in Happy's `sessions.json`.
+    First upgrade can recover sessions listed by the old graceful-shutdown marker;
+    an unclean restart before the hook was installed has no reliable live inventory.
+  - Recovery requires a **full workspace image rebuild**, not the gateway-only
+    health image. The build patches a narrowly scoped callback in pinned Happy
+    1.2.5 and fails if the expected version or hook changes. A supervisor runs in
+    both containers; retries retain the original identity and never create a fresh
+    conversation as a fallback.
+  - **Restart notices** (`happy.restartNotice.enabled`) remain separate. The
+    ConfigMap preStop hook sends a best-effort deploy notice; the next boot reports
+    automatic restoration, or manual `happy resume` instructions when recovery is
+    disabled. Abrupt termination can skip this notice without disabling recovery.
   - Turn it off with `happy.daemon.enabled: false` (drops the container); the
     old manual `happy daemon start` from `/term` still works if you do.
 - The chart holds no secrets at all, so `values.local.yaml` is just the

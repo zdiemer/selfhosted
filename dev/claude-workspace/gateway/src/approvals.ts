@@ -1,10 +1,13 @@
 import fs from "node:fs";
+import { nativeTasksFor, describeNativeTask, findNativeTask, taskDetails } from "./native-tasks.ts";
 import net from "node:net";
 import path from "node:path";
 import { deliveryKey, isGroupChat, laneOf } from "./chat.ts";
 import { approvalSocketPath, config } from "./config.ts";
 import { autoActive, getChat, updateChat } from "./state.ts";
 import type { MsgRef } from "./transport.ts";
+import { jobContext } from "./claude.ts";
+import { startJob, jobsFor, findJob, cancelJob, describeJob, jobLog } from "./jobs.ts";
 
 // The approve-mcp stdio server (grandchild of this process, via claude) dials
 // this unix socket with {chatKey, toolName, input} and blocks until the human
@@ -351,18 +354,66 @@ export async function startApprovalServer(
       buf += d.toString("utf8");
       const nl = buf.indexOf("\n");
       if (nl < 0) return;
-      let req: { chatKey: string; toolName: string; input: unknown };
+      let req: { chatKey: string; toolName: string; input: unknown; operation?: string };
       try {
         req = JSON.parse(buf.slice(0, nl));
       } catch {
         sock.end();
         return;
       }
-      handleRequest(req, sock, sendPrompt);
+      // One request per connection; fragmented or repeated data cannot launch
+      // a command twice.
+      sock.removeAllListeners("data");
+      if (req.operation === "job") {
+        void handleJobRequest(req, sock);
+      } else handleRequest(req, sock, sendPrompt);
     });
     sock.on("error", () => {});
   });
   server.listen(approvalSocketPath);
+}
+
+async function handleJobRequest(
+  req: { chatKey: string; toolName: string; input: unknown },
+  sock: net.Socket,
+): Promise<void> {
+  try {
+    if (isGroupChat(req.chatKey)) throw new Error("jobs are unavailable in groups");
+    const input = req.input as { command?: string; title?: string; checkpoint?: string; id?: string };
+    let result: unknown;
+    if (req.toolName === "start") {
+      if (getChat(req.chatKey).plan) throw new Error("cannot start jobs in plan mode");
+      if (typeof input.command !== "string" || typeof input.title !== "string")
+        throw new Error("command and title required");
+      const context = jobContext(req.chatKey);
+      const approval = requestApproval(req.chatKey, "Bash", { command: input.command });
+      sock.on("close", approval.abandon);
+      const verdict = await approval.promise;
+      if (sock.destroyed) return;
+      if (verdict.behavior !== "allow") throw new Error("job command was denied");
+      // Bind to the originating run, not the chat's possibly switched cwd.
+      result = startJob({ chatKey: req.chatKey, ...context,
+        title: input.title, command: input.command,
+        checkpoint: typeof input.checkpoint === "string" ? input.checkpoint : undefined });
+    } else if (req.toolName === "tasks") {
+      result = nativeTasksFor(req.chatKey).slice(0, 30).map(describeNativeTask);
+    } else if (req.toolName === "task") {
+      result = taskDetails(findNativeTask(req.chatKey, String(input.id ?? "")));
+    } else if (req.toolName === "list") {
+      result = jobsFor(req.chatKey).slice(0, 30).map(describeJob);
+    } else {
+      if (typeof input.id !== "string") throw new Error("job ID required");
+      const job = findJob(req.chatKey, input.id);
+      if (req.toolName === "cancel") {
+        cancelJob(job);
+        result = { id: job.id, cancellationRequested: true };
+      } else if (req.toolName === "read") result = { job, status: describeJob(job), output: jobLog(job) };
+      else throw new Error("unknown job operation");
+    }
+    sock.end(JSON.stringify(result) + "\n");
+  } catch (error) {
+    if (!sock.destroyed) sock.end(JSON.stringify({ error: String(error) }) + "\n");
+  }
 }
 
 /** Close the listening socket. Only tests need this — the gateway itself keeps

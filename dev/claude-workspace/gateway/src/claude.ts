@@ -1,5 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { trackNativeTasks, interruptNativeTasks } from "./native-tasks.ts";
 import path from "node:path";
 import { acquireSlot, releaseSlot } from "./agent/slots.ts";
 import { isGroupChat } from "./chat.ts";
@@ -10,12 +12,16 @@ import {
   resumeIdForSlot,
   sessionPatchForSlot,
   updateChat,
+  sessionName,
 } from "./state.ts";
 
 /** Per-run overrides for a schedule-fired run (schedules.ts): a pinned cwd
  * and session slot, so a recurring job never runs in — or writes its session
  * id over — whatever the chat happens to be pointed at. */
 export interface RunOverrides {
+  /** Exact originating transcript for a durable completion; never repoints the chat. */
+  resumeId?: string;
+  agent?: "claude" | "codex" | "gemini" | "muse";
   cwd?: string;
   /** Named session slot to resume and to record new ids under. */
   session?: string;
@@ -27,6 +33,8 @@ export interface RunOverrides {
 
 export interface RunResult {
   text: string;
+  /** False for a background turn before the submitted prompt was acknowledged. */
+  answersPrompt?: boolean;
   sessionId?: string;
   isError: boolean;
   /** What this turn's confirmed ScheduleWakeup call asked for, if it made one.
@@ -54,6 +62,8 @@ export interface BackgroundTask {
  * gateway reads are typed; the stream carries a good deal more. */
 export interface StreamEvent {
   type?: string;
+  uuid?: string;
+  isReplay?: boolean;
   subtype?: string;
   session_id?: string;
   message?: {
@@ -75,10 +85,20 @@ export interface StreamEvent {
    * time, so this replaces what we knew rather than amending it. Empty means
    * nothing is outstanding. */
   tasks?: BackgroundTask[];
+  task_id?: string;
+  status?: string;
+  output_file?: string;
+  description?: string;
+  task_type?: string;
+  summary?: string;
+  last_tool_name?: string;
   /** Present on the `result` event. Drives the token/cost tail on the status
    * receipt, so a run's cost is visible without reaching for !usage. */
   total_cost_usd?: number;
   usage?: {
+    total_tokens?: number;
+    tool_uses?: number;
+    duration_ms?: number;
     input_tokens?: number;
     output_tokens?: number;
     cache_creation_input_tokens?: number;
@@ -96,6 +116,8 @@ export interface RunHooks {
    * The gateway's persisted copy of that wake-up is spent and must be
    * discarded, or the same prompt fires a second time from the outside. */
   onSelfWake?(): void;
+  /** Delivery finished and the process is now available for a queued handoff. */
+  onIdle?(): void;
   /**
    * One completed turn. Called for the answer to the message that started the
    * run AND for every later turn the CLI wakes itself into — a background task
@@ -119,6 +141,11 @@ export interface RunHooks {
  */
 interface LiveRun {
   child: ChildProcess;
+  sessionId?: string;
+  cwd: string;
+  slot: string;
+  pendingPrompts: Set<string>;
+  acknowledgedPrompt: boolean;
   /** Outstanding background work, as of the last `background_tasks_changed`. */
   tasks: BackgroundTask[];
   /** A `task_notification` landed and no turn has started to consume it yet.
@@ -148,9 +175,9 @@ const running = new Map<string, LiveRun>();
  * user message per line. Writing rather than passing `-p <prompt>` is what
  * keeps stdin open, and an open stdin is what keeps the process alive past its
  * first answer. */
-function userMessage(text: string): string {
+function userMessage(text: string, uuid: string): string {
   return (
-    JSON.stringify({ type: "user", message: { role: "user", content: text } }) +
+    JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } }) +
     "\n"
   );
 }
@@ -259,6 +286,12 @@ export function describeTasks(tasks: BackgroundTask[]): string {
   return `${tasks.length} background tasks`;
 }
 
+export function jobContext(chatKey: string) {
+  const run = running.get(chatKey);
+  if (!run?.sessionId) throw new Error("no live originating session");
+  return { sessionId: run.sessionId, cwd: run.cwd, session: run.slot };
+}
+
 export function isRunning(chatKey: string): boolean {
   return running.has(chatKey);
 }
@@ -279,7 +312,7 @@ export function hasLiveWakeup(chatKey: string): boolean {
 /** What a parked run is waiting on. Empty for anything else. */
 export function waitingOn(chatKey: string): BackgroundTask[] {
   const run = running.get(chatKey);
-  return run?.waiting ? run.tasks : [];
+  return run?.tasks ?? [];
 }
 
 export function stop(chatKey: string): boolean {
@@ -324,7 +357,9 @@ export function handOff(
   }
   leaveWait(run);
   run.chain = 0;
-  run.child.stdin.write(userMessage(prompt));
+  const uuid = randomUUID();
+  run.pendingPrompts.add(uuid);
+  run.child.stdin.write(userMessage(prompt, uuid));
   return true;
 }
 
@@ -455,6 +490,7 @@ export async function runClaude(
     "--output-format",
     "stream-json",
     "--verbose",
+    "--replay-user-messages",
   ];
   args.push("--model", run_?.model ?? chat.model ?? config.model);
   args.push("--effort", run_?.effort ?? chat.effort ?? config.effort);
@@ -467,11 +503,11 @@ export async function runClaude(
   if (systemPrompt) args.push("--append-system-prompt", systemPrompt);
   // A pinned run resumes its own slot's session — or nothing, when the
   // schedule wants a fresh one per firing — never the chat's live thread.
-  const resumeId = run_?.session
+  const resumeId = run_?.resumeId ?? (run_?.session
     ? run_.fresh
       ? undefined
       : resumeIdForSlot(chat, run_.session)  // claude's thread is the top level
-    : chat.sessionId;
+    : chat.sessionId);
   if (resumeId) args.push("--resume", resumeId);
   if (group) {
     // Groups never get auto mode and never get an interactive prompt: the room
@@ -512,7 +548,7 @@ export async function runClaude(
       "--allowedTools",
       // Still worth passing under auto: a read-only tool answered here never
       // makes the socket round trip at all.
-      config.allowedTools,
+      config.allowedTools + ",mcp__gw__job_start,mcp__gw__job_list,mcp__gw__job_read,mcp__gw__job_cancel,mcp__gw__task_list,mcp__gw__task_read",
     );
     // Plan mode outranks auto (the router keeps them from being set together,
     // but state written by an older build could have both). Claude refuses
@@ -548,6 +584,9 @@ export async function runClaude(
       });
       const run: LiveRun = {
         child,
+        sessionId: resumeId, cwd, slot: run_?.session ?? sessionName(chat),
+        pendingPrompts: new Set(),
+        acknowledgedPrompt: false,
         tasks: [],
         wakePending: false,
         turns: 0,
@@ -563,6 +602,7 @@ export async function runClaude(
       );
 
       let err = "";
+      child.on("error", (error) => { err += `spawn: ${error.message}\n`; });
       let result: RunResult | null = null;
       let sessionId: string | undefined;
       let lastAssistant = "";
@@ -577,7 +617,10 @@ export async function runClaude(
       child.stdin!.on("error", (e) => {
         err += `stdin: ${(e as Error).message}\n`;
       });
-      child.stdin!.write(userMessage(prompt));
+      const promptId = randomUUID();
+      run.pendingPrompts.add(promptId);
+      child.stdin!.write(userMessage(prompt, promptId));
+      let turnActive = false;
 
       /** Stop feeding the process, which is how it is asked to exit. A CLI
        * that is still up a minute later is told again, harder: it can no
@@ -639,10 +682,12 @@ export async function runClaude(
         // already on the PVC, we just have to remember its id.
         if (ev.session_id && ev.session_id !== sessionId) {
           sessionId = ev.session_id;
+          run.sessionId = sessionId;
           // A pinned run's id goes to its slot; the chat's live pointer is
           // someone else's thread. Re-fetch the chat: the user may have
           // switched sessions since this run started.
-          if (run_?.session)
+          if (run_?.resumeId) { /* Completion must not repoint a switched thread. */ }
+          else if (run_?.session)
             updateChat(
               chatKey,
               sessionPatchForSlot(
@@ -655,6 +700,8 @@ export async function runClaude(
           else updateChat(chatKey, { sessionId });
         }
         if (ev.type === "system") {
+          if (sessionId && child.pid) trackNativeTasks(chatKey, sessionId, child.pid, ev,
+            { cwd, session: run.slot });
           // The whole outstanding list, every time — assign, don't merge.
           if (ev.subtype === "background_tasks_changed") run.tasks = ev.tasks ?? [];
           else if (ev.subtype === "task_notification") run.wakePending = true;
@@ -671,15 +718,34 @@ export async function runClaude(
               hooks.onSelfWake?.();
             }
             run.wakePending = false;
-            if (run.turns > 0) leaveWait(run);
+            if (run.turns > 0) { leaveWait(run); turnActive = true; }
           }
+        }
+        if (ev.type === "user" && ev.uuid && run.pendingPrompts.delete(ev.uuid)) {
+          run.acknowledgedPrompt = true;
+          turnActive = true;
+          leaveWait(run);
+        }
+        if (ev.type === "assistant") {
+          turnActive = true;
+          run.wakePending = false;
+          leaveWait(run);
         }
         const spoke = assistantText(ev);
         if (spoke) lastAssistant = spoke;
         wakeups.onEvent(ev);
         run.wakeupAt = wakeups.pendingAt;
         if (ev.type === "result") {
+          // Resume can finish an old task notification BEFORE consuming stdin.
+          // It must neither answer that prompt nor close the input carrying it.
+          if (run.pendingPrompts.size && !run.acknowledgedPrompt && !ev.is_error) {
+            lastAssistant = "";
+            turnActive = false;
+            return;
+          }
+          if (ev.is_error) run.pendingPrompts.clear();
           result = {
+            answersPrompt: run.acknowledgedPrompt,
             text: pickResultText(ev.result, lastAssistant),
             sessionId: ev.session_id ?? sessionId,
             isError: Boolean(ev.is_error),
@@ -688,24 +754,33 @@ export async function runClaude(
           // The next turn writes its own words; carrying these over would let
           // a wake-up with no text repeat the previous turn's answer.
           lastAssistant = "";
+          turnActive = false;
+          run.acknowledgedPrompt = false;
           run.turns++;
           run.chain++;
           const turn = run.turns;
           const delivered = result;
           const pending = run.tasks;
-          deliveries = deliveries.then(() =>
-            hooks.onTurn?.(delivered, turn, pending),
-          );
-
-          // Is there more coming? `tasks` is the CLI's own outstanding list;
-          // `wakePending` covers the gap where it has already cleared the list
-          // but not yet started the turn it cleared it for.
-          const more = pending.length > 0 || run.wakePending;
-          if (!more || !config.background.waitMs) endInput("nothing pending");
-          else if (run.chain >= chainLimit(pending)) {
-            endInput("turn limit");
-            if (pending.length) hooks.onAbandon?.(pending, "turns");
-          } else enterWait();
+          // Do not expose a parked process until its reply is delivered:
+          // a handoff must not steal the old turn's reaction or callback.
+          deliveries = deliveries.then(async () => {
+            await hooks.onTurn?.(delivered, turn, pending);
+            if (turn !== run.turns || turnActive || child.exitCode !== null || child.signalCode !== null) return;
+            const more = run.tasks.length > 0 || run.wakePending || run.pendingPrompts.size > 0;
+            if (!more || !config.background.waitMs) endInput("nothing pending");
+            else if (run.chain >= chainLimit(run.tasks)) {
+              endInput("turn limit");
+              if (run.tasks.length) hooks.onAbandon?.(run.tasks, "turns");
+            } else {
+              enterWait();
+              hooks.onIdle?.();
+            }
+          }).catch((error) => {
+            stopChild(child);
+            throw error;
+          });
+          // Keep a rejection observed until close turns it into a RunResult.
+          void deliveries.catch(() => {});
         }
         try {
           hooks.onEvent?.(ev);
@@ -737,12 +812,14 @@ export async function runClaude(
             (signal ? `, ${signal}` : "") + `, ${run.turns} turns)`,
         );
         if (buf.trim()) handleLine(buf);
+        const interruptedTasks = child.pid ? interruptNativeTasks(chatKey, child.pid) : 0;
         // No result event means the run died before finishing — killed by
         // !stop, the timeout, or a SIGTERM from a redeploy. Say what happened
         // rather than hand back an empty answer.
-        const final: RunResult = result ?? {
+        const final: RunResult = (!turnActive && !run.pendingPrompts.size && !interruptedTasks ? result : null) ?? {
           text:
-            `claude exited ${code}` +
+            `Claude was interrupted before completing its work (exit ${code}${signal ? `, ${signal}` : ""}).` +
+            (interruptedTasks ? ` ${interruptedTasks} CLI task(s) interrupted; !tasks shows their records.` : "") +
             (err.trim() ? `\n${err.trim().slice(-800)}` : ""),
           sessionId,
           isError: true,
@@ -750,7 +827,9 @@ export async function runClaude(
         };
         // Not before the last turn's reply has actually gone out: the caller
         // takes this as "the run is over" and starts draining the queue.
-        void deliveries.then(() => resolve(final));
+        void deliveries.then(() => resolve(final), (error) => resolve({
+          text: `Reply delivery failed: ${String(error)}`, sessionId, isError: true, aborted: true,
+        }));
       });
     });
   } finally {

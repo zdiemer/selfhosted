@@ -203,7 +203,9 @@ image:
   #      on its way out no longer unregisters the run that replaced it, and a
   #      CLI still up exitGraceSeconds after its input ended is stopped (two
   #      CLIs resuming one session both merged and pushed on 2026-10-19).
-  tag: "v41"
+  # v42: durable jobs, task tracking, and gateway/Happy restart recovery.
+  # Requires a full image build (includes the pinned Happy recovery hook).
+  tag: "v42"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
@@ -386,6 +388,12 @@ happy:
     # container, so it needs claude-sized memory headroom (resources.happyDaemon
     # below), not just the daemon's own tiny footprint.
     enabled: true
+  autoResume:
+    # Restore only sessions observed live before termination. The Happy hook
+    # preserves conversation IDs and reconnect credentials stay in ~/.happy.
+    enabled: true
+    maxAttempts: 3
+    maxAgeHours: 24
   restartNotice:
     # Push to the phone when a deploy takes the daemon down and when it comes
     # back, via `happy notify`. Because phone-spawned sessions are children of
@@ -808,6 +816,11 @@ messaging:
     working: "👀"
     done: "✅"
     error: "❌"
+  autoResume:
+    # Resume the exact interrupted backend/transcript; notice dedupe is separate.
+    enabled: true
+    maxAttempts: 3
+    maxAgeHours: 24
   restartNotice:
     # Redeploying this chart is a `Recreate` rollout — the pod is torn down
     # before the new one pulls, so a run in flight just stops. Since a chat can

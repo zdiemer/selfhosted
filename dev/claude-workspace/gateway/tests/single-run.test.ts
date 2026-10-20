@@ -29,6 +29,8 @@ afterAll(() => {
 afterEach(() => {
   delete process.env.FAKE_CLAUDE_PARK;
   delete process.env.FAKE_CLAUDE_LINGER;
+  delete process.env.FAKE_CLAUDE_STALE;
+  delete process.env.FAKE_CLAUDE_CRASH_CONTINUATION;
   Object.assign(config.background, savedBackground);
 });
 
@@ -92,4 +94,32 @@ test("a second run for a chat stops the first and stays registered", async () =>
   expect(isRunning(key)).toBe(true);
   await second;
   expect(isRunning(key)).toBe(false);
+});
+
+test("a stale empty result before prompt acknowledgment neither replies nor closes stdin", async () => {
+  process.env.FAKE_CLAUDE_STALE = "1";
+  Object.assign(config.background, { exitGraceMs: 30 });
+  const replies: string[] = [];
+  const result = await runClaude(chat(), "answer this message", "", {
+    onTurn: async (result) => { replies.push(result.text); },
+  });
+  expect(replies).toEqual(["ok"]);
+  expect(result.aborted).not.toBe(true);
+});
+
+test("a continuation crash cannot return an earlier successful result", async () => {
+  process.env.FAKE_CLAUDE_PARK = "1";
+  process.env.FAKE_CLAUDE_CRASH_CONTINUATION = "1";
+  const result = await runClaude(chat(), "work");
+  expect(result.isError).toBe(true);
+  expect(result.aborted).toBe(true);
+  expect(result.text).toContain("interrupted");
+});
+
+test("a delivery failure settles the run instead of leaving it hung", async () => {
+  const result = await runClaude(chat(), "hello", "", {
+    onTurn: async () => { throw new Error("transport offline"); },
+  });
+  expect(result.isError).toBe(true);
+  expect(result.text).toContain("transport offline");
 });

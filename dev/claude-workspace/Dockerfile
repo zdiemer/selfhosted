@@ -218,6 +218,9 @@ RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.5 "bun@${BUN_VERSI
         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
  && npm cache clean --force
 
+COPY recovery /opt/workspace-recovery
+RUN python3 /opt/workspace-recovery/patch-happy.py /usr/local/lib/node_modules/happy
+
 # Vendor bakery at a pinned ref and install its deps at build time. The pod's
 # rootfs is read-only for the other surfaces, but the bakery containers run
 # with readOnlyRootFilesystem:false (bun/vite write transpile caches into the

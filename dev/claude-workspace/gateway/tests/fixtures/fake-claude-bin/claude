@@ -9,14 +9,20 @@ import fs from "node:fs";
 const log = process.env.FAKE_CLAUDE_LOG;
 if (log) fs.appendFileSync(log, `start ${process.pid}\n`);
 const say = (ev: object) => process.stdout.write(JSON.stringify(ev) + "\n");
-const session = "fake-session";
+const resume = process.argv.indexOf("--resume");
+const session = resume >= 0 ? process.argv[resume + 1] : "fake-session";
 
 let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
   let nl: number;
   while ((nl = buf.indexOf("\n")) >= 0) {
+    const input = JSON.parse(buf.slice(0, nl));
     buf = buf.slice(nl + 1);
+    if (process.env.FAKE_CLAUDE_STALE === "1")
+      say({ type: "result", result: "", session_id: session });
+    const respond = () => {
+    say({ ...input, isReplay: true });
     say({ type: "system", subtype: "init", session_id: session });
     if (process.env.FAKE_CLAUDE_PARK === "1")
       say({
@@ -26,6 +32,13 @@ process.stdin.on("data", (d) => {
         tasks: [{ task_id: "b1", task_type: "local_bash", description: "build" }],
       });
     say({ type: "result", result: "ok", session_id: session, is_error: false });
+    if (process.env.FAKE_CLAUDE_CRASH_CONTINUATION === "1") setTimeout(() => {
+      say({ type: "assistant", message: { content: [{ type: "text", text: "continuing work" }] } });
+      setTimeout(() => process.exit(7), 20);
+    }, 20);
+    };
+    if (process.env.FAKE_CLAUDE_STALE === "1") setTimeout(respond, 100);
+    else respond();
   }
 });
 process.stdin.on("end", () => {

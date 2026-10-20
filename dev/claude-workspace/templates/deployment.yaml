@@ -157,6 +157,20 @@ spec:
           # the ingress route /term here with no StripPrefix middleware, so
           # the websocket URL survives Traefik and the Cloudflare tunnel
           # unchanged.
+          {{- if .Values.happy.autoResume.enabled }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              python3 /opt/workspace-recovery/happy-recovery.py &
+              recovery_pid=$!
+              terminal_pid=""
+              trap 'kill -TERM "$recovery_pid" 2>/dev/null; wait "$recovery_pid"; [ -z "$terminal_pid" ] || kill -TERM "$terminal_pid" 2>/dev/null; exit 0' TERM INT
+              ttyd -W -p {{ .Values.service.termPort }} --base-path /term tmux new -A -s main &
+              terminal_pid=$!
+              wait "$terminal_pid"
+              kill -TERM "$recovery_pid" 2>/dev/null
+              wait "$recovery_pid"
+          {{- else }}
           command:
             - ttyd
             - -W
@@ -169,6 +183,7 @@ spec:
             - -A
             - -s
             - main
+          {{- end }}
           env:
             - name: HOME
               value: /home/node
@@ -185,6 +200,18 @@ spec:
             # fallback — see happy.serverUrl in values.yaml.
             - name: HAPPY_SERVER_URL
               value: {{ .Values.happy.serverUrl | quote }}
+            - name: HAPPY_WORKSPACE_RECOVERY
+              value: {{ .Values.happy.autoResume.enabled | quote }}
+            - name: WORKSPACE_CONTAINER
+              value: "term"
+            - name: WORKSPACE_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: HAPPY_AUTO_RESUME_MAX_ATTEMPTS
+              value: {{ .Values.happy.autoResume.maxAttempts | quote }}
+            - name: HAPPY_AUTO_RESUME_MAX_AGE_HOURS
+              value: {{ .Values.happy.autoResume.maxAgeHours | quote }}
             {{- if .Values.secrets.onePassword.enabled }}
             # scripts/op-session.sh reads these three paths rather than
             # ~/.config/selfhosted, so the credentials stay on the read-only
@@ -274,14 +301,25 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
+              recovery_pid=""
+              daemon_pid=""
+              {{- if .Values.happy.autoResume.enabled }}
+              python3 /opt/workspace-recovery/happy-recovery.py capture || true
+              python3 /opt/workspace-recovery/happy-recovery.py &
+              recovery_pid=$!
+              {{- end }}
+              trap '[ -z "$recovery_pid" ] || { kill -TERM "$recovery_pid" 2>/dev/null; wait "$recovery_pid"; }; [ -z "$daemon_pid" ] || kill -TERM "$daemon_pid" 2>/dev/null; exit 0' TERM INT
               {{- if .Values.happy.restartNotice.enabled }}
               # Backgrounded: it retries against the relay for up to a minute
               # and must not hold up the daemon that phone sessions need.
               /etc/claude-workspace/happy-restart-notice.sh up &
               {{- end }}
               while true; do
-                happy daemon start-sync || true
-                sleep 10
+                happy daemon start-sync &
+                daemon_pid=$!
+                wait "$daemon_pid" || true
+                sleep 10 &
+                wait $!
               done
           {{- if .Values.happy.restartNotice.enabled }}
           # Phone-spawned sessions are children of THIS container, so a deploy
@@ -304,6 +342,18 @@ spec:
             # HAPPY_SERVER_URL with highest precedence over ~/.happy/settings.json.
             - name: HAPPY_SERVER_URL
               value: {{ .Values.happy.serverUrl | quote }}
+            - name: HAPPY_WORKSPACE_RECOVERY
+              value: {{ .Values.happy.autoResume.enabled | quote }}
+            - name: WORKSPACE_CONTAINER
+              value: "happy-daemon"
+            - name: WORKSPACE_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: HAPPY_AUTO_RESUME_MAX_ATTEMPTS
+              value: {{ .Values.happy.autoResume.maxAttempts | quote }}
+            - name: HAPPY_AUTO_RESUME_MAX_AGE_HOURS
+              value: {{ .Values.happy.autoResume.maxAgeHours | quote }}
             {{- if .Values.secrets.onePassword.enabled }}
             # Phone-spawned seats are children of this container and run
             # `secrets` like the /term one — see the op-credentials note on
@@ -654,6 +704,12 @@ spec:
               value: {{ .Values.messaging.reactions.done | quote }}
             - name: GW_REACT_ERROR
               value: {{ .Values.messaging.reactions.error | quote }}
+            - name: GW_AUTO_RESUME_ENABLED
+              value: {{ .Values.messaging.autoResume.enabled | quote }}
+            - name: GW_AUTO_RESUME_MAX_ATTEMPTS
+              value: {{ .Values.messaging.autoResume.maxAttempts | quote }}
+            - name: GW_AUTO_RESUME_MAX_AGE_HOURS
+              value: {{ .Values.messaging.autoResume.maxAgeHours | quote }}
             - name: GW_RESTART_NOTICE_ENABLED
               value: {{ .Values.messaging.restartNotice.enabled | quote }}
             - name: GW_RESTART_NOTICE_MINUTES

@@ -109,7 +109,7 @@ export function parseSchedules(raw: string | undefined): ScheduleSpec[] {
 /** Claude-only: the gateway parks a claude run on its background tasks and
  * wakes it when they report. Nothing does that for an ACP agent, so acpSystemPrompt()
  * swaps this paragraph for ACP_FOREGROUND. */
-export const BACKGROUND_PARAGRAPH = `Long jobs can run in the background. Start one (a build, a migration, a test suite) as a background task, say so in a short reply, and end your turn — you will be woken when it finishes and can send a second message with the result. That is the right shape here: a reply that lands now beats a phone held open for twenty minutes. Don't background something that takes seconds.`;
+export const BACKGROUND_PARAGRAPH = `For long shell jobs (builds, tests, migrations), use mcp__gw__job_start rather than Bash run_in_background. The gateway gives the job a persistent ID, logs, explicit cancellation, and a completion event back to this conversation. You may end your turn after reporting its ID. The detached worker survives your conversation ending; a container restart marks it interrupted, not successful, and never reruns it automatically. Supply a checkpoint file path when useful and make the command maintain progress and safe resume instructions there. Inspect job_read and the checkpoint before resuming interrupted work. The user can inspect !jobs and !job <id> [cancel]. CLI-managed subagents still depend on this process: instruct each to save a checkpoint (files changed, tests run, next steps) and report its transcript/agent ID. !tasks lists short task aliases and progress; !task @alias shows details and supports cancel/resume. Use mcp__gw__task_list and mcp__gw__task_read to inspect persisted task status and checkpoints. Resume an interrupted agent only after inspecting its checkpoint and verifying no original worker is still running. Don't background something that takes seconds.`;
 
 /** The ACP replacement. Written as an instruction to WAIT, not merely the
  * absence of a promise: codex's exec_command yields long commands back to the
@@ -282,6 +282,11 @@ export const config = {
     // exiting anyway. The pod's terminationGracePeriodSeconds is the real
     // ceiling; being SIGKILLed mid-send is a normal outcome here.
     shutdownGraceMs: envInt("GW_SHUTDOWN_GRACE_SECONDS", 5) * 1000,
+  },
+  autoResume: {
+    enabled: (process.env.GW_AUTO_RESUME_ENABLED ?? "true") === "true",
+    maxAttempts: envInt("GW_AUTO_RESUME_MAX_ATTEMPTS", 3),
+    maxAgeMs: envInt("GW_AUTO_RESUME_MAX_AGE_HOURS", 24) * 3_600_000,
   },
 
   attachments: {

@@ -221,6 +221,11 @@ export class Status {
   }
 
   onEvent(ev: StreamEvent): void {
+    if (ev.type === "system" && ["task_started", "task_progress", "task_notification"].includes(ev.subtype ?? "")) {
+      this.note = oneLine(`${ev.description ?? ev.task_id ?? "Subagent"}: ${ev.status ?? ev.last_tool_name ?? "working"}` +
+        (ev.usage?.tool_uses != null ? ` · ${ev.usage.tool_uses} tools` : ""), 140);
+      return;
+    }
     if (ev.type === "result") {
       // Everything the run cost, including cache traffic — the point is "was
       // that an expensive question?", which cache reads very much are part of.
