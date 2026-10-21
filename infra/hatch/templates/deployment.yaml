@@ -32,7 +32,7 @@ spec:
       {{- end }}
       # Not stylistic. The Service is named `hatch`, so Kubernetes would inject
       # HATCH_PORT=tcp://10.43.x.y:8080 into every container and shadow the
-      # config var of the same name. carson hit exactly this.
+      # config var of the same name.
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true

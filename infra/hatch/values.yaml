@@ -13,7 +13,7 @@ replicaCount: 2
 image:
   repository: ghcr.io/zdiemer/hatch
   tag: "v4"
-  # IfNotPresent, unlike carson, and the reason is specific to this chart.
+  # Cache immutable images so restarts do not depend on registry availability.
   # hatch is the thing you want running when something else is broken, so a
   # node reboot during an outage must not leave it unable to pull. That only
   # holds if a cached layer can be trusted, which requires tags to be
@@ -33,7 +33,7 @@ service:
 
 # ---------------------------------------------------------------------------
 # Ingress — ONE Ingress. Nothing here needs a different middleware chain per
-# path, so the carson two-Ingress split would be duplication.
+# path, so a second Ingress would be duplication.
 # ---------------------------------------------------------------------------
 ingress:
   enabled: true
@@ -294,7 +294,7 @@ resources:
     memory: 128Mi
   limits:
     cpu: "1"
-    # 512Mi rather than carson's 256Mi: `import kubernetes.client` alone is
+    # `import kubernetes.client` alone is
     # ~40MB RSS, and a full pod list across ~150 pods is not free.
     memory: 512Mi
 

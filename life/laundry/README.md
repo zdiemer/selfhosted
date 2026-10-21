@@ -365,8 +365,7 @@ same tuning picture as the dashboard, with history.
   forever — it's a few rows a week, and it's the only evidence the thing works.
 - The idempotency key sent to sms-relay is scoped per cycle. A coarser key would
   send the first text ever and then silently swallow every one after it; see
-  [`src/notify.py`](src/notify.py), which carries the same warning
-  `life/carson` does, learned the same way.
+  [`src/notify.py`](src/notify.py) for the key construction.
 - The firmware never buffers a failed post to replay later. The server treats
   arrival time as sample time — the ESP32 has no RTC — so a replayed window
   would be a lie about the present. A dropped post is dropped, and the cycle

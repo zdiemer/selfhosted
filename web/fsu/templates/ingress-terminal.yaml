@@ -11,7 +11,6 @@ Traefik attaches middleware to a ROUTER, and `router.middlewares` is an
 annotation on the INGRESS, so it applies to every router the Ingress produces.
 There is no per-path middleware in the Ingress API. The split is therefore
 forced: each Ingress may contain only paths that share one middleware chain.
-life/carson does the same thing in the other direction.
 
 PRIORITY. Traefik's default router priority is the LENGTH of the rule string, so
 
@@ -21,8 +20,8 @@ already outranks
 
     Host(`fsu…`) && PathPrefix(`/`)
 
-and life/carson has relied on exactly that in production. But "the specific path
-wins, so the unauthenticated catch-all can never shadow a shell" is the property
+But "the specific path wins, so the unauthenticated catch-all can never shadow
+a shell" is the property
 that keeps this host safe, and a property that load-bearing should not be a side
 effect of how many characters are in a string. 100 states it outright.
 
@@ -79,7 +78,7 @@ spec:
   {{- /*
     Both Ingresses list the same host. Neither names a secretName, so both
     routers pick up the cluster-wide default wildcard from Traefik's TLSStore
-    (infra/traefik-certs). life/carson does the same and it is fine.
+    (infra/traefik-certs).
   */}}
   tls:
     - hosts:

@@ -13,7 +13,7 @@
   app         :8080  Dashboard, JSON API and /metrics, on a ClusterIP, reached
                      only through the Traefik ingress behind Authelia. No login
                      code lives here and none should — same arrangement as
-                     life/carson and docs/stirling-pdf.
+                     docs/stirling-pdf.
 
 Nothing on the ingest port can read anything back: it answers with the machine's
 own state (so the device can drive its status LED) and nothing else.

@@ -127,7 +127,7 @@ ingress:
 
 auth:
   # The dashboard has no login of its own, by design. Same arrangement as
-  # life/carson and docs/stirling-pdf.
+  # docs/stirling-pdf.
   forwardAuth:
     enabled: true
     autheliaService: authelia

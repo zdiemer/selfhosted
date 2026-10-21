@@ -9,9 +9,8 @@ THE IDEMPOTENCY KEY IS SCOPED BY CYCLE, and that is not a detail. sms-relay
 dedupes on (service, idempotency_key): a key of "laundry-washer" would send the
 first text ever and then answer 202 to every load after it, returning the
 ORIGINAL message id, having sent nothing. The caller sees success. You see no
-texts. life/carson's notify.py carries the same warning, learned the same way in
-web/apartment-watch — so here the key carries the cycle's start timestamp, which
-is unique per load by construction.
+texts. Here the key carries the cycle's start timestamp, which is unique per
+load by construction.
 """
 
 from __future__ import annotations

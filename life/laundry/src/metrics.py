@@ -1,8 +1,7 @@
 """Prometheus exposition, hand-written.
 
-No prometheus_client: this is eleven series and forty lines, and the repo's
-habit is to not carry a dependency for that (see life/carson's requirements.txt
-on the absent ICS library). infra/alloy scrapes pods that ask for it.
+No prometheus_client: this is eleven series and forty lines, so it needs no
+additional dependency. infra/alloy scrapes pods that ask for it.
 
 These series are how `threshold_mg` actually gets chosen. `laundry_vibration_mg`
 plotted over a full wash shows the idle floor, the agitate plateau, the spin

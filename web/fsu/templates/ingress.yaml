@@ -5,9 +5,8 @@ THE UNAUTHENTICATED HALF: the static site, Breakout, and pybank.
 The two shells live on ingress-terminal.yaml with Authelia in front. The split
 into two objects is forced, not stylistic: `router.middlewares` is an annotation
 on the INGRESS and Traefik applies it to every router that Ingress produces, so
-there is no way to say "Authelia on /cloysta, none on /" inside one object. Same
-forcing as life/carson, inverted — there the second Ingress exists to REMOVE
-auth from one path, here to ADD it to two.
+there is no way to say "Authelia on /cloysta, none on /" inside one object.
+The second Ingress adds authentication to the two terminal paths.
 
 Path order matters less than it looks: Traefik's default router priority is the
 LENGTH of the rule string, so PathPrefix(`/pybank`) beats PathPrefix(`/`)

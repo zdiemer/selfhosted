@@ -56,8 +56,8 @@ One hostname, four path prefixes, two Ingress objects.
 
 Two objects is **forced**, not stylistic: `router.middlewares` is an annotation
 on the Ingress and Traefik applies it to every router that Ingress produces, so
-there is no per-path middleware. Same shape as `life/carson`, inverted — carson's
-second Ingress removes auth from one path, this one adds it to two.
+there is no per-path middleware. The second Ingress adds authentication to
+the two terminal paths.
 
 > **Traefik v3's `PathPrefix` is a raw string prefix**, unlike Kubernetes
 > `pathType: Prefix`, which is element-wise. So the `/cloysta` rule also matches
