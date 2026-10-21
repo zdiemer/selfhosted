@@ -179,7 +179,7 @@ kubectl -n talaria logs -f job/postgres-drill-YYYYMMDD -c postgres
 Use `--archive /talaria-dump.pgdump` only for the older streamed snapshots.
 The drill mounts the repository read-only, has no network access or production
 credentials, starts PostgreSQL on a Unix socket only, and requires `pg_restore
---exit-on-error` followed by table/index checks. It uses a new 200 GiB scratch
+--exit-on-error` followed by table/index checks. It uses a new 400 GiB scratch
 PVC and refuses to overwrite an existing drill. Allow up to six hours. Read-only
 Restic uses `--no-lock`; schedule outside the Sunday 06:00 UTC repository prune.
 

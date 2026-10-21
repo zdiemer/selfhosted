@@ -24,7 +24,7 @@ trap 'pg_ctl -m fast stop >/dev/null' EXIT
 createdb recovery
 pg_restore --list /work/talaria-dump.pgdump >/work/archive.list
 printf 'Archive entries: '; wc -l </work/archive.list
-pg_restore --exit-on-error --no-owner --no-acl --jobs=2 -d recovery /work/talaria-dump.pgdump
+pg_restore --exit-on-error --no-owner --no-acl --jobs=4 -d recovery /work/talaria-dump.pgdump
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT count(*) AS restored_tables FROM pg_tables WHERE schemaname='public';"
 # Refresh table statistics and check restored index validity.
 psql -X -v ON_ERROR_STOP=1 -d recovery -c 'ANALYZE;'
@@ -36,7 +36,7 @@ echo RESTORE_VERIFIED
 archive_local = '/work' + a.archive
 script = script.replace('/work/talaria-dump.pgdump', archive_local)
 objects = [
-    {'apiVersion':'v1','kind':'PersistentVolumeClaim','metadata':meta,'spec':{'accessModes':['ReadWriteOnce'],'storageClassName':'truenas-iscsi','resources':{'requests':{'storage':'200Gi'}}}},
+    {'apiVersion':'v1','kind':'PersistentVolumeClaim','metadata':meta,'spec':{'accessModes':['ReadWriteOnce'],'storageClassName':'truenas-iscsi','resources':{'requests':{'storage':'400Gi'}}}},
     {'apiVersion':'networking.k8s.io/v1','kind':'NetworkPolicy','metadata':meta,'spec':{'podSelector':{'matchLabels':labels},'policyTypes':['Ingress','Egress'],'ingress':[],'egress':[]}},
     {'apiVersion':'batch/v1','kind':'Job','metadata':meta,'spec':{'backoffLimit':0,'activeDeadlineSeconds':21600,'template':{'metadata':{'labels':labels},'spec':{
         'automountServiceAccountToken':False,'restartPolicy':'Never',
@@ -49,7 +49,7 @@ objects = [
             'volumeMounts':[{'name':'work','mountPath':'/work'},{'name':'repo','mountPath':'/repo','readOnly':True},{'name':'password','mountPath':'/credentials','readOnly':True},{'name':'tmp','mountPath':'/tmp'}]}],
         'containers':[{'name':'postgres','image':'postgres:15.19-alpine','command':['sh','-ec',script],
             'securityContext':{**security,'runAsUser':70,'runAsGroup':70,'runAsNonRoot':True},
-            'resources':{'requests':{'cpu':'500m','memory':'1Gi'},'limits':{'cpu':'2','memory':'3Gi'}},
+            'resources':{'requests':{'cpu':'500m','memory':'1Gi'},'limits':{'cpu':'4','memory':'4Gi'}},
             'volumeMounts':[{'name':'work','mountPath':'/work'},{'name':'tmp','mountPath':'/tmp'}]}],
         'volumes':[{'name':'work','persistentVolumeClaim':{'claimName':a.name}},
                    {'name':'repo','persistentVolumeClaim':{'claimName':'k8up-restic-repo','readOnly':True}},
