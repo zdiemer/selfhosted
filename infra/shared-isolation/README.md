@@ -29,7 +29,7 @@ negative controls passed; the live dashboard remained healthy without restart.
 Metadata timed out in the unrestricted control too: its exclusion is verified
 in the policy, but that timeout does not independently prove enforcement.
 
-Storage/VM operators, backups and remaining infra
+Storage/VM operators and remaining infra
 services still need their own dependency review. This release intentionally
 started with Headlamp and Renovate; subsequent coverage is described below.
 
@@ -109,3 +109,6 @@ Live checks on 2026-10-21 verified the allowed/denied connection matrix, agent
 LAPI authentication, central API authentication and existing console enrollment,
 registry TLS/authentication, fresh Traefik bouncer polling, and continued parsing.
 Temporary test Jobs were removed. Notifications were not sent as tests.
+
+K8up operator, worker and database-dump policies are owned by the K8up chart;
+see [backup isolation and recovery validation](../k8up/README.md).

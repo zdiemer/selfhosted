@@ -225,3 +225,50 @@ kubectl -n k8up logs deploy/k8up --tail=50
 
 Every namespace's `k8up-restic-repo` PVC must be `Bound` — an unbound one means
 that namespace silently backs up nothing. `upgrade.sh` checks this and fails.
+
+## Network isolation (2026-10-21)
+
+This chart owns 22 policies: one for the operator, worker policies in all 17
+managed backup/maintenance namespaces, and dump-client policies in docs, games,
+discord and rachel. Operator/workers get only cluster DNS and the Kubernetes
+API VIP/control-plane endpoints. Only Alloy collectors can enter the operator's
+metrics port; worker and dump pods deny ingress. Dump clients get DNS and their
+specific database port, with no API or public-network access.
+
+The local restic repository is a node-mounted NFS volume; no pod-network NAS
+exception is needed. [K8up runs backup commands through the Kubernetes API](https://docs.k8up.io/k8up/2.16/explanations/backup.html),
+so denying direct ingress to dump pods does not prevent command execution.
+New namespaces, control-plane addresses, database targets, remote repositories,
+or stats/pushgateway destinations need corresponding policy updates. These
+rules do not reduce backup filesystem access, repository credentials or RBAC.
+The independently managed atomic Talaria backup and isolated restore drill
+retain their own policies and are not selected by `k8upjob=true`.
+
+Validation covered all 17 worker namespaces and all four dump clients. It
+exposed a pre-existing Paperless PostgreSQL ingress rule that excluded K8up;
+the Paperless chart now admits only the same-namespace dump label on 5432.
+No Redis/parser access was added. A real, label-selected K8up Backup ran a
+28-byte PreBackupPod command, saved it, and a separate read-only restic Job
+verified the exact restored payload. The small snapshot is retained with tag
+`network-policy-verification`; all temporary test resources were removed.
+This smoke test does not replace full database-restore verification.
+
+## Continuing the in-flight Talaria drill
+
+The 2026-10-21 drill was launched before the final SQL quoting fix. Its running
+Job cannot be edited. `recovery/verify-existing-restore.py JOB --name NAME`
+prepares a validation-only Job only after the original has failed with evidence
+that archive replay and ANALYZE succeeded and the legacy quoted SQL failed.
+It refuses active Jobs, unrelated claims and restore failures. Add `--apply`
+to create the network-denied Job; it mounts only the existing scratch database
+and temporary storage, with no backup credentials, and never runs initdb or
+replays the archive. It checks index/constraint validity, table and auction
+counts, and database size before printing `RESTORE_VERIFIED`.
+
+The current scratch restore is still in progress; no recovery success is
+claimed yet. A workspace watcher at `/tmp/watch-talaria-validation.py` waits
+for it, invokes the guarded continuation only when eligible, and records its
+result in `/tmp/talaria-final-validation-driver.log` and
+`/tmp/talaria-final-validation-result.log`. This watcher is session-local, not
+a durable cluster controller; if the workspace stops, run the guarded command
+manually after inspecting the original Job. Scratch data is retained for review.

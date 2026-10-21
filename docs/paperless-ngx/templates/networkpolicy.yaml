@@ -25,6 +25,12 @@ spec:
             matchLabels:
               {{- include "paperless.selectorLabels" $ | nindent 14 }}
               app.kubernetes.io/component: paperless
+        {{- if eq $component "postgres" }}
+        # Logical backups execute in K8up's dedicated database client pod.
+        - podSelector:
+            matchLabels:
+              k8up.io/backupCommandPod: "true"
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ if eq $component "redis" }}6379{{ else if eq $component "postgres" }}5432{{ else if eq $component "tika" }}9998{{ else }}3000{{ end }}

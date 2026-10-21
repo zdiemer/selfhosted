@@ -297,3 +297,30 @@ talariaAtomicBackup:
   scratchSize: 50Gi
   postgresImage: postgres:15.19-alpine
   resticImage: restic/restic:0.19.1
+
+# Backup traffic is distinct from application and monitoring traffic.
+networkPolicy:
+  enabled: true
+  # VIP plus backends for CNI/NAT ordering; update on control-plane replacement.
+  apiAddresses:
+    - 10.43.0.1/32
+    - 192.168.4.21/32
+    - 192.168.4.25/32
+    - 192.168.4.26/32
+  dumpTargets:
+    - namespace: docs
+      app: paperless-ngx
+      component: postgres
+      port: 5432
+    - namespace: games
+      app: romm
+      component: db
+      port: 3306
+    - namespace: discord
+      app: vocard
+      component: mongo
+      port: 27017
+    - namespace: rachel
+      app: rachel-freeman
+      component: postgres
+      port: 5432

@@ -1,0 +1,68 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8up-operator-boundary
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: k8up
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: alloy}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy, app.kubernetes.io/instance: alloy}
+      ports:
+        - {port: 8080, protocol: TCP}
+  egress:
+    {{- include "k8up-wrapper.apiEgress" . | nindent 4 }}
+{{- $namespaces := list .Values.maintenance.namespace }}
+{{- range .Values.schedules }}
+{{- $namespaces = append $namespaces .namespace }}
+{{- end }}
+{{- range $namespaces | uniq }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8up-worker-boundary
+  namespace: {{ . }}
+spec:
+  podSelector:
+    matchLabels: {k8upjob: "true"}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  # Local restic backend is a node-mounted volume, not pod-network NFS.
+  # Backup commands are executed through the Kubernetes API.
+  egress:
+    {{- include "k8up-wrapper.apiEgress" $ | nindent 4 }}
+{{- end }}
+{{- if .Values.databaseDumps.enabled }}
+{{- range .Values.networkPolicy.dumpTargets }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8up-dump-boundary
+  namespace: {{ .namespace }}
+spec:
+  podSelector:
+    matchLabels: {k8up.io/backupCommandPod: "true"}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    {{- include "k8up-wrapper.dnsEgress" $ | nindent 4 }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .app }}
+              app.kubernetes.io/component: {{ .component }}
+      ports:
+        - {port: {{ .port }}, protocol: TCP}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -30,3 +30,25 @@ actually gets it. k8up mounts it via backend.volumeMounts above.
   persistentVolumeClaim:
     claimName: k8up-restic-repo
 {{- end }}
+
+{{- define "k8up-wrapper.dnsEgress" -}}
+- to:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: kube-system}
+      podSelector:
+        matchLabels: {k8s-app: kube-dns}
+  ports:
+    - {port: 53, protocol: UDP}
+    - {port: 53, protocol: TCP}
+{{- end }}
+
+{{- define "k8up-wrapper.apiEgress" -}}
+{{ include "k8up-wrapper.dnsEgress" . }}
+- to:
+    {{- range .Values.networkPolicy.apiAddresses }}
+    - ipBlock: {cidr: {{ . | quote }}}
+    {{- end }}
+  ports:
+    - {port: 443, protocol: TCP}
+    - {port: 6443, protocol: TCP}
+{{- end }}
