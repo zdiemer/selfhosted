@@ -168,3 +168,5 @@ kedaControlPlaneSources:
 - 10.42.11.0/32
 - 10.42.4.0/32
 - 10.42.0.0/32
+# Controller API only; node-side NFS/iSCSI traffic does not traverse these pods.
+storageControllerNAS: 192.168.4.36/32

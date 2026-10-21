@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: storage-controller-boundary
+  namespace: democratic-csi
+spec:
+  # Node plugins use host networking and require a separate host-level review.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: democratic-csi
+      app.kubernetes.io/csi-role: controller
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        {{- range .Values.apiAddresses }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+    - to:
+        - ipBlock: {cidr: {{ .Values.storageControllerNAS | quote }}}
+      ports:
+        - {port: 443, protocol: TCP}

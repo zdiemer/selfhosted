@@ -140,3 +140,29 @@ Temporary verification Jobs must remain unready: KEDA Services select the same
 endpoints and caused a metrics request failure; they were removed and checks
 rerun with failing readiness probes to exclude them from service traffic.
 All verification Jobs were removed afterward.
+
+## Storage controllers
+
+`storage-controller-boundary` selects democratic-csi's iSCSI and NFS controller
+pods by name and CSI role. It denies ingress and permits only DNS, Kubernetes
+API VIP/backends and the configured TrueNAS IP on HTTPS TCP 443. Controller
+sidecars communicate with the driver through Unix sockets. Node-side NFS and
+iSCSI mounts do not need controller pod access to ports 2049 or 3260.
+
+This does not contain the privileged, host-network node plugins, reduce the
+controller's Kubernetes permissions, or restrict what its NAS credential can
+do through the allowed API. The current NAS client also disables certificate
+verification; trusted NAS TLS and host-level containment remain separate work.
+
+Use `infra/democratic-csi/verify.sh --class <class>` with a fresh `NS` per class
+for live validation: it provisions a disposable volume, writes/fsyncs a payload,
+snapshots it, restores and compares the contents, expands it, and cleans up.
+Never run the smoke test in an existing application namespace.
+
+Validated 2026-10-21: both storage classes passed provision, write/fsync,
+snapshot, restore, content comparison and expansion from 1Gi to 2Gi. The
+controller-label probe could reach DNS, API VIP/backend and NAS HTTPS; public
+HTTPS, unrelated apps, tailnet SSH and NAS NFS/iSCSI ports were blocked.
+Metadata was unreachable, with the same control-test limitation noted above.
+The Windows VMI kept its original UID, Ready state and guest-agent connection;
+all 72 Alloy scrape targets remained healthy. No storage plugin was restarted.
