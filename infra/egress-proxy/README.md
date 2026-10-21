@@ -233,3 +233,11 @@ A denied CONNECT is a transport failure, not an HTTP status — curl reports `CO
 - **Health probes read `/proc/net/tcp` rather than connecting.** Squid logs every connection that opens and closes without a request as an aborted transaction, ~17k lines/day across two pods, and none of squid's access_log ACLs suppress them — the ACL is evaluated in a context with no HTTP request, so `method NONE` warns and logs anyway, and `src` does not take either. Not generating the transaction is the only thing that works. If those lines reappear, something really is dropping connections to the listener.
 - **`allowedHosts` is empty for every client.** Fill it from a real measurement (`scripts/egress-audit.sh`), not from a guess. An allowlist written from imagination breaks the service at the worst moment and teaches everyone to widen it back to empty.
 - **A browser-tier client's allowlist is not going to be a short list.** The first proxied apartment-watch run made **145 requests to 70 distinct hosts** for four listing sites. Six of those were the sites themselves; the rest was ad-tech the pages pull in — criteo, rubicon, adnxs, id5-sync, clarity.ms and so on. Anything driving a real browser has this shape, so an allowlist for one is either long, or regularly broken, or it has to be paired with blocking those requests in the browser instead. `apartment-watch` excluded uBlock Origin from Camoufox deliberately (startup cost, and its cache is on a read-only filesystem); revisiting that would probably be a precondition for allowlisting any browser-tier client, not a separate optimisation. Non-browser clients — smitele-bot, `finance/money`'s API calls — do not have this problem.
+
+### Internal destination isolation
+
+Squid denies private, tailnet, loopback, link-local and multicast destinations
+before any client allow rule. NetworkPolicy also excludes those IPv4 ranges;
+`networkPolicy.privateParents` grants only the reviewed parent transport
+(`100.121.204.109:3129`). That transport exception does not authorize clients to
+CONNECT to tailnet destinations. No IPv6 egress is granted.

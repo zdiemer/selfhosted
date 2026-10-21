@@ -1,0 +1,3 @@
+image: docker.io/squat/generic-device-plugin:a11f990@sha256:5c48f7a16cfb37c4e07731bfa384b9dba6e12d2b0fb4350d8a321d49f12ac494
+# Sharing is intentional; this is device access control, not GPU memory isolation.
+shares: 8

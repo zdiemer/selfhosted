@@ -1,0 +1,4 @@
+apiVersion: v2
+name: application-isolation
+version: 0.1.0
+description: Block application access to LAN, tailnet and metadata destinations

@@ -24,6 +24,7 @@ spec:
       # and flushes on shutdown. 30s also hard-kills any in-flight transcode
       # ffmpeg children, leaving their temp segments behind on the config
       # volume. 60s lets it close out and clean up.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
       {{- if .Values.transcode.enabled }}
       # A required capability label keeps the pod on a VAAPI host; hostname is
@@ -55,12 +56,11 @@ spec:
           securityContext:
             runAsUser: {{ .Values.runAsUser }}
             runAsGroup: {{ .Values.runAsGroup }}
-            {{- if .Values.transcode.enabled }}
-            # Privileged solely to open /dev/dri: the device cgroup denies
-            # host device nodes to unprivileged containers and there is no
-            # GPU device plugin on this cluster. Still runs as uid 1000.
-            privileged: true
-            {{- end }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: JELLYFIN_PublishedServerUrl
               value: {{ .Values.publishedServerUrl | quote }}
@@ -83,10 +83,6 @@ spec:
             - name: media
               mountPath: {{ .Values.media.mountPath }}
               readOnly: {{ .Values.media.readOnly }}
-            {{- if .Values.transcode.enabled }}
-            - name: dri
-              mountPath: /dev/dri
-            {{- end }}
           readinessProbe:
             httpGet:
               path: /health
@@ -100,7 +96,11 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 30
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- $resources := deepCopy .Values.resources }}
+            {{- if .Values.transcode.enabled }}
+            {{- $_ := set $resources.limits "devic.es/render" 1 }}
+            {{- end }}
+            {{- toYaml $resources | nindent 12 }}
       volumes:
         - name: config
           persistentVolumeClaim:
@@ -116,9 +116,3 @@ spec:
             server: {{ .Values.media.server | quote }}
             path: {{ .Values.media.path | quote }}
             readOnly: {{ .Values.media.readOnly }}
-        {{- if .Values.transcode.enabled }}
-        - name: dri
-          hostPath:
-            path: /dev/dri
-            type: Directory
-        {{- end }}

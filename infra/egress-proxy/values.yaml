@@ -285,6 +285,9 @@ peerLogins: {}
   #   password: ""
 
 networkPolicy:
+  # Transport to the reviewed parent, never arbitrary tailnet destinations.
+  privateParents:
+    - {cidr: 100.121.204.109/32, port: 3129}
   enabled: true
   # Egress from the proxy itself. This is the one pod in the cluster that is
   # supposed to talk to arbitrary external hosts, so it stays wide — the

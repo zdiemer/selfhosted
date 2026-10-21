@@ -19,7 +19,9 @@ p = Path('/opt/frontend/utils/websockify/websockify/auth_plugins.py')
 p.write_text(p.read_text() + Path('/opt/chart-init/steam-auth.py').read_text())
 p = Path('/etc/sudoers')
 s = p.read_text()
-s = '\n'.join(line for line in s.splitlines() if not (line.strip().startswith('default ') and 'NOPASSWD' in line)) + '\n'
+s = '\n'.join(line for line in s.splitlines() if not line.strip().startswith('default ')) + '\n'
 p.write_text(s)
 PY
+gpasswd -d default sudo >/dev/null
+passwd -l root >/dev/null
 visudo -c

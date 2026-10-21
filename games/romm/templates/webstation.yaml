@@ -92,8 +92,7 @@ spec:
           image: {{ .Values.streaming.image | quote }}
           imagePullPolicy: IfNotPresent
           securityContext:
-            # Same device-cgroup requirement as Jellyfin, until a GPU plugin exists.
-            privileged: true
+            allowPrivilegeEscalation: false
           env:
             - name: PUID
               value: "1000"
@@ -131,7 +130,9 @@ spec:
             periodSeconds: 30
             failureThreshold: 5
           resources:
-            {{- toYaml .Values.streaming.resources | nindent 12 }}
+            {{- $resources := deepCopy .Values.streaming.resources }}
+            {{- $_ := set $resources.limits "devic.es/render" 1 }}
+            {{- toYaml $resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /config
@@ -141,8 +142,6 @@ spec:
             - name: nas
               mountPath: /romm/library/.nas
               readOnly: true
-            - name: dri
-              mountPath: /dev/dri
             - name: shm
               mountPath: /dev/shm
             - name: setup
@@ -167,10 +166,6 @@ spec:
         - name: builder
           configMap:
             name: {{ include "romm.fullname" . }}-library-builder
-        - name: dri
-          hostPath:
-            path: /dev/dri
-            type: Directory
         - name: shm
           emptyDir:
             medium: Memory

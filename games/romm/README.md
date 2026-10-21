@@ -307,3 +307,11 @@ must run: it generates nginx's port/configuration before starting services.
 The change preserves the module's Python AST and does not suppress warnings or
 change database behavior. It is a no-op when the dependency corrects the line;
 remove the wrapper once the upstream image incorporates that correction.
+
+### Webstation GPU containment
+
+Install `infra/gpu-devices` before this chart. Webstation requests one
+`devic.es/render` slot instead of running privileged with the whole host DRM
+directory. The image still starts as root for its initialization, then runs the
+desktop as `abc`; privilege escalation is disabled. Application egress is governed
+by `infra/application-isolation`.

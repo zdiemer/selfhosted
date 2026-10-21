@@ -1,0 +1,9 @@
+# Named applications only: backup/operator jobs retain their existing policies.
+# Host-network Steam needs its own listener controls and a VM isolation boundary.
+applications:
+  games: [cloud-game, ffxiv-1x, gamedex, ra2, romm, romm-webstation, ror2-server, smt-imagine]
+  media: [arr, bitmagnet, jellyfin, jellyseerr]
+  docs: [paperless-ngx, stirling-pdf]
+  web: [diemer-codes, kelsey-green, luke-birthday, old-diemer-codes]
+  rachel: [rachel-freeman]
+  discord: [smitele-bot, vocard]

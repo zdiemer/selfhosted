@@ -67,6 +67,6 @@ Raw VNC binds only to loopback. Both the web desktop and audio WebSocket
 proxy independently validate the browser's Authelia session, using the fixed
 Steam hostname and requiring an authenticated identity. Forged identity headers,
 missing cookies and authentication outages fail closed. Use the HTTPS ingress;
-direct node access no longer provides an anonymous desktop. Passwordless sudo is
-removed; administrative sudo requires the existing vault-managed user password.
+direct node access no longer provides an anonymous desktop. Desktop sudo access is
+removed and root password login is locked; use Kubernetes exec for administration.
 The host-network/privileged deployment remains a separate containment concern.

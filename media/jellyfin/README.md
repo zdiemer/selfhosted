@@ -435,3 +435,10 @@ Sonarr/Radarr anything — the series/movie stays monitored there and gets
 re-downloaded on the next search. To actually be rid of something, delete it
 in Sonarr/Radarr instead (or afterwards), which removes the file *and* stops
 the automation chasing it.
+
+### GPU containment
+
+Install `infra/gpu-devices` before this chart. Jellyfin requests a render-device
+slot, runs as UID 1000 with no Linux capabilities, and cannot gain privileges.
+The writable media library remains intentional so authorized UI deletion still
+works; device isolation does not make those files read-only.

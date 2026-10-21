@@ -44,15 +44,15 @@ media:
 # hostname below is only a soft preference that keeps normal rollouts on the
 # original, proven node while allowing automatic failover to ubuntu-6.
 #
-# The container must be privileged to open /dev/dri: non-privileged pods are
-# denied device nodes by the device cgroup, and this cluster has no GPU device
-# plugin. supplementalGroups grants the Jellyfin user access to renderD128.
+# infra/gpu-devices allocates only renderD128 through devic.es/render.
+# The application is unprivileged and drops all capabilities; supplementalGroups
+# grants its UID access to the allocated device.
 #
 # Bootstrap or restore the durable node labels with:
 #   kubectl label node zachd-ubuntu-1 zachd-ubuntu-6 media.zachd/vaapi=true
 #
-# Setting transcode.enabled: false removes the selector, affinity, privileged
-# bit, and /dev/dri mount at the cost of CPU-only transcoding.
+# Setting transcode.enabled: false removes the selector, affinity and device
+# allocation at the cost of CPU-only transcoding.
 transcode:
   enabled: true
   nodeSelector:
