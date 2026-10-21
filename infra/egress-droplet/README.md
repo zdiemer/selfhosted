@@ -138,3 +138,18 @@ A clean-host recovery still needs a rehearsal on a replacement droplet. Syntax
 checks and live convergence do not establish that the entire recovery works.
 DigitalOcean resource creation, provider backups and tailnet grants remain
 outside this playbook; credentials for those APIs are not available here.
+
+On October 21, the initial prerequisite run triggered severe memory pressure on
+the 458 MiB host with no swap. The kernel killed CrowdSec at 16:24 UTC; SSH and
+the media edge temporarily stopped responding. The host recovered without a
+reboot, and CrowdSec restarted. The revised prerequisite run completed with
+1 GiB swap active and both package-install tasks skipped. Runtime proxy
+authentication/containment checks passed, and Jellyfin's public health endpoint
+returned HTTP 200. This verifies recovery of the existing host, not replacement
+provisioning.
+
+The workspace's mounted `claude-workspace-op-credentials` Secret provides
+1Password access; it does not contain a DigitalOcean API token. Provider-level
+recovery therefore requires the DigitalOcean console or a separately supplied
+vault reference for an appropriately scoped provider credential. Do not paste
+provider tokens into chat or commit them to this repository.
