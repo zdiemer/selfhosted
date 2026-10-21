@@ -28,7 +28,7 @@ pg_restore --exit-on-error --no-owner --no-acl --jobs=4 -d recovery /work/talari
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT count(*) AS restored_tables FROM pg_tables WHERE schemaname='public';"
 # Refresh table statistics and check restored index validity.
 psql -X -v ON_ERROR_STOP=1 -d recovery -c 'ANALYZE;'
-psql -X -v ON_ERROR_STOP=1 -d recovery -c "DO \\$\\$ BEGIN IF EXISTS (SELECT 1 FROM pg_index WHERE NOT indisvalid) THEN RAISE EXCEPTION 'invalid restored indexes'; END IF; END \\$\\$;"
+psql -X -v ON_ERROR_STOP=1 -d recovery -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_index WHERE NOT indisvalid) THEN RAISE EXCEPTION 'invalid restored indexes'; END IF; END \$\$;"
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT count(*) AS restored_auction_items FROM auction_items;"
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT pg_size_pretty(pg_database_size('recovery')) AS restored_size;"
 echo RESTORE_VERIFIED
