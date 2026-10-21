@@ -1,0 +1,3 @@
+image: registry.zachd.duckdns.org/zdiemer/steam-input-runtime:input-v1@sha256:c78936e4994ade073466e861a5f9a983f7ae6938a5b6a21aa3e31fb6ecf9ffd7
+node: zachd-ubuntu-6
+devicePluginImage: docker.io/squat/generic-device-plugin:a11f990@sha256:5c48f7a16cfb37c4e07731bfa384b9dba6e12d2b0fb4350d8a321d49f12ac494

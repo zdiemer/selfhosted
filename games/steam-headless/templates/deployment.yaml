@@ -6,7 +6,7 @@ metadata:
     {{- include "steam-headless.labels" . | nindent 4 }}
 spec:
   replicas: 1
-  # hostNetwork ports and RWO local volumes: two copies can never coexist.
+  # Host ports and RWO local volumes: two copies can never coexist.
   strategy:
     type: Recreate
   selector:
@@ -17,17 +17,16 @@ spec:
       labels:
         {{- include "steam-headless.selectorLabels" . | nindent 8 }}
       annotations:
+        steam.zachd/input-policy: virtual-input-v1
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         checksum/init: {{ include (print $.Template.BasePath "/configmap-init.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
       nodeSelector:
         kubernetes.io/hostname: {{ .Values.node | quote }}
-      # Upstream's compose uses network_mode: host. Moonlight's discovery
-      # (mDNS) and Sunshine's fixed TCP/UDP port set (47984-48010) want the
-      # node's own IP, and the README warns controllers do not work without it.
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # Only Moonlight's fixed streaming ports are published on the node.
+      # Desktop/admin access stays behind the authenticated ingress.
+      dnsPolicy: ClusterFirst
       # No hostIPC (upstream's compose sets ipc: host): that exists for
       # "secondary" containers sharing this X server. Everything here is in one
       # container, so MIT-SHM works without reaching into the host's IPC.
@@ -37,16 +36,18 @@ spec:
         - name: steam-headless
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # Privileged is upstream's amd+intel.privileged variant. The
-          # non-privileged one relies on docker's device_cgroup_rules
-          # (c 13:* rmw for dynamically created input devices), which has no
-          # Kubernetes equivalent, and there is no GPU device plugin here.
-          # The image's init runs as root and drops to PUID itself.
-          #
-          # Privileged also means udevd in here can rewrite host device nodes;
-          # see configmap-init.yaml for why no host /dev path is mounted.
           securityContext:
-            privileged: true
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETFCAP, SETPCAP, SYS_CHROOT, NET_BIND_SERVICE]
+            seccompProfile:
+              type: Localhost
+              localhostProfile: steam-headless.json
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: steam-headless
           command:
             - /bin/bash
             - -c
@@ -71,22 +72,58 @@ spec:
             - { name: STEAM_ARGS, value: "-silent" }
             - { name: ENABLE_SUNSHINE, value: "true" }
             - { name: SUNSHINE_USER, value: {{ .Values.sunshine.username | quote }} }
+            - {name: SDL_JOYSTICK_DISABLE_UDEV, value: "1"}
+            - {name: SDL_HIDAPI_JOYSTICK_DISABLE_UDEV, value: "1"}
             - { name: ENABLE_EVDEV_INPUTS, value: "true" }
             # See values.yaml (forceDummyDisplay) before flipping this.
             - { name: FORCE_X11_DUMMY_CONFIG, value: {{ .Values.forceDummyDisplay | quote }} }
           envFrom:
             - secretRef:
                 name: {{ include "steam-headless.fullname" . }}
+          ports:
+            {{- range $port := list 47984 47989 48010 }}
+            - {containerPort: {{ $port }}, hostPort: {{ $port }}, protocol: TCP}
+            {{- end }}
+            {{- range $port := list 47998 47999 48000 48002 48010 }}
+            - {containerPort: {{ $port }}, hostPort: {{ $port }}, protocol: UDP}
+            {{- end }}
           volumeMounts:
+            - {name: input, mountPath: /dev/input, readOnly: true}
             - { name: home, mountPath: /home/default }
             - { name: games, mountPath: /mnt/games }
             - { name: x11, mountPath: /tmp/.X11-unix }
             - { name: pulse, mountPath: /tmp/pulse }
             - { name: shm, mountPath: /dev/shm }
             - { name: init, mountPath: /opt/chart-init, readOnly: true }
+          readinessProbe:
+            exec:
+              command: [bash, -c, "supervisorctl status xorg x11vnc frontend sunshine virtual-inputs >/dev/null"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- $resources := deepCopy .Values.resources }}
+            {{- $_ := set $resources.limits "devic.es/steam-display" 1 }}
+            {{- toYaml $resources | nindent 12 }}
+        - name: input-devices
+          image: python:3.14.7-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01
+          command: [python3, /scripts/input-devices.py]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [MKNOD, CHOWN]
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          volumeMounts:
+            - {name: input, mountPath: /dev/input}
+            - {name: init, mountPath: /scripts, readOnly: true}
       volumes:
+        - name: input
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
         - name: home
           persistentVolumeClaim:
             claimName: {{ include "steam-headless.fullname" . }}-home

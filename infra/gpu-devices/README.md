@@ -13,5 +13,5 @@ It exposes no network listener outside loopback.
 
 The eight slots per node share a GPU; this is device access control, not GPU memory
 or performance isolation. Jellyfin's hardware H.264 encoding was verified after
-removing privileged mode. Steam still needs a separate treatment for Xorg and
-dynamic input devices; its desktop listeners are protected independently.
+removing privileged mode. Steam uses the separate `infra/steam-input-runtime` chart for its Xorg and
+dynamic input devices, also without privileged mode.

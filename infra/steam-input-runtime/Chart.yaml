@@ -1,0 +1,4 @@
+apiVersion: v2
+name: steam-input-runtime
+version: 0.1.0
+description: Narrow NRI input-device rules for the Steam workload

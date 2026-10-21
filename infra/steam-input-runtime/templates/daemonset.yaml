@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: steam-input-runtime
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: steam-input-runtime}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: steam-input-runtime}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.node }}
+      containers:
+        - name: plugin
+          image: {{ .Values.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: nri, mountPath: /var/run/nri/nri.sock}
+      volumes:
+        - name: nri
+          hostPath: {path: /var/run/nri/nri.sock, type: Socket}

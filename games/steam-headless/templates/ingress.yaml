@@ -1,8 +1,7 @@
 {{- if .Values.ingress.enabled }}
 {{- $fullname := include "steam-headless.fullname" . }}
 {{- /*
-The pod is on the host network, so these Services' endpoints are
-192.168.4.22:<port> — plain node IPs, which Traefik on any node can reach.
+These Services target the private pod IP; NetworkPolicy permits Traefik.
 Two Services rather than one because the backend scheme (http vs https) and
 the ServersTransport are per-Service annotations.
 */}}
