@@ -66,9 +66,9 @@ adoption playbook, not a bare-droplet bootstrap. Minecraft relay workers run as
 
 A root compromise can still change this host firewall. Independently enforced
 Tailscale grants/ACLs must also restrict the droplet to the exact backend nodes
-and ports. No tailnet policy API credential was available in the connected vault, so
-independent tailnet-policy enforcement is not claimed here. DNS/DO resources, backup policy and provider DDoS protection
-remain separate, as with the Whatnow host configuration.
+and ports. Tailnet policy API access has not been established, and those independent
+grants/ACLs have not been changed. DNS/DO resources, backup policy and provider DDoS
+protection remain separate, as with the Whatnow host configuration.
 
 Existing bootstrap remains available for an unmanaged host, but refuses to run
 once `/etc/egress-iac-managed` is present. Do not use it to change an adopted host.
