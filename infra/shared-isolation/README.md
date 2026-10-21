@@ -192,9 +192,9 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-21, after CDI control-component isolation:
+Planning inventory as of 2026-10-21, after CDI and KubeVirt isolation:
 
-1. KubeVirt and remaining shared/VM networking, including CDI workers.
+1. Remaining shared/VM networking, including destination-namespace CDI workers.
 2. Trusted TLS verification for the TrueNAS API clients.
 3. Host-level containment for privileged/host-network infrastructure.
 4. Shared BuildKit process containment (the no-process-sandbox exception).
@@ -207,3 +207,34 @@ Planning inventory as of 2026-10-21, after CDI control-component isolation:
 These are workstreams, not nine confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
+
+
+## KubeVirt
+
+The namespace boundary denies inbound traffic and allows only DNS and Kubernetes
+API egress by default. API server hosts and their exact Flannel source IPs can
+reach virt-api 8443, operator admission 8444 and template API/webhooks 9443.
+Virt-api can reach handlers on console 8186 and VM statistics 8187. Handler
+peers can reach each other on TCP: the deployed
+[v1.9.0 migration proxy](https://github.com/kubevirt/kubevirt/blob/v1.9.0/pkg/virt-handler/migration-proxy/migration-proxy.go)
+allocates random listener ports, so a fixed 49152/49153 pod rule would break
+migration. This grant is restricted to handler labels within the namespace;
+it does not grant access to arbitrary pods or node/LAN addresses. Migration TLS
+remains enabled. Launcher communication otherwise uses local Unix sockets.
+
+The export proxy can reach only labeled export servers in `dev` on TCP 8443.
+No public export route exists; clients can use authenticated API port-forward.
+New destination namespaces or monitoring scrapes require explicit rules.
+The policies do not sandbox handlers' privileged host access, reduce Kubernetes
+RBAC, or change VM guest network rules. End-to-end export testing remains
+outside this validation; there were no active exports to preserve.
+
+Validated 2026-10-21: all seven component roles passed allowed/denied network
+checks; all four aggregated APIs stayed Available. A Windows guest-agent API
+request succeeded through virt-api and its handler. A disposable CirrOS VMI
+with masquerade networking migrated from zachd-ubuntu-6 to zachd-ubuntu-5 with
+its UID preserved. Its guest network was denied throughout. The first test's
+default bridge interface was correctly rejected by migration admission and
+replaced with the migratable test configuration. Windows retained its original
+UID/node, Ready state and guest-agent connection; all 72 Alloy targets stayed
+healthy. No production VM was migrated or restarted.

@@ -1,0 +1,117 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubevirt-boundary
+  namespace: kubevirt
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        {{- range .Values.apiAddresses }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+{{- range $role := list "virt-api" "virt-operator" "virt-template-apiserver" "virt-template-controller" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $role }}-api-ingress
+  namespace: kubevirt
+spec:
+  podSelector:
+    matchLabels:
+      {{- if hasPrefix "virt-template" $role }}
+      app.kubernetes.io/name: virt-template
+      control-plane: {{ if eq $role "virt-template-apiserver" }}apiserver{{ else }}controller-manager{{ end }}
+      {{- else }}
+      kubevirt.io: {{ $role }}
+      {{- end }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range $.Values.controlPlaneSources }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - port: {{ if eq $role "virt-api" }}8443{{ else if eq $role "virt-operator" }}8444{{ else }}9443{{ end }}
+          protocol: TCP
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virt-api-handler-access
+  namespace: kubevirt
+spec:
+  podSelector:
+    matchLabels: {kubevirt.io: virt-api}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {kubevirt.io: virt-handler}
+      ports:
+        - {port: 8186, protocol: TCP}
+        - {port: 8187, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virt-handler-peers
+  namespace: kubevirt
+spec:
+  podSelector:
+    matchLabels: {kubevirt.io: virt-handler}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {kubevirt.io: virt-api}
+      ports:
+        - {port: 8186, protocol: TCP}
+        - {port: 8187, protocol: TCP}
+    # Migration listeners allocate dynamic ports; only other handlers may connect.
+    - from:
+        - podSelector:
+            matchLabels: {kubevirt.io: virt-handler}
+      ports:
+        - {port: 1, endPort: 65535, protocol: TCP}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {kubevirt.io: virt-handler}
+      ports:
+        - {port: 1, endPort: 65535, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virt-exportproxy-targets
+  namespace: kubevirt
+spec:
+  podSelector:
+    matchLabels: {kubevirt.io: virt-exportproxy}
+  policyTypes: [Egress]
+  egress:
+    # Export clients use authenticated API port-forward; no public ingress exists.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: dev}
+          podSelector:
+            matchExpressions:
+              - {key: kubevirt.io.virt-export-service, operator: Exists}
+      ports:
+        - {port: 8443, protocol: TCP}
