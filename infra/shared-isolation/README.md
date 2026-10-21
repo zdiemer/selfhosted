@@ -192,19 +192,18 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-21, after CDI and KubeVirt isolation:
+Planning inventory as of 2026-10-21, after CDI/KubeVirt control and data-worker isolation:
 
-1. Remaining shared/VM networking, including destination-namespace CDI workers.
-2. Trusted TLS verification for the TrueNAS API clients.
-3. Host-level containment for privileged/host-network infrastructure.
-4. Shared BuildKit process containment (the no-process-sandbox exception).
-5. Backup integrity and restore validation: finish Talaria and test other DB dumps.
-6. Backups outside the NAS failure domain.
-7. Clean-droplet recovery rehearsal.
-8. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-9. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. Trusted TLS verification for the TrueNAS API clients.
+2. Host-level containment for privileged/host-network infrastructure.
+3. Shared BuildKit process containment (the no-process-sandbox exception).
+4. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
+5. Backups outside the NAS failure domain.
+6. Clean-droplet recovery rehearsal.
+7. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+8. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
 
-These are workstreams, not nine confirmed exploitable vulnerabilities or an
+These are workstreams, not eight confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
 
@@ -226,8 +225,7 @@ The export proxy can reach only labeled export servers in `dev` on TCP 8443.
 No public export route exists; clients can use authenticated API port-forward.
 New destination namespaces or monitoring scrapes require explicit rules.
 The policies do not sandbox handlers' privileged host access, reduce Kubernetes
-RBAC, or change VM guest network rules. End-to-end export testing remains
-outside this validation; there were no active exports to preserve.
+RBAC, or change VM guest network rules. The subsequent worker validation below exercises the authenticated export path.
 
 Validated 2026-10-21: all seven component roles passed allowed/denied network
 checks; all four aggregated APIs stayed Available. A Windows guest-agent API
@@ -238,3 +236,31 @@ default bridge interface was correctly rejected by migration admission and
 replaced with the migratable test configuration. Windows retained its original
 UID/node, Ready state and guest-agent connection; all 72 Alloy targets stayed
 healthy. No production VM was migrated or restarted.
+
+
+## VM import, upload, clone and export workers
+
+In the current VM destination namespace `dev`, CDI-labeled workers get only
+cluster DNS by default. Importers additionally get public IPv4 HTTP/HTTPS,
+excluding private, LAN, tailnet and metadata ranges. Upload workers accept TCP
+8443 only from the CDI upload proxy and same-namespace clone-source workers;
+clone sources can reach only those upload workers on 8443. Export workers have
+no egress and accept TCP 8443 only from KubeVirt's export proxy. NAS mounts are
+performed by nodes, so workers need no direct NAS network access. These rules
+leave Windows launcher and Guacamole policies unchanged.
+
+This covers the currently used HTTP/registry imports, uploads and same-namespace
+host-assisted clones. Private image sources, cross-namespace copies, new VM
+namespaces and specialized VDDK/imageio imports need explicit dependency review
+before use. Public egress is IP/port restricted, not hostname restricted.
+Kubernetes API access is not granted to these data workers.
+
+
+Validated 2026-10-21: all four worker-role egress matrices passed. A disposable
+archive upload succeeded and its payload matched on a read-only mount. Its
+VirtualMachineExport returned the exact same file through virt-exportproxy
+with the export token and rejected an unauthenticated request. A public CirrOS
+HTTP import completed, followed by a host-assisted `copy` clone from NFS to
+iSCSI; the source and clone disk files compared byte-for-byte. All test
+DataVolumes, exports, token Secret, pods and claims were cleaned up. Windows
+retained its UID and Ready state; all 72 Alloy scrape targets stayed healthy.

@@ -1,0 +1,93 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cdi-worker-boundary
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels: {app: containerized-data-importer}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cdi-importer-public-sources
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels: {app: containerized-data-importer, cdi.kubevirt.io: importer}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{ toJson .Values.publicExclusions }}
+      ports:
+        - {port: 80, protocol: TCP}
+        - {port: 443, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cdi-clone-targets
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels: {app: containerized-data-importer, cdi.kubevirt.io: cdi-clone-source}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app: containerized-data-importer, cdi.kubevirt.io: cdi-upload-server}
+      ports:
+        - {port: 8443, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cdi-upload-clone-ingress
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels: {app: containerized-data-importer, cdi.kubevirt.io: cdi-upload-server}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: cdi}
+          podSelector:
+            matchLabels: {cdi.kubevirt.io: cdi-uploadproxy}
+        - podSelector:
+            matchLabels: {app: containerized-data-importer, cdi.kubevirt.io: cdi-clone-source}
+      ports:
+        - {port: 8443, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vm-export-worker-boundary
+  namespace: dev
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: kubevirt.io.virt-export-service, operator: Exists}
+  policyTypes: [Ingress, Egress]
+  egress: []
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kubevirt}
+          podSelector:
+            matchLabels: {kubevirt.io: virt-exportproxy}
+      ports:
+        - {port: 8443, protocol: TCP}
