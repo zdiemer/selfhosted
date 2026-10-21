@@ -11,6 +11,7 @@ image:
 # The weekly cadence IS the schedule; no `schedule:` in renovate config, so
 # there aren't two overlapping schedulers.
 schedule: "30 5 * * 6"
+timeZone: America/Los_Angeles
 
 # Onboarding a repo = add it here and redeploy. Explicit list, no autodiscover:
 # what Renovate may touch is visible in git. Excluded on purpose:

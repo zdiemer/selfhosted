@@ -16,6 +16,7 @@ metadata:
     {{- include "crowdsec-machine-prune.labels" . | nindent 4 }}
 spec:
   schedule: {{ .Values.schedule.cron | quote }}
+  timeZone: {{ .Values.schedule.timeZone | default "America/Los_Angeles" | quote }}
   concurrencyPolicy: {{ .Values.schedule.concurrencyPolicy }}
   successfulJobsHistoryLimit: {{ .Values.schedule.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.schedule.failedJobsHistoryLimit }}

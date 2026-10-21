@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   schedule: {{ .Values.schedule | quote }}
+  timeZone: {{ .Values.timeZone | default "America/Los_Angeles" | quote }}
   # A run that overlaps its successor would fight over branches; one at a time.
   concurrencyPolicy: Forbid
   # If the cluster was down at 05:30, run when it comes back — within reason.

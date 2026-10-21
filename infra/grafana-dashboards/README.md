@@ -118,9 +118,15 @@ do not fall through to the default notification policy. See
 from every 5 minutes (duckdns) to quarterly (money's anchor refresh), so no
 single "hours since last success" threshold is correct for all of them — a 48h
 rule would fire permanently on the weekly Renovate job. The rule watches
-`kube_cronjob_next_schedule_time` instead, which moves forward on every
-successful run: a value stuck an hour in the past means the schedule stopped
-advancing, whatever its period. Suspended CronJobs are excluded.
+`kube_cronjob_next_schedule_time` instead, which advances when the controller
+schedules a run. A value stuck an hour in the past indicates a missed schedule;
+subsequent successful catch-up runs and suspended CronJobs are excluded.
+
+Clock-based schedules must set `spec.timeZone` explicitly. The controller
+uses the host timezone when it is absent, while kube-state-metrics can calculate
+the next run in UTC. Money, Renovate, certificate renewal, and CrowdSec cleanup
+use `America/Los_Angeles` to preserve their existing local run times and prevent
+false overdue alerts.
 
 ## Deploy
 

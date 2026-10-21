@@ -53,6 +53,7 @@ prune:
   duration: 24h
 
 schedule:
+  timeZone: America/Los_Angeles
   # Daily, at a minute nothing else in the repo uses (traefik-certs 04:17 Mon,
   # renovate 05:30 Sat, versions-report 07:00 Sat).
   #

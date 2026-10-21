@@ -70,6 +70,7 @@ certSecret:
   name: traefik-wildcard-tls
 
 schedule:
+  timeZone: America/Los_Angeles
   # Weekly. A 90-day cert with a 30-day renewal threshold gives roughly eight
   # attempts before expiry, so a couple of failed runs are recoverable without
   # anyone noticing. Daily would just be eight times the log noise.
