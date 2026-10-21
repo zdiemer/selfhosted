@@ -1656,7 +1656,7 @@ data:
                 url = public_url if "://" in public_url else "https://" + public_url
             primary = hosts[0] if hosts else None
             if not url and primary:
-                url = "https://" + primary.get("host", "")
+                url = "https://" + primary.get("host", "") + (primary.get("path") or "/")
 
             names = [h.get("host", "") for h in hosts]
             if public_url:
@@ -1712,6 +1712,8 @@ data:
             want = e.get("hosts")
             if want:
                 matched = [r for r in matched if r.get("host") in want]
+            if e.get("paths"):
+                matched = [r for r in matched if r.get("path") in e["paths"]]
             for r in matched:
                 claimed.add((ns, svc, r.get("host"), r.get("path")))
             out.append(tile(e.get("name") or svc, e.get("category") or "Other",

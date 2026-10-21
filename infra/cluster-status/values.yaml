@@ -438,7 +438,13 @@ catalog:
     - name: Steam
       category: Games
       namespace: games
-      service: steam-headless
+      service: steam-headless-desktop
+      workload: steam-headless
+    - name: Sunshine
+      category: Games
+      namespace: games
+      service: steam-headless-sunshine
+      workload: steam-headless
     - name: Red Alert 2
       category: Games
       namespace: games
@@ -535,10 +541,22 @@ catalog:
       namespace: fsu
       service: fsu-web
       note: 2014–16 projects, running
-      # Only the web tile. fsu-terminal and fsu-pybank are behind the same
-      # hostname on path prefixes, so a tile each would be three rows pointing
-      # at one link — and the two terminals sit behind Authelia, which the
-      # favicon fetcher would land on rather than the app.
+    - name: FSU PyBank
+      category: Sites
+      namespace: fsu
+      service: fsu-pybank
+    - name: FSU Cloysta terminal
+      category: Sites
+      namespace: fsu
+      service: fsu-terminal
+      paths: [/cloysta]
+      slug: fsu-cloysta
+    - name: FSU Hashtable terminal
+      category: Sites
+      namespace: fsu
+      service: fsu-terminal
+      paths: [/hashtable]
+      slug: fsu-hashtable
     - name: Whatnow cluster instance
       category: Sites
       namespace: whatnow
@@ -564,6 +582,12 @@ catalog:
       # Same Service, same pod, different front door — so it needs its own icon
       # slug or the two tiles would share one mark.
       slug: bakery
+    - name: Trading workspace
+      category: Dev
+      namespace: claude
+      service: claude-workspace
+      hosts: [trading.zachd.duckdns.org]
+      slug: trading
     - name: Happy
       category: Dev
       namespace: happy

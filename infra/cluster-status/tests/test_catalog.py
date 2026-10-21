@@ -38,6 +38,14 @@ class Catalog(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['workload'], 'web')
 
+    def test_shared_host_preserves_service_paths(self):
+        rows = [dict(namespace='fsu', backend='terminal:80', host='fsu.example.com', path=p)
+                for p in ['/one', '/two']]
+        entries = [dict(name=p, namespace='fsu', service='terminal', paths=[p]) for p in ['/one', '/two']]
+        result = extras.build_catalog(entries, rows, [], [], [], {})
+        self.assertEqual({r['url'] for r in result}, {'https://fsu.example.com/one', 'https://fsu.example.com/two'})
+        self.assertEqual(len(result), 2)
+
     def test_namespace_collisions_and_failed_workers_are_visible(self):
         workloads = [dict(namespace=n, name='worker', desired=1, ready=0) for n in ['a', 'b']]
         result = extras.build_catalog([], [], workloads, [], [], {})
