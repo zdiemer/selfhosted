@@ -51,7 +51,7 @@ client = openai.OpenAI(
 client.chat.completions.create(model="qwen3:8b", messages=[...])
 ```
 
-In-cluster clients skip the gate entirely: `http://ollama.ai.svc:11434`, no
+Only the authorized Talaria general and scraper workers may call the backend directly: `http://ollama.ai.svc:11434`, no
 auth (ClusterIP is not published anywhere).
 
 ## Models
@@ -77,3 +77,7 @@ re-pull.
 Waits for rollout, then checks the public host both ways: anonymous must get
 401, the vault credential must get `/api/version`. Model presence is reported
 but not asserted.
+
+An ingress NetworkPolicy admits only Traefik and those two Talaria worker
+components. Other workloads must use the authenticated ingress; direct model
+listing, generation, and model-management calls are blocked.
