@@ -32,3 +32,31 @@ in the policy, but that timeout does not independently prove enforcement.
 Monitoring, ARC, CrowdSec, storage/VM operators, backups and remaining infra
 services still need their own dependency review. This release intentionally
 covers only Headlamp and Renovate.
+
+## Shared CI
+
+The shared-isolation release also isolates `arc-systems`: DNS, API VIP/backends,
+and public HTTPS are its only egress paths; ingress is denied. ARC's controller
+and listeners communicate through Kubernetes/GitHub, with no inbound webhooks
+or enabled metrics listener in the deployed configuration.
+
+Runner policies are owned by `infra/actions-runner`, generated from its repo
+list so newly added repositories inherit the boundary. Each of the seven
+current runner namespaces allows DNS, public HTTP/HTTPS, shared BuildKit TCP
+1234 and Traefik's HTTPS listener for registry login. Other egress and all
+inbound connections are denied. The BuildKit client certificate and registry
+credentials are still required. The Traefik grant includes all routes on that
+listener, not just the registry; route authentication remains necessary.
+
+`python3 verify.py --ci` also checks the controller and every active runner
+namespace, including BuildKit reachability and registry TLS/anonymous rejection.
+It does not run repository workflows or publish images. The existing terminating
+`arc-runners` namespace is excluded. Monitoring isolation remains pending.
+
+CI validation on 2026-10-21: all seven namespaces passed allowed/denied
+connectivity tests; the controller/listeners retained API access and active
+GitHub long-polls. An authenticated `buildctl debug workers` from arc-talaria
+with its existing client Secret succeeded. Immediate-start probes initially
+received connection refused; allowing ten seconds after pod creation succeeded,
+consistent with asynchronous network-policy propagation. No workflow build or
+image push was triggered. All temporary probes were removed.

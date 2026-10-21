@@ -6,11 +6,11 @@ zero between jobs. Private repos are the only ones GitHub meters, and they are
 the only ones that should ever get a self-hosted runner (see `values.yaml`).
 
 ```
-GitHub ◀─long-poll─ listener pod   ns arc-talaria
-GitHub ◀─long-poll─ listener pod   ns arc-money
-GitHub ◀─long-poll─ listener pod   ns arc-…            │ job queued
+GitHub ◀─long-poll─ listener pod   ns arc-systems
+GitHub ◀─long-poll─ listener pod   ns arc-systems
+GitHub ◀─long-poll─ listener pod   ns arc-systems            │ job queued
                                                        ▼
-                                    runner pod (+ dind sidecar), gone after
+                                    runner pod (no Docker daemon), gone after
                            ▲
    arc-systems: gha-runner-scale-set-controller watches AutoscalingRunnerSets
 ```
@@ -83,8 +83,23 @@ came in at 17.
 ## Failure modes
 
 - **Jobs sit on "Waiting for a runner"** with listeners Running: the PAT has
-  expired or lost a repo. `kubectl -n arc-<repo> logs -l app.kubernetes.io/component=runner-scale-set-listener`.
+  expired or lost a repo. `kubectl -n arc-systems logs -l app.kubernetes.io/component=runner-scale-set-listener`.
 - **Listener CrashLoops right after upgrade**: controller and scale set from
   different ARC versions. `upgrade.sh` pins both to `ARC_VERSION`.
 - **A runner pod is Pending**: `resources.requests` don't fit; maxRunners ×
   requests is the worst case per repo.
+
+## Network boundary
+
+This chart now creates a namespace-wide NetworkPolicy for every configured
+runner namespace: no inbound connections; outbound DNS, public HTTP/HTTPS,
+BuildKit mTLS on 1234 and Traefik HTTPS for the registry only. The Traefik rule
+permits its other HTTPS routes too; it cannot enforce the registry hostname.
+LAN services, Kubernetes API, metadata and tailnet destinations are excluded.
+No SSH egress or private dependency registries are allowed without an explicit
+policy update. Test with `python3 ../shared-isolation/verify.py --ci`.
+
+The controller and listeners actually run in `arc-systems`; their API/GitHub
+network policy is managed by `infra/shared-isolation`. These controls supplement
+runner RBAC and BuildKit authentication; trusted private repositories remain a
+requirement for sharing the builder.

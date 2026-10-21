@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise live policies using credential-free probes; always remove test pods."""
+import argparse
 import json
 import subprocess
 import uuid
@@ -10,6 +11,13 @@ def kubectl(*args, input=None):
     return subprocess.check_output(['kubectl', *args], input=input, text=True)
 
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--ci', action='store_true', help='Also verify ARC controller and all active runner namespaces')
+args = parser.parse_args()
+runner_namespaces = []
+if args.ci:
+    runner_namespaces = [x['metadata']['name'] for x in json.loads(kubectl('get','ns','-l','actions-runner.zachd/repo','-o','json'))['items'] if x['status']['phase']=='Active']
+namespaces = ['infra','headlamp','renovate'] + (['arc-systems'] + runner_namespaces if args.ci else [])
 name = 'isolation-check-' + uuid.uuid4().hex[:8]
 created = []
 probe = '''import socket,json,concurrent.futures,urllib.request
@@ -31,7 +39,7 @@ print(json.dumps(result))
 try:
     # The same worker avoids differences in node routing. Never use host networking.
     node = json.loads(kubectl('get', 'pods', '-n', 'headlamp', '-l', 'app.kubernetes.io/name=headlamp', '-o', 'json'))['items'][0]['spec']['nodeName']
-    for ns in ['infra', 'headlamp', 'renovate']:
+    for ns in namespaces:
         pod = {'apiVersion':'v1','kind':'Pod','metadata':{'name':name,'namespace':ns},'spec':{
             'nodeName':node,'automountServiceAccountToken':False,'restartPolicy':'Never',
             'securityContext':{'runAsNonRoot':True,'runAsUser':65534,'seccompProfile':{'type':'RuntimeDefault'}},
@@ -45,7 +53,7 @@ try:
     def run(ns):
         return ns,json.loads(kubectl('exec','-n',ns,name,'--','python','-c',probe))
     results = dict(ThreadPoolExecutor().map(run,created))
-    for ns in ['headlamp','renovate']:
+    for ns in namespaces[1:]:
         ip = json.loads(kubectl('get','pod',name,'-n',ns,'-o','json'))['status']['podIP']
         code = "import socket\ntry:\n socket.create_connection((%r,9000),timeout=3).close(); print('allowed')\nexcept OSError: print('blocked')" % ip
         outcome = kubectl('exec','-n','infra',name,'--','python','-c',code).strip()
@@ -55,10 +63,17 @@ try:
     control = results['infra']
     for target in ['api','api-backend','nas','authelia','headlamp','github','npm','dns']:
         assert control[target], 'Control destination unavailable: '+target
-    for ns in ['headlamp','renovate']:
+    for ns in namespaces[1:]:
         expected = {'dns','api','api-backend'} if ns=='headlamp' else {'dns','github','npm'}
+        if ns=='arc-systems':
+            expected |= {'api','api-backend'}
         for target,allowed in results[ns].items():
             assert allowed == (target in expected), (ns,target,allowed)
+    for ns in runner_namespaces:
+        # TCP proves the selected BuildKit path. Authentication is tested
+        # separately with buildctl using the runner's existing client certificate.
+        code = "import socket,urllib.request,urllib.error; socket.create_connection(('buildkitd.buildkit.svc',1234),timeout=5).close()\ntry:\n urllib.request.urlopen('https://registry.zachd.duckdns.org/v2/',timeout=5); raise AssertionError('registry accepted anonymous access')\nexcept urllib.error.HTTPError as e: assert e.code==401,e.code\nprint('BuildKit reachable; registry TLS valid and anonymous access denied')"
+        print(ns+': '+kubectl('exec','-n',ns,name,'--','python','-c',code).strip())
     print('POLICIES_VERIFIED (metadata unavailable in control; timeout alone is not proof)')
 finally:
     for ns in created:
