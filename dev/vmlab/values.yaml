@@ -350,10 +350,9 @@ egressExcept:
   - 100.64.0.0/10
 
 networkPolicy:
-  # The UI's own ingress policy. Off by default for the same reason as
-  # infra/hatch: a wrong netpol fails looking exactly like an application bug.
-  # The VM profile policies above are NOT gated on this — they are the sandbox.
-  uiEnabled: false
+  # Only Traefik may reach the management API and console proxy.
+  # Guest profile policies remain independent of the UI policy.
+  uiEnabled: true
 
 # ---------------------------------------------------------------------------
 # The seed catalog. Helm owns this ConfigMap and the UI renders it read-only.

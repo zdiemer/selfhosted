@@ -605,3 +605,7 @@ it advertises `kvm=1k` and carries **no taint**, only the label
 
 `kubevirt.io/ksm-enabled` is `false` cluster-wide. Turning KSM on would be the
 single highest-leverage change for running several similar guests at once.
+
+The management API and console proxy are protected by the enabled
+`networkPolicy.uiEnabled` policy: only Traefik may connect. Guest isolation
+alone does not protect the controller API from other cluster workloads.

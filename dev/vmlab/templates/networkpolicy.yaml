@@ -1,10 +1,9 @@
 {{/*
 The sandbox.
 
-These are NOT gated behind networkPolicy.uiEnabled. The UI's own ingress policy
-is a hardening nicety and defaults off (a wrong netpol fails looking exactly
-like an app bug); these three are the thing that makes it defensible to boot a
-2008 Kubuntu and a DPRK desktop on a cluster that also runs the house.
+Guest policies are independent of networkPolicy.uiEnabled. The enabled UI
+policy admits only Traefik, so direct API calls cannot bypass Authelia. Guest
+policies separately constrain the networks reachable from each VM.
 
 They select on the label vmlab.zachd/network, which app/vmlab/k8s.py stamps on
 every session pod from the validated profile name. A pod with no such label is
