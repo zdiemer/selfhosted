@@ -103,9 +103,15 @@ def negative_cases():
 
 def verify_denials(namespace):
     for name,pod in negative_cases():
-        result=dryrun(pod,namespace)
-        if result.returncode==0 or 'application-guard-' not in result.stderr:
-            raise RuntimeError(f'{namespace}: expected guard rejection for {name}: {result.stderr[:500]}')
+        # Policy/binding admission caches converge asynchronously on API servers.
+        # Retrying a dry run cannot persist the deliberately unsafe test pod.
+        for attempt in range(30):
+            result=dryrun(pod,namespace)
+            if result.returncode!=0 and 'application-guard-' in result.stderr:
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f'{namespace}: expected guard rejection for {name}: {result.stderr[-700:]}')
     print(namespace, '8 dangerous pod configurations denied')
 
 
