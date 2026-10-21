@@ -372,3 +372,10 @@ same tuning picture as the dashboard, with history.
   stays open across the gap.
 - No STOP/HELP handling and no quiet hours. If this ever texts at 2 a.m. because
   a load finished at 2 a.m., that is working as designed.
+
+## Backend network boundary
+
+The dashboard/API listener accepts traffic only from Traefik and the trusted
+Alloy metrics agents. The separate device-ingest listener remains reachable
+through ServiceLB and still requires the device token. A NetworkPolicy cannot
+filter HTTP paths: Alloy is trusted to reach the shared metrics/API port.
