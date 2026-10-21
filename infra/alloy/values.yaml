@@ -797,12 +797,9 @@ alloy:
 
         tls_config {
           ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-          // The kubelet serving cert is self-signed against the node's own
-          // name/IP and is not issued by the cluster CA, so verification cannot
-          // succeed here. The connection is still authenticated in the
-          // direction that matters — the bearer token proves us to the kubelet,
-          // and the target is a node IP on the cluster network.
-          insecure_skip_verify = true
+          // All ten kubelet serving certificates validate against this CA,
+          // including their InternalIP SANs (verified 2026-10-21).
+          insecure_skip_verify = false
         }
       }
 

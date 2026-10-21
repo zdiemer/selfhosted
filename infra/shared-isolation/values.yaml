@@ -1,16 +1,162 @@
-# Both Service VIP and backend addresses are needed across CNI/NAT ordering.
+# API VIP and backends cover CNI/NAT ordering. Update when control planes change.
 apiAddresses:
-  - 10.43.0.1/32
-  - 192.168.4.21/32
-  - 192.168.4.25/32
-  - 192.168.4.26/32
+- 10.43.0.1/32
+- 192.168.4.21/32
+- 192.168.4.25/32
+- 192.168.4.26/32
 publicExclusions:
-  - 0.0.0.0/8
-  - 10.0.0.0/8
-  - 100.64.0.0/10
-  - 127.0.0.0/8
-  - 169.254.0.0/16
-  - 172.16.0.0/12
-  - 192.168.0.0/16
-  - 224.0.0.0/4
-  - 240.0.0.0/4
+- 0.0.0.0/8
+- 10.0.0.0/8
+- 100.64.0.0/10
+- 127.0.0.0/8
+- 169.254.0.0/16
+- 172.16.0.0/12
+- 192.168.0.0/16
+- 224.0.0.0/4
+- 240.0.0.0/4
+# Explicit node IPs for kubelet and host-network node-exporter metrics.
+# Update with node replacements/additions; never widen to the whole LAN.
+monitoringNodes:
+- 192.168.4.26/32
+- 192.168.4.28/32
+- 192.168.4.37/32
+- 192.168.4.25/32
+- 192.168.4.27/32
+- 192.168.4.21/32
+- 192.168.4.22/32
+- 192.168.4.39/32
+- 192.168.4.31/32
+- 192.168.4.30/32
+alloyCollectorTargets:
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik
+  ports:
+  - port: 9100
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: kube-state-metrics
+  ports:
+  - port: 8080
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: crowdsec
+    podSelector:
+      matchLabels:
+        k8s-app: crowdsec
+  ports:
+  - port: 6060
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: cloudflared
+  ports:
+  - port: 2000
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  ports:
+  - port: 9153
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: k8up
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: k8up
+  ports:
+  - port: 8080
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: claude
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: claude-workspace
+  ports:
+  - port: 9105
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app: health-exporter
+  ports:
+  - port: 9105
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: sms-relay
+  ports:
+  - port: 9105
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: media
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: arr
+  ports:
+  - port: 9105
+    protocol: TCP
+alloyProbeTargets:
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: sms-relay
+  ports:
+  - port: 8000
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: infra
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: cluster-status
+  ports:
+  - port: 8080
+    protocol: TCP
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: auth
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: keepass
+        app.kubernetes.io/component: keeweb
+  ports:
+  - port: 80
+    protocol: TCP

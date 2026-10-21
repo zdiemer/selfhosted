@@ -1,0 +1,77 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-boundary
+  namespace: alloy
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - {port: 12345, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    # Self-scrapes and the upgrade script's credential-free verification pod.
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - {port: 12345, protocol: TCP}
+{{- range $instance := list "alloy" "alloy-probe" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $instance }}-dependencies
+  namespace: alloy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+      app.kubernetes.io/instance: {{ $instance }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{ toJson $.Values.publicExclusions }}
+      ports:
+        - {port: 443, protocol: TCP}
+        {{- if eq $instance "alloy-probe" }}
+        - {port: 80, protocol: TCP}
+        {{- end }}
+    {{- if eq $instance "alloy" }}
+    - to:
+        {{- range $.Values.apiAddresses }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+    - to:
+        {{- range $.Values.monitoringNodes }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 9100, protocol: TCP}
+        - {port: 10250, protocol: TCP}
+    {{- toYaml $.Values.alloyCollectorTargets | nindent 4 }}
+    {{- else }}
+    {{- toYaml $.Values.alloyProbeTargets | nindent 4 }}
+    # Preserve the existing relay probe; verification must not connect to it
+    # because a connection can wake the paused Minecraft server.
+    - to:
+        - ipBlock: {cidr: 147.182.206.23/32}
+      ports:
+        - {port: 25565, protocol: TCP}
+    {{- end }}
+{{- end }}

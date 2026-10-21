@@ -372,3 +372,15 @@ completely invisible — `node_network_*` counts their bytes and the probes in
 **Fixed since this was first written:** BlueMap's `:8100` LoadBalancer on every
 node IP is now `ClusterIP`, so `map.*` through Traefik is the only door. See
 [`minecraft/bluemap-ingress`](../../minecraft/bluemap-ingress).
+
+## Network and kubelet TLS hardening
+
+`infra/shared-isolation` manages separate network grants for collectors and the
+blackbox prober. New scrape endpoints require a matching rule there, and node
+replacements require updating its `monitoringNodes` list. The existing upgrade
+script's same-namespace metrics verification remains allowed. Alloy's metrics
+and debug UI are blocked from other namespaces.
+
+Kubelet certificate verification is enabled using the cluster CA. All ten
+node certificates and IP SANs were verified on 2026-10-21; the earlier comment
+claiming they were self-signed was incorrect for the deployed cluster.
