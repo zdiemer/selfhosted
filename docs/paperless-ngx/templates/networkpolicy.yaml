@@ -1,0 +1,25 @@
+{{/* The broker accepts pickle tasks: only the application may reach it. */}}
+{{- range $component := list "redis" "postgres" "tika" "gotenberg" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paperless.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "paperless.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "paperless.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "paperless.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: paperless
+      ports:
+        - protocol: TCP
+          port: {{ if eq $component "redis" }}6379{{ else if eq $component "postgres" }}5432{{ else if eq $component "tika" }}9998{{ else }}3000{{ end }}
+{{- end }}

@@ -57,3 +57,10 @@ schema migrations at startup; allow migrations to finish before restarting it.
 An image rollback may require restoring the matching database. Use
 [K8up](../../infra/k8up/README.md) for backup/restore procedures, and retain PVCs
 when uninstalling unless their data is intentionally being discarded.
+
+## Internal service isolation
+
+NetworkPolicies allow only this release's Paperless application pods to reach
+Redis, PostgreSQL, Tika, and Gotenberg. In particular, Redis is a trusted Celery
+broker accepting pickle tasks; it must never be reachable by unrelated workloads.
+These policies preserve Paperless's existing serializer and scheduled tasks.
