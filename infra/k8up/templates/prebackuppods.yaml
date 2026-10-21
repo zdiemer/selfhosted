@@ -122,6 +122,7 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 64Mi }
             limits: { memory: 512Mi }
+{{- if not .Values.talariaAtomicBackup.enabled }}
 ---
 apiVersion: k8up.io/v1
 kind: PreBackupPod
@@ -202,6 +203,7 @@ spec:
             requests: { cpu: 50m, memory: 128Mi }
             # A 75G database dumps through a compression pipeline; give it room.
             limits: { memory: 1Gi }
+{{- end }}
 ---
 apiVersion: k8up.io/v1
 kind: PreBackupPod
