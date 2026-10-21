@@ -33,6 +33,14 @@ template:
       - name: runner
         image: {{ $r.image }}
         command: ["/home/runner/run.sh"]
+        volumeMounts:
+          - name: buildkit-client
+            mountPath: /var/run/buildkit-client
+            readOnly: true
         resources:
           {{- toYaml $r.resources | nindent 10 }}
+    volumes:
+      - name: buildkit-client
+        secret:
+          secretName: buildkit-client-tls
 {{- end -}}

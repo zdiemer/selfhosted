@@ -1,11 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
 {{/*
-The TCP listener has no auth (no mTLS — README), so this policy IS the auth:
-only pods in the client namespace may reach it. Egress is what a builder
-needs and nothing more: DNS, plus HTTPS to public registries (pull base
-images from docker.io/ghcr.io, push results to the registry via Traefik or to ghcr.io) and HTTP for apt —
-Debian images fetch deb.debian.org over port 80 by default (apt's signature
-checks cover integrity), so RUN apt-get layers die without it.
+The TCP listener requires client TLS certificates. NetworkPolicy further limits
+callers and public egress; registry pushes pass through Traefik.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -70,6 +66,11 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
+              - 0.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 224.0.0.0/4
+              - 240.0.0.0/4
               - 10.0.0.0/8
               - 172.16.0.0/12
               - 192.168.0.0/16

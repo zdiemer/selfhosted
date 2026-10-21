@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
-# Apply the buildkit chart.
-#
-# The one way this deploy fails that helm can't tell you about: rootless
-# buildkitd needs to create a user namespace, and Ubuntu 24.04 ships
-# kernel.apparmor_restrict_unprivileged_userns=1 which forbids exactly that
-# for unconfined processes. So before touching helm, this pre-flights the
-# sysctl on every node (best-effort, via tailscale ssh) — and after the
-# rollout it proves the oci worker actually initialized, which is the step
-# that dies when the sysctl is wrong.
+# Provision TLS and named node profiles, deploy, then check the local worker.
 
 set -euo pipefail
 
@@ -20,28 +12,8 @@ VALUE_ARGS=(-f "${HERE}/values.yaml")
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
-# Best-effort sysctl pre-flight. Warn, don't fail: tailscale may not be up
-# (fresh workspace pod), and the pod may well land on a compliant node anyway.
-if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
-  echo "==> Pre-flight: unprivileged-userns sysctl on each node"
-  BAD=0
-  for NODE in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-    # Bounded, because this is a best-effort check and `tailscale ssh` can hang
-    # rather than fail — a stale tailnet session, a sleeping laptop node, a
-    # machine that answers ping and nothing else. Without a timeout the loop
-    # runs ten unbounded SSH attempts and the deploy never reaches helm at all,
-    # which is a far worse outcome than not knowing the sysctl.
-    VAL="$(timeout 10 tailscale ssh "root@${NODE}" sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo '?')"
-    [[ "$VAL" == "0" ]] || { echo "    ${NODE}: kernel.apparmor_restrict_unprivileged_userns=${VAL}"; BAD=1; }
-  done
-  if [[ "$BAD" == "1" ]]; then
-    echo "    WARNING: rootless buildkitd will crashloop on the nodes above."
-    echo "    Fix (persistent), per node:"
-    echo "      tailscale ssh root@<node> 'printf \"kernel.apparmor_restrict_unprivileged_userns=0\\n\" > /etc/sysctl.d/60-buildkit-userns.conf && sysctl --system >/dev/null'"
-  fi
-else
-  echo "==> Skipping sysctl pre-flight (tailscale not available here)"
-fi
+python3 "$HERE/../../scripts/internal-pki.py"
+python3 "$HERE/apply-node-profile.py"
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
@@ -55,4 +27,4 @@ kubectl -n "$NAMESPACE" rollout status "deployment/${RELEASE}" --timeout=300s
 # `oci` worker listed = builds will work.
 echo "==> Smoke: buildctl debug workers"
 kubectl -n "$NAMESPACE" exec "deploy/${RELEASE}" -- \
-  buildctl --addr tcp://127.0.0.1:1234 debug workers
+  buildctl --addr unix:///run/user/1000/buildkit/buildkitd.sock debug workers

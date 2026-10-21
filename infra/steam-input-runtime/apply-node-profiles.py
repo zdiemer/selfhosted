@@ -5,8 +5,9 @@ from pathlib import Path
 import subprocess
 
 root = Path(__file__).resolve().parent
-pods = json.loads(subprocess.check_output(['kubectl', 'get', 'pods', '-n', 'infra', '-o', 'json']))
-pod = next(p['metadata']['name'] for p in pods['items'] if p['spec'].get('nodeName') == 'zachd-ubuntu-6' and p['metadata']['name'].startswith('registry-node-config-') and p['status']['phase'] == 'Running')
+import sys
+sys.path.insert(0,str(root.parents[1] / 'scripts/lib'))
+from node_exec import node_session
 files = {
     '/etc/apparmor.d/steam-headless': (root / 'profiles/steam-headless.apparmor').read_text(),
     '/var/lib/kubelet/seccomp/steam-headless.json': (root / 'profiles/steam-headless.json').read_text(),
@@ -22,4 +23,5 @@ for name, content in json.load(sys.stdin).items():
 subprocess.run(['/usr/sbin/apparmor_parser', '-r', '/etc/apparmor.d/steam-headless'], check=True)
 print('Steam node profiles installed')
 '''
-subprocess.run(['kubectl', 'exec', '-i', '-n', 'infra', pod, '--', 'nsenter', '-t', '1', '-m', '--', 'python3', '-c', code], input=json.dumps(files).encode(), check=True)
+with node_session('zachd-ubuntu-6') as execute:
+    print(execute(['python3','-c',code],json.dumps(files).encode()).decode().strip())

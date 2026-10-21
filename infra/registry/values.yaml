@@ -64,24 +64,10 @@ ingress:
 # none of which can complete an interactive login. distribution's own htpasswd
 # (basic auth on every request, including pulls) is the gate instead.
 
-# The node side of the contract. A privileged DaemonSet writes
-# /etc/rancher/k3s/registries.yaml on every node — mirror `registry.host` to
-# the ClusterIP above, plus the pull credential — and restarts k3s when, and
-# only when, the file changed. Nodes are restarted ONE AT A TIME, in name
-# order, so three control-plane restarts never overlap. A node that is off
-# today (the laptops) gets the file when it next joins, which is the reason
-# this is a DaemonSet and not a script run once.
+# Explicit short-lived node maintenance; see apply-node-config.py.
 nodeConfig:
   enabled: true
-  # kubectl + jq on alpine, for ordering the nodes. Deliberately from Docker
-  # Hub, not GHCR: this pod is the thing that makes the cluster survive GitHub
-  # being down, so it must not need GitHub to start.
-  image:
-    repository: docker.io/alpine/k8s
-    # renovate: image=docker.io/alpine/k8s
-    tag: "1.34.9"
-  # Seconds between one node's restart and the next node's turn.
-  stagger: 45
+  overlaySourceCIDRs: [10.42.0.0/32, 10.42.7.0/32, 10.42.9.0/32, 10.42.4.0/32, 10.42.6.0/32, 10.42.11.0/32, 10.42.2.0/32, 10.42.13.0/32, 10.42.3.0/32, 10.42.8.0/32]
   # Additional registries.yaml content merged verbatim (e.g. a second mirror).
   extra: {}
 

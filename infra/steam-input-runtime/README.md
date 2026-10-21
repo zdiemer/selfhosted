@@ -3,8 +3,8 @@
 Run `./upgrade.sh` with cluster-admin credentials before deploying
 `games/steam-headless`. This installs the node's persistent AppArmor and seccomp
 profiles and two nonprivileged runtime helpers on zachd-ubuntu-6. The installer
-uses the existing registry-node-config administration pod; it does not create a
-new privileged workload. The AppArmor file is loaded immediately and by the host's
+uses a short-lived node-maintenance Job with no API token and a ten-minute
+deadline; it deletes the Job afterwards. The AppArmor file is loaded immediately and by the host's
 AppArmor service at boot. Reapply before moving Steam to a rebuilt node.
 
 The device plugin advertises one `devic.es/steam-display` allocation containing

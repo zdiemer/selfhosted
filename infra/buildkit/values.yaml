@@ -33,7 +33,7 @@ scheduling:
 
 networkPolicy:
   enabled: true
-  # Only pods in this namespace may reach the (unauthenticated) TCP listener.
+  # Network allowlist in addition to mandatory client TLS authentication.
   clientNamespace: claude
   # Also admit any namespace carrying this label: the GitHub Actions runner
   # namespaces from infra/actions-runner. Set "" to admit none.
@@ -59,3 +59,8 @@ resources:
     # Sized for the worst known build (rachelfreeman) with headroom; the pinned
     # node has 32Gi. No CPU limit on purpose — builds should use every core.
     memory: 16Gi
+
+pki:
+  image: registry.zachd.duckdns.org/zdiemer/build-pki:v1@sha256:59eff43237de51c4111bfc49d2fddad7b19a7a9c43aeb79cfa536bebea71eedd
+  # Issuance runs during upgrade; scheduled renewal can only modify named Secrets.
+  clientNamespaces: [claude, arc-talaria, arc-money, arc-rachelfreeman, arc-whatnowgg, arc-kelsey-dot-green, arc-romnas, arc-vxp]

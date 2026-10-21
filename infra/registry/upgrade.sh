@@ -27,6 +27,8 @@ command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
+python3 "$HERE/../../scripts/internal-pki.py"
+
 echo "==> helm upgrade --install ${RELEASE} ${HERE} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" "$HERE" -n "$NAMESPACE" \
   -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
@@ -35,9 +37,8 @@ echo "==> Waiting for ${RELEASE} rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=300s
 
 HOST="$(helm get values "$RELEASE" -n "$NAMESPACE" -a -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["registry"]["host"])')"
-USER="$(helm get values "$RELEASE" -n "$NAMESPACE" -a -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["registry"]["auth"]["username"])')"
-PASS="$(sv_fd | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["registry"]["auth"]["password"])')"
-LAN="$($K get svc "$RELEASE" -o jsonpath='{.spec.clusterIP}'):$($K get svc "$RELEASE" -o jsonpath='{.spec.ports[0].port}')"
+REGISTRY_USER="$(helm get values "$RELEASE" -n "$NAMESPACE" -a -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["registry"]["auth"]["username"])')"
+REGISTRY_PASS="$(sv_fd | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["registry"]["auth"]["password"])')"
 
 # A push exercises Traefik, the wildcard cert, the htpasswd and the blob store
 # in one go; an anonymous 401 proves the gate is actually closed.
@@ -50,7 +51,7 @@ echo "==> Push a probe image through https://${HOST}"
 PROBE="${HOST}/zdiemer/registry-probe:$(date -u +%Y%m%d%H%M%S)"
 # A throwaway docker config dir on tmpfs, so the credential never lands on ext4.
 cfg_dir="$(mktemp -d -p /dev/shm 2>/dev/null || mktemp -d -p "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}")"
-printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$HOST" "$(printf '%s:%s' "$USER" "$PASS" | base64 -w0)" >"${cfg_dir}/config.json"
+printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$HOST" "$(printf '%s:%s' "$REGISTRY_USER" "$REGISTRY_PASS" | base64 -w0)" >"${cfg_dir}/config.json"
 ctx="$(mktemp -d)"
 trap 'rm -rf "$cfg_dir" "$ctx"' EXIT
 printf 'FROM scratch\nCOPY probe /probe\n' >"${ctx}/Dockerfile"
@@ -68,24 +69,10 @@ else
 fi
 if [[ -n "$PROBE" ]]; then
   echo "    pushed ${PROBE}"
-  TAG="${PROBE##*:}"
-  echo "==> Pull its manifest back over the LAN path http://${LAN}"
-  # From a pod, because the ClusterIP is only routable from inside the cluster
-  # (and from the nodes, which is the point).
-  code="$($K run registry-probe-pull --rm -i --restart=Never --quiet \
-    --image=docker.io/curlimages/curl:8.12.1 --command -- \
-    curl -sS -o /dev/null -w '%{http_code}' -u "${USER}:${PASS}" \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
-    "http://${LAN}/v2/zdiemer/registry-probe/manifests/${TAG}" 2>/dev/null | tail -c 3)"
-  [[ "$code" == "200" ]] || { echo "    !! LAN pull returned ${code}"; exit 1; }
-  echo "    200 via ${LAN}"
 fi
 
-echo "==> Node config"
-$K rollout status "daemonset/${RELEASE}-node-config" --timeout=120s || true
-$K get pods -l app.kubernetes.io/component=node-config -o wide | sed 's/^/    /'
-echo "    (each node applies registries.yaml in turn; watch with:"
-echo "     kubectl -n ${NAMESPACE} logs -l app.kubernetes.io/component=node-config -f --prefix)"
+echo "==> Node config and CRI pulls (sequential maintenance jobs)"
+python3 "$HERE/apply-node-config.py" "$PROBE"
 
 echo "==> Ingress"
 $K get ingress "$RELEASE"

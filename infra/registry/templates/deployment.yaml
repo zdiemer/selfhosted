@@ -35,6 +35,7 @@ spec:
         {{- end }}
     spec:
       enableServiceLinks: false
+      automountServiceAccountToken: false
       # Platform: if this pod cannot be scheduled, no first-party image can be
       # pulled fresh anywhere, which is one rung below "the ingress is down".
       priorityClassName: platform-core
@@ -47,6 +48,11 @@ spec:
         - name: registry
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
           args: ["serve", "/etc/distribution/config.yml"]
           env:
             # Signs the upload-session state passed back to clients. Derived
@@ -63,6 +69,7 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
           volumeMounts:
+            - {name: tls, mountPath: /etc/registry/tls, readOnly: true}
             - name: config
               mountPath: /etc/distribution/config.yml
               subPath: config.yml
@@ -79,23 +86,28 @@ spec:
           # driver turns it into a 503.
           startupProbe:
             httpGet:
+              scheme: HTTPS
               path: /
               port: http
             periodSeconds: 5
             failureThreshold: 24
           readinessProbe:
             httpGet:
+              scheme: HTTPS
               path: /
               port: http
             periodSeconds: 15
           livenessProbe:
             httpGet:
+              scheme: HTTPS
               path: /
               port: http
             periodSeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: tls
+          secret: {secretName: registry-internal-tls}
         - name: config
           configMap:
             name: {{ include "registry.fullname" . }}-config

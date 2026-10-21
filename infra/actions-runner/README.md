@@ -62,6 +62,10 @@ that way). Verified against `ghcr.io/actions/actions-runner:latest`.
   with:
     driver: remote
     endpoint: tcp://buildkitd.buildkit.svc.cluster.local:1234
+    driver-opts: |
+      cacert=/var/run/buildkit-client/ca.crt
+      cert=/var/run/buildkit-client/tls.crt
+      key=/var/run/buildkit-client/tls.key
 ```
 
 then `docker buildx build` / `docker/build-push-action` as usual. `infra/buildkit`'s

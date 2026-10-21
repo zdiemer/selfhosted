@@ -20,6 +20,7 @@ data:
         "maintenance" (dict "uploadpurging" (dict "enabled" true "age" "168h" "interval" "24h" "dryrun" false))
       )
       "http" (dict
+        "tls" (dict "certificate" "/etc/registry/tls/tls.crt" "key" "/etc/registry/tls/tls.key" "minimumtls" "tls1.2")
         "addr" (printf ":%d" (int .Values.service.port))
         "headers" (dict "X-Content-Type-Options" (list "nosniff"))
       )

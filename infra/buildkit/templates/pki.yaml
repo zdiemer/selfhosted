@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-pki-script
+data:
+  renew.py: |
+    {{- .Files.Get "files/internal-pki.py" | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-pki
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: build-pki-namespaces
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: build-pki-namespaces
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: build-pki-namespaces}
+subjects:
+  - {kind: ServiceAccount, name: build-pki, namespace: buildkit}
+{{- $targets := append (append (deepCopy .Values.pki.clientNamespaces) "buildkit") "infra" }}
+{{- range $targets }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: build-pki-renew
+  namespace: {{ . }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: {{ if eq . "buildkit" }}[buildkit-server-tls]{{ else if eq . "infra" }}[registry-internal-tls]{{ else }}[buildkit-client-tls]{{ end }}
+    verbs: [get, patch]
+  {{- if eq . "buildkit" }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [internal-build-ca]
+    verbs: [get]
+  {{- end }}
+  {{- if or (eq . "infra") (eq . "buildkit") }}
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ if eq . "infra" }}registry{{ else }}buildkit{{ end }}]
+    verbs: [get, patch]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: build-pki-renew
+  namespace: {{ . }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: build-pki-renew}
+subjects:
+  - {kind: ServiceAccount, name: build-pki, namespace: buildkit}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: build-pki-renew
+spec:
+  schedule: "17 5 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 180
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: build-pki}
+        spec:
+          serviceAccountName: build-pki
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532}
+          containers:
+            - name: renew
+              image: {{ .Values.pki.image }}
+              args: [/scripts/renew.py]
+              env:
+                - {name: HOME, value: /tmp}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+              resources:
+                requests: {cpu: 10m, memory: 64Mi}
+                limits: {cpu: "1", memory: 256Mi}
+              volumeMounts:
+                - {name: script, mountPath: /scripts, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+                - {name: shm, mountPath: /dev/shm}
+          volumes:
+            - name: script
+              configMap: {name: build-pki-script}
+            - name: tmp
+              emptyDir: {medium: Memory, sizeLimit: 16Mi}
+            - name: shm
+              emptyDir: {medium: Memory, sizeLimit: 16Mi}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: build-pki
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: build-pki}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock: {cidr: 10.43.0.1/32}
+        - ipBlock: {cidr: 192.168.4.0/24}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}

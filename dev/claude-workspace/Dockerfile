@@ -269,3 +269,10 @@ WORKDIR /home/node
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # No CMD — each pod container sets its own `command:`.
+
+# Authenticated shared BuildKit client; arbitrary remote endpoints remain supported.
+USER root
+RUN mkdir -p /usr/local/libexec && mv /usr/local/bin/buildctl /usr/local/libexec/buildctl
+COPY files/buildctl /usr/local/bin/buildctl
+RUN chmod 0755 /usr/local/bin/buildctl
+USER node

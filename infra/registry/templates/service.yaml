@@ -5,6 +5,9 @@ metadata:
   labels:
     {{- include "registry.labels" . | nindent 4 }}
     app.kubernetes.io/component: registry
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: infra-registry-internal@kubernetescrd
 spec:
   type: {{ .Values.service.type }}
   # Pinned — every node's registries.yaml names this address. See values.yaml.

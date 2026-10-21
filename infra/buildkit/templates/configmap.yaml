@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkit-config
+data:
+  buildkitd.toml: |
+    [worker.oci]
+      max-parallelism = 4
+      gc = true
+      reservedSpace = "10GB"
+      maxUsedSpace = "80GB"
+      minFreeSpace = "10GB"

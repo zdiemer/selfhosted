@@ -1,147 +1,56 @@
-# registry
+# Registry
 
-The cluster's own OCI registry at `registry.zachd.duckdns.org`, in the `infra`
-namespace. Every first-party image (`money`, `sms-relay`, `smitele-bot`,
-`talaria-*`, `whatnowgg`, `gamedex`, `claude-workspace`, …) is pushed here by its
-`build.sh` and pulled from here by every node. It is
-[CNCF distribution](https://distribution.github.io/distribution/), values only.
+The private OCI registry is `registry.zachd.duckdns.org`, with its 200Gi iSCSI
+volume preserved. It requires its existing 1Password-managed Basic authentication
+for pushes and pulls. Anonymous `/v2/` access returns 401.
 
-## Why
+## Transport and containment
 
-Until this existed, every first-party image lived only on `ghcr.io/zdiemer/*`.
-That made GitHub a *runtime* dependency: a pod rescheduling onto a node that
-had never pulled that image — a drained node, a rebuilt one, a new one — needed
-GHCR to answer, and an outage there, a package-permission change, or a PAT
-expiring turned into pods stuck in `ImagePullBackOff`. The builds already ran
-in-cluster ([`infra/buildkit`](../buildkit/)); this closes the loop so the
-images they produce never leave the house.
+Pushes use HTTPS through Traefik. Traefik verifies the registry backend against
+the internal CA, including its server name. Node containerd pulls use the pinned
+`https://10.43.200.10:5000` mirror with CA verification. No insecure-skip-verify or
+plaintext pull path remains. The public hostname is retained as an authenticated
+HTTPS fallback. Keep the Service IP fixed.
 
-Third-party images (`docker.io`, `ghcr.io/<upstream>`, `registry.k8s.io`) are
-*not* proxied here. distribution's pull-through mode is one upstream per
-instance and cannot accept pushes, so it would be a second deployment per
-upstream for an outage that has never actually bitten. If that ever changes,
-k3s's embedded registry mirror (Spegel) is the cheaper answer: nodes serve
-each other whatever any of them has already pulled.
+The registry runs as UID/GID 1000 with all capabilities dropped, no privilege
+escalation, RuntimeDefault seccomp, a read-only root filesystem, no API token and
+no egress. Only its blob volume is writable. Ingress policy admits Traefik,
+workspace maintenance clients and node sources. Flannel host-to-pod traffic uses
+node tunnel addresses, so the policy includes those individual /32 addresses,
+not the pod CIDR. Review `nodeConfig.overlaySourceCIDRs` when adding nodes.
 
-## Two paths in, one credential
+## Node configuration
 
-```
-build.sh (laptop / workspace / ARC) ──https──▶ Traefik ──▶ registry:5000   push
-containerd on every node ──────────http (LAN)─────────────▶ 10.43.200.10:5000  pull
-```
+The permanent privileged hostPID DaemonSet and its RBAC are removed.
+`apply-node-config.py` creates one short-lived, token-free privileged maintenance
+Job at a time, writes root-only registry configuration/trust, restarts k3s only
+if content changed, and verifies both authenticated TLS and a real CRI pull.
+Jobs are deleted in finally blocks, have a ten-minute deadline and TTL cleanup.
+No registry secret is passed in command arguments or stored in a Pod spec.
 
-- **Push** goes through the normal ingress with the wildcard cert. No Authelia:
-  docker and buildkit cannot complete an interactive login, so the gate is
-  distribution's own htpasswd, checked on every request, pulls included.
-- **Pull** never touches the ingress. Each node's
-  `/etc/rancher/k3s/registries.yaml` mirrors `registry.zachd.duckdns.org` to the
-  Service's **pinned ClusterIP** over plain HTTP on the cluster network, with
-  the same credential. Two reasons this is not "just pull through the
-  hostname": the public name resolves (from the LAN as well) to the VPS relay,
-  so pulls would leave the house and come back; and
-  [`infra/traefik`](../traefik/)'s edge rate limit is 25 r/s per source, which
-  a multi-layer pull from one node exceeds on its own. If the mirror is ever
-  unreachable containerd falls back to the hostname, so the slow path still
-  works — it is just not the one anything should rely on.
+This is explicit administration, not a continuously running node agent. After
+adding/rebuilding a node, run the upgrade to configure it before relying on
+private image pulls. Offline nodes must return Ready before the all-node apply.
+Other host profile installers use the same short-lived helper.
 
-The ClusterIP `10.43.200.10` is part of the contract: every node's file names
-it, and helm cannot change a Service's IP in place. Don't.
+## Deploy and rotate
 
-There is exactly one user (`registry.auth`, from
-`op://homelab/infra-registry`). Rotating it is `secrets edit infra/registry`
-then `./upgrade.sh` — that re-hashes the htpasswd, rewrites every node, and
-restarts k3s on each in turn — plus updating the two `~/.docker/config.json`
-copies by hand (below).
+`./upgrade.sh` resolves `op://homelab/infra-registry` into memory, provisions TLS,
+applies the chart, tests an anonymous rejection and an authenticated push, then
+updates and verifies every node sequentially. A k3s restart can close its exec
+stream; the idempotent operation retries and requires an explicit success marker.
+A failed service restart restores the previous files before retrying.
 
-## The node side: the `node-config` DaemonSet
+The same existing credential is used by node pulls and developer pushes.
+Rotating it also requires updating developer Docker logins with
+`docker login --password-stdin`. The internal CA, 90-day certificates and daily
+renewal are managed by [BuildKit's PKI](../buildkit/README.md). Certificate renewal
+restarts this registry; CA rotation additionally needs every node's trust updated.
 
-containerd reads `registries.yaml` once, at k3s start, and a node cannot
-resolve a Service name, so every node needs the file and a restart after any
-change. A privileged, `hostPID` DaemonSet (see the header of
-[`templates/node-config.yaml`](templates/node-config.yaml)) keeps the file equal
-to the chart's Secret and restarts `k3s`/`k3s-agent` via `nsenter` when it
-differs. It polls every five minutes; the steady state is "same, sleep".
+## Storage
 
-Restarting k3s does not touch containerd or any running pod. Nodes take turns —
-each waits for its slot in name order and for every schedulable node to be
-Ready — so three control-plane restarts never overlap. If the unit is not back
-within 90 s the previous file is restored and restarted, and that node stops
-retrying until the Secret changes. A cordoned laptop gets the file whenever it
-next runs the pod.
-
-Watch a rollout with:
-
-```sh
-kubectl -n infra logs -l app.kubernetes.io/component=node-config -f --prefix
-```
-
-## Pushing from somewhere new
-
-Add the credential to the docker config wherever `build.sh` runs. In the
-workspace pod (no docker CLI):
-
-```sh
-eval "$(bash ~/code/selfhosted/scripts/op-session.sh ensure)"
-PW="$(op read 'op://homelab/infra-registry/values.local.yaml' | python3 -c 'import sys,yaml;print(yaml.safe_load(sys.stdin)["registry"]["auth"]["password"])')"
-python3 - "$PW" <<'PY'
-import json, base64, sys, os
-p = os.path.expanduser("~/.docker/config.json")
-cfg = json.load(open(p)) if os.path.exists(p) else {"auths": {}}
-cfg.setdefault("auths", {})["registry.zachd.duckdns.org"] = {
-    "auth": base64.b64encode(f"zdiemer:{sys.argv[1]}".encode()).decode()}
-json.dump(cfg, open(p, "w")); os.chmod(p, 0o600)
-PY
-unset PW
-```
-
-On a laptop with docker: `docker login registry.zachd.duckdns.org`.
-
-## Reclaiming space
-
-`storage.delete.enabled` is on, so a tag can be dropped with a `DELETE` on its
-manifest digest, but distribution only frees the blobs when its garbage
-collector runs — and that needs the registry stopped or read-only, which on a
-single-attach RWO volume means a maintenance step, not a CronJob:
-
-```sh
-kubectl -n infra scale deploy/registry --replicas=0
-kubectl -n infra run registry-gc --rm -it --restart=Never --image=docker.io/library/registry:3.1.1 \
-  --overrides='{"spec":{"containers":[{"name":"gc","image":"docker.io/library/registry:3.1.1","command":["registry","garbage-collect","--delete-untagged","/etc/distribution/config.yml"],"volumeMounts":[{"name":"data","mountPath":"/var/lib/registry"},{"name":"config","mountPath":"/etc/distribution/config.yml","subPath":"config.yml"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"registry-data"}},{"name":"config","configMap":{"name":"registry-config"}}]}}'
-kubectl -n infra scale deploy/registry --replicas=1
-```
-
-Half-finished uploads are purged automatically after a week.
-
-The iSCSI volume was expanded online to 200 GiB on 2026-10-18 after reaching
-81.6% of 100 GiB. Usage after filesystem expansion was about 41% (80 GiB),
-with no image deletion or registry downtime. `persistence.size` records the
-new capacity; do not attempt to shrink the existing PVC on a later upgrade.
-
-## Deploy
-
-```sh
-./upgrade.sh   # helm upgrade, rollout, 401 gate check, probe push via the ingress, probe pull via the ClusterIP
-```
-
-The probe image (`zdiemer/registry-probe:<timestamp>`) is a one-file scratch
-image; it is the smallest thing that proves the whole path, and it is cheap to
-leave behind.
-
-## Authentication checks and logging
-
-Verified 2026-10-19: the existing workspace credential and managed registry
-credential both returned 200 on `/v2/`, anonymous access returned 401, a small
-image push succeeded over HTTPS, and all ten nodes pulled that image through
-CRI. The probe manifest was then deleted. No credential rotation was needed.
-A containerd 401 challenge followed by a successful retry is normal Basic auth
-negotiation; it is not evidence of a stale password.
-
-The default registry log level is `warn`, with the separate combined access
-log disabled. This removes probe requests and successful-request chatter while
-retaining auth warnings and errors. Initial auth challenges and missing-blob
-checks during a push can still appear; diagnose the final operation result.
-Override `registry.extraConfig.log` temporarily when detailed tracing is needed.
-
-Helm's retained volume setting was corrected from 50Gi to the existing 200Gi
-capacity. When deploying with `--reuse-values`, explicitly preserve 200Gi or
-later approved expansions; Kubernetes rejects a request to shrink the PVC.
+Keep the existing 200Gi capacity; do not shrink it during upgrades. Tag deletion
+is enabled, but deleting a manifest does not reclaim blobs until registry garbage
+collection runs. GC requires a deliberate stopped/read-only maintenance window;
+normal deployment does not delete images or data. Incomplete uploads expire after
+a week. Successful pulls/pushes are quiet; authentication failures remain logged.

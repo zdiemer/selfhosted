@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+real=/usr/local/libexec/buildctl
+[[ -x "$real" ]] || real=/usr/local/bin/buildctl
+address="${BUILDKIT_HOST:-tcp://buildkitd.buildkit.svc.cluster.local:1234}"
+previous=''
+for arg in "$@"; do
+  [[ "$previous" != --addr ]] || address="$arg"
+  [[ "$arg" != --addr=* ]] || address="${arg#--addr=}"
+  previous="$arg"
+done
+if [[ "$address" == tcp://buildkitd.buildkit.svc.cluster.local:1234 ]]; then
+  tls="${BUILDKIT_TLS_DIR:-/var/run/buildkit-client}"
+  if [[ ! -r "$tls/tls.key" ]]; then
+    tls="$HOME/.config/buildkit/tls"
+    # Compatibility for existing workspace pods until the Secret is mounted.
+    if [[ -f "$HOME/code/selfhosted/scripts/buildkit-client.py" ]]; then
+      python3 "$HOME/code/selfhosted/scripts/buildkit-client.py" >/dev/null
+    fi
+  fi
+  [[ -r "$tls/tls.key" ]] || { echo 'BuildKit client certificate missing: run scripts/buildkit-client.py' >&2; exit 1; }
+  exec "$real" --tlsdir "$tls" "$@"
+fi
+exec "$real" "$@"

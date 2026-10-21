@@ -24,12 +24,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-The LAN endpoint nodes pull from. Plain HTTP on purpose: it never leaves the
-cluster network, and the alternative — TLS on the registry itself — means a
-second certificate to rotate for a hop that the ingress already covers.
+The node pull mirror uses TLS with the internal CA and an IP SAN.
 */}}
 {{- define "registry.lanEndpoint" -}}
-http://{{ .Values.service.clusterIP }}:{{ .Values.service.port }}
+https://{{ .Values.service.clusterIP }}:{{ .Values.service.port }}
 {{- end -}}
 
 {{- define "registry.password" -}}

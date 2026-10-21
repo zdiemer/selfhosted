@@ -1,17 +1,3 @@
-{{/*
-Rootless buildkitd, adapted from upstream's
-examples/kubernetes/deployment+service.rootless.yaml (mTLS stripped — see the
-README for that tradeoff; the NetworkPolicy is the gate instead).
-
-The securityContext looks alarming, so in plain terms: rootlesskit must create
-a user namespace and exec the setuid newuidmap/newgidmap helpers, which means
-  - no `allowPrivilegeEscalation: false` (it would block the setuid helpers),
-  - seccomp/AppArmor Unconfined (the default profiles deny unshare-with-userns
-    on some kernels).
-Everything still runs as uid 1000; nothing here grants root on the node.
-Ubuntu 24.04 nodes additionally need kernel.apparmor_restrict_unprivileged_userns=0
-— upgrade.sh pre-flights that, see the README.
-*/}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,10 +18,9 @@ spec:
       labels:
         {{- include "buildkit.labels" . | nindent 8 }}
       annotations:
-        # Legacy AppArmor annotation, kept alongside the securityContext field
-        # below — the field is authoritative on k8s ≥1.30, the annotation is
-        # belt-and-braces.
-        container.apparmor.security.beta.kubernetes.io/buildkitd: unconfined
+        checksum/seccomp: {{ .Files.Get "profiles/buildkit.json" | sha256sum }}
+        checksum/apparmor: {{ .Files.Get "profiles/buildkit.apparmor" | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
       # Covers the preStop sleep plus letting buildkitd write out its cache
@@ -54,6 +39,16 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --tlscacert
+            - /etc/buildkit/tls/ca.crt
+            - --tlscert
+            - /etc/buildkit/tls/tls.crt
+            - --tlskey
+            - /etc/buildkit/tls/tls.key
             - --addr
             - tcp://0.0.0.0:{{ .Values.service.port }}
             # Required for rootless-in-k8s: buildkitd can't create the pid
@@ -63,9 +58,11 @@ spec:
             runAsUser: 1000
             runAsGroup: 1000
             seccompProfile:
-              type: Unconfined
+              type: Localhost
+              localhostProfile: buildkit.json
             appArmorProfile:
-              type: Unconfined
+              type: Localhost
+              localhostProfile: buildkit
           # Endpoint removal races SIGTERM: a buildctl client can be handed this
           # pod's address while the daemon is going away, which surfaces as a
           # connection reset partway through a build.
@@ -76,27 +73,35 @@ spec:
           ports:
             - name: buildkitd
               containerPort: {{ .Values.service.port }}
-          # `buildctl debug workers` proves the daemon is up AND the rootless
-          # oci worker initialized — the thing that fails when the userns
-          # sysctl is wrong. --addr is required: the daemon listens on TCP
-          # only (see args), and buildctl's default is a unix socket that
-          # doesn't exist here — without it the probe kills a healthy daemon.
+          # Probes use the local Unix socket; remote clients must authenticate.
           readinessProbe:
             exec:
-              command: ["buildctl", "--addr", "tcp://127.0.0.1:{{ .Values.service.port }}", "debug", "workers"]
+              command: ["buildctl", "--addr", "unix:///run/user/1000/buildkit/buildkitd.sock", "debug", "workers"]
             initialDelaySeconds: 5
             periodSeconds: 30
           livenessProbe:
             exec:
-              command: ["buildctl", "--addr", "tcp://127.0.0.1:{{ .Values.service.port }}", "debug", "workers"]
+              command: ["buildctl", "--addr", "unix:///run/user/1000/buildkit/buildkitd.sock", "debug", "workers"]
             initialDelaySeconds: 15
             periodSeconds: 30
           volumeMounts:
+            - name: config
+              mountPath: /etc/buildkit/buildkitd.toml
+              subPath: buildkitd.toml
+              readOnly: true
+            - name: tls
+              mountPath: /etc/buildkit/tls
+              readOnly: true
             - name: cache
               mountPath: /home/user/.local/share/buildkit
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: config
+          configMap: {name: buildkit-config}
+        - name: tls
+          secret:
+            secretName: buildkit-server-tls
         - name: cache
           {{- if .Values.cache.enabled }}
           persistentVolumeClaim:

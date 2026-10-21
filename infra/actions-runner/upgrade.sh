@@ -35,6 +35,8 @@ echo "==> 2/3 namespaces + secrets: actions-runner -n ${NS_CTRL}"
 helm upgrade --install actions-runner "$HERE" -n "$NS_CTRL" \
   -f "$VALUES" -f <(sv_fd) --cleanup-on-fail
 
+python3 "$HERE/../../scripts/internal-pki.py"
+
 echo "==> 3/3 scale sets"
 # The repo list and each repo's values are rendered out of this very chart, so
 # values.yaml is the single place the fleet is described.

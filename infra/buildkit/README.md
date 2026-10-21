@@ -1,43 +1,72 @@
-# buildkit
+# Shared BuildKit
 
-In-cluster **rootless buildkitd**, so the [claude-workspace](../../dev/claude-workspace/) pod can build and push images without a docker daemon. Clients talk to it with `buildctl` over plain TCP:
+Rootless BuildKit v0.32.2 serves authenticated clients at
+`tcp://buildkitd.buildkit.svc.cluster.local:1234`. Talaria's three image builds,
+workspace builds and ARC workflows use this service; no per-app privileged
+builders are needed. Clients forward registry credentials per build session.
+
+Run `./upgrade.sh` to provision TLS, install the node's security profiles and
+apply the chart. A short-lived, token-free administrative Job installs profiles;
+it is deleted afterwards and has a ten-minute deadline. The builder stays on
+zachd-ubuntu-4 with its existing 100Gi cache PVC and 16Gi memory limit. Four
+simultaneous build steps and bounded cache GC prevent unconstrained parallelism.
+
+## Client authentication
+
+The TCP listener requires a certificate signed by the internal build CA. Plain
+TCP, clients without certificates and untrusted certificates are rejected.
+NetworkPolicy additionally restricts callers to the workspace and ARC namespaces.
+No application namespace gets access merely because it runs an app built here.
+
+Workspace: `scripts/buildkit-client.py` exports credentials to
+`~/.config/buildkit/tls` (0700 directory, 0600 files). The managed `buildctl`
+wrapper reads `/var/run/buildkit-client` when mounted, and refreshes exported
+credentials for existing workspace pods. Other clients can use:
 
 ```
-workspace pod ──tcp──▶ buildkitd.buildkit.svc.cluster.local:1234
+buildctl --tlsdir ~/.config/buildkit/tls --addr tcp://buildkitd.buildkit.svc.cluster.local:1234 debug workers
 ```
 
-The workspace image bakes that address in as `BUILDKIT_HOST`, and every per-chart `build.sh` falls back from `docker` to `buildctl` automatically — so `./build.sh` works identically from a laptop (docker) and from the pod (remote build here).
+Buildx remote-driver options are `cacert=.../ca.crt`, `cert=.../tls.crt`, and
+`key=.../tls.key`. ARC mounts a separate client certificate in each repository
+namespace at `/var/run/buildkit-client`. Workflows must pass those three options.
+Talaria's setup script does this automatically. The Service remains internal.
 
-## How a build works
+## Containment and limits
 
-`buildctl` streams the build context from the client's filesystem to buildkitd, which builds and **pushes directly to the registry from inside the cluster** — [`infra/registry`](../registry/) for first-party images, GHCR for the two that still live there. Registry credentials are not stored here: the client forwards its own `~/.docker/config.json` auth per session (for the workspace, that file lives on its home PVC — see its README for the one-time PAT setup).
+AppArmor/seccomp are named local profiles, not Unconfined. They permit rootless
+namespaces, mounts, runc keyring/hostname operations and namespaced device setup;
+ptrace/process_vm_readv/process_vm_writev/kcmp remain denied by seccomp. Ubuntu's
+unprivileged-userns restriction is restored to 1 on the build node: only the
+explicit AppArmor profile grants this workload user namespace creation.
 
-## Security posture
+BuildKit still requires setuid UID-map helpers and `--oci-worker-no-process-sandbox`
+with this rootless Kubernetes configuration. Builds share a daemon and can affect
+its availability. This service is for trusted repositories; mTLS does not make
+arbitrary third-party Dockerfiles safe or provide per-repository VM isolation.
+Rootless permissions do not eliminate shared-kernel vulnerabilities.
 
-- **No mTLS on the listener** (upstream supports it). Anyone who can reach port 1234 can run builds and push with whatever credentials *they* forward. The gate is the NetworkPolicy: ingress only from the `claude` namespace (`networkPolicy.clientNamespace`), and the Service is ClusterIP-only. Single-user homelab tradeoff; if that ever changes, wire up upstream's mTLS example.
-- **The scary-looking securityContext** (seccomp/AppArmor `Unconfined`, no `allowPrivilegeEscalation: false`) is the standard rootless-buildkit-on-k8s recipe: rootlesskit creates a user namespace and execs setuid `newuidmap`/`newgidmap`, which the default profiles block. Everything runs as uid 1000; nothing grants root on the node.
-- Egress: DNS, HTTPS to public IPs (pull bases, push to ghcr.io), and Traefik's `websecure` port — which is what `registry.zachd.duckdns.org` resolves to inside the cluster.
+Outbound traffic is limited to DNS, public HTTP/HTTPS and the registry's Traefik
+endpoint. LAN, tailnet, metadata, loopback and multicast ranges are excluded from
+the public rule. Kubernetes NetworkPolicy does not isolate a pod from its own node.
 
-## Ubuntu 24.04 prerequisite
+## Certificates and recovery
 
-The nodes run Ubuntu 24.04, which defaults `kernel.apparmor_restrict_unprivileged_userns=1` — that forbids exactly the user namespace rootlesskit needs, and buildkitd crashloops with `operation not permitted`. `upgrade.sh` pre-flights this on every node (via tailscale ssh) and prints the fix:
+`files/internal-pki.py` is the canonical issuer; `scripts/internal-pki.py` invokes
+it. The CA private key exists only in `buildkit/internal-build-ca`, never in the
+builder, registry or client mounts. Leaf certificates last 90 days. The daily
+05:17 UTC renewal CronJob renews leaves below 30 days remaining and restarts a
+server only when its certificate changes. That maintenance can interrupt active
+builds. Client Secret mounts update automatically; exported laptop credentials
+must be refreshed. The CA lasts five years and requires planned rotation; renewal
+fails loudly with 120 days remaining instead of silently replacing trust.
 
-```sh
-tailscale ssh root@<node> 'printf "kernel.apparmor_restrict_unprivileged_userns=0\n" > /etc/sysctl.d/60-buildkit-userns.conf && sysctl --system >/dev/null'
-```
+The renewal account can only read the CA, patch named TLS Secrets, list namespaces,
+and restart the two named servers. New client namespaces require initial issuance
+and a matching scoped Role during an admin upgrade. Back up the CA Secret with
+restricted access; losing it requires reissuing clients and distributing new
+registry trust to all nodes. The registry credential remains in 1Password.
 
-## Placement & sizing
-
-Pinned via `scheduling.nodeName` to **zachd-ubuntu-4** (20 cores / 32Gi), with a 16Gi memory limit — sized so the worst known build (rachelfreeman's frontend, which OOMKilled the old 4Gi cap and had to build on Actions) fits with headroom. Set `scheduling.nodeName: ""` to unpin, but note the cache PVC is local-path and therefore node-bound: moving nodes means deleting the PVC (and its Retained PV + data dir on the old node) and letting the next `./upgrade.sh` re-provision.
-
-## Cache
-
-100Gi PVC (`cache.size`) on the default StorageClass, mounted at buildkitd's snapshot store. buildkitd's built-in GC keeps it bounded; if it ever fills anyway, tune GC via a `buildkitd.toml` ConfigMap (not wired up yet — deliberately, YAGNI). local-path can't expand in place — resizing is the same delete-and-reprovision dance as moving nodes.
-
-## Deploy
-
-```sh
-./upgrade.sh   # creates the buildkit namespace, helm upgrade, rollout wait, worker smoke test
-```
-
-Version lockstep: `image.tag` here (`v0.24.0-rootless`) and `BUILDKIT_VERSION` in `dev/claude-workspace/Dockerfile` (`v0.24.0`) move together.
+Build the renewal image from `pki-image/Dockerfile`, push it, and pin its digest in
+values.yaml. The scheduled job has no external network access. For a controlled
+client-only rotation test, set `PKI_RENEW_CLIENT` to an existing client namespace.
