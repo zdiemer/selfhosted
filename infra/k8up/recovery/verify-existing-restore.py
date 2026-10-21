@@ -38,17 +38,15 @@ def build_validation(job, logs, name):
     container['command'] = ['sh', '-ec', r'''set -eu
 export PGDATA=/work/pgdata PGHOST=/tmp PGUSER=postgres
 test -s "$PGDATA/PG_VERSION"
-pg_ctl -l /tmp/postgres.log -o "-c listen_addresses='' -c unix_socket_directories=/tmp" start
+# A new pod's fsGroup volume setup can widen this scratch directory mode.
+chmod 0700 "$PGDATA"
+pg_ctl -l /tmp/postgres.log -o "-c listen_addresses='' -c unix_socket_directories=/tmp" start || { cat /tmp/postgres.log; exit 1; }
 trap 'pg_ctl -m fast stop >/dev/null' EXIT
 psql -X -v ON_ERROR_STOP=1 -d recovery <<'SQL'
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_index WHERE NOT indisvalid) THEN
-    RAISE EXCEPTION 'invalid restored indexes';
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE NOT convalidated) THEN
-    RAISE EXCEPTION 'unvalidated restored constraints';
-  END IF;
-END $$;
+-- Division by zero aborts psql if any invalid object remains. Avoid dollar
+-- quoting: Kubernetes expands paired dollar signs in container commands.
+SELECT 1 / (count(*) = 0)::int AS indexes_valid FROM pg_index WHERE NOT indisvalid;
+SELECT 1 / (count(*) = 0)::int AS constraints_valid FROM pg_constraint WHERE NOT convalidated;
 SELECT count(*) AS restored_tables FROM pg_tables WHERE schemaname='public';
 SELECT count(*) AS restored_auction_items FROM auction_items;
 SELECT pg_size_pretty(pg_database_size('recovery')) AS restored_size;

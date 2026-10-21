@@ -265,10 +265,21 @@ and temporary storage, with no backup credentials, and never runs initdb or
 replays the archive. It checks index/constraint validity, table and auction
 counts, and database size before printing `RESTORE_VERIFIED`.
 
-The current scratch restore is still in progress; no recovery success is
-claimed yet. A workspace watcher at `/tmp/watch-talaria-validation.py` waits
-for it, invokes the guarded continuation only when eligible, and records its
-result in `/tmp/talaria-final-validation-driver.log` and
-`/tmp/talaria-final-validation-result.log`. This watcher is session-local, not
-a durable cluster controller; if the workspace stops, run the guarded command
-manually after inspecting the original Job. Scratch data is retained for review.
+The drill completed on 2026-10-21 at 22:53 UTC. Snapshot
+`e9eca426670ff22da2eb55a6feadd9de6bce60a4fa76289b7b8689369d593b9a`
+was replayed with `pg_restore --exit-on-error`, followed by ANALYZE. The final
+validation Job `talaria-restore-20261021-verified` completed and printed
+`RESTORE_VERIFIED`: 50 public tables, 37,542,982 auction_items rows, 117 GB,
+no invalid indexes and no unvalidated constraints. This proves that snapshot's
+restore, not the validity of every historical or future backup.
+
+The continuation needed two fixes: fsGroup setup on remount widened PGDATA's
+permissions, so the owner now restores mode 0700 on the verified scratch path;
+and Kubernetes collapsed paired dollar signs in the command before the shell
+ran the SQL. The checks now use plain SQL assertions that fail with division
+by zero if invalid objects exist, avoiding dollar quoting. Startup failures
+also print the PostgreSQL log. Six guard/regression tests pass.
+
+The scratch Jobs, network policies and 400 GiB claim are cleaned up after
+recording the result. The restic snapshot and backup staging volume remain.
+Other database dumps and off-NAS recovery still need their own validation.

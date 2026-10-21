@@ -29,6 +29,14 @@ class ExistingRestoreTests(unittest.TestCase):
         self.assertNotIn('pg_restore', command)
         self.assertIn("<<'SQL'", command)
 
+    def test_remount_permissions_and_kubernetes_dollar_expansion(self):
+        _, job = validator.build_validation(self.job, self.logs, 'verify-scratch')
+        command = job['spec']['template']['spec']['containers'][0]['command'][-1]
+        self.assertIn('chmod 0700 "$PGDATA"', command)
+        self.assertNotIn('$$', command)
+        self.assertIn('constraints_valid', command)
+        self.assertIn('cat /tmp/postgres.log', command)
+
     def test_refuses_active_job(self):
         self.job['status'] = {}
         with self.assertRaises(ValueError): validator.build_validation(self.job, self.logs, 'verify')
