@@ -1,0 +1,16 @@
+{
+  "version": "v1.35",
+  "default": "baseline",
+  "restricted": ["cdi", "fsu", "keda"],
+  "exceptions": {
+    "crowdsec": "Agent reads host log files using hostPath mounts.",
+    "democratic-csi": "Storage drivers require privileged containers, host networking and host device mounts.",
+    "games": "Steam Sunshine requires host ports; other applications inherit this namespace exception until it is isolated.",
+    "infra": "Node exporter uses host networking/PID/mounts; short-lived node-maintenance jobs require privilege.",
+    "kube-system": "CNI/service load-balancers, storage and device plugins require host access.",
+    "kubevirt": "Virtualization node handlers require privilege, host PID and device mounts.",
+    "media": "Gluetun requires NET_ADMIN for the qBittorrent VPN. Jellyfin writable media is preserved.",
+    "minecraft": "Claude bridge uses a hostPath mount.",
+    "talaria": "Elasticsearch uses IPC_LOCK; isolated restore init requires DAC_READ_SEARCH. Revisit after restore and capability removal."
+  }
+}
