@@ -44,7 +44,8 @@ Rules live in `infra/grafana-dashboards/alerts/rules.json`:
 | Startup failure / CrashLoop | 10m | ntfy/SMS |
 | Recurring OOM | observed restart count delta >1 in 30m, last exit OOMKilled; 2m pending | ntfy/SMS |
 | Messaging transport disconnected | 5m | ntfy/SMS |
-| Arr health warning/error | 15m | ntfy/SMS |
+| Arr health warning | 1h | ntfy/SMS |
+| Arr health error | 15m | ntfy/SMS |
 
 Existing four-hour repeat and recovery notifications apply. Only the dedicated
 ntfy-unreachable rule uses email, after five minutes of explicit unhealthy checks.

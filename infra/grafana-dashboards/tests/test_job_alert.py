@@ -46,6 +46,23 @@ tests = [case('terminal standalone failure'), case('failed retry in successful j
          case('Backup recovered', owner='Backup', success=200),
          case('Backup success predates failure', owner='Backup', success=50),
          case('Prebackup hook cannot resolve failed backup', owner='Backup', success=200, prebackup=True)]
+
+# A telemetry gap must neither resolve a real failure nor resurrect a recovered one.
+for recovered in [False, True]:
+    gap = case('telemetry gap, recovered=' + str(recovered), owner='CronJob',
+               success=200 if recovered else None)
+    for row in gap['input_series']:
+        row['values'] = row['values'].split('+')[0] + ' stale _ _ _ _ _ _ _ _ _'
+    gap['promql_expr_test'][0]['eval_time'] = '7m'
+    gap['promql_expr_test'].append({'expr': expr, 'eval_time': '10m', 'exp_samples': []})
+    tests.append(gap)
+
+recovery = case('fresh recovery clears a retained failure', owner='CronJob', success=200)
+for row in recovery['input_series']:
+    row['values'] = ('50 stale _ _ _ _ 200' if 'last_successful_time' in row['series']
+                     else row['values'].split('+')[0] + ' stale _ _ _ _ _')
+recovery['promql_expr_test'][0]['eval_time'] = '6m'
+tests.append(recovery)
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'test.yaml'
     path.write_text(yaml.safe_dump({'rule_files': [], 'evaluation_interval': '1m', 'tests': tests}))

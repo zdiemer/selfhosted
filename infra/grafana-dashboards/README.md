@@ -162,7 +162,7 @@ curl -s -o /dev/null https://status.diemer.codes/wp-login.php
 Both should appear on **Security & Intrusion** → *Known-bad path probes* within
 a minute, and the source IP in *Top source IPs by 4xx*.
 
-### Job failure recovery (2026-10-19)
+### Job failure recovery
 
 `sh-job-failed` uses the terminal `kube_job_failed` condition, not failed pod
 attempts. A successful retry in the same Job no longer fires. A retained failed
@@ -173,6 +173,14 @@ backup policy; split the join by backup policy/repository before adding multiple
 independent policies per namespace. Standalone and unresolved failures remain
 visible, even if a CronJob is suspended. History is retained rather than deleted.
 
+Each input uses its latest sample within ten minutes. This bridges short metric
+gaps without falsely resolving and re-firing the same failed Job. Recovery
+timestamps and owner mappings use the same window so a gap cannot resurrect an
+already-recovered failure. A fresh successful run clears immediately; a deleted
+Job ages out after ten minutes. The fifteen-minute pending period still applies.
+Longer telemetry outages need the separate telemetry alerts; missing data is
+not evidence of a successful Job.
+
 The dashboard still shows retained terminal failures as historical inventory.
 Warning notifications use `ntfy-primary`. Regression checks use the actual rule
 expression and Prometheus' engine:
@@ -181,8 +189,13 @@ expression and Prometheus' engine:
 PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_job_alert.py
 ```
 
-The Arr health rule sums the exporter's warning/error counts with
-`sum without (severity)` before assigning the alert's routing severity. Querying
+### Arr health persistence
+
+`sh-arr-health` requires warnings to persist for one hour, allowing ordinary
+indexer timeout/backoff cycles to recover silently. `sh-arr-health-error` retains
+fifteen-minute notification for health errors. Each selects its source severity
+and removes that label with `sum without (severity)` before assigning routing
+severity. Querying
 both source severities directly collapses them into one alert identity when the
 rule overrides `severity`, causing contradictory transitions and duplicate
 `GRAFANA_ALERTS` timestamps. Inspect `grafanacloud-alert-state-history` for

@@ -329,7 +329,8 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "A Job reached terminal failure without a later successful CronJob run or full namespace backup. Retained recovered failures and failed retry pods do not fire."
+      "summary": "A Job reached terminal failure without a later successful CronJob run or full namespace backup. Retained recovered failures and failed retry pods do not fire.",
+      "description": "Retains the latest Job, owner, and recovery samples for ten minutes to avoid false resolution during short telemetry gaps. A later successful run still clears the failure immediately; deleted Jobs age out after ten minutes."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -344,7 +345,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "(((max by (namespace, job_name) (kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}) == 1) unless on (namespace, job_name) ((max by (namespace, job_name) (kube_job_status_start_time{cluster=\"home-k3s\"}) * on (namespace, job_name) group_left(owner_name) max by (namespace, job_name, owner_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"CronJob\",owner_is_controller=\"true\"})) < on (namespace, owner_name) group_left() label_replace(max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cluster=\"home-k3s\"}), \"owner_name\", \"$1\", \"cronjob\", \"(.+)\"))) unless on (namespace, job_name) ((max by (namespace, job_name) (kube_job_status_start_time{cluster=\"home-k3s\"}) and on (namespace, job_name) max by (namespace, job_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"})) < on (namespace) group_left() max by (namespace) (kube_job_status_completion_time{cluster=\"home-k3s\"} and on (namespace, job_name) max by (namespace, job_name) (kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"})))) or on (namespace, job_name) (0 * max by (namespace, job_name) (kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}))",
+          "expr": "(((max by (namespace, job_name) (last_over_time(kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}[10m])) == 1) unless on (namespace, job_name) ((max by (namespace, job_name) (last_over_time(kube_job_status_start_time{cluster=\"home-k3s\"}[10m])) * on (namespace, job_name) group_left(owner_name) max by (namespace, job_name, owner_name) (last_over_time(kube_job_owner{cluster=\"home-k3s\",owner_kind=\"CronJob\",owner_is_controller=\"true\"}[10m]))) < on (namespace, owner_name) group_left() label_replace(max by (namespace, cronjob) (last_over_time(kube_cronjob_status_last_successful_time{cluster=\"home-k3s\"}[10m])), \"owner_name\", \"$1\", \"cronjob\", \"(.+)\"))) unless on (namespace, job_name) ((max by (namespace, job_name) (last_over_time(kube_job_status_start_time{cluster=\"home-k3s\"}[10m])) and on (namespace, job_name) max by (namespace, job_name) (last_over_time(kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"}[10m]))) < on (namespace) group_left() max by (namespace) (last_over_time(kube_job_status_completion_time{cluster=\"home-k3s\"}[10m]) and on (namespace, job_name) max by (namespace, job_name) (last_over_time(kube_job_owner{cluster=\"home-k3s\",owner_kind=\"Backup\",owner_is_controller=\"true\",job_name!~\".*-prebackup\"}[10m]))))) or on (namespace, job_name) (0 * max by (namespace, job_name) (last_over_time(kube_job_failed{cluster=\"home-k3s\",condition=\"true\"}[10m])))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1982,7 +1983,7 @@
     "title": "Arr application health warning",
     "condition": "C",
     "ruleGroup": "selfhosted",
-    "for": "15m",
+    "for": "1h",
     "isPaused": false,
     "noDataState": "NoData",
     "execErrState": "Error",
@@ -1991,7 +1992,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "Arr reports persistent health warnings/errors. Inspect System > Status for indexer, download-client, or configuration details. Routine downloads do not notify."
+      "summary": "Arr health warnings have persisted for one hour. Inspect System > Status; temporary indexer backoff may recover without intervention."
     },
     "notification_settings": {
       "receiver": "unwired"
@@ -2006,7 +2007,86 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\"})",
+          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"warning\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-arr-health-error",
+    "title": "Arr application health error",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "15m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Arr health errors have persisted for fifteen minutes. Inspect System > Status for unavailable indexers, download clients, or configuration failures."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"error\"})",
           "instant": true,
           "range": false,
           "editorMode": "code",
