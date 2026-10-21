@@ -316,3 +316,7 @@ the ANSI it prints, and paints it into the window above.
   checkout it can see has moved past it. Rebuild with
   `scripts/build-secrets-cli.sh --install`, and rebuild the workspace image
   (`dev/claude-workspace/build.sh`) for the pod's copy.
+
+Production **whatnow.gg droplet configuration** is managed by
+[`infra/whatnow-droplet`](infra/whatnow-droplet/README.md): Ansible desired state,
+Cloudflare origin firewall, pinned releases and 1Password-backed secret delivery.

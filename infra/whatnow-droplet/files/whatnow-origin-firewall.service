@@ -1,0 +1,15 @@
+[Unit]
+Description=Whatnow Cloudflare origin restriction before Docker DNAT
+Before=docker.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sh -c '/usr/sbin/nft list table inet whatnow_origin >/dev/null 2>&1 || /usr/sbin/nft add table inet whatnow_origin'
+ExecStart=/usr/sbin/nft -f /etc/whatnow-origin.nft
+ExecReload=/usr/sbin/nft -f /etc/whatnow-origin.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

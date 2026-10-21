@@ -1,0 +1,226 @@
+- name: Manage Whatnow production droplet
+  hosts: whatnow
+  become: true
+  vars_files: [config.yml]
+  tasks:
+    - name: Validate pinned releases and secret inputs
+      ansible.builtin.assert:
+        that:
+          - whatnow_tag is match('^v[0-9]+\.[0-9]+\.[0-9]+$')
+          - caddy_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+          - lookup('env', 'WHATNOW_SECRET_DIR') | length > 0
+          - cloudflare_ipv4 | length > 0
+          - cloudflare_ipv6 | length > 0
+
+    - name: Install host prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, nftables, sqlite3, ufw]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create managed directories
+      ansible.builtin.file:
+        path: '{{ item.path }}'
+        state: directory
+        mode: '{{ item.mode }}'
+      loop:
+        - {path: /etc/apt/keyrings, mode: '0755'}
+        - {path: /etc/systemd/system/docker.service.d, mode: '0755'}
+        - {path: /opt/whatnowgg, mode: '0755'}
+        - {path: /root/.docker, mode: '0700'}
+
+    - name: Install origin firewall unit
+      ansible.builtin.copy:
+        src: whatnow-origin-firewall.service
+        dest: /etc/systemd/system/whatnow-origin-firewall.service
+        mode: '0644'
+      notify: Apply origin firewall
+
+    - name: Require origin protection before Docker starts
+      ansible.builtin.copy:
+        src: origin-firewall.conf
+        dest: /etc/systemd/system/docker.service.d/origin-firewall.conf
+        mode: '0644'
+
+    - name: Ensure owned nftables table exists for transactional validation
+      ansible.builtin.shell: |
+        nft list table inet whatnow_origin >/dev/null 2>&1 || {
+          nft add table inet whatnow_origin
+          echo created
+        }
+      register: nft_table
+      changed_when: "'created' in nft_table.stdout"
+
+    - name: Render and validate atomic firewall rules
+      ansible.builtin.template:
+        src: origin.nft.j2
+        dest: /etc/whatnow-origin.nft
+        mode: '0644'
+        validate: /usr/sbin/nft -c -f %s
+      notify: Apply origin firewall
+
+    - name: Apply firewall before starting services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable persistent origin protection
+      ansible.builtin.systemd_service:
+        name: whatnow-origin-firewall
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Reconcile live firewall even if its file has not changed
+      ansible.builtin.command: /usr/sbin/nft -f /etc/whatnow-origin.nft
+      changed_when: false
+
+    - name: Keep UFW service rules independent of changing Cloudflare ranges
+      ansible.builtin.command:
+        argv: [ufw, allow, '{{ item }}']
+      loop: [OpenSSH, 80/tcp, 443/tcp]
+      register: ufw_rule
+      changed_when: "'Rules updated' in ufw_rule.stdout or 'Rule added' in ufw_rule.stdout"
+      tags: [host_firewall]
+
+    - name: Inspect host firewall status
+      ansible.builtin.command: ufw status
+      register: ufw_status
+      changed_when: false
+      check_mode: false
+      tags: [host_firewall]
+
+    - name: Enable host firewall after origin protection is loaded
+      ansible.builtin.command: ufw --force enable
+      when: "'Status: active' not in ufw_status.stdout"
+      tags: [host_firewall]
+
+    - name: Install Docker signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Configure Docker package repository
+      ansible.builtin.copy:
+        content: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n"
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: '0644'
+      register: docker_repo
+
+    - name: Install Docker and Compose
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        state: present
+        update_cache: '{{ docker_repo.changed }}'
+
+    - name: Start Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Ensure data directory ownership without walking existing data
+      ansible.builtin.file:
+        path: /opt/whatnowgg/data
+        state: directory
+        owner: '1000'
+        group: '1000'
+        mode: '0755'
+
+    - name: Install registry authentication from vault
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'WHATNOW_SECRET_DIR') }}/docker.json"
+        dest: /root/.docker/config.json
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      diff: false
+
+    - name: Pull pinned images before changing application configuration
+      ansible.builtin.command:
+        argv: [docker, pull, '{{ item }}']
+      loop:
+        - 'ghcr.io/zdiemer/whatnowgg:{{ whatnow_tag }}'
+        - 'caddy:{{ caddy_tag }}'
+      register: image_pull
+      changed_when: "'Downloaded newer image' in image_pull.stdout"
+
+    - name: Install application environment from vault
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'WHATNOW_SECRET_DIR') }}/app.env"
+        dest: /opt/whatnowgg/.env
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      diff: false
+      notify: Converge application
+
+    - name: Render production stack
+      ansible.builtin.template:
+        src: '{{ item }}.j2'
+        dest: '/opt/whatnowgg/{{ item }}'
+        mode: '0644'
+      loop: [docker-compose.yml, Caddyfile]
+      notify: Converge application
+
+    - name: Install cache maintenance
+      ansible.builtin.copy:
+        src: art-evict.sh
+        dest: /opt/whatnowgg/art-evict.sh
+        mode: '0755'
+
+    - name: Schedule cache maintenance
+      ansible.builtin.copy:
+        content: "17 4 * * * root nice -n19 ionice -c3 /opt/whatnowgg/art-evict.sh >> /var/log/whatnow-art-evict.log 2>&1\n"
+        dest: /etc/cron.d/whatnow-art-evict
+        mode: '0644'
+
+    - name: Retire obsolete maintenance and firewall scripts
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop: [/etc/cron.d/whatnow-backup, /opt/whatnowgg/cf-firewall.sh]
+
+    - name: Apply application configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure stack is running even without configuration changes
+      ansible.builtin.command: docker compose up -d --wait --wait-timeout 120
+      args:
+        chdir: /opt/whatnowgg
+      register: compose_up
+      changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Recreated' in compose_up.stderr"
+
+    - name: Verify direct origin ports are inaccessible from the deployment host
+      ansible.builtin.wait_for:
+        host: '{{ origin_ipv4 }}'
+        port: '{{ item }}'
+        state: stopped
+        connect_timeout: 3
+        timeout: 8
+      loop: [80, 443]
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+
+    - name: Verify Cloudflare route is healthy
+      ansible.builtin.uri:
+        url: https://whatnow.gg/healthz
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Apply origin firewall
+      ansible.builtin.systemd_service:
+        name: whatnow-origin-firewall
+        state: restarted
+        daemon_reload: true
+
+    - name: Converge application
+      ansible.builtin.command: docker compose up -d --force-recreate --wait --wait-timeout 120
+      args:
+        chdir: /opt/whatnowgg

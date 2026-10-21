@@ -1,0 +1,14 @@
+# Replace only this table atomically; leave Docker/UFW rules alone.
+delete table inet whatnow_origin
+table inet whatnow_origin {
+    set cloudflare4 { type ipv4_addr; flags interval; elements = { {{ cloudflare_ipv4 | join(', ') }} } }
+    set cloudflare6 { type ipv6_addr; flags interval; elements = { {{ cloudflare_ipv6 | join(', ') }} } }
+    chain ingress {
+        # Before Docker DNAT (-100), for both forwarded and host traffic.
+        type filter hook prerouting priority -110; policy accept;
+        iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } tcp dport { 80, 443 } ip saddr @cloudflare4 accept
+        iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } tcp dport { 80, 443 } ip6 saddr @cloudflare6 accept
+        iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } tcp dport { 80, 443 } counter drop
+        iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } udp dport 443 counter drop
+    }
+}

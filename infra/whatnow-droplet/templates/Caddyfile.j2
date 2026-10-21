@@ -1,0 +1,31 @@
+# Cloudflare sits in front of this (proxy mode, see DEPLOY.md's cutover
+# section). trusted_proxies + client_ip_headers make {client_ip} the real
+# visitor when the connection arrives from Cloudflare's edge; header_up then
+# hands exactly that to the app, so its per-IP rate limiter never keys on an
+# edge address. Harmless before the cutover: no connections arrive from
+# these ranges, and direct visitors are their own client_ip.
+{
+	servers {
+		trusted_proxies static {{ (cloudflare_ipv4 + cloudflare_ipv6) | join(" ") }}
+		client_ip_headers CF-Connecting-IP
+	}
+}
+
+whatnow.gg {
+	encode zstd gzip
+	# The wire-level body ceiling. app.py refuses an oversized Content-Length
+	# on its own, but only this covers a chunked body that declares no length:
+	# Caddy counts bytes as they arrive and cuts the request off. Keep it
+	# above app.py's MAX_BODY_BYTES so the app's 413 (with its JSON detail)
+	# is what a merely-too-big post normally meets.
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {client_ip}
+	}
+}
+
+www.whatnow.gg {
+	redir https://whatnow.gg{uri} permanent
+}

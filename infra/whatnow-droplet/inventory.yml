@@ -1,0 +1,7 @@
+all:
+  hosts:
+    whatnow:
+      ansible_host: whatnow
+      ansible_user: root
+      ansible_python_interpreter: /usr/bin/python3
+      ansible_remote_tmp: /run/whatnow-ansible
