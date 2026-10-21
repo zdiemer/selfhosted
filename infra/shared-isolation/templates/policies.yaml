@@ -1,0 +1,45 @@
+{{- range $namespace := list "headlamp" "renovate" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shared-infrastructure-boundary
+  namespace: {{ $namespace }}
+spec:
+  # Dedicated namespaces: also covers future Jobs and unlabeled pods.
+  podSelector: {}
+  policyTypes:
+    - Egress
+    {{- if eq $namespace "renovate" }}
+    - Ingress
+  ingress: []
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    {{- if eq $namespace "headlamp" }}
+    - to:
+        {{- range $.Values.apiAddresses }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+    {{- else }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{ toJson $.Values.publicExclusions }}
+      ports:
+        - {port: 80, protocol: TCP}
+        - {port: 443, protocol: TCP}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: shared-isolation
+version: 0.1.0
+description: Explicit network dependencies for reviewed shared infrastructure
