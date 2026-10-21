@@ -12,7 +12,13 @@ spec:
     matchLabels:
       {{- include "paperless.selectorLabels" $ | nindent 6 }}
       app.kubernetes.io/component: {{ $component }}
+  {{- if has $component (list "tika" "gotenberg") }}
+  # Document parsers need no outbound network access.
+  policyTypes: [Ingress, Egress]
+  egress: []
+  {{- else }}
   policyTypes: [Ingress]
+  {{- end }}
   ingress:
     - from:
         - podSelector:

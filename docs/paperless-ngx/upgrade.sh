@@ -36,6 +36,8 @@ echo "==> Waiting for ${RELEASE} rollout"
 $K rollout status "deployment/${RELEASE}" --timeout=300s
 $K rollout status "deployment/${RELEASE}-postgres" --timeout=120s
 $K rollout status "deployment/${RELEASE}-redis" --timeout=60s
+$K rollout status "deployment/${RELEASE}-tika" --timeout=300s
+$K rollout status "deployment/${RELEASE}-gotenberg" --timeout=120s
 
 echo "==> Pods"
 $K get pods -l app.kubernetes.io/instance="${RELEASE}"

@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "steam-headless.labels" . | nindent 4 }}
 data:
+  steam-auth.py: |
+    {{- .Files.Get "files/steam-auth.py" | nindent 4 }}
+  99-harden-desktop.sh: |
+    {{- .Files.Get "files/harden-desktop.sh" | nindent 4 }}
   # Sourced by the image's /entrypoint.sh ahead of its own cont-init scripts
   # (the container command copies it into /etc/cont-init.d first, because the
   # entrypoint sed -i's every script and a ConfigMap mount is read-only).

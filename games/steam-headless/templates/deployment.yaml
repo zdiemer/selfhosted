@@ -20,6 +20,7 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         checksum/init: {{ include (print $.Template.BasePath "/configmap-init.yaml") . | sha256sum }}
     spec:
+      automountServiceAccountToken: false
       nodeSelector:
         kubernetes.io/hostname: {{ .Values.node | quote }}
       # Upstream's compose uses network_mode: host. Moonlight's discovery
@@ -51,6 +52,10 @@ spec:
             - -c
             - install -m 0755 /opt/chart-init/*.sh /etc/cont-init.d/ && exec /entrypoint.sh
           env:
+            - name: DESKTOP_AUTH_URL
+              value: http://{{ .Values.auth.forwardAuth.autheliaService }}.{{ .Values.auth.forwardAuth.autheliaNamespace }}.svc.cluster.local:{{ .Values.auth.forwardAuth.autheliaPort }}{{ .Values.auth.forwardAuth.autheliaPath }}
+            - name: DESKTOP_AUTH_ORIGIN
+              value: {{ .Values.ingress.desktopHost | quote }}
             - { name: NAME, value: SteamHeadless }
             - { name: TZ, value: {{ .Values.timezone | quote }} }
             - { name: USER_LOCALES, value: "en_US.UTF-8 UTF-8" }

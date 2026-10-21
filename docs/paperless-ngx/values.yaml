@@ -146,7 +146,7 @@ tika:
   # Extracts text + metadata from Office docs paperless can't OCR directly.
   image:
     repository: apache/tika
-    tag: "2.9.2.1-full"
+    tag: "3.2.3.0-full"
     pullPolicy: IfNotPresent
   service:
     port: 9998

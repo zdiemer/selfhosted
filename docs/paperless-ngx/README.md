@@ -64,3 +64,10 @@ NetworkPolicies allow only this release's Paperless application pods to reach
 Redis, PostgreSQL, Tika, and Gotenberg. In particular, Redis is a trusted Celery
 broker accepting pickle tasks; it must never be reachable by unrelated workloads.
 These policies preserve Paperless's existing serializer and scheduled tasks.
+
+### Parser isolation
+
+Tika uses 3.2.3 rather than the XXE-affected 2.9.2 image. Tika and Gotenberg admit
+requests only from Paperless and have no outbound network allowance. Office
+conversion and text extraction work locally; documents cannot fetch remote
+resources through these parsers. The upgrade script waits for both backends.

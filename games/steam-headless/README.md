@@ -60,3 +60,13 @@ working — and `http://192.168.4.22:8083` skips Authelia entirely.
 The 680M is roughly Steam Deck class or a bit better: any indie at 1080p60,
 older/lighter AAA at 720p–1080p low. Sunshine's X11 capture is SDR only (HDR
 needs KMS capture).
+
+### Desktop access boundary
+
+Raw VNC binds only to loopback. Both the web desktop and audio WebSocket
+proxy independently validate the browser's Authelia session, using the fixed
+Steam hostname and requiring an authenticated identity. Forged identity headers,
+missing cookies and authentication outages fail closed. Use the HTTPS ingress;
+direct node access no longer provides an anonymous desktop. Passwordless sudo is
+removed; administrative sudo requires the existing vault-managed user password.
+The host-network/privileged deployment remains a separate containment concern.
