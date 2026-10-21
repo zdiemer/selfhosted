@@ -112,3 +112,31 @@ Temporary test Jobs were removed. Notifications were not sent as tests.
 
 K8up operator, worker and database-dump policies are owned by the K8up chart;
 see [backup isolation and recovery validation](../k8up/README.md).
+
+## KEDA
+
+The entire KEDA namespace now denies ingress and limits egress to cluster DNS
+and the API VIP/backends. The operator additionally reaches only Talaria's
+Redis pods on TCP 6379; the metrics API server reaches only the operator on
+TCP 9666. Admission TCP 9443 and the metrics API TCP 6443 admit the three
+control-plane hosts and their exact Flannel host source addresses. Update
+`kedaControlPlaneSources` when replacing control planes. No general internet,
+LAN, tailnet, metadata or other application access is granted. Future scaler
+backends require an explicit dependency rule. API/RBAC powers and Kubernetes'
+resident-node exceptions remain outside this boundary.
+
+Validated 2026-10-21: all three roles passed DNS/API and role-specific positive
+checks and denied public HTTPS, NAS, unrelated applications and the other
+role's dependency. Metadata was unreachable, but prior unrestricted controls
+also could not reach it, so this is not independent enforcement evidence.
+All twelve real external metrics returned values, all five ScaledObjects/HPAs
+retained working metrics, and a duplicate-target server dry-run was rejected
+by the KEDA admission webhook. This last check matters because deployed
+webhooks have failurePolicy Ignore: a successful valid dry-run alone cannot
+prove webhook reachability. No scaler bounds or policies were changed.
+
+Temporary verification Jobs must remain unready: KEDA Services select the same
+`app` labels as these policies. Initial ready probes briefly entered Service
+endpoints and caused a metrics request failure; they were removed and checks
+rerun with failing readiness probes to exclude them from service traffic.
+All verification Jobs were removed afterward.

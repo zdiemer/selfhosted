@@ -1,0 +1,81 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keda-boundary
+  namespace: keda
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        {{- range .Values.apiAddresses }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 6443, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keda-operator-dependencies
+  namespace: keda
+spec:
+  podSelector:
+    matchLabels: {app: keda-operator}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app: keda-operator-metrics-apiserver}
+      ports:
+        - {port: 9666, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: talaria}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: talaria
+              app.kubernetes.io/instance: talaria
+              app.kubernetes.io/component: redis
+      ports:
+        - {port: 6379, protocol: TCP}
+{{- range $role, $port := dict "keda-admission-webhooks" 9443 "keda-operator-metrics-apiserver" 6443 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $role }}-dependencies
+  namespace: keda
+spec:
+  podSelector:
+    matchLabels: {app: {{ $role }}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range $.Values.kedaControlPlaneSources }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports:
+        - {port: {{ $port }}, protocol: TCP}
+  egress:
+    {{- if eq $role "keda-operator-metrics-apiserver" }}
+    - to:
+        - podSelector:
+            matchLabels: {app: keda-operator}
+      ports:
+        - {port: 9666, protocol: TCP}
+    {{- else }}
+    []
+    {{- end }}
+{{- end }}
