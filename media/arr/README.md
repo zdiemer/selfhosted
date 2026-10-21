@@ -112,3 +112,18 @@ returned no results and retried failed indexer creation on every sync. Existing
 proxy tags are retained. **Give new indexers the appropriate sync tags** or they
 will remain available only in Prowlarr. Restore an excluded membership after
 its movie/TV category query returns usable results.
+
+### Cloudflare-blocked sources (2026-10-21)
+
+Torrentsome and Torrenttip remained unavailable for over six hours. Fresh
+Prowlarr tests for both returned Cloudflare protection errors; earlier requests
+also repeatedly exhausted FlareSolverr's challenge timeout. Both indexers are
+disabled with their configurations retained. Application sync disabled their
+RSS, automatic search, and interactive search in Radarr. Sonarr already excluded
+them through application tags. Retest actual movie-category queries successfully
+before re-enabling and syncing them.
+
+Prowlarr, Radarr, and Sonarr all returned empty health-check lists afterward.
+Executable rejection and qBittorrent's 25 exclusion patterns remained intact.
+These warnings became visible after the Grafana Arr alert's severity-label
+collision was fixed; the notification was reporting existing source failures.
