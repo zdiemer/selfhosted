@@ -3,9 +3,14 @@
 # fsu-web — the static showcase site plus the Breakout jar, on the same
 # nginx-unprivileged base as the rest of web/.
 #
-# Two stages: a JDK builder that produces breakout.jar from the 2014 sources,
-# and nginx. Build context is web/fsu/; projects/Breakout is a frozen submodule
-# and nothing here writes to it.
+# A JDK builder that produces breakout.jar from the 2014 sources; a captures
+# stage and two Python 2 stages that run the programs whose output does not
+# depend on a visitor (see "captures stage"); and nginx. Build context is
+# web/fsu/; everything under projects/ is a frozen submodule and nothing here
+# writes to it.
+
+# renovate: datasource=docker depName=debian
+ARG DEBIAN_TAG=bookworm-20250929-slim
 
 # ------------------------------------------------------------ breakout builder
 #
@@ -43,6 +48,159 @@ RUN set -eux; \
     jar --list --file /breakout.jar | grep -qx 'breakout/Breakout.class'; \
     javap -verbose -cp /out breakout.Breakout | grep -q 'major version: 52'
 
+# ------------------------------------------------------------- captures stage
+#
+# Programs whose output does not depend on a visitor, run ONCE here, with the
+# transcripts served as text files under /projects/out/. Not a recording made in
+# 2026 and pasted in: the image cannot be built without running them, so the
+# page always shows what the frozen sources do on this build.
+#
+#   hw7.txt, hw8.txt   the two CDA 3100 Verilog testbenches under Icarus. They
+#                      take no input and run on a free clock, so a terminal
+#                      would add nothing but a wait.
+#   grader-*.txt       the COP 3014 grader's frequency table, compiled two ways
+#                      (see below).
+#   notepadpp.diff     the CEN 4021 change against the Notepad++ release it was
+#                      made on.
+#
+# The live, interactive programs are in the terminal image instead (/console).
+FROM debian:${DEBIAN_TAG} AS captures
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        iverilog g++ libc6-dev python3 diffutils curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY projects/cda3100/hw7_Diemer.v projects/cda3100/hw8_Diemer.v /v/
+COPY sims/ /v/
+COPY projects/cop3014/main.cpp /grader/main.cpp
+COPY terminal/cop3014/make-xfile.py /grader/make-xfile.py
+COPY projects/cen4021-notepadpp/FindReplaceDlg.cpp /npp/FindReplaceDlg.cpp
+RUN set -eux; \
+    mkdir -p /captures; \
+    cd /v; \
+    # -Wall is kept and its output is published: hw8 relies on three implicitly
+    # declared wires (D2, D1, D0), which Verilog allows and Icarus remarks on.
+    for h in hw7 hw8; do \
+        iverilog -Wall -o "/tmp/${h}" -s test_bench -s harness \
+            "${h}_Diemer.v" "harness_${h}.v" 2> "/captures/${h}-iverilog.txt"; \
+        vvp -n "/tmp/${h}" | grep -v '^VCD info\|\$finish called' > "/captures/${h}.txt"; \
+    done; \
+    cat /captures/hw7.txt /captures/hw8.txt; \
+    # hw7: sixteen input pairs plus the wrap, all agreeing with A < B.
+    test "$(grep -c ' ok$' /captures/hw7.txt)" -eq 17; \
+    ! grep -q MISMATCH /captures/hw7.txt; \
+    # hw8: the 3-bit Gray sequence, twice — the same digits the 2014 ModelSim
+    # screenshot shows. hw8 uses BLOCKING assignments in three flip-flops on one
+    # clock edge, which is a race in principle; this assert is what notices if a
+    # future Icarus resolves it differently.
+    test "$(awk 'NR>1{printf "%s ", $5}' /captures/hw8.txt)" = "0 1 3 2 6 7 5 4 0 1 3 2 6 7 5 4 0 1 "; \
+    \
+    # THE GRADER, TWICE. main.cpp draws its histogram bars with
+    #     cout << setw(n) << cout.fill('*') << cout.fill(' ')
+    # — two calls that change stream state, inside one expression whose operand
+    # order C++ did not fix until C++17. GCC's default for -std=c++11 already
+    # evaluates `<<` operands left to right, and the bars come out right.
+    # -fstrong-eval-order=none drops that guarantee, which is the latitude a
+    # 2013 compiler (the header names Visual C++ 2012) actually had — and the
+    # same source then prints a different table. Both are published.
+    mkdir -p /Users/Zachary; \
+    python3 /grader/make-xfile.py /Users/Zachary/xfile.txt; \
+    g++ -std=c++11 -O0 -o /tmp/grader-ordered /grader/main.cpp; \
+    g++ -std=c++11 -O0 -fstrong-eval-order=none -o /tmp/grader-unsequenced /grader/main.cpp; \
+    /tmp/grader-ordered     | sed -n '/^Frequency Table/,$p' > /captures/grader-ordered.txt; \
+    /tmp/grader-unsequenced | sed -n '/^Frequency Table/,$p' > /captures/grader-unsequenced.txt; \
+    cat /captures/grader-ordered.txt /captures/grader-unsequenced.txt; \
+    grep -q '^ 11\.\.\.15 *6 *\*\*\*\*\*\*$' /captures/grader-ordered.txt; \
+    ! cmp -s /captures/grader-ordered.txt /captures/grader-unsequenced.txt; \
+    \
+    # NOTEPAD++. The submitted file differs from FindReplaceDlg.cpp as shipped in
+    # 6.7 through 6.7.4 (byte-identical across all five releases; the file was
+    # untouched upstream from 2014-10-31 to 2015-02-06) by exactly the 13 lines
+    # of the assignment, and from every later release by hundreds. So that is
+    # the base. Pinned by commit, not by tag, and by hash.
+    curl -fsSL -o /npp/upstream.cpp \
+      https://raw.githubusercontent.com/notepad-plus-plus/notepad-plus-plus/00f664188f844d0c58f8c73a9c7b7e89ae72b41e/PowerEditor/src/ScitillaComponent/FindReplaceDlg.cpp; \
+    echo "350c4b0b10b20272f4a57fc56f26a0b293632fff66a5d6050ded113d1cb5c85d  /npp/upstream.cpp" \
+      | sha256sum -c -; \
+    cd /npp; \
+    # Both files are CRLF; strip for display so the diff is not 13 lines of ^M.
+    tr -d '\r' < upstream.cpp > a.cpp; tr -d '\r' < FindReplaceDlg.cpp > b.cpp; \
+    diff -u --label 'FindReplaceDlg.cpp (Notepad++ 6.7.4)' --label 'FindReplaceDlg.cpp (as submitted)' \
+        a.cpp b.cpp > /captures/notepadpp.diff || test $? -eq 1; \
+    # 13 added lines, two of them blank, and nothing removed. Count every +/-
+    # line except the two file headers.
+    test "$(grep '^+' /captures/notepadpp.diff | grep -vc '^+++ ')" -eq 13; \
+    test "$(grep '^-' /captures/notepadpp.diff | grep -vc '^--- ')" -eq 0
+
+# -------------------------------------------------------- python hw4: fetch
+#
+# Everything the Python 2 stage needs from the network, fetched on a modern
+# base — the same split as Dockerfile.pybank, for the same reason.
+#
+# The Wayback captures are fetched slowly and retried. archive.org refuses
+# connections outright — "Couldn't connect to server", not an HTTP error — once
+# a client goes much past ~15 requests a minute. Measured twice: 18 rapid CDX
+# queries, and then 20 page fetches at one every 3 s, each followed by a block
+# that outlasted two minutes of retries. So: one request every 6 s, and a full
+# minute's back-off when refused. About four minutes when nothing goes wrong.
+# BuildKit caches this layer, so that is paid once per change to wayback.tsv,
+# not once per build.
+FROM debian:${DEBIAN_TAG} AS pyhw4-fetch
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY pyhw4/wayback.tsv /wayback.tsv
+RUN set -eux; \
+    mkdir -p /dl /recorded/faculty; \
+    curl -fsSL -o /dl/lxml-4.9.4-cp27-cp27mu-manylinux_2_5_x86_64.manylinux1_x86_64.whl \
+      https://files.pythonhosted.org/packages/14/14/0e995f9966d9b0c3ee1d5ab0d9a5879b036d9b97875173c3d94903d7dec3/lxml-4.9.4-cp27-cp27mu-manylinux_2_5_x86_64.manylinux1_x86_64.whl; \
+    echo "4d973729ce04784906a19108054e1fd476bc85279a403ea1a72fdb051c76fa48  /dl/lxml-4.9.4-cp27-cp27mu-manylinux_2_5_x86_64.manylinux1_x86_64.whl" \
+      | sha256sum -c -; \
+    n=0; \
+    grep -v '^#' /wayback.tsv | while IFS="$(printf '\t')" read -r ts url; do \
+        n=$((n + 1)); f="$(printf '%02d' "$n").html"; \
+        curl -fsSL --retry 6 --retry-delay 60 --retry-all-errors --max-time 120 \
+             -o "/recorded/faculty/${f}" "https://web.archive.org/web/${ts}id_/${url}"; \
+        test -s "/recorded/faculty/${f}"; \
+        printf '%s\t%s\n' "$url" "$f" >> /recorded/faculty/index.tsv; \
+        sleep 6; \
+    done; \
+    test "$(wc -l < /recorded/faculty/index.tsv)" -eq 33
+
+# ---------------------------------------------------------- python hw4: run
+#
+# Python 2.7, because both files use the print statement. lxml 4.9.4 rather
+# than whatever was current in April 2016 (3.6.0), because 4.9.4 is the last
+# release with a cp27mu manylinux wheel and a wheel is what an offline install
+# needs; the two XPath calls the script makes behave the same on both.
+#
+# `requests` is NOT installed. pyhw4/shim/requests.py stands in for it and
+# answers only from the recordings — see that file. PYTHONIOENCODING because a
+# 2016 terminal was UTF-8 and a build container's stdout is a pipe, where
+# Python 2 would otherwise raise on the first non-ASCII name it prints.
+# renovate: datasource=docker depName=python
+FROM python:2.7.18-slim-buster AS pyhw4
+COPY --from=pyhw4-fetch /dl/ /dl/
+RUN pip install --no-index --no-cache-dir /dl/lxml-*.whl \
+ && python -c "import lxml.html; print('lxml ' + lxml.__version__)"
+COPY projects/python-homework4/ /hw/
+COPY pyhw4/shim/ /shim/
+COPY pyhw4/run_imgur.py /hw-driver/run_imgur.py
+COPY pyhw4/imgur/ /recorded/imgur/
+COPY --from=pyhw4-fetch /recorded/faculty/ /recorded/faculty/
+ENV PYTHONPATH=/shim:/hw PYTHONIOENCODING=utf-8
+RUN set -eux; \
+    mkdir -p /captures; \
+    # The shim must be what `import requests` finds — if a real requests ever
+    # lands in this image, these scripts would try the network instead.
+    FSU_RECORDED=/recorded/imgur python -c \
+        "import requests; assert requests.__file__.startswith('/shim/'), requests.__file__"; \
+    FSU_RECORDED=/recorded/faculty python /hw/faculty_directory.py > /captures/faculty.txt; \
+    FSU_RECORDED=/recorded/imgur   python /hw-driver/run_imgur.py  > /captures/imgur.txt; \
+    cat /captures/imgur.txt; \
+    # One block per faculty link, and the bug the invented data exists to show.
+    test "$(grep -c '^Name: ' /captures/faculty.txt)" -eq 32; \
+    grep -qx 'The winners are \[\]!' /captures/imgur.txt
+
 # ------------------------------------------------------------------- runtime
 # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
 FROM nginxinc/nginx-unprivileged:1.29-alpine
@@ -56,6 +214,31 @@ COPY site/ /usr/share/nginx/html/
 # document root. Moving the jar into a subdirectory means editing that string.
 COPY --from=breakout /breakout.jar /usr/share/nginx/html/breakout.jar
 
+# Transcripts from the captures and pyhw4 stages, read into the pages by
+# capture.js.
+COPY --from=captures /captures/ /usr/share/nginx/html/projects/out/
+COPY --from=pyhw4    /captures/ /usr/share/nginx/html/projects/out/
+
+# Sources, screenshots and artifacts straight out of the five private repos, so
+# a visitor can read what the pages describe without access to GitHub. Renamed
+# where the repo path has a space in it ("Assignment 2/"); never edited.
+# nginx/default.conf serves projects/src/ as text/plain.
+COPY projects/cop3014/*.cpp                      /usr/share/nginx/html/projects/src/cop3014/
+COPY projects/cda3100/*.v projects/cda3100/*.s   /usr/share/nginx/html/projects/src/cda3100/
+COPY projects/cda3100/*.PNG                      /usr/share/nginx/html/projects/img/cda3100/
+COPY projects/python-homework4/*.py              /usr/share/nginx/html/projects/src/python-hw4/
+COPY projects/cen4021-notepadpp/Assignment4_Diemer.pdf /usr/share/nginx/html/projects/files/notepadpp/
+COPY ["projects/cop4656-android/Assignment 2/MainActivity.java", \
+      "projects/cop4656-android/Assignment 2/activity_main.xml", \
+      "projects/cop4656-android/Assignment 2/strings.xml", \
+      "/usr/share/nginx/html/projects/src/android/"]
+COPY ["projects/cop4656-android/Assignment 2/gator.jpg", \
+      "projects/cop4656-android/Assignment 2/nole.jpg", \
+      "projects/cop4656-android/Assignment 1/assign1.PNG", \
+      "/usr/share/nginx/html/projects/img/android/"]
+COPY ["projects/cop4656-android/Assignment 2/app-debug.apk", \
+      "/usr/share/nginx/html/projects/files/android/"]
+
 # Fail the build rather than serve a half-built site. Every one of these is
 # silent at runtime: a missing stylesheet still returns 200 for the page it
 # styles, and a missing jar surfaces only as a CheerpJ fetch error in a console
@@ -63,9 +246,11 @@ COPY --from=breakout /breakout.jar /usr/share/nginx/html/breakout.jar
 USER root
 RUN set -eux; \
     cd /usr/share/nginx/html; \
-    for f in index.html style.css term.js breakout.jar \
+    for f in index.html style.css term.js capture.js breakout.jar \
              projects/breakout.html projects/cloysta.html \
-             projects/myds.html projects/pybank.html; do \
+             projects/myds.html projects/pybank.html \
+             projects/cop3014.html projects/cda3100.html projects/python-hw4.html \
+             projects/android.html projects/notepadpp.html; do \
         test -s "$f" || { echo "MISSING: $f"; exit 1; }; \
     done; \
     \
@@ -80,9 +265,9 @@ RUN set -eux; \
     # which 404'd it — both with a perfectly healthy nginx behind them.
     #
     # Hence projects/. Any file whose served path begins with one of these
-    # three strings is unreachable no matter what nginx does, so the build
-    # refuses it rather than letting it 404 in production.
-    for p in cloysta hashtable pybank; do \
+    # strings is unreachable no matter what nginx does, so the build refuses it
+    # rather than letting it 404 in production.
+    for p in cloysta hashtable pybank console; do \
         if find . -mindepth 1 -maxdepth 1 -name "${p}*" | grep -q .; then \
             echo "RESERVED PREFIX: /${p}* is routed to another Service by the"; \
             echo "Ingress and can never reach nginx. Move it under projects/."; \
@@ -90,14 +275,16 @@ RUN set -eux; \
         fi; \
     done; \
     \
-    # Every local href in every page must resolve to a file that exists. This
-    # catches a renamed page long before a visitor finds the 404. The three
-    # prefixes above are skipped because they are other Services, not files.
+    # Every local href, src and data-src in every page must resolve to a file
+    # that exists. This catches a renamed page long before a visitor finds the
+    # 404 — and data-src covers the transcripts capture.js loads, which would
+    # otherwise fail only as a "could not load" line inside a healthy page. The
+    # reserved prefixes are skipped because they are other Services, not files.
     for f in index.html projects/*.html; do \
-        grep -o 'href="/[^"#]*"' "$f" | sed 's/href="\///; s/"$//' | \
+        grep -o '\(href\|src\|data-src\)="/[^"#?]*' "$f" | sed 's/^[a-z-]*="\///' | \
         while read -r t; do \
             case "$t" in \
-                ""|pybank/*|cloysta/*|hashtable/*) continue ;; \
+                ""|pybank/*|cloysta/*|hashtable/*|console/*) continue ;; \
             esac; \
             test -e "$t" || { echo "$f -> broken link: /$t"; exit 1; }; \
         done; \

@@ -73,6 +73,17 @@ if [[ -n "$HOST" ]]; then
         *)    echo "    FAIL: /cloysta returned ${code}, expected a 3xx redirect"; fail=1 ;;
     esac
 
+    # 1b. The same property for the other two terminals. Tamer programs, same
+    #     pod, same middleware — so the same failure would expose the same pod.
+    for t in hashtable console; do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${HOST}/${t}/" || echo 000)"
+        case "$code" in
+            3*)   echo "    ok:   /${t} -> ${code} (Authelia)" ;;
+            000)  echo "    WARN: /${t} unreachable — expected if you are off the tailnet" ;;
+            *)    echo "    FAIL: /${t} returned ${code}, expected a 3xx redirect to Authelia"; fail=1 ;;
+        esac
+    done
+
     # 2. The unauthenticated half really is unauthenticated.
     curl -s -o /dev/null -w '    /healthz    %{http_code}\n' --max-time 15 "https://${HOST}/healthz" || true
 

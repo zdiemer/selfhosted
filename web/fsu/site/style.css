@@ -1,4 +1,4 @@
-/* One stylesheet for five hand-written pages. No framework, no build step.
+/* One stylesheet for every hand-written page. No framework, no build step.
    Garnet and gold, because of course. */
 
 :root {
@@ -258,3 +258,43 @@ footer a { color: var(--ink-soft); }
     border-radius: 3px;
 }
 .btn-quiet:hover { background: var(--paper); color: var(--garnet-light); }
+
+/* ---- the /console pages: one terminal, several programs ---- */
+
+.programs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin: 0 0 1rem;
+    padding: 0;
+    list-style: none;
+}
+.programs .btn-quiet[aria-pressed="true"] {
+    background: var(--garnet);
+    border-color: var(--garnet);
+    color: #fff;
+}
+
+/* Transcripts produced by the image build (site/capture.js). Long ones scroll
+   inside themselves rather than pushing the notes off the page. */
+pre.transcript { max-height: 28rem; overflow: auto; }
+
+figure { margin: 1.5rem 0; }
+figure img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+}
+figcaption {
+    font: .85rem/1.5 system-ui, -apple-system, sans-serif;
+    color: var(--ink-soft);
+    margin-top: .5rem;
+}
+.figs {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    align-items: start;
+}

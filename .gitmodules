@@ -46,3 +46,23 @@
 	path = web/fsu/projects/my-data-structure
 	url = git@github.com:zdiemer/my-data-structure.git
 	branch = master
+[submodule "web/fsu/projects/cop3014"]
+	path = web/fsu/projects/cop3014
+	url = git@github.com:zdiemer/cop3014.git
+	branch = master
+[submodule "web/fsu/projects/cda3100"]
+	path = web/fsu/projects/cda3100
+	url = git@github.com:zdiemer/cda3100.git
+	branch = master
+[submodule "web/fsu/projects/cop4656-android"]
+	path = web/fsu/projects/cop4656-android
+	url = git@github.com:zdiemer/cop4656-android.git
+	branch = master
+[submodule "web/fsu/projects/cen4021-notepadpp"]
+	path = web/fsu/projects/cen4021-notepadpp
+	url = git@github.com:zdiemer/cen4021-notepadpp.git
+	branch = master
+[submodule "web/fsu/projects/python-homework4"]
+	path = web/fsu/projects/python-homework4
+	url = git@github.com:zdiemer/python-homework4.git
+	branch = master

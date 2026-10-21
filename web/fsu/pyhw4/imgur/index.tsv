@@ -1,0 +1,4 @@
+http://imgur.com/user/example_alice/index/newest/page/0/hit.json?scrolling	example_alice-0.json
+http://imgur.com/user/example_alice/index/newest/page/1/hit.json?scrolling	empty.txt
+http://imgur.com/user/example_bob/index/newest/page/0/hit.json?scrolling	example_bob-0.json
+http://imgur.com/user/example_bob/index/newest/page/1/hit.json?scrolling	empty.txt

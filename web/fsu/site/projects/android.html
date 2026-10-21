@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>Show Me A Nole</h1>
+  <p class="sub">
+    Android, Summer 2015 &mdash; the course was COP&nbsp;4656, and the apps call
+    it CIS&nbsp;4930. Two assignments: one survives as a screenshot, the other
+    as three source files and the APK they were built into.
+  </p>
+</header>
+
+<p>
+  This is the one project on the site that does not run here. There is no way
+  to put a 2015 Android app in a browser tab without rewriting it, and a
+  rewrite is the thing this site does not do. What survives is shown as it is,
+  and the APK is below for anyone with a phone and patience.
+</p>
+
+<h2>Assignment 2: a toggle</h2>
+<div class="figs">
+  <figure>
+    <img src="/projects/img/android/nole.jpg" alt="nole.jpg, the image the app shows at launch">
+    <figcaption><code>nole.jpg</code> &mdash; shown at launch, under a button
+      reading &ldquo;Show Me A Gator!&rdquo;</figcaption>
+  </figure>
+  <figure>
+    <img src="/projects/img/android/gator.jpg" alt="gator.jpg, the image the app shows when the toggle is on">
+    <figcaption><code>gator.jpg</code> &mdash; shown when it is pressed, which
+      relabels the button &ldquo;Show Me A Nole!&rdquo;</figcaption>
+  </figure>
+</div>
+<p>
+  One <code>ImageView</code> and one <code>ToggleButton</code> in a
+  <code>RelativeLayout</code>. The layout wires the button straight to a
+  method with <code>android:onClick="onToggleClicked"</code>, and that method is
+  the whole of the app's behaviour:
+</p>
+<pre><code>public void onToggleClicked(View view) {
+    boolean on = ((ToggleButton)view).isChecked();
+    ImageView img = (ImageView)findViewById(R.id.imageView1);
+
+    if (on) {
+        img.setImageResource(R.drawable.gator);
+    } else {
+        img.setImageResource(R.drawable.nole);
+    }
+}</code></pre>
+<p>
+  Sources:
+  <a href="/projects/src/android/MainActivity.java">MainActivity.java</a> &middot;
+  <a href="/projects/src/android/activity_main.xml">activity_main.xml</a> &middot;
+  <a href="/projects/src/android/strings.xml">strings.xml</a>
+</p>
+
+<h3>Notes</h3>
+<ul class="notes">
+  <li>
+    <strong>The package is still <code>com.android.assignment1</code>.</strong>
+    Assignment 2 was built by copying Assignment 1's project forward, and the
+    package name came with it. The app's label does say &ldquo;CIS 4930 -
+    Assignment 2&rdquo;.
+  </li>
+  <li>
+    <strong>It extends <code>ActionBarActivity</code>,</strong> which the
+    support library had deprecated in favour of
+    <code>AppCompatActivity</code> in its 22.1 release that April, a few weeks
+    before this was written.
+  </li>
+  <li>
+    <strong>The three files are not a buildable project.</strong> The layout
+    refers to <code>@dimen/padding_medium</code> and the activity to
+    <code>R.menu.menu_main</code>, and neither resource file was saved. The APK
+    is the only complete build that exists.
+  </li>
+</ul>
+
+<h2>The APK</h2>
+<dl class="facts">
+  <dt>File</dt>
+  <dd><a href="/projects/files/android/app-debug.apk">app-debug.apk</a>, 1.0&nbsp;MB,
+      31 May 2015 &mdash; a debug build, signed with the stock
+      <code>CN=Android Debug</code> certificate.</dd>
+  <dt>Built against</dt>
+  <dd>Android 5.0.1 (API 21); <code>minSdkVersion 8</code>,
+      <code>targetSdkVersion 21</code>.</dd>
+  <dt>Installing it in 2026</dt>
+  <dd>Android 14 and later refuse to install anything targeting below API 23.
+      The way round that is from a computer, not the phone:
+      <code>adb install --bypass-low-target-sdk-block app-debug.apk</code>.
+      Older devices and the emulator take it as it is.</dd>
+</dl>
+
+<h2>Assignment 1: a screenshot</h2>
+<figure>
+  <img src="/projects/img/android/assign1.PNG" width="565" height="1019"
+       alt="An Android emulator showing an app titled Assignment 1: Welcome to: CIS 4930, ANDROID DEVELOPMENT, Zachary Diemer">
+  <figcaption>
+    <code>assign1.PNG</code>, 24 May 2015 &mdash; the entire submission. The zip
+    that was handed in contains this image and nothing else.
+  </figcaption>
+</figure>
+
+<a class="backlink" href="/">&larr; all projects</a>
+
+</div>
+</body>
+</html>

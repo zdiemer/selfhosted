@@ -1,0 +1,12 @@
+Cola
+0.75 20
+Root Beer
+0.75 20
+Lemon-Lime
+0.75 0
+Grape Soda
+0.80 3
+Cream Soda
+0.80 12
+Water
+0.50 8

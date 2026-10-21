@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDA 3100 — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap-wide">
+
+<header class="masthead">
+  <h1>CDA 3100</h1>
+  <p class="sub">
+    Computer Organization I, Summer 2014. Two MIPS programs, running under
+    <code>spim</code>, and two Verilog circuits, simulated by this site's image
+    build against the waveforms saved in 2014.
+  </p>
+</header>
+
+<h2>MIPS</h2>
+
+<ul class="programs">
+  <li><button class="btn-quiet" type="button" data-term-arg="stats" aria-pressed="true">Assignment 4: statistics</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="tictactoe" aria-pressed="false">Tic-tac-toe, as far as it got</button></li>
+</ul>
+
+<div id="terminal" data-base="/console" data-arg="stats" data-label="the CDA 3100 programs">
+  <p class="status">Checking…</p>
+</div>
+
+<p class="status">
+  Enter integers one per line and finish with a negative number. The banner
+  above the prompt is spim's own, the same one it printed in 2014.
+</p>
+
+<dl class="facts">
+  <dt>Assignment 4 &middot; 13 June 2014</dt>
+  <dd>Reads up to 100 integers into an array, then prints sum, min, max, mean
+      and variance &mdash; the last two in single-precision floating point,
+      converted with <code>mtc1</code>/<code>cvt.s.w</code>. Variance is the
+      population variance, divided by <em>n</em>. Its one unused string reads
+      &ldquo;Managed to actually program in MIPS...!&rdquo;
+      <a href="/projects/src/cda3100/Assignment4_Diemer.s">Source</a>.</dd>
+  <dt>Tic-tac-toe &middot; 23 June 2014</dt>
+  <dd>The start of the next assignment, saved with Assignment 4's header still
+      on it. It declares a board, every prompt and all three endings &mdash; X
+      wins, O wins, a tie &mdash; and then <code>gather_input</code> prints a
+      debugging line and returns. Running it prints &ldquo;Made it to
+      currentPlayerX&rdquo; and &ldquo;Made it home!&rdquo;, which is the whole
+      program. <a href="/projects/src/cda3100/test.s">Source</a>.</dd>
+</dl>
+
+<h3>Notes on Assignment 4</h3>
+<ul class="notes">
+  <li>
+    <strong>The first number is never checked for being negative.</strong> The
+    count-is-zero path initialises the minimum and jumps straight to the
+    arithmetic, skipping the sign test. So typing <code>-1</code> to an empty
+    program does nothing; it takes a second one. Measured: <code>-4 2 -1</code>
+    reports a sum of &minus;2.
+  </li>
+  <li>
+    <strong>Max starts at zero and is never seeded.</strong> Min is
+    initialised from the first value; max is just whatever <code>$s3</code>
+    held, which under spim is 0. All-negative input &mdash; reachable only
+    through the bug above &mdash; reports <code>Max is: 0</code>.
+  </li>
+  <li>
+    <strong>It never returns to <code>main</code>.</strong>
+    <code>readInt</code> is entered with <code>jal</code>, but the way out
+    &mdash; through <code>end</code>, <code>varianceLoop</code> and
+    <code>printVariance</code> &mdash; reloads <code>$ra</code> from the slot
+    where <code>main</code> saved <em>its</em> return address. So the final
+    <code>jr $ra</code> goes straight back to spim's startup code, as though
+    <code>main</code> had returned, and <code>main</code>'s own epilogue is dead
+    code. On the way it releases 4 of <code>main</code>'s 8 stack bytes and
+    reloads <code>$s0</code> from a slot nothing ever stored to. None of it
+    reaches the output, which is presumably why it passed.
+  </li>
+  <li>
+    <strong>At end of input it never stops.</strong> spim's
+    <code>read_int</code> returns 0 at EOF, forever, so the negative sentinel
+    never arrives: the program keeps storing zeros, through its 100-word array
+    and on past it, until spim starts raising &ldquo;Bad address&rdquo;
+    exceptions at steadily climbing addresses &mdash; without end. The terminal
+    disables Ctrl-D and caps output, so you cannot fall into it.
+  </li>
+  <li>
+    <strong>There is no bound on the array either.</strong> A 101st number is
+    stored past the end of <code>arrayInt</code>. It is the last thing in
+    <code>.data</code>, so in practice nothing is overwritten, and 1 to 101
+    still averages to 51.
+  </li>
+</ul>
+
+<h2>Verilog</h2>
+<p>
+  Neither testbench has a <code>$display</code> or a <code>$finish</code>.
+  They were written to be looked at in ModelSim's waveform window, so a
+  command-line simulator runs their free clock forever and prints nothing. The
+  build compiles each file exactly as submitted alongside a small second
+  top-level module that reads the testbench's wires by hierarchical reference,
+  prints them, and stops &mdash; <code>iverilog -s test_bench -s harness</code>.
+  The harnesses are in <code>web/fsu/sims/</code>.
+</p>
+
+<h3>Homework 7 &middot; a two-bit comparator</h3>
+<p>
+  <code>O = (~A1 &amp; ~A0 &amp; B0) | (~A0 &amp; B1 &amp; B0) | (~A1 &amp; B1)</code>,
+  driven by a 4-bit counter through all sixteen inputs. Worked through, that
+  sum of products is exactly <em>A&nbsp;&lt;&nbsp;B</em>; the
+  <code>check</code> column is the harness comparing against that, and the
+  build fails on a mismatch. <a href="/projects/src/cda3100/hw7_Diemer.v">Source</a>.
+</p>
+<pre class="transcript" data-src="/projects/out/hw7.txt">Loading…</pre>
+
+<h3>Homework 8 &middot; a Gray-code counter</h3>
+<p>
+  Three D flip-flops and the next-state logic for the 3-bit Gray sequence
+  000, 001, 011, 010, 110, 111, 101, 100. The assignment sheet supplied the
+  sequence; the equations are the student's.
+  <a href="/projects/src/cda3100/hw8_Diemer.v">Source</a>.
+</p>
+<pre class="transcript" data-src="/projects/out/hw8.txt">Loading…</pre>
+
+<figure>
+  <img src="/projects/img/cda3100/hw8_Diemer.PNG" width="1261" height="794"
+       alt="ModelSim waveform window, 2014: clk and HW8out, with HW8out cycling 0, 1, 3, 2, -2, -1, -3, -4">
+  <figcaption>
+    The same circuit in ModelSim, July 2014. The bus is shown with a signed
+    radix, so 6, 7, 5, 4 read as &minus;2, &minus;1, &minus;3, &minus;4 &mdash;
+    the right-hand column above prints it that way for comparison. Icarus
+    agrees digit for digit.
+  </figcaption>
+</figure>
+
+<ul class="notes">
+  <li>
+    <strong>It is a race that happens to come out right.</strong> The
+    flip-flop is <code>always @(posedge clk) Q = D;</code> &mdash; a blocking
+    assignment. Three of them share one clock edge, and each one's
+    <code>D</code> is computed from the others' <code>Q</code>. Whether a flop
+    sees its neighbours' old value or new one is up to the simulator's
+    scheduling. ModelSim in 2014 and Icarus 11 in 2026 both produce the
+    correct sequence; the build asserts it, so a simulator that disagrees will
+    say so.
+  </li>
+  <li>
+    <strong><code>D2</code>, <code>D1</code> and <code>D0</code> are never
+    declared.</strong> Verilog makes an undeclared name on the left of an
+    <code>assign</code> into an implicit wire, which is legal and is how this
+    compiles. Icarus mentions it:
+  </li>
+</ul>
+<pre class="transcript" data-src="/projects/out/hw8-iverilog.txt">Loading…</pre>
+
+<h3>Two waveforms without their source</h3>
+<div class="figs">
+  <figure>
+    <img src="/projects/img/cda3100/hw8p1_Diemer.PNG" width="1257" height="803"
+         alt="ModelSim waveform titled hw8P1_Diemer.v, a 3-bit bus cycling 0, 1, 3, 2, -4">
+    <figcaption><code>hw8P1_Diemer.v</code>, 20 July 2014.</figcaption>
+  </figure>
+  <figure>
+    <img src="/projects/img/cda3100/hw8p2_Diemer.PNG" width="1258" height="675"
+         alt="ModelSim waveform titled hw8P2_Diemer.v, a 3-bit bus cycling 0, 1, 3, 2, -4">
+    <figcaption><code>hw8P2_Diemer.v</code>, 20 July 2014.</figcaption>
+  </figure>
+</div>
+<p>
+  The tab names give away two more parts of Homework 8, and both show a
+  five-state cycle &mdash; 0, 1, 3, 2, 4 &mdash; rather than the eight-state
+  Gray counter. The <code>.v</code> files themselves were not saved, so these
+  two cannot be re-run.
+</p>
+
+<a class="backlink" href="/">&larr; all projects</a>
+
+</div>
+<script src="/term.js"></script>
+<script src="/capture.js"></script>
+</body>
+</html>

@@ -1,13 +1,18 @@
-# fsu.zachd.duckdns.org — four pieces of 2014–16 Florida State coursework,
-# running again rather than screenshotted.
+# fsu.zachd.duckdns.org — Florida State coursework from 2013–16, running again
+# rather than screenshotted.
 #
 #   Cloysta            a C shell          FSU Operating Systems, Fall 2015
 #   Breakout           Swing game         Fall 2014, pair project
 #   pybank             Django 1.9 bank    Spring 2016, team project
 #   my-data-structure  C++ hash table     January 2015
+#   cop3014            six C++ programs   COP 3014, Fall 2013        (/console)
+#   cda3100            MIPS + Verilog     CDA 3100, Summer 2014      (/console, build-time sims)
+#   python-homework4   two scrapers       Python Programming, Spring 2016 (build-time run)
+#   cop4656-android    Android app        Summer 2015                (page only)
+#   cen4021-notepadpp  Notepad++ change   CEN 4021, Spring 2015      (page only)
 #
 # This chart INVERTS the repo's usual submodule shape, the same way
-# web/old-diemer-codes does and for the same reason: the four app repos are
+# web/old-diemer-codes does and for the same reason: the project repos are
 # frozen archives that must not be modified, so the chart and the three
 # Dockerfiles live HERE and the sources are submodules under projects/. They sit
 # inside the chart directory because `docker build` cannot COPY from outside its
@@ -16,6 +21,10 @@
 #
 # Every fix, shim, wrapper and driver these projects need in 2026 lives in
 # web/fsu/, never in projects/. That is a filesystem property, not a promise.
+#
+# Five of the nine (cop3014 onward) are PRIVATE repos, recovered from Dropbox in
+# 2026 rather than from GitHub. The site's source links to them work for their
+# owner and 404 for anyone else; that is expected.
 
 nameOverride: ""
 
@@ -31,13 +40,13 @@ images:
   # the drift check without saying so.
   web:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-web
-    tag: "1.0.6"
+    tag: "1.1.0"
   terminal:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-terminal
-    tag: "1.0.6"
+    tag: "1.1.0"
   pybank:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-pybank
-    tag: "1.0.6"
+    tag: "1.1.0"
   # IfNotPresent — so NEVER reuse a tag. A rebuilt tag is not re-pulled by any
   # node that already holds it, and the cluster keeps serving the old bytes.
   # build.sh refuses to push over an existing tag for exactly this reason.
@@ -91,6 +100,9 @@ terminal:
     port: 7681
   hashtable:
     port: 7682
+  # The COP 3014 and CDA 3100 programs behind one menu; console-session.sh.
+  console:
+    port: 7683
   # ttyd --max-clients. Two, because `ulimit -u` in cloysta-session.sh is a
   # per-UID limit and is therefore shared across concurrent sessions: a fork
   # bomb in one denies the other. Two is the number where that trade is

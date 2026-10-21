@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Python Homework 4 — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>Python Homework 4</h1>
+  <p class="sub">
+    Python Programming, April 2016. Two scrapers, 118 lines between them, in
+    Python&nbsp;2 &mdash; both of whose targets are gone.
+  </p>
+</header>
+
+<p>
+  Neither can run against the live web: the CS department's site has been
+  redesigned since, and imgur's per-user comment feed no longer exists. So both
+  ran once, during this site's image build, against a recording. The scripts are
+  untouched; what stands between them and the network is a short
+  replacement for <code>requests</code> (<code>web/fsu/pyhw4/shim/</code>) that
+  answers only from files on disk, and refuses any URL it has no recording for.
+</p>
+
+<h2><code>faculty_directory.py</code></h2>
+<p>
+  Fetches the department's faculty list, follows the first link in every row
+  of <code>table#faculty</code>, and prints name, office, phone and email from
+  each person's page &mdash; four XPath expressions, each in a bare
+  <code>try</code>/<code>except</code> that prints <code>N/A</code> when it
+  finds nothing. <a href="/projects/src/python-hw4/faculty_directory.py">Source</a>.
+</p>
+<p>
+  Its inputs here are <strong>Wayback Machine captures</strong>: the faculty
+  list as of 26&nbsp;March 2016, the last capture before the homework was
+  handed in, and for each of the 32 links the 2016 XPath finds in it, the
+  closest capture of that page. Most date from April 2016; a few pages were
+  not crawled then and their nearest capture is as late as August 2017. They
+  are fetched by the image build and never stored in the repository, which is
+  public. They are fetched as the original bytes, not the Wayback's rewritten
+  page with its toolbar, so the XPath written against the live site in 2016
+  still finds all 32 links in them. On this build it fills 121 of the 128
+  fields; the seven <code>N/A</code>s &mdash; six phone numbers and one office
+  &mdash; are pages where the 2016 XPath found nothing.
+</p>
+<pre class="transcript" data-src="/projects/out/faculty.txt">Loading…</pre>
+
+<h2><code>imgur_battle.py</code></h2>
+<p>
+  Given several imgur usernames, it pages through each user's comments,
+  finds the posts all of them commented on, sums each user's points on those
+  posts, and names a winner. <a href="/projects/src/python-hw4/imgur_battle.py">Source</a>.
+</p>
+<blockquote>
+  <p>
+    <strong>The data below is invented.</strong> The endpoint it read,
+    <code>/user/&lt;name&gt;/index/newest/page/&lt;N&gt;/hit.json</code>, is gone
+    and was never archived for arbitrary users, so there is nothing real to
+    replay. Two placeholder users and four responses exist only to make the
+    bug below happen; <code>web/fsu/pyhw4/imgur/README</code> walks through
+    them.
+  </p>
+</blockquote>
+<pre class="transcript" data-src="/projects/out/imgur.txt">Loading…</pre>
+
+<h2>Notes, ten years on</h2>
+<ul class="notes">
+  <li>
+    <strong><code>imgur_battle.py</code> does nothing when run.</strong> It
+    defines <code>battle(*users)</code> and never calls it. The build drives it
+    with a two-line script that imports the module and calls it once.
+  </li>
+  <li>
+    <strong>It can name no winner at all.</strong> <code>high_score</code> is
+    updated after <em>every post</em>, from running totals, and the winners are
+    the users whose <em>final</em> total equals it. imgur comment points can be
+    negative, so a running total can peak above where it ends: here alice
+    reaches 10 on the first shared post and finishes on 4, nobody finishes on
+    10, and the program prints <code>The winners are []!</code>
+  </li>
+  <li>
+    <strong>Which post counts first is Python's choice.</strong> The shared
+    posts are a <code>set</code>, so whether the bug shows depends on set
+    iteration order. Python&nbsp;2 makes that deterministic; Python&nbsp;3.3+
+    randomises string hashing per process, so the same input would flip
+    between a winner and no winner from run to run.
+  </li>
+  <li>
+    <strong>Paging stops only on an empty body.</strong>
+    <code>while page.text != ''</code> &mdash; if the endpoint ever answered a
+    page past the end with valid JSON and an empty list, rather than nothing,
+    this would request pages forever. There is no way left to check which it
+    did.
+  </li>
+  <li>
+    <strong>The email field has a fallback.</strong> If the first text node in
+    the email cell is blank, it takes the second &mdash; a special case for
+    at least one page the author must have seen in 2016.
+  </li>
+</ul>
+
+<h2>Run with</h2>
+<p>
+  Python 2.7.18 and lxml 4.9.4 &mdash; not the lxml of April 2016 (3.6.0),
+  because 4.9.4 is the last release with a Python&nbsp;2 wheel and the build
+  installs offline. The script calls two XPath methods; both behave the same in
+  each. <code>PYTHONIOENCODING=utf-8</code> stands in for the UTF-8 terminal
+  it was written in, without which Python&nbsp;2 raises on the first non-ASCII
+  name it prints to a pipe.
+</p>
+
+<a class="backlink" href="/">&larr; all projects</a>
+
+</div>
+<script src="/capture.js"></script>
+</body>
+</html>

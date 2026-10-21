@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# fsu-terminal — Cloysta (C, FSU Operating Systems, Fall 2015) and a REPL driver
-# for MyDS (C++, January 2015), each behind its own ttyd.
+# fsu-terminal — three ttyds from one image:
 #
-# Build context is web/fsu/. Both projects are git submodules under projects/
-# and are FROZEN: nothing here writes to them. The Cloysta build copies the tree
-# into the builder and compiles from the copy; the MyDS build only ever reads
-# two headers. Every fix lives in this file or in terminal/.
+#   /cloysta    Cloysta (C, FSU Operating Systems, Fall 2015)
+#   /hashtable  a REPL driver for MyDS (C++, January 2015)
+#   /console    a menu over six COP 3014 C++ programs (Fall 2013) and two
+#               CDA 3100 MIPS programs run under spim (Summer 2014)
+#
+# Build context is web/fsu/. Every project is a git submodule under projects/
+# and is FROZEN: nothing here writes to them. Builds copy or read the sources;
+# every fix, fixture and wrapper lives in this file or in terminal/.
 
 # renovate: datasource=docker depName=debian
 ARG DEBIAN_TAG=bookworm-20250929-slim
@@ -104,6 +107,56 @@ RUN set -eux; \
     cat /out/build-warnings.txt; \
     test -x /out/myds-repl
 
+# ----------------------------------------------------------- cop3014 builder
+#
+# Six console programs from COP 3014, Fall 2013. The headers say "Windows OS /
+# C++ 11 / Microsoft Visual C++ Express 2012", and one of them (main.cpp)
+# opens /Users/Zachary/xfile.txt, so at least that one was built on a Mac.
+#
+# -std=c++11 because the headers say so, and because it is the oldest standard
+# all six accept: ifstream::open(std::string) in main.cpp is C++11. -O0 because
+# a Visual Studio debug build is what a student ran. Nothing here needed a flag
+# to compile; -Wall -Wextra produce two warnings, and both are kept and shown:
+# an unused parameter in p6, and "/*" within comment in p1 — its summary block
+# ends with a lone "/" where "*/" was meant, and the comment only closes because
+# the next banner happens to contain one.
+#
+# Renamed on the way out (walk, deltatau, …) so the menu, the page and the
+# binary all use one name. The sources keep their 2013 filenames in the repo.
+FROM debian:${DEBIAN_TAG} AS cop3014-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ libc6-dev python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY projects/cop3014/ /src/
+COPY terminal/cop3014/make-xfile.py /fixture/make-xfile.py
+RUN set -eux; \
+    mkdir -p /out/bin; \
+    : > /out/build-warnings.txt; \
+    for pair in walk:diemer_PX7200105_p1 deltatau:diemer_zd12c_p3 \
+                deltatau-draft:deltatau craps:diemer_zd12c_p4 \
+                drinks:diemer_zd12c_p6 grader:main; do \
+        out="${pair%%:*}"; src="${pair#*:}.cpp"; \
+        g++ -std=c++11 -O0 -Wall -Wextra -o "/out/bin/${out}" "/src/${src}" \
+            2>> /out/build-warnings.txt \
+        || { echo "--- ${src} failed ---"; cat /out/build-warnings.txt; exit 1; }; \
+    done; \
+    cat /out/build-warnings.txt; \
+    test "$(ls /out/bin | wc -l)" -eq 6; \
+    \
+    # The grader's input, at the absolute path compiled into the binary. See
+    # make-xfile.py for why the line endings are bare CRs.
+    mkdir -p /Users/Zachary; \
+    python3 /fixture/make-xfile.py /Users/Zachary/xfile.txt; \
+    test "$(tr -cd '\r' < /Users/Zachary/xfile.txt | wc -c)" -eq 51; \
+    test "$(tr -cd '\n' < /Users/Zachary/xfile.txt | wc -c)" -eq 0; \
+    cp /Users/Zachary/xfile.txt /out/xfile.txt; \
+    \
+    # Smoke-test the two programs whose input this image supplies, and one that
+    # takes stdin. The grader prints every student; p1 does arithmetic a test
+    # can check (4.2 in at 0.25 mi/in rounds to 1.1).
+    /out/bin/grader | grep -q 'Sophie Wilson'; \
+    printf '4.2\n6.0\n3.1\n' | /out/bin/walk | grep -q 'Total mileage for the day is 3.4 miles'
+
 # ------------------------------------------------------------ wordlist stage
 #
 # Debian's wamerican (SCOWL, permissively licensed). Derived deterministically —
@@ -144,7 +197,7 @@ ARG TTYD_VERSION=1.7.7
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates curl coreutils util-linux; \
+        ca-certificates curl coreutils util-linux spim; \
     mkdir -p /usr/libexec/fsu; \
     curl -fsSL -o /usr/libexec/fsu/ttyd \
         "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"; \
@@ -153,7 +206,13 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     test -x /bin/ls; \
     test -x /bin/more; \
-    test -x /usr/bin/timeout
+    test -x /usr/bin/timeout; \
+    # console-session.sh runs every program through these two, by absolute
+    # path. stdbuf is coreutils, but it works by LD_PRELOADing a helper that
+    # lives elsewhere — assert the helper too, or prompts silently vanish.
+    test -x /usr/bin/stdbuf; \
+    test -f /usr/libexec/coreutils/libstdbuf.so; \
+    test -x /usr/bin/spim
 
 # /usr/libexec/fsu holds everything the POD runs; /usr/local/bin holds exactly
 # what a VISITOR may run. Keeping ttyd, the two programs and the session
@@ -166,7 +225,18 @@ COPY --from=myds-build    /out/myds-repl        /usr/libexec/fsu/myds-repl
 COPY --from=myds-build    /out/build-warnings.txt /opt/myds/build-warnings.txt
 COPY --from=words         /words/common.txt     /opt/myds/words/common.txt
 COPY terminal/words/fsu.txt                     /opt/myds/words/fsu.txt
-COPY terminal/cloysta-session.sh terminal/myds-session.sh /usr/libexec/fsu/
+COPY terminal/cloysta-session.sh terminal/myds-session.sh terminal/console-session.sh /usr/libexec/fsu/
+
+# /console: the COP 3014 binaries, their two stand-in data files, and the
+# CDA 3100 MIPS sources, which spim assembles at run time — there is nothing to
+# build for those. machine.txt sits in the directory the session cd's into,
+# because p6 opens it by relative path; xfile.txt sits at the absolute path the
+# grader has compiled in.
+COPY --from=cop3014-build /out/bin/                  /usr/libexec/fsu/cop3014/
+COPY --from=cop3014-build /out/build-warnings.txt    /opt/fsu-console/cop3014/build-warnings.txt
+COPY --from=cop3014-build /out/xfile.txt             /Users/Zachary/xfile.txt
+COPY terminal/cop3014/machine.txt                    /opt/fsu-console/cop3014/machine.txt
+COPY projects/cda3100/Assignment4_Diemer.s projects/cda3100/test.s /opt/fsu-console/cda3100/
 
 # A single-entry PATH for Cloysta (set in the chart), so the demo binaries have
 # to live in /usr/local/bin. findexec()/otroexec() build a candidate list in
@@ -184,7 +254,8 @@ COPY terminal/cloysta-session.sh terminal/myds-session.sh /usr/libexec/fsu/
 # builtins for most of these and execv's a path, so a broken link is a broken
 # demo command.
 RUN set -eux; \
-    chmod 0755 /usr/libexec/fsu/cloysta-session.sh /usr/libexec/fsu/myds-session.sh; \
+    chmod 0755 /usr/libexec/fsu/cloysta-session.sh /usr/libexec/fsu/myds-session.sh \
+               /usr/libexec/fsu/console-session.sh; \
     for b in ls cat echo pwd head tail wc sort uniq date env printenv \
              true false sleep more id uname; do \
         src=""; \
@@ -198,10 +269,40 @@ RUN set -eux; \
     test -f /opt/myds/words/common.txt; \
     test -f /opt/myds/words/fsu.txt; \
     /usr/libexec/fsu/myds-repl < /dev/null > /dev/null; \
+    \
+    # The console's eight programs. Each check is the one thing that proves the
+    # program and its input met: the grader found its CR-delimited file at the
+    # baked-in path, the drink machine found machine.txt from the session's
+    # working directory, and spim assembled and ran both MIPS files. The stats
+    # input is the hand-checked case: 4, 8 -> mean 6, population variance 4.
+    /usr/libexec/fsu/cop3014/grader | grep -q 'Sophie Wilson'; \
+    ( cd /opt/fsu-console/cop3014 && printf 'n\n' | /usr/libexec/fsu/cop3014/drinks ) \
+        | grep -q 'Drink: Lemon-Lime'; \
+    spim -quiet -file /opt/fsu-console/cda3100/test.s < /dev/null | grep -q 'Made it home!'; \
+    printf '4\n8\n-1\n' | spim -quiet -file /opt/fsu-console/cda3100/Assignment4_Diemer.s \
+        | grep -q 'Variance is:.4.00000000'; \
+    # The session itself, under the PATH the pod gives it — /usr/local/bin and
+    # nothing else. Run with the build's own PATH, a wrapper that leans on grep
+    # or sed passes here and silently ignores every choice in production.
+    #
+    # A known argument must start that program; a menu number must too; an
+    # unknown or hostile one must land on the menu and run nothing.
+    printf '4.2\n6.0\n3.1\nq\n' | env -i PATH=/usr/local/bin HOME=/tmp \
+        /usr/libexec/fsu/console-session.sh walk | grep -q 'Total mileage for the day is 3.4 miles'; \
+    printf '8\nq\n' | env -i PATH=/usr/local/bin HOME=/tmp \
+        /usr/libexec/fsu/console-session.sh | grep -q 'Made it home!'; \
+    for evil in '../../bin/sh' 'walk;id' '$(id)' 'walk walk'; do \
+        out="$(printf 'q\n' | env -i PATH=/usr/local/bin HOME=/tmp \
+                 /usr/libexec/fsu/console-session.sh "$evil")"; \
+        echo "$out" | grep -q 'Choose:'; \
+        ! echo "$out" | grep -q 'uid=\|Walking Distance Calculator Program'; \
+    done; \
     # /usr/local/bin is the visitor's entire command set. Assert that nothing
     # the pod needs leaked into it — a stray ttyd or session wrapper here would
     # be runnable from inside Cloysta.
-    for leaked in ttyd cloysta myds-repl cloysta-session.sh myds-session.sh; do \
+    for leaked in ttyd cloysta myds-repl cloysta-session.sh myds-session.sh \
+                  console-session.sh spim walk deltatau deltatau-draft craps \
+                  drinks grader; do \
         test ! -e "/usr/local/bin/${leaked}" \
             || { echo "LEAKED into the visitor PATH: ${leaked}"; exit 1; }; \
     done

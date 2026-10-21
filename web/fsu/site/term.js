@@ -1,4 +1,5 @@
-// Shared by the two terminal pages (projects/cloysta.html, projects/myds.html).
+// Shared by the terminal pages (projects/cloysta.html, projects/myds.html, and
+// the /console pages projects/cop3014.html and projects/cda3100.html).
 //
 // THE PROBLEM THIS SOLVES. /cloysta and /hashtable sit behind Authelia
 // forwardAuth. For a visitor without a session, Traefik answers the iframe's
@@ -23,14 +24,23 @@
   var mount = document.getElementById("terminal");
   if (!mount) return;
 
-  var base = mount.getAttribute("data-base");   // "/cloysta" or "/hashtable"
+  var base = mount.getAttribute("data-base");   // "/cloysta", "/hashtable", "/console"
   var label = mount.getAttribute("data-label") || "terminal";
+  // /console only: which program to open. ttyd --url-arg hands ?arg= to
+  // console-session.sh as $1, which checks it against its own fixed list.
+  var arg = mount.getAttribute("data-arg");
+  var src;
+  function setArg(a) {
+    arg = a;
+    src = base + "/" + (arg ? "?arg=" + encodeURIComponent(arg) : "");
+  }
+  setArg(arg);
 
   function attach() {
     var f = document.createElement("iframe");
     f.className = "frame frame-tall";
     f.title = label;
-    f.src = base + "/";
+    f.src = src;
     mount.innerHTML = "";
     mount.appendChild(f);
   }
@@ -42,7 +52,7 @@
       '<p>Authelia sits in front of ' + label + ', because it is a live process ' +
       'on the cluster rather than a recording. Open it once in its own tab to ' +
       'sign in, then come back here and reload.</p>' +
-      '<p><a class="btn" href="' + base + '/" target="_blank" rel="noopener">' +
+      '<p><a class="btn" href="' + src + '" target="_blank" rel="noopener">' +
       'Sign in and open ' + label + '</a> ' +
       '<button class="btn btn-quiet" type="button" id="term-retry">Reload here</button></p>' +
       (detail ? '<p class="status">' + detail + '</p>' : '') +
@@ -69,6 +79,20 @@
         signInPrompt("The check itself failed: " + e + ".");
       });
   }
+
+  // Buttons elsewhere on the page that switch the terminal to another program.
+  // Each switch is a fresh ttyd session: the old iframe's websocket closes with
+  // it, so this never holds two of the --max-clients slots at once.
+  Array.prototype.forEach.call(document.querySelectorAll("[data-term-arg]"), function (b) {
+    b.addEventListener("click", function () {
+      setArg(b.getAttribute("data-term-arg"));
+      Array.prototype.forEach.call(document.querySelectorAll("[data-term-arg]"), function (o) {
+        o.setAttribute("aria-pressed", o === b ? "true" : "false");
+      });
+      probe();
+      mount.scrollIntoView({ block: "nearest" });
+    });
+  });
 
   probe();
 })();

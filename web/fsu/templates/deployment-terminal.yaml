@@ -1,6 +1,6 @@
 {{- if .Values.terminal.enabled }}
 {{/*
-Two containers from ONE image, differing only in `command:` — the shape
+Three containers from ONE image, differing only in `command:` — the shape
 dev/claude-workspace already uses. ttyd runs exactly one command, so one
 container per terminal is the natural split, and it buys separate probes,
 separate limits and separate log streams for free.
@@ -226,6 +226,71 @@ spec:
           livenessProbe:
             tcpSocket:
               port: hashtable
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: home
+              mountPath: /home/demo
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.terminal.resources | nindent 12 }}
+        - name: console
+          image: "{{ .Values.images.terminal.repository }}:{{ .Values.images.terminal.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # --url-arg is the one flag the other two terminals do not have. It
+          # lets each explainer page open this terminal on its own program
+          # (/console/?arg=craps) instead of eight pages sharing one menu. The
+          # value reaches console-session.sh as $1 and is only ever compared
+          # against a fixed list there; Dockerfile.terminal asserts that an
+          # unknown or hostile value lands on the menu.
+          command:
+            - /usr/libexec/fsu/ttyd
+            - -W
+            - --url-arg
+            - -p
+            - {{ .Values.terminal.console.port | quote }}
+            - --base-path
+            - /console
+            - --max-clients
+            - {{ .Values.terminal.maxClients | quote }}
+            - --check-origin
+            - --ping-interval
+            - "30"
+            - --cwd
+            - /home/demo
+            - --terminal-type
+            - xterm-256color
+            - /usr/libexec/fsu/console-session.sh
+          env:
+            - name: HOME
+              value: /home/demo
+            - name: TERM
+              value: xterm-256color
+            - name: PATH
+              value: /usr/local/bin
+            - name: FSU_SESSION_SECONDS
+              value: {{ .Values.terminal.sessionSeconds | quote }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 3
+          ports:
+            - name: console
+              containerPort: {{ .Values.terminal.console.port }}
+          readinessProbe:
+            tcpSocket:
+              port: console
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: console
             initialDelaySeconds: 10
             periodSeconds: 30
           volumeMounts:

@@ -17,8 +17,8 @@ spec:
 {{- if .Values.terminal.enabled }}
 ---
 {{/*
-One Service, two ports: the Ingress routes /cloysta and /hashtable to different
-ports on the same pod. Splitting them into two Services would add an object
+One Service, three ports: the Ingress routes /cloysta, /hashtable and /console
+to different ports on the same pod. Splitting them into two Services would add an object
 without adding a boundary — they are containers in one pod either way.
 */}}
 apiVersion: v1
@@ -39,6 +39,10 @@ spec:
       targetPort: hashtable
       protocol: TCP
       name: hashtable
+    - port: {{ .Values.terminal.console.port }}
+      targetPort: console
+      protocol: TCP
+      name: console
   selector:
     {{- include "fsu.selectorLabels" (dict "root" . "component" "terminal") | nindent 4 }}
 {{- end }}

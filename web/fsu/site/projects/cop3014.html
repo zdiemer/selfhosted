@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COP 3014 — FSU coursework</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap-wide">
+
+<header class="masthead">
+  <h1>COP 3014</h1>
+  <p class="sub">
+    Programming I, Fall 2013: the first semester. Six C++ console programs,
+    compiled from the files as they were saved and run in a real terminal.
+  </p>
+</header>
+
+<ul class="programs">
+  <li><button class="btn-quiet" type="button" data-term-arg="walk" aria-pressed="true">Walking distance</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="deltatau" aria-pressed="false">Delta Tau</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="deltatau-draft" aria-pressed="false">Delta Tau (draft)</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="craps" aria-pressed="false">Craps</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="drinks" aria-pressed="false">Drink machine</button></li>
+  <li><button class="btn-quiet" type="button" data-term-arg="grader" aria-pressed="false">Test grader</button></li>
+</ul>
+
+<div id="terminal" data-base="/console" data-arg="walk" data-label="the COP 3014 programs">
+  <p class="status">Checking…</p>
+</div>
+
+<p class="status">
+  Ctrl-C stops a program and returns to the menu. A letter where a program
+  wants a number makes three of these loop &mdash; the output is capped, and
+  that is the program, not the page.
+</p>
+
+<h2>The six</h2>
+<dl class="facts">
+  <dt>Project 1 &middot; Walking Distance Calculator &middot; due 11 Sep 2013</dt>
+  <dd>Three distances in inches on a map at a quarter-mile per inch, rounded to
+      a tenth of a mile by hand: <code>double(int(x * 10.0 + 0.5)) / 10.0</code>.
+      <a href="/projects/src/cop3014/diemer_PX7200105_p1.cpp">Source</a>.</dd>
+  <dt>Project 3 &middot; Delta Tau fuel simulation &middot; due 9 Oct 2013</dt>
+  <dd>The Enterprise, an alien tractor beam, and Scotty shovelling ten
+      kilograms of fuel a minute. Prints a minute-by-minute table until you
+      escape or crash.
+      <a href="/projects/src/cop3014/diemer_zd12c_p3.cpp">Source</a>.</dd>
+  <dt>Delta Tau, earlier draft</dt>
+  <dd>Same program with no header comment and less validation. By content it is
+      the earlier of the two; see below for what the submitted one fixed.
+      <a href="/projects/src/cop3014/deltatau.cpp">Source</a>.</dd>
+  <dt>Project 4 &middot; Craps &middot; due 30 Oct 2013</dt>
+  <dd>Two simulated players, twenty wagers, real craps rules (naturals, craps,
+      points). Player 2 bets $150 when ahead and $50 when behind. &ldquo;Press
+      a key and enter&rdquo; means exactly that: it reads a <code>char</code>
+      with <code>&gt;&gt;</code>, which skips whitespace, so Enter on its own
+      just waits.
+      <code>DrawNum</code> is credited in a comment to the course library.
+      <a href="/projects/src/cop3014/diemer_zd12c_p4.cpp">Source</a>.</dd>
+  <dt>Project 6 &middot; Drink machine &middot; due 5 Dec 2013</dt>
+  <dd>Reads six drinks from <code>machine.txt</code>, selection-sorts them by
+      price, sells them, then sorts by stock for a final report.
+      <a href="/projects/src/cop3014/diemer_zd12c_p6.cpp">Source</a>.</dd>
+  <dt>True/false test grader</dt>
+  <dd>Twenty-five students, thirty questions, a percentage each, and a
+      histogram drawn in asterisks. No header, no project number.
+      <a href="/projects/src/cop3014/main.cpp">Source</a>.</dd>
+</dl>
+
+<h2>Two of them read files that were never saved</h2>
+<p>
+  The drink machine opens <code>machine.txt</code> and the grader opens
+  <code>/Users/Zachary/xfile.txt</code> &mdash; an absolute path to a 2013
+  MacBook's home directory, compiled into the binary. Neither data file
+  survives. Both programs here read <strong>stand-ins written in 2026</strong>,
+  shaped to what the code parses rather than to any assignment text:
+</p>
+<ul class="notes">
+  <li>
+    <code>machine.txt</code> is six drinks, one sold out. The image puts it in
+    the directory the program starts in, because it is opened by relative path.
+  </li>
+  <li>
+    The grader's file sits at exactly <code>/Users/Zachary/xfile.txt</code>
+    inside the container, rather than editing the path out of the source. It
+    has to use bare <code>\r</code> line endings &mdash; the old Mac
+    convention &mdash; because the program splits on <code>'\r'</code>. The
+    twenty-five students are computing pioneers, so nobody mistakes it for a
+    real class.
+  </li>
+</ul>
+
+<h2>Notes, thirteen years on</h2>
+<ul class="notes">
+  <li>
+    <strong>Both Delta Taus and the drink machine loop forever on a
+    letter.</strong> <code>cin &gt;&gt; altitude</code> with input that is not a
+    number puts <code>cin</code> into its fail state; every later read then
+    fails without waiting, and the loop's <code>'Y'</code> never changes.
+    Measured: Delta Tau prints 3&nbsp;MB of prompts in under two seconds. This
+    terminal pipes each program through a 1&nbsp;MiB cap, and disables Ctrl-D,
+    which triggers the same thing.
+  </li>
+  <li>
+    <strong>The draft says you can escape from 250,000&nbsp;km.</strong>
+    <code>fuel_required = (1 - altitude / 200000) * beam</code> goes negative
+    above 200,000&nbsp;km, and any fuel at all is more than a negative number.
+    The submitted version catches that case with &ldquo;Stop being silly! You
+    aren't even close to Delta Tau!&rdquo;
+  </li>
+  <li>
+    <strong>And it crashes at zero metres needing 100.2&nbsp;kg.</strong> Try
+    1000, 5, 100 in both. The draft prints the crash row's altitude as
+    <code>0</code>, but computes the fuel requirement from the real one,
+    &minus;400&nbsp;km. The submitted version clamps the altitude first and
+    shows 100.
+  </li>
+  <li>
+    <strong>Declining a drink still takes it out of the machine.</strong>
+    Stock is decremented before the &ldquo;Would you like to make the
+    purchase?&rdquo; question, and &ldquo;N&rdquo; does not put it back.
+    Decline a Grape Soda and the final report shows one fewer.
+  </li>
+  <li>
+    <strong>Profit is $0.25 a drink regardless of price</strong> &mdash; a
+    constant, <code>PROFIT</code>, times the number sold.
+  </li>
+  <li>
+    <strong>The grader's histogram never counts a zero.</strong> The
+    <code>switch</code> that buckets scores starts at <code>case 1:</code>,
+    so a student who gets nothing right falls through every case. The
+    stand-in data includes one; the &ldquo;0...5&rdquo; row says 3 and the
+    rows add up to 24.
+  </li>
+  <li>
+    <strong>Project 1's summary comment ends with <code>/</code>.</strong> It
+    was meant to be <code>*/</code>, so the comment silently continues through
+    the next banner and closes on that banner's own <code>*/</code>. It
+    compiles anyway; <code>-Wall</code> notices, in 2026.
+  </li>
+  <li>
+    <strong>Projects 3 and 4 both say &ldquo;PROJECT NUMBER: 1&rdquo;</strong>
+    in their headers. Project 1's header was the template.
+  </li>
+</ul>
+
+<h2>The histogram depends on the compiler</h2>
+<p>
+  The grader draws each bar with
+  <code>setw(n) &lt;&lt; cout.fill('*') &lt;&lt; cout.fill(' ')</code>:
+  two calls that change the stream's state, inside one expression. Before
+  C++17 the language did not say which order those operands are evaluated in.
+  GCC happens to go left to right, and the bars come out right. Built with
+  <code>-fstrong-eval-order=none</code> &mdash; the latitude a 2013 compiler
+  actually had, and the header names Visual C++ 2012 &mdash; the same source
+  prints this instead. Both were produced by this image's build:
+</p>
+<h3>Left to right (what GCC does by default)</h3>
+<pre class="transcript" data-src="/projects/out/grader-ordered.txt">Loading…</pre>
+<h3>Unsequenced</h3>
+<pre class="transcript" data-src="/projects/out/grader-unsequenced.txt">Loading…</pre>
+
+<h2>Build</h2>
+<p>
+  <code>g++ -std=c++11 -O0 -Wall -Wextra</code>: C++11 because the headers say
+  &ldquo;C++ 11&rdquo; and the grader needs it, and <code>-O0</code> because a
+  debug build is what a student ran. Nothing in any of the six needed changing
+  to compile.
+</p>
+
+<a class="backlink" href="/">&larr; all projects</a>
+
+</div>
+<script src="/term.js"></script>
+<script src="/capture.js"></script>
+</body>
+</html>

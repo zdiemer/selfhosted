@@ -1,0 +1,50 @@
+# Wayback Machine captures for faculty_directory.py, fetched by Dockerfile.web.
+#
+# <capture timestamp> TAB <URL exactly as the script requests it>
+#
+# URLs and timestamps only. The pages themselves are 2016 faculty directory
+# entries (names, offices, phone numbers, email addresses) and this repository
+# is public, so they are fetched into the image at build time instead of being
+# committed here.
+#
+# The first row is the directory the script starts from: the last capture before
+# the homework's 2016-04-11 submission. Every other row is the capture closest
+# to that date for the faculty page the 2016 XPath extracts from it — 32 links.
+# Most are from April 2016; a few pages were not crawled then, and their nearest
+# capture is as late as August 2017. projects/python-hw4.html says so.
+#
+# `id_` in the fetch URL asks the Wayback Machine for the original bytes, without
+# its toolbar and link rewriting, so the 2016 XPath sees the 2016 markup.
+20160326234943	http://www.cs.fsu.edu/department/faculty/
+20160426153920	http://www.cs.fsu.edu/department/faculty/ackerman/
+20160414040930	http://www.cs.fsu.edu/department/faculty/asriniva/
+20160402194724	http://www.cs.fsu.edu/department/faculty/awang/
+20160414025605	http://www.cs.fsu.edu/department/faculty/baker/
+20160414041715	http://www.cs.fsu.edu/department/faculty/burmeste/
+20160414025610	http://www.cs.fsu.edu/department/faculty/carnahan/
+20160414085736	http://www.cs.fsu.edu/department/faculty/duan/
+20160414040935	http://www.cs.fsu.edu/department/faculty/engelen/
+20160414025615	http://www.cs.fsu.edu/department/faculty/gaitrosd/
+20160414041253	http://www.cs.fsu.edu/department/faculty/hawkes/
+20170811212538	http://www.cs.fsu.edu/department/faculty/jieyang/
+20160701143653	http://www.cs.fsu.edu/department/faculty/jwinston/
+20160414041719	http://www.cs.fsu.edu/department/faculty/lacher/
+20160414041534	http://www.cs.fsu.edu/department/faculty/langley/
+20160402190214	http://www.cs.fsu.edu/department/faculty/levitz/
+20160414082939	http://www.cs.fsu.edu/department/faculty/liux/
+20160414040940	http://www.cs.fsu.edu/department/faculty/mascagni/
+20160414041725	http://www.cs.fsu.edu/department/faculty/myers/
+20160414025620	http://www.cs.fsu.edu/department/faculty/oral/
+20160414084834	http://www.cs.fsu.edu/department/faculty/piyush/
+20160414041539	http://www.cs.fsu.edu/department/faculty/schwartz/
+20160402200952	http://www.cs.fsu.edu/department/faculty/shaiduc/
+20160414085741	http://www.cs.fsu.edu/department/faculty/sudhir/
+20160414040945	http://www.cs.fsu.edu/department/faculty/tyson/
+20160701142955	http://www.cs.fsu.edu/department/faculty/vastola/
+20160414085747	http://www.cs.fsu.edu/department/faculty/whalley/
+20160330222052	http://www.cs.fsu.edu/department/faculty/xyuan/
+20160221225121	http://www.cs.fsu.edu/department/faculty/yuw/
+20161204061423	http://www.cs.fsu.edu/department/faculty/yuwang/
+20160402195549	http://www.cs.fsu.edu/department/faculty/zhao/
+20170113003729	http://www.cs.fsu.edu/department/faculty/zwang/
+20160301190252	http://www.cs.fsu.edu/department/faculty/zzhang/

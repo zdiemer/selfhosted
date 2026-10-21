@@ -54,6 +54,8 @@ spec:
           protocol: TCP
         - port: {{ .Values.terminal.hashtable.port }}
           protocol: TCP
+        - port: {{ .Values.terminal.console.port }}
+          protocol: TCP
   egress: []
 ---
 {{- end }}

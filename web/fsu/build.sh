@@ -2,8 +2,12 @@
 # Build and push the three fsu images from one context.
 #
 # Unusually for this repo, this chart builds THREE images — fsu-web (the static
-# site plus the Breakout jar), fsu-terminal (Cloysta and the MyDS REPL behind
-# ttyd) and fsu-pybank (Django 1.9 on Python 2.7). One build context, three
+# site, the Breakout jar, and the transcripts of everything run at build time),
+# fsu-terminal (Cloysta, the MyDS REPL and the /console programs behind ttyd)
+# and fsu-pybank (Django 1.9 on Python 2.7).
+#
+# fsu-web's first build fetches 33 Wayback Machine pages, slowly and on
+# purpose (see Dockerfile.web); expect a few minutes. BuildKit caches it after. One build context, three
 # Dockerfiles, one version number across all of them.
 #
 # Run ./upgrade.sh afterwards to roll the deployments onto the new images.
@@ -19,7 +23,7 @@ APPVERSION="$(awk -F'"' '/^appVersion:/{print $2; exit}' "${HERE}/Chart.yaml")"
 # ---------------------------------------------------------------------------
 # The submodules ARE the build context.
 #
-# A clone without --recurse-submodules leaves projects/ as four empty
+# A clone without --recurse-submodules leaves projects/ as empty
 # directories and the build fails somewhere inside a COPY with an opaque
 # message. Test a real file in each rather than .git, so a half-finished
 # checkout fails here too.
@@ -34,6 +38,11 @@ check_source projects/Cloysta/makefile                    Cloysta
 check_source projects/Breakout/src/breakout/Breakout.java Breakout
 check_source projects/pybank/manage.py                    pybank
 check_source projects/my-data-structure/MyDS.h            my-data-structure
+check_source projects/cop3014/main.cpp                    cop3014
+check_source projects/cda3100/hw8_Diemer.v                cda3100
+check_source projects/python-homework4/faculty_directory.py python-homework4
+check_source projects/cen4021-notepadpp/FindReplaceDlg.cpp cen4021-notepadpp
+check_source "projects/cop4656-android/Assignment 2/MainActivity.java" cop4656-android
 
 # ---------------------------------------------------------------------------
 # Read repository and tag out of values.yaml, never hardcoded here, so the image

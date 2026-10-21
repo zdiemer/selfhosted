@@ -1,0 +1,28 @@
+INVENTED DATA. None of this came from imgur.
+
+imgur_battle.py read a user's comments from
+
+    http://imgur.com/user/<name>/index/newest/page/<N>/hit.json?scrolling
+
+paging until a response came back empty. That endpoint is gone and nothing
+archived it for arbitrary users, so there is no real data to replay. These four
+responses exist for one reason: to make the scoring bug in battle() happen on
+purpose, with the smallest input that shows it.
+
+battle() keeps one high_score across the RUNNING totals, updated after every
+post, and then declares as winners the users whose FINAL total equals it. imgur
+comment points can be negative, so a running total can peak above where it ends:
+
+    post        alice  bob    running high
+    Xq7Lm2a      +10    +1        10
+    Pz4Kd8w       -6    +2        10      (alice ends on 4, bob on 3)
+
+Nobody finishes on 10, so the winner list is empty and the program prints
+"The winners are []!". Dockerfile.web asserts that line.
+
+The order matters, and it is Python 2's set iteration order over the shared
+post hashes, which is deterministic for a given interpreter; Xq7Lm2a comes out
+first on 2.7.18. The comments that only one user made (Hn2Rt5c, Wd9Fg1s) are
+there so get_shared() has something to exclude.
+
+example_alice and example_bob are placeholders, not anyone's imgur account.
