@@ -70,3 +70,11 @@ registry trust to all nodes. The registry credential remains in 1Password.
 Build the renewal image from `pki-image/Dockerfile`, push it, and pin its digest in
 values.yaml. The scheduled job has no external network access. For a controlled
 client-only rotation test, set `PKI_RENEW_CLIENT` to an existing client namespace.
+
+The CA was backed up and round-trip verified in the homelab 1Password document
+`infra-build-pki-ca`. With an authenticated `op` session, run
+`python3 scripts/build-pki-recovery.py backup` to verify that copy. For cluster
+recovery, create the `buildkit` namespace and run
+`python3 scripts/build-pki-recovery.py restore` **before** infrastructure upgrades.
+The helper refuses to overwrite a different live CA or vault backup. Leaf keys
+can then be reissued; node trust remains valid because the CA is preserved.
