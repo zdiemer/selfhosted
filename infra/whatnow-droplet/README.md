@@ -15,7 +15,9 @@ infra/whatnow-droplet/apply.sh --check --diff  # drift preview on a managed host
 infra/whatnow-droplet/apply.sh                # apply and check site health
 ```
 
-Ansible Core is pinned by the wrapper. `inventory.yml` selects the host;
+Ansible Core is pinned by the wrapper. The public Docker signing key is vendored
+from `https://download.docker.com/linux/ubuntu/gpg` so key changes are reviewed
+and dry runs can compare its content without downloading it. `inventory.yml` selects the host;
 `config.yml` pins application and Caddy versions, interfaces and Cloudflare CIDRs.
 To release or roll back, change `whatnow_tag`, commit, then apply. Images are pulled
 before the runtime environment changes. The application image version is never
