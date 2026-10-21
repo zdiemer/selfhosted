@@ -2,7 +2,6 @@
 
 Status: planned; no agent, permissions, or notification changes deployed.
 Agreed direction: **bounded repairs with automatic tested merges and deployments**.
-Written 2026-10-20.
 
 ## Objective
 
@@ -138,16 +137,11 @@ application probes, and the original alert condition clearing. Check affected
 dependencies for regressions. Observe the rollback with the same rigor as the
 repair. Record incomplete evidence and escalate when verification is impossible.
 
-The October 2026 Grafana ingestion incident is a useful example: successful
-local scrapes plus Cloud rejection should lead to bounded provider-recovery
-checks after reducing series volume, rather than repeated Prowlarr restarts.
-
 ## Notifications and independent failure detection
 
 Use the existing [notification routing](notification-routing.md): ntfy first,
 SMS on publish failure, and Grafana Cloud email only when ntfy is explicitly
-unavailable. This reflects the stricter email policy agreed on 2026-10-20;
-critical severity or missing telemetry alone must not trigger email.
+unavailable. Critical severity or missing telemetry alone must not trigger email.
 SMS availability must be verified before treating it as a working fallback.
 
 Successful repairs write an incident report without paging. Escalations contain

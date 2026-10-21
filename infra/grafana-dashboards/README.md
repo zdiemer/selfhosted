@@ -185,8 +185,8 @@ The Arr health rule sums the exporter's warning/error counts with
 `sum without (severity)` before assigning the alert's routing severity. Querying
 both source severities directly collapses them into one alert identity when the
 rule overrides `severity`, causing contradictory transitions and duplicate
-`GRAFANA_ALERTS` timestamps. See the
-[investigation](../../docs/grafana-metric-duplicates-2026-10-20.md). Run its regression
+`GRAFANA_ALERTS` timestamps. Inspect `grafanacloud-alert-state-history` for
+opposing transitions at the same timestamp and fingerprint. Run regression
 checks with:
 
 ```sh

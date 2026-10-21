@@ -52,8 +52,8 @@ paperless:
   #   PAPERLESS_CONSUMER_POLLING: "30"
   #   PAPERLESS_FILENAME_FORMAT: "{created_year}/{correspondent}/{title}"
 
-  # OIDC — follow-up. Leave disabled until DuckDNS + Authelia are up. See
-  # README §Follow-up B.
+  # Native OIDC. Configure the issuer and client before enabling. See
+  # README authentication guidance.
   oidc:
     enabled: false
     name: "Authelia"             # Display label on the login page
@@ -158,7 +158,7 @@ tika:
       memory: 1Gi
 
 ingress:
-  # Disabled for LAN-only v1. Flip on after the DuckDNS follow-up — see README.
+  # Enable after configuring the hostname and authentication; see README.
   enabled: false
   className: traefik
   host: docs.zachd.duckdns.org

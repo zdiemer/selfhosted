@@ -34,7 +34,7 @@ stirling:
   # Native OIDC — Stirling renders its own login page with an "Authelia"
   # button and does the OAuth2 dance itself. Alternative to forward-auth for
   # when you want Stirling to know *who* each user is (per-user settings).
-  # Leave disabled unless you switch off forward-auth. See README §Follow-up B.
+  # Leave disabled unless you switch off forward-auth. See README authentication guidance.
   oauth2:
     enabled: false
     provider: "Authelia"
@@ -81,8 +81,7 @@ auth:
     autheliaPath: /api/authz/forward-auth
 
 ingress:
-  # Disabled for LAN-only v1. Flip on (in values.local.yaml) after you've
-  # confirmed the pod boots — see README §Expose via DuckDNS.
+  # Enable after confirming the pod and authentication work; see README.
   enabled: false
   className: traefik
   host: pdf.zachd.duckdns.org

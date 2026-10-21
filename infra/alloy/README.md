@@ -222,22 +222,13 @@ batch, so a zero failed-write counter alone does not establish that no samples
 were discarded. See the distributor change in the
 [Mimir 2.16 release notes](https://github.com/grafana/mimir/releases/tag/mimir-2.16.0).
 
-On 2026-10-20 the small duplicate-discard rate cleared during a diagnostic
-ConfigMap reload. A 130-second live-debug capture of `prometheus.remote_write`
-across all eleven collectors observed 13,296 samples with no repeated
-timestamp/label pair. Temporary `livedebugging` was then removed. This did not
-identify the original series or establish a permanent root-cause fix; the
-discard alert remains enabled. If it recurs, capture the remote-write debug
-stream while the discard rate is nonzero and compare timestamp/label pairs
-before changing relabel rules. Never drop distinguishing labels to hide it.
-
-The follow-up [2026-10-20 investigation](../../docs/grafana-metric-duplicates-2026-10-20.md)
-traced the duplicates to `GRAFANA_ALERTS`: the Arr health alert overwrote the
-exporter's severity label, collapsing warning and error series into one alert
-instance. Opposing transitions at the same timestamp generated conflicting
-history samples. Summing source severities before applying the alert's routing
-severity fixes the collision. When Alloy captures are clean, inspect the
-`grafanacloud-alert-state-history` logs for repeated timestamps and fingerprints.
+When Alloy captures contain no duplicate timestamp/label pairs, inspect
+`grafanacloud-alert-state-history` for conflicting transitions at the same
+timestamp and fingerprint. Grafana's `GRAFANA_ALERTS` history is another writer
+into the tenant. Alert labels can overwrite distinguishing source labels:
+combine source severities before assigning a routing severity, as in the
+[Arr health rule](../grafana-dashboards/README.md). Do not drop distinguishing
+collector labels or suppress the discard alert to hide the symptom.
 
 ### Grafana accepts scrapes locally but rejects new series
 

@@ -1,76 +1,34 @@
 # Node3 PostgreSQL storage separation plan
 
-Status: planned; no hardware installation or database migration performed.
-Evidence collected 2026-10-19. Recheck device identities, capacity, placement,
-backups, and cluster health before execution.
-
-## Objective
-
-Install a second physical NVMe SSD in `zachd-ubuntu-3` and move Talaria's
-PostgreSQL data directory, including WAL, onto it. Keep the operating system,
-K3s, and embedded etcd on the existing SSD. Keep PostgreSQL on node3 and retain
-the existing application database endpoint.
+Planned work: install a second physical NVMe SSD in `zachd-ubuntu-3` and move
+Talaria PostgreSQL data and WAL onto it. Keep the OS, K3s, and etcd on the
+existing SSD, preserving the database endpoint and node placement.
 
 This separates database maintenance I/O from etcd. It does not provide database
-high availability, protect against node loss, or eliminate shared CPU, memory,
-power, and chassis cooling constraints. Backups remain necessary.
+high availability or protect against node loss. CPU, memory, power, and chassis
+cooling remain shared.
 
-## Why this is needed
+## Hardware and sizing
 
-During the price-snapshot index build on 2026-10-18, node3 logged:
+The host is an HP EliteDesk 800 G4 Desktop Mini 35W (TAA), SKU `5PA44US#ABA`,
+board `83E2`. Firmware reports two M.2 PCIe 3.0 ×4 SSD slots; one is occupied
+by a Kioxia `KBG40ZNS512G`. Confirm the empty slot, mounting screw, thermal pad,
+and clearance physically using the
+[HP service guide](https://h10032.www1.hp.com/ctg/Manual/c06063157.pdf).
 
-- 23:26:27–35 UTC: etcd `fdatasync` calls took 2.1–3.0 seconds and API requests
-  timed out.
-- 23:26:34 UTC: the embedded scheduler failed to renew its leadership lease.
-- 23:26:36 UTC: K3s exited with status 1; KEDA also lost its API lease.
-- 23:27:01 UTC: systemd had restarted K3s.
+Select a compatible M.2 2280 NVMe drive after checking live database size,
+maintenance headroom, endurance, and cooling. A 1 TB drive is the planning
+candidate, not a purchased or validated device. Do not assume an aftermarket
+heatsink fits. Identify disks by model, serial, and `/dev/disk/by-id`; mount by
+filesystem UUID because device numbering can change.
 
-The immediate exit mechanism was scheduler leadership loss. Shared-disk
-contention is the strongest explanation for the latency: the index build
-overlapped the incident, and etcd and PostgreSQL use the same ext4 filesystem.
-Slow flushes were also logged before the build. No kernel OOM or NVMe-reset
-messages appeared in the incident window.
+Read the live `talaria/data-talaria-postgres-0` binding and PV path before copying.
+Do not infer current usage from the claim's declared capacity. Confirm the source
+PV uses `Retain` and inventory any tablespaces outside its data directory.
 
-## Hardware and current storage
-
-| Item | Observed configuration |
-|---|---|
-| Host | HP EliteDesk 800 G4 Desktop Mini 35W (TAA) |
-| Product SKU / board | `5PA44US#ABA` / `83E2` |
-| Existing SSD | Kioxia `KBG40ZNS512G`, 512 GB, currently `/dev/nvme0n1` |
-| Existing filesystem | `/dev/nvme0n1p2`, ext4; approximately 195 GiB available |
-| SSD slot 3 | M.2 PCIe 3.0 ×4, in use |
-| SSD slot 4 | M.2 PCIe 3.0 ×4, firmware reports available |
-| PostgreSQL directory | Approximately 189 GiB; logical database size 174 GB |
-| etcd directory | Approximately 447 MiB |
-| Current PVC | `talaria/data-talaria-postgres-0`, declared 200 GiB |
-| Current PV | `pvc-95514cfa-26e7-46ab-910b-bc7263dcd983`, reclaim policy `Retain` |
-| Current PV path | `/var/lib/rancher/k3s/storage/pvc-95514cfa-26e7-46ab-910b-bc7263dcd983_talaria_pgdata-migrate3` |
-
-HP's [maintenance and service guide](https://h10032.www1.hp.com/ctg/Manual/c06063157.pdf)
-documents the two SSD locations. Confirm the empty slot, mounting screw,
-thermal pad, and clearance physically before purchasing/installing a drive.
-Use a compatible M.2 2280 NVMe SSD. Plan for at least 500 GB nominal capacity;
-1 TB provides more room for growth and maintenance. Select the exact model
-after checking endurance, sustained-write behavior, cooling, and compatibility.
-Do not assume a large aftermarket heatsink will fit the Mini chassis.
-
-Device numbering may change after installation. Identify drives by model,
-serial, and `/dev/disk/by-id`, and mount by filesystem UUID—not `nvme1n1` guesses.
-
-## Why not move PostgreSQL to node6
-
-Node6 passed a bounded temporary-file disk test: 64 MiB/s capped sequential
-writes, 0.18 ms random-I/O p99, and 4.01 ms synchronous-write p99 under concurrent
-64 MiB/s writes. Its SSD stayed around 40–42°C. This was not a sustained peak
-database benchmark.
-
-However, node6 has 25.9 GiB allocatable RAM and approximately 15.7 GiB already
-requested. PostgreSQL requests 20 GiB, has a 28 GiB limit, and uses 18 GiB of
-shared buffers. Steam Headless and RomM Webstation together request 8 GiB and
-depend on node6's gaming GPU; Steam also uses local volumes and node6's Moonlight
-address. Keeping those services plus unchanged PostgreSQL would exceed node6's
-allocatable memory even before other workloads. A second SSD avoids that move.
+Moving to node6 would also require relocating GPU-dependent workloads or changing
+the PostgreSQL memory budget. Keep this plan focused on a second disk on node3;
+reassess scheduling and memory if considering another host.
 
 ## Execution sequence
 
@@ -128,8 +86,8 @@ standby on the new SSD, followed by WAL streaming. Use PostgreSQL's supported
 
 - Use restricted, temporary replication access. Bound WAL retention and monitor
   source free space; an abandoned replication slot must not fill the old disk.
-- Budget memory for the temporary standby. It must not start with another
-  18 GiB of shared buffers on node3; use a small standby configuration and check
+- Budget memory for the temporary standby. It must not duplicate the primary
+  memory allocation on node3; use a small standby configuration and check
   scheduling headroom before starting it.
 - Start conservatively, for example at 30 MiB/s, and adjust only while etcd
   flush latency and temperatures remain healthy. Pause if API/lease or disk
@@ -154,8 +112,8 @@ copy alone is not a valid backup. Follow PostgreSQL's
 
 There are two potential interruptions: the physical SSD installation and the
 database cutover. Hardware downtime depends on hands-on access and boot checks.
-At 30–60 MiB/s, seeding 189 GiB takes approximately 55–110 minutes before overhead
-and catch-up; applications can remain online during that copy. Target a
+Estimate seed time from the current data size and a measured safe copy rate;
+applications can remain online during standby seeding. Target a
 10–20-minute cutover window, but refine it after measuring replay and startup.
 A shutdown-copy approach requires a substantially longer database outage.
 
