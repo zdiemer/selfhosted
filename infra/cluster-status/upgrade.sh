@@ -87,6 +87,14 @@ print("    routing:      %d ingress route(s), %d reachable from the internet" % 
 print("    storage:      %d PVC(s)" % len(d.get("storage") or []))
 cat = d.get("catalog") or []
 if cat:
+    actual = {(w.get("namespace", ""), w["name"]) for key in
+              ("deployments", "statefulSets", "daemonSets") for w in d.get(key, [])}
+    covered = {(c.get("namespace", ""), c["workload"]) for c in cat if c.get("workload")}
+    missing = actual - covered
+    actual_crons = {(c.get("namespace", ""), c["name"]) for c in d.get("cronJobs", [])}
+    covered_crons = {(c.get("namespace", ""), c["cronjob"]) for c in cat if c.get("cronjob")}
+    assert not missing and not (actual_crons - covered_crons), "Catalog inventory incomplete"
+    print("    coverage:     all %d workloads and %d scheduled jobs" % (len(actual), len(actual_crons)))
     links = [c for c in cat if c.get("url")]
     pub = [c for c in links if c.get("exposure") == "public"]
     miss = [c for c in cat if not c.get("icon")]

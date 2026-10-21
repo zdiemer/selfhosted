@@ -1469,20 +1469,20 @@ data:
                   down + ' down</span>' : '<span class="sub">all up</span>') + '</div>' +
           '<div class="card-c"><div class="scroll"><table><thead><tr><th>Service</th>' +
           (showUrl ? '<th class="opt">Target</th>' : '') +
-          '<th class="c">State</th><th class="c">Detail</th><th class="r">Latency</th>' +
+          '<th class="c">State</th><th class="c">Detail</th><th class="r">Latency</th><th>Checked</th>' +
           '</tr></thead><tbody>' +
           list.map(function (s) {
             var c = s.ok ? 'var(--ok)' : 'var(--destructive)';
             // A reachable-but-unhealthy service reports its HTTP code; an
             // unreachable one reports why the connection failed.
-            var detail = s.reason ? s.reason : ('HTTP ' + (s.status == null ? '—' : s.status));
+            var detail = s.reason || s.detail || ('HTTP ' + (s.status == null ? '—' : s.status));
             return '<tr><td data-l="Service">' + esc(s.name) + '</td>' +
               (showUrl ? '<td class="mono opt" style="font-size:11px;color:var(--muted)" data-l="Target">' +
                 esc(s.url || '—') + '</td>' : '') +
               '<td class="c" style="color:' + c + '" data-l="State">' + (s.ok ? 'up' : 'down') + '</td>' +
               '<td class="c mono" style="font-size:12px;color:var(--muted)" data-l="Detail">' + esc(detail) + '</td>' +
               '<td class="r mono" style="font-size:12px" data-l="Latency">' +
-              (s.latencyMs == null ? '—' : s.latencyMs + 'ms') + '</td></tr>';
+              (s.latencyMs == null ? '—' : s.latencyMs + 'ms') + '</td><td data-l="Checked">' + esc(s.checkedAt || '—') + '</td></tr>';
           }).join('') + '</tbody></table></div></div></div>';
       }
 

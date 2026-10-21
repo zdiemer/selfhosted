@@ -20,8 +20,8 @@ plumbing: talaria's `Handler` framework, its k8s client, protobuf, and structlog
 This drops all four and emits plain JSON. **The measurement logic is otherwise
 deliberately unchanged**: it was the valuable part and it was already right.
 
-Talaria redirects its former cluster page here. Its backend no longer has
-cluster inventory, other namespaces' logs, or kubelet-proxy permissions.
+Talaria's former cluster page and inventory RPC have been removed. Its backend
+no longer has cluster inventory, other namespaces' logs, or kubelet-proxy permissions.
 
 **It used to be public**, at `status.diemer.codes` over the Cloudflare tunnel,
 on the reasoning that the page is static JSON so public traffic never touches
@@ -49,7 +49,7 @@ thing — which is exactly when a status dashboard earns its keep.
 ## The service catalog
 
 The tile grid at the top, and the reason to open this page when nothing is
-wrong: 45 services, grouped, each one a link.
+wrong: curated services, grouped, with links where browser interfaces exist.
 
 **The link is the public name whenever a service has one.** Most things here
 answer on two hostnames — `romm.zachd.duckdns.org` and `romm.diemer.codes` — and
@@ -80,18 +80,45 @@ household), and **the services with no Ingress at all** — a Minecraft server a
 three Discord bots are services by any definition a person would use, and a
 catalog derived from Ingresses would omit all four and call itself complete.
 
-It does not go stale, because the list is not the only input: **any Ingress host
-no entry claims still gets a tile**, under an `Unlisted` heading, named after its
-Service. Deploy a new chart with an Ingress and it appears here unprompted,
-looking unloved — which is the nudge to come and name it. `upgrade.sh` prints
-those by name on every deploy.
+The list is not the only input: **any Ingress host no entry claims gets a tile**
+under `Unlisted`. Every Deployment, StatefulSet and DaemonSet without an existing
+tile is also included under `Cluster workloads`, even without an Ingress. The
+same applies to unclaimed CronJobs under `Scheduled jobs`. Namespaces distinguish
+identically named components. Application dependencies are visible individually;
+a healthy frontend does not hide a failing worker or database. `upgrade.sh`
+checks complete coverage of the collected workload and scheduled-job inventory.
+Bare pods, transient Jobs and VM guest pods remain in the existing pod/job panels;
+they are not promoted to permanent catalog services.
 
 Health per tile comes from what the page already collects, in this order: a
 failed endpoint probe (see below) beats a healthy replica count, because that is
 the entire reason probes exist; then Deployment/StatefulSet/DaemonSet readiness;
 then, for the services that own no Pod between ticks — the DuckDNS updater,
 Renovate — their CronJob's last run. A tile that can see none of those says
-`unknown` rather than green.
+`unknown` rather than green. External entries can use a successful endpoint
+check as their health source without requiring a Kubernetes workload.
+
+### Droplet checks
+
+The `Droplets` group separates host reachability from application health:
+
+- Whatnow host: SSH banner on `64.227.0.147:22`.
+- Whatnow production: `https://whatnow.gg/healthz` through Cloudflare and Caddy.
+- Egress host (`homelab-sfo3`): SSH banner on `147.182.206.23:22`.
+- Egress media route: `https://jellyfin.diemer.codes/health`, including the
+  droplet's Caddy and the cluster backend.
+
+These use no SSH credentials or provider API token. An SSH success means the
+listener responds, not that memory, disk, Squid or TURN is healthy. Public HTTP
+failures can originate at DNS, the edge, the droplet or the application; separate
+rows keep that distinction visible. No Minecraft connection probes are added.
+The Whatnow cluster instance remains a separate tile from production on the VPS.
+
+Droplet results are cached for 60 seconds per collector replica. The table shows
+the actual check time. Four bounded workers prevent sequential timeouts from
+stalling every scrape. HTTP requests identify themselves as `cluster-status/1.0`;
+the Whatnow edge rejects the default Python user agent. TLS validation and the
+Cloudflare-only origin restriction remain enabled.
 
 ### Favicons
 
@@ -202,8 +229,9 @@ pod can be `1/1 Running` and its `/api/health` green while the Android phone
 that actually puts messages on the air is asleep, off wifi, or between IP
 addresses — every other section of this page stays green through all of it.
 
-`serviceChecks` in values is a list of HTTP endpoints the collector probes once
-per cycle, in series, inside the scrape loop:
+`serviceChecks` lists HTTP endpoints and SSH listeners. Four workers probe them
+in parallel inside the scrape loop; `intervalSeconds` optionally caches a result
+between cycles:
 
 ```yaml
 serviceChecks:

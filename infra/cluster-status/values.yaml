@@ -171,19 +171,11 @@ publish:
 # invisible in pod status — a Running pod whose upstream is unreachable still
 # shows green in every other section of this page.
 #
-# Each entry: name (published), url (NEVER published), expectStatus (default
-# 200), timeoutSeconds (default 5). Keep timeouts well under
-# collector.intervalSeconds — checks run in series, inside the scrape loop.
-#
+# Checks run with four bounded workers. HTTP checks expect a status code; ssh://
+# reads the server banner without authenticating. Droplet checks run at most once
+# per minute per replica, with checkedAt displayed beside each result.
+# Targets are published only when publish.serviceCheckUrls is enabled.
 # SMS dependency checks stay in the relay, which holds handset credentials.
-# The status tile must reflect the phone, not just a healthy relay process.
-# Kubernetes readiness continues to use /api/health independently.
-#
-# Six checks at 3-5s each is up to ~25s of budget against a 15s interval if
-# every one of them hangs — which cannot happen unless the whole cluster is
-# already gone, but it is why the timeouts below are tight rather than generous.
-# A scrape that overruns the interval just delays the next one; main() sleeps
-# for the remainder, never a negative.
 serviceChecks:
   - name: SMS relay
     # Cluster-internal Service address, so the check works with no ingress,
@@ -225,6 +217,24 @@ serviceChecks:
     url: http://paperless.docs.svc.cluster.local:8000/
     expectStatus: 200
     timeoutSeconds: 5
+  - name: Whatnow droplet SSH
+    url: ssh://64.227.0.147:22
+    timeoutSeconds: 3
+    intervalSeconds: 60
+  - name: Whatnow public health
+    url: https://whatnow.gg/healthz
+    expectStatus: 200
+    timeoutSeconds: 3
+    intervalSeconds: 60
+  - name: Egress droplet SSH
+    url: ssh://147.182.206.23:22
+    timeoutSeconds: 3
+    intervalSeconds: 60
+  - name: Egress media route
+    url: https://jellyfin.diemer.codes/health
+    expectStatus: 200
+    timeoutSeconds: 3
+    intervalSeconds: 60
 #
 # Deliberately NOT checked, so the next person doesn't have to re-derive it:
 #
@@ -307,6 +317,9 @@ catalog:
     - Dev
     - Bots
     - Infrastructure
+    - Droplets
+    - Cluster workloads
+    - Scheduled jobs
 
   # Favicons, fetched by the collector from each service's ClusterIP.
   #
@@ -422,6 +435,25 @@ catalog:
       address: 100.84.179.82:54994
       note: Garlemald Server (1.23b), tailnet only
 
+    - name: Steam
+      category: Games
+      namespace: games
+      service: steam-headless
+    - name: Red Alert 2
+      category: Games
+      namespace: games
+      service: ra2
+    - name: Risk of Rain 2
+      category: Games
+      namespace: games
+      service: ror2-ror2
+      note: game server; workload readiness only
+    - name: RomM Webstation
+      category: Games
+      namespace: games
+      service: romm-webstation
+      note: internal companion service
+
     # ------------------------------------------------------------------- Home
     - name: money
       category: Home
@@ -454,6 +486,19 @@ catalog:
       namespace: infra
       service: sms-relay
       check: SMS relay
+
+    - name: Laundry
+      category: Home
+      namespace: life
+      service: laundry
+    - name: Early Internet Archive
+      category: Home
+      namespace: life
+      service: early-internet-archive
+    - name: ArchiveTeam Warrior
+      category: Home
+      namespace: life
+      service: archiveteam-warrior
 
     # ------------------------------------------------------------------ Sites
     - name: talaria
@@ -494,7 +539,7 @@ catalog:
       # hostname on path prefixes, so a tile each would be three rows pointing
       # at one link — and the two terminals sit behind Authelia, which the
       # favicon fetcher would land on rather than the app.
-    - name: whatnow.gg
+    - name: Whatnow cluster instance
       category: Sites
       namespace: whatnow
       service: whatnowgg
@@ -554,6 +599,11 @@ catalog:
       # Ollama serves no favicon — its `/` is a plain-text banner — so the mark
       # is seeded in brand/service-icons.
       note: local LLM API — basic auth, no UI
+
+    - name: Hatch
+      category: Dev
+      namespace: infra
+      service: hatch
 
     # ------------------------------------------------------------------- Bots
     - name: Smite-le bot
@@ -637,6 +687,33 @@ catalog:
       namespace: renovate
       service: renovate
       cronjob: renovate
+
+    # Hosts and application routes are separate signals: SSH is reachability,
+    # not host resource health, and an HTTP failure can be a backend failure.
+    - name: Whatnow droplet
+      category: Droplets
+      service: whatnow-droplet
+      address: 64.227.0.147
+      check: Whatnow droplet SSH
+      note: SSH reachability; no host metrics
+    - name: whatnow.gg production
+      category: Droplets
+      service: whatnow-production
+      url: https://whatnow.gg
+      check: Whatnow public health
+      note: Cloudflare → droplet → application
+    - name: Egress droplet (homelab-sfo3)
+      category: Droplets
+      service: egress-droplet
+      address: 147.182.206.23
+      check: Egress droplet SSH
+      note: SSH reachability; no host metrics
+    - name: Egress media route
+      category: Droplets
+      service: egress-media
+      url: https://jellyfin.diemer.codes
+      check: Egress media route
+      note: droplet Caddy → cluster Jellyfin
 
 ingress:
   enabled: true

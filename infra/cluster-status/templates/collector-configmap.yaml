@@ -32,6 +32,7 @@ data:
     import urllib.request
 
     import extras
+    import probes
     from extras import fmt_bytes, parse_cpu, parse_memory, prune
 
     SA = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -1008,55 +1009,6 @@ data:
         return _ICONS
 
 
-    def check_service(check):
-        # Probe one HTTP endpoint and report whether it answered as expected.
-        #
-        # THE URL USED TO BE WITHHELD UNCONDITIONALLY, and the comment here said
-        # so in capitals. The reason was sound and is now spent: checks point at
-        # ClusterIPs and LAN addresses, and while this page was on the Cloudflare
-        # tunnel, publishing them would have handed the internet an internal host
-        # inventory for free.
-        #
-        # On the tailnet the target is the most useful column in that table.
-        # "SMS relay is down" and "this specific ClusterIP is refusing on :8000"
-        # are different diagnoses, and only the second one tells you where to
-        # look. So it is published, behind publish.serviceCheckUrls.
-        #
-        # Turning that flag off restores the old behaviour EXACTLY — the field is
-        # never written, so it cannot leak through a later ingress mistake. And
-        # upgrade.sh now treats "URLs published" plus "a public host in the
-        # Ingress" as a combination worth shouting about at deploy time, which is
-        # the interlock that makes flipping this back on safe to forget.
-        name = check.get("name") or "service"
-        expect = int(check.get("expectStatus", 200))
-        timeout = float(check.get("timeoutSeconds", 5))
-        started = time.monotonic()
-        try:
-            req = urllib.request.Request(check["url"], method="GET")
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                code = r.status
-                r.read(2048)
-        except urllib.error.HTTPError as e:
-            # An HTTP error is still an answer — a 500 means the service is up
-            # and unhealthy, which reads differently from unreachable.
-            code = e.code
-        except Exception as e:
-            return prune({
-                "name": name,
-                "ok": False,
-                "reason": type(e).__name__,
-                "latencyMs": round((time.monotonic() - started) * 1000),
-                "url": check["url"] if PUBLISH_SERVICE_CHECK_URLS else None,
-            })
-        return prune({
-            "name": name,
-            "ok": code == expect,
-            "status": code,
-            "latencyMs": round((time.monotonic() - started) * 1000),
-            "url": check["url"] if PUBLISH_SERVICE_CHECK_URLS else None,
-        })
-
-
     def collect():
         nodes = api_get("/api/v1/nodes")["items"]
 
@@ -1149,16 +1101,7 @@ data:
             except Exception as e:
                 log("versions_report_error", error=e)
 
-        services = []
-        if PUBLISH_UPTIME:
-            for check in SERVICE_CHECKS:
-                if not check.get("url"):
-                    continue
-                try:
-                    services.append(check_service(check))
-                except Exception as e:
-                    # A malformed check must not cost the whole scrape.
-                    log("service_check_error", name=check.get("name"), error=e)
+        services = probes.run_checks(SERVICE_CHECKS, PUBLISH_SERVICE_CHECK_URLS) if PUBLISH_UPTIME else []
 
         result = []
         totals = Totals()
@@ -1644,10 +1587,14 @@ data:
         if cron is not None:
             if cron.get("suspended"):
                 return "warn", "suspended"
+            if cron.get("activeCount"):
+                return "ok", "running"
             if cron.get("lastRunFailed"):
                 return "down", "last run failed"
             return "ok", cron.get("schedule") or "scheduled"
         if not workloads:
+            if check is not None and check.get("ok"):
+                return "ok", check.get("detail") or f"HTTP {check.get('status', '?')}"
             return ("unknown", "no workload matched")
         desired = sum(w.get("desired", 0) for w in workloads)
         ready = sum(w.get("ready", 0) for w in workloads)
@@ -1689,6 +1636,8 @@ data:
                    for c in (cron_jobs or [])}
 
         claimed = set()
+        claimed_workloads = set()
+        claimed_crons = set()
         out = []
 
         def tile(name, category, namespace, service, matched, entry):
@@ -1715,8 +1664,12 @@ data:
                 if bare not in names:
                     names.insert(0, bare)
 
-            targets = wl.get((namespace, entry.get("workload") or service), [])
+            workload_key = (namespace, entry.get("workload") or service)
+            claimed_workloads.add(workload_key)
+            targets = wl.get(workload_key, [])
             cron = by_cron.get((namespace, entry.get("cronjob"))) if entry.get("cronjob") else None
+            if entry.get("cronjob"):
+                claimed_crons.add((namespace, entry["cronjob"]))
             state, detail = _catalog_state(targets, by_check.get(entry.get("check")), cron)
 
             # `exposure` describes the LINK, not the service: it is what the
@@ -1734,6 +1687,8 @@ data:
                 "category": category,
                 "namespace": namespace,
                 "service": service,
+                "workload": workload_key[1] if targets else None,
+                "cronjob": entry.get("cronjob"),
                 "url": url,
                 "hosts": names,
                 "exposure": exposure,
@@ -1770,6 +1725,15 @@ data:
                 leftover.setdefault(key, []).append(r)
         for (ns, svc), rs in sorted(leftover.items()):
             out.append(tile(svc, "Unlisted", ns, svc, rs, None))
+
+        # Ingress-only discovery misses workers, operators, databases and bots.
+        # Reuse the complete workload lists; no new API grants or network probes.
+        for ns, name in sorted(set(wl) - claimed_workloads):
+            out.append(tile(name, "Cluster workloads", ns, name, [],
+                            {"slug": f"{ns}-{name}", "note": ns}))
+        for ns, name in sorted(set(by_cron) - claimed_crons):
+            out.append(tile(name, "Scheduled jobs", ns, name, [],
+                            {"cronjob": name, "slug": f"cron-{ns}-{name}", "note": ns}))
 
         # Sort inside the page's own category order, not alphabetically across
         # it — the grid is grouped by category, so the only ordering that
@@ -1840,7 +1804,7 @@ data:
 
 
     # ------------------------------------------------------------------ jobs lane
-    def parse_cronjobs(items, limit=100):
+    def parse_cronjobs(items, limit=None):
         rows = []
         for cj in items:
             meta = cj.get("metadata") or {}
@@ -1939,3 +1903,6 @@ data:
             if kind:
                 return f"{kind}/{name}"
         return ""
+
+  probes.py: |
+{{ .Files.Get "scripts/probes.py" | indent 4 }}
