@@ -1,0 +1,133 @@
+{{- if .Values.talariaAtomicBackup.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: talaria-postgres-backup-staging
+  namespace: talaria
+  annotations:
+    k8up.io/backup: 'false'
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: truenas-iscsi
+  resources:
+    requests:
+      storage: {{ .Values.talariaAtomicBackup.scratchSize }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: talaria-postgres-backup
+  namespace: talaria
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: talaria-postgres-backup}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: talaria
+              app.kubernetes.io/component: postgres
+      ports: [{port: 5432, protocol: TCP}]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: talaria-postgres-backup
+  namespace: talaria
+spec:
+  schedule: {{ .Values.talariaAtomicBackup.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 21600
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: talaria-postgres-backup
+            k8up.io/backupCommandPod: 'true'
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            seccompProfile: {type: RuntimeDefault}
+          initContainers:
+            - name: dump
+              image: {{ .Values.talariaAtomicBackup.postgresImage }}
+              command:
+                - sh
+                - -ec
+                - |
+                  umask 077
+                  rm -f /dump/talaria-dump.pgdump /dump/talaria-dump.partial
+                  # kube-router may need a policy sync before this new pod can connect.
+                  i=0
+                  until pg_isready -q; do
+                    i=$((i + 1)); [ "$i" -lt 30 ] || exit 1
+                    sleep 5
+                  done
+                  pg_dump --format=custom --compress=3 --file=/dump/talaria-dump.partial
+                  # --list only checks the TOC. Read every payload to detect truncation.
+                  pg_restore --file=/dev/null /dump/talaria-dump.partial
+                  mv /dump/talaria-dump.partial /dump/talaria-dump.pgdump
+                  echo DUMP_VALIDATED
+              env:
+                - {name: PGHOST, value: talaria-postgres}
+                - name: PGUSER
+                  valueFrom: {secretKeyRef: {name: talaria-secrets, key: POSTGRES_USER}}
+                - name: PGDATABASE
+                  valueFrom: {secretKeyRef: {name: talaria-secrets, key: POSTGRES_DB}}
+                - name: PGPASSWORD
+                  valueFrom: {secretKeyRef: {name: talaria-secrets, key: POSTGRES_PASSWORD}}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: '1', memory: 1Gi}
+              volumeMounts:
+                - {name: dump, mountPath: /dump}
+                - {name: tmp, mountPath: /tmp}
+          containers:
+            - name: snapshot
+              image: {{ .Values.talariaAtomicBackup.resticImage }}
+              command: [restic, backup, /dump/talaria-dump.pgdump, --host, talaria, --tag, validated-postgres, --json]
+              env:
+                - {name: RESTIC_REPOSITORY, value: /restic-repo}
+                - {name: RESTIC_CACHE_DIR, value: /tmp/cache}
+                - {name: RESTIC_PASSWORD_FILE, value: /credentials/password}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {cpu: '1', memory: 1Gi}
+              volumeMounts:
+                - {name: dump, mountPath: /dump, readOnly: true}
+                - {name: repo, mountPath: /restic-repo}
+                - {name: password, mountPath: /credentials, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: dump
+              persistentVolumeClaim: {claimName: talaria-postgres-backup-staging}
+            - name: repo
+              persistentVolumeClaim: {claimName: k8up-restic-repo}
+            - name: password
+              secret: {secretName: k8up-restic-password, defaultMode: 0400}
+            - name: tmp
+              emptyDir: {sizeLimit: 1Gi}
+{{- end }}

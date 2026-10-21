@@ -152,37 +152,41 @@ kubectl -n docs get snapshots.k8up.io
 Done on 2026-08-08 for `stirling-configs`: 11 files, `diff -r` identical to
 live, JWT signing keys included.
 
-## TODO
+## Talaria PostgreSQL recovery
 
-**Get talaria's Postgres backed up.** It is the largest database in the cluster
-(75G, 45 tables, ~40M rows in the biggest) and right now it has **no backup at
-all** — the volume snapshot is 0 B because of the RWO attach problem above, and
-the `PreBackupPod` dump that should cover it cannot connect.
+The old missing-backup warning was stale: K8up has been capturing `.pgdump`
+streams. However, the October 21 isolated restore drill found that snapshot
+`8d30cf3962546d1ca9a85f91072d74cc4643be14340f4e17d44cb2b5aa13d037`
+(October 19, 2.804 GiB) fails with `pg_restore: unexpected end of file`, despite
+a successful Backup status. A readable archive table of contents is insufficient.
+Do not rely on that snapshot for a full recovery.
 
-What is already ruled out, so nobody repeats it:
+`talaria-postgres-backup` now stages `pg_dump` on a dedicated scratch PVC and
+runs `pg_restore --file=/dev/null` across the complete archive. Only a successful
+init container permits Restic to publish `/dump/talaria-dump.pgdump`, tagged
+`validated-postgres`. Dump/validation and snapshot errors fail the Job. The
+weekly schedule runs Monday 07:00 UTC; existing CronJob/job monitoring covers it.
+The repository password is mounted only in the snapshot container, and database
+credentials only in the dump container. The pod has no Kubernetes API token.
 
-- The server. It listens on `0.0.0.0:5432` and accepts connections from inside
-  its own pod.
-- The endpoint. Present, ready, correct port.
-- Pod networking. `Connection refused` reproduces same-node and straight to the
-  pod IP, not just via the service.
-- The NetworkPolicy. `~/Code/talaria` now admits `component: backup`, and a test
-  pod carrying labels byte-identical to `talaria-backend`'s (minus
-  `pod-template-hash`) is still refused — while the real backend connects fine
-  from the same namespace. No egress policies exist.
+Run an isolated restore with an explicit full snapshot ID:
 
-Two loose threads worth pulling first:
+```sh
+python3 infra/k8up/recovery/talaria-postgres.py SNAPSHOT_ID --name postgres-drill-YYYYMMDD --apply
+kubectl -n talaria logs -f job/postgres-drill-YYYYMMDD -c postgres
+```
 
-1. `pod.metadata.labels` set on the PreBackupPod does **not** appear on the live
-   object. If k8up ignores that field, the label approach cannot work at all and
-   needs `podConfigRef` or a different mechanism.
-2. Whatever distinguishes `talaria-backend` from an identically-labelled pod.
-   `pod-template-hash` is the only difference found so far, which should be
-   irrelevant to `matchLabels` — suggesting the policy is not what is blocking
-   this, and something else is refusing the connection.
+Use `--archive /talaria-dump.pgdump` only for the older streamed snapshots.
+The drill mounts the repository read-only, has no network access or production
+credentials, starts PostgreSQL on a Unix socket only, and requires `pg_restore
+--exit-on-error` followed by table/index checks. It uses a new 200 GiB scratch
+PVC and refuses to overwrite an existing drill. Allow up to six hours. Read-only
+Restic uses `--no-lock`; schedule outside the Sunday 06:00 UTC repository prune.
 
-Until then the only copy of that database is whatever ZFS snapshots the NAS
-holds, which is not a backup in the sense the rest of this document means.
+After recording the result, delete only that drill's Job, NetworkPolicy and PVC.
+Never substitute the production database PVC. The repository and primary database
+are retained. Archive validation is not a substitute for periodically running
+this full restore drill. NAS-hosted backups still share the NAS failure domain.
 
 ## Gotchas that cost time here
 

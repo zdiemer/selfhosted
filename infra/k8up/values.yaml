@@ -288,3 +288,12 @@ k8up:
   # one node is how you discover it stopped running when that node died.
   nodeSelector: {}
   affinity: {}
+
+# Stage and fully parse the dump before publishing a restic snapshot. A successful
+# Kubernetes exec stream is insufficient evidence that pg_dump completed.
+talariaAtomicBackup:
+  enabled: true
+  schedule: '0 7 * * 1'
+  scratchSize: 50Gi
+  postgresImage: postgres:15.19-alpine
+  resticImage: restic/restic:0.19.1
