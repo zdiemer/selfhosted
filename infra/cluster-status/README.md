@@ -20,7 +20,8 @@ plumbing: talaria's `Handler` framework, its k8s client, protobuf, and structlog
 This drops all four and emits plain JSON. **The measurement logic is otherwise
 deliberately unchanged**: it was the valuable part and it was already right.
 
-talaria keeps its own page. This one is a separate, read-only view.
+Talaria redirects its former cluster page here. Its backend no longer has
+cluster inventory, other namespaces' logs, or kubelet-proxy permissions.
 
 **It used to be public**, at `status.diemer.codes` over the Cloudflare tunnel,
 on the reasoning that the page is static JSON so public traffic never touches

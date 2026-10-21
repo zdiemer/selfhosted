@@ -14,6 +14,7 @@ Subscribe on `https://ntfy.zachd.duckdns.org`.
 | CrowdSec non-routine remediation | `security` | Aggregate for five minutes or 20 alerts; routine scanners stay silent |
 | Owner's Talaria new/ending listings | `talaria` | Relay; configured recipient/templates only |
 | SMS handset outage/recovery | `alerts` | `cluster-status-sms-monitor` CronJob |
+| Node outage/recovery (two minutes, per node, including cordoned nodes) | `alerts` | Grafana `sh-node-notready`; replaces Talaria SMS task |
 | Grafana application and infrastructure rules | `alerts` | `ntfy-primary` webhook to relay |
 | ntfy explicitly unavailable for five minutes | Email | Grafana Cloud `notification-path-email` |
 
