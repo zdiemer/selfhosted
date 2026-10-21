@@ -13,6 +13,27 @@
           - lookup('env', 'EGRESS_SECRET_DIR') | length > 0
           - ansible_facts.os_family == 'Debian'
 
+    - name: Inspect adoption and replacement recovery markers
+      ansible.builtin.stat:
+        path: '{{ item }}'
+      loop: [/etc/egress-iac-managed, /etc/egress-state-restored]
+      register: recovery_markers
+
+    - name: Require recovered identity on a replacement host
+      ansible.builtin.assert:
+        that:
+          - recovery_markers.results[0].stat.exists or recovery_markers.results[1].stat.exists
+          - public_ipv4 in ansible_facts.all_ipv4_addresses
+        fail_msg: 'Prepare and recover the replacement, then review its public IP before applying.'
+
+    - name: Require an enrolled Tailscale identity
+      ansible.builtin.command: tailscale status --json
+      register: tailnet_status
+      changed_when: false
+      check_mode: false
+      failed_when: tailnet_status.rc != 0 or (tailnet_status.stdout | from_json).BackendState != 'Running'
+      no_log: true
+
     - name: Load preserved credentials without logging or fact caching
       ansible.builtin.set_fact:
         egress_secrets: "{{ lookup('file', lookup('env', 'EGRESS_SECRET_DIR') + '/secrets.json') | from_json }}"
@@ -184,17 +205,15 @@
       changed_when: false
       when: not ansible_check_mode
 
+    - name: Inspect installed service units
+      ansible.builtin.service_facts:
+
     - name: Retire unused public-proxy DDNS refresh timer
       ansible.builtin.systemd_service:
         name: egress-allow-home.timer
         enabled: false
         state: stopped
-
-    - name: Mark this host as managed to prevent legacy bootstrap drift
-      ansible.builtin.copy:
-        content: "Managed by selfhosted/infra/egress-droplet. Use apply.sh.\n"
-        dest: /etc/egress-iac-managed
-        mode: '0644'
+      when: "'egress-allow-home.timer' in ansible_facts.services"
 
     - name: Install non-secret verification inputs
       ansible.builtin.copy:
@@ -217,6 +236,35 @@
       ansible.builtin.command: systemctl is-active nftables squid caddy haproxy coturn crowdsec crowdsec-firewall-bouncer
       changed_when: false
       when: not ansible_check_mode
+
+    - name: Inspect replacement bootstrap guard
+      ansible.builtin.stat:
+        path: /etc/egress-bootstrap.nft
+      register: bootstrap_guard
+
+    - name: Disable verified replacement bootstrap guard
+      ansible.builtin.systemd_service:
+        name: egress-bootstrap
+        enabled: false
+        state: stopped
+      when: bootstrap_guard.stat.exists and not ansible_check_mode
+
+    - name: Remove only the temporary firewall table after service verification
+      ansible.builtin.shell: |
+        if nft list table inet egress_bootstrap >/dev/null 2>&1; then
+          nft delete table inet egress_bootstrap
+          echo removed
+        fi
+      register: bootstrap_remove
+      changed_when: "'removed' in bootstrap_remove.stdout"
+      when: bootstrap_guard.stat.exists and not ansible_check_mode
+
+    - name: Mark this host as managed to prevent legacy bootstrap drift
+      ansible.builtin.copy:
+        content: "Managed by selfhosted/infra/egress-droplet. Use apply.sh.\n"
+        dest: /etc/egress-iac-managed
+        mode: '0644'
+
 
   handlers:
     - name: Restart credential consumers

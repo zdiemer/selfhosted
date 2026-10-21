@@ -1,0 +1,182 @@
+- name: Prepare Ubuntu egress host prerequisites
+  hosts: egress_sfo3
+  become: true
+  tasks:
+    - name: Require the supported base image
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version == '24.04'
+          - ansible_facts.architecture == 'x86_64'
+
+    - name: Detect an adopted host
+      ansible.builtin.stat:
+        path: /etc/egress-iac-managed
+      register: managed
+
+    - name: Ensure package-management headroom on small hosts
+      ansible.builtin.shell: |
+        set -eu
+        if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 1048576 ] &&
+           [ "$(awk '/SwapTotal/ {print $2}' /proc/meminfo)" -lt 524288 ]; then
+          test "$(df -Pk / | awk 'NR==2 {print $4}')" -gt 2097152
+          test ! -e /swap-egress-recovery
+          umask 077
+          fallocate -l 1G /swap-egress-recovery
+          mkswap /swap-egress-recovery >/dev/null
+          swapon /swap-egress-recovery
+          printf '/swap-egress-recovery none swap sw 0 0\n' >> /etc/fstab
+          echo created
+        fi
+      register: recovery_swap
+      changed_when: "'created' in recovery_swap.stdout"
+      when: not ansible_check_mode
+
+    - name: Inspect installed packages without opening the APT cache
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, '-f=${db:Status-Status} ${binary:Package}\n']
+        expand_argument_vars: false
+      register: installed_packages
+      changed_when: false
+      check_mode: false
+
+    - name: Install missing bootstrap tools only on fresh hosts
+      ansible.builtin.apt:
+        name: '{{ bootstrap_missing }}'
+        state: present
+        update_cache: true
+        policy_rc_d: 101
+      vars:
+        bootstrap_missing: "{{ ['ca-certificates', 'nftables', 'python3', 'rsyslog', 'unattended-upgrades'] | difference(installed_packages.stdout_lines | select('match', '^installed ') | map('regex_replace', '^installed ', '') | list) }}"
+      when: bootstrap_missing | length > 0
+
+    - name: Protect a fresh host before installing public services
+      ansible.builtin.copy:
+        dest: /etc/egress-bootstrap.nft
+        mode: '0600'
+        content: |
+          table inet egress_bootstrap
+          delete table inet egress_bootstrap
+          table inet egress_bootstrap {
+            chain input {
+              type filter hook input priority -10; policy drop;
+              ct state established,related accept
+              iifname lo accept
+              ip protocol icmp accept
+              ip6 nexthdr icmpv6 accept
+              tcp dport 22 accept
+              udp dport 41641 accept
+            }
+          }
+      when: not managed.stat.exists
+
+    - name: Install persistent bootstrap guard
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/egress-bootstrap.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Egress replacement host bootstrap firewall
+          DefaultDependencies=no
+          After=local-fs.target
+          Before=network-pre.target
+          Wants=network-pre.target
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/sbin/nft -f /etc/egress-bootstrap.nft
+          RemainAfterExit=yes
+          [Install]
+          WantedBy=multi-user.target
+      when: not managed.stat.exists
+
+    - name: Activate bootstrap guard
+      ansible.builtin.systemd_service:
+        name: egress-bootstrap
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: not managed.stat.exists
+
+    - name: Create repository key directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Install reviewed public signing keys
+      ansible.builtin.copy:
+        src: 'keyrings/{{ item }}.gpg'
+        dest: '/etc/apt/keyrings/egress-{{ item }}.gpg'
+        mode: '0644'
+      loop: [caddy, crowdsec, tailscale]
+
+    - name: Configure signed service repositories
+      ansible.builtin.copy:
+        dest: '/etc/apt/sources.list.d/{{ item.file }}'
+        content: "{{ item.line }}\n"
+        mode: '0644'
+      loop:
+        - file: caddy-stable.list
+          line: 'deb [signed-by=/etc/apt/keyrings/egress-caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main'
+        - file: crowdsec_crowdsec.list
+          line: 'deb [signed-by=/etc/apt/keyrings/egress-crowdsec.gpg] https://packagecloud.io/crowdsec/crowdsec/any/ any main'
+        - file: tailscale.list
+          line: 'deb [signed-by=/etc/apt/keyrings/egress-tailscale.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main'
+      register: repos
+
+    - name: Install service packages without exposing default configurations
+      ansible.builtin.apt:
+        name: '{{ services_missing }}'
+        state: present
+        update_cache: '{{ repos.changed }}'
+        policy_rc_d: 101
+      vars:
+        services_missing: "{{ ['squid-openssl', 'caddy', 'haproxy', 'coturn', 'crowdsec', 'crowdsec-firewall-bouncer-nftables', 'tailscale'] | difference(installed_packages.stdout_lines | select('match', '^installed ') | map('regex_replace', '^installed ', '') | list) }}"
+      when: services_missing | length > 0
+
+    - name: Create protected credential and log directories
+      ansible.builtin.file:
+        path: '{{ item.path }}'
+        owner: '{{ item.owner }}'
+        group: '{{ item.group }}'
+        mode: '{{ item.mode }}'
+        state: directory
+      loop:
+        - {path: /etc/squid/secret, owner: root, group: proxy, mode: '0750'}
+        - {path: /etc/squid/tls, owner: root, group: proxy, mode: '0750'}
+        - {path: /etc/coturn, owner: root, group: turnserver, mode: '0750'}
+        - {path: /var/log/caddy, owner: caddy, group: caddy, mode: '0750'}
+
+    - name: Inspect installed CrowdSec collections
+      ansible.builtin.command: cscli collections list -o json
+      register: installed_collections
+      changed_when: false
+      check_mode: false
+      when: managed.stat.exists or not ansible_check_mode
+
+    - name: Install owned CrowdSec collections
+      ansible.builtin.command:
+        argv: [cscli, collections, install, '{{ item }}']
+      loop: [crowdsecurity/linux, crowdsecurity/sshd, crowdsecurity/caddy, crowdsecurity/haproxy]
+      register: collection
+      changed_when: "'already installed' not in (collection.stdout + collection.stderr)"
+      when:
+        - not ansible_check_mode
+        - item not in ((installed_collections.stdout | from_json).collections | map(attribute='name') | list)
+
+    - name: Enable system logs required by CrowdSec acquisition
+      ansible.builtin.systemd_service:
+        name: rsyslog
+        enabled: true
+        state: started
+
+    - name: Start Tailscale without cloning another machine's identity
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    - name: Report enrollment requirement
+      ansible.builtin.debug:
+        msg: 'Fresh hosts: enroll this machine using tailscale up, restore the recovery archive, review config.yml addresses, then run apply.sh. Bootstrap guard stays active until apply succeeds.'
+      when: not managed.stat.exists

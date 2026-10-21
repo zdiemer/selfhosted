@@ -94,3 +94,47 @@ Maintenance testing also inserts a short-lived decision for a reserved test IP,
 verifies it reaches nftables and survives a firewall-service restart, then deletes
 it. A successful reboot must pass runtime isolation checks BEFORE the playbook
 reconciles anything, so reconciliation cannot hide a failed boot configuration.
+
+
+## Replacement provisioning and identity recovery
+
+`prepare.sh` provisions the supported Ubuntu 24.04 amd64 base: reviewed signing
+keys/repositories, missing service packages, directories, CrowdSec collections,
+and Tailscale. It checks installed packages with `dpkg-query`, without loading
+Python APT's package cache on an already-provisioned small host. Small hosts get
+1 GiB swap before package operations, provided at least 2 GiB disk is free.
+A fresh host keeps a persistent SSH/Tailscale-only bootstrap firewall while
+service packages are installed with automatic service startup suppressed.
+
+With an authenticated 1Password session:
+
+```sh
+python3 infra/egress-droplet/recovery-state.py backup --document egress-sfo3-recovery-YYYYMMDD
+python3 infra/egress-droplet/recovery-state.py verify --document egress-sfo3-recovery-YYYYMMDD
+```
+
+The encrypted document includes a consistent SQLite backup of CrowdSec's local
+API database, its configuration/console identity, and Caddy's ACME state. The
+October 21 archive was retrieved and byte-verified against the source; it is
+5.2 MB. Archives deliberately exclude Tailscale's machine identity. Refresh
+archives after identity/registration changes; they do not contain application
+data from the separate Whatnow droplet.
+
+For a replacement, fence the old host first. Install the operator's SSH public
+key, verify its new SSH host key, point `inventory.yml` at it, then:
+
+1. Run `prepare.sh`. The temporary firewall remains until final verification.
+2. Enroll the new machine with `tailscale up` and authorize its intended grants.
+3. Restore the chosen vault document with `recovery-state.py restore --host HOST
+   --document NAME`. It refuses any already-adopted host.
+4. Update `public_ipv4` and review backend addresses in `config.yml`; restore
+   existing service credentials from the existing vault item using `apply.sh`.
+5. `apply.sh` verifies the enrolled identity, public IP, proxy containment,
+   CrowdSec hooks and services before removing only the bootstrap firewall.
+6. Update DNS/provider firewall rules and verify the public media and TURN paths.
+   Do not add Minecraft probes that wake its JVM.
+
+A clean-host recovery still needs a rehearsal on a replacement droplet. Syntax
+checks and live convergence do not establish that the entire recovery works.
+DigitalOcean resource creation, provider backups and tailnet grants remain
+outside this playbook; credentials for those APIs are not available here.
