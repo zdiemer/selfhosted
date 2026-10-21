@@ -109,3 +109,25 @@ and apply. Reverting the Git config and applying rolls back managed settings.
 Do not flush the entire nftables ruleset. A reboot test should be done in a
 maintenance window; normal verification checks unit dependencies and reloads the
 firewall without restarting Docker or rebooting the host.
+
+## Container containment and reboot maintenance
+
+The app is capped at 512 MiB RAM, 0.75 CPU and 128 processes; Caddy at 96 MiB,
+0.25 CPU and 64 processes. Limits are variables in `config.yml`. Both containers
+have read-only roots, bounded tmpfs, dropped capabilities and no-new-privileges;
+Caddy retains only NET_BIND_SERVICE. This reserves host headroom and confines an
+OOM to its container. It does not make application-level DoS impossible.
+
+The firewall blocks Docker bridges from cloud metadata and host services, and
+blocks private/tailnet/link-local destinations through the droplet's physical
+interfaces. Same-bridge Caddy/app communication and public Internet access remain.
+The host retains metadata access for OS/provider tooling. Every apply checks both
+container network namespaces for blocked metadata and host SSH, public HTTPS,
+container limits, and Caddy-to-app health. The host private address in the check
+must be updated if moving this deployment to a different droplet/VPC.
+
+```sh
+# Explicit, disruptive maintenance: reboot, wait for recovery, verify containment,
+# and reapply/check desired state. Normal apply never reboots automatically.
+infra/whatnow-droplet/apply.sh --reboot
+```

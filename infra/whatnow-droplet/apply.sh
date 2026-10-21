@@ -11,5 +11,10 @@ chmod 600 "$SV_DIR/app.env" "$SV_DIR/docker.json"
 python3 "$HERE/validate-secrets.py" "$SV_DIR"
 export ANSIBLE_LOCAL_TEMP="$SV_DIR/ansible"
 export ANSIBLE_NOCOLOR=1
+PLAYBOOK=site.yml
+if [[ ${1:-} == --reboot ]]; then
+  PLAYBOOK=reboot.yml
+  shift
+fi
 # No disk cache of plaintext secrets, including Ansible transfer staging.
-uv run --with ansible-core==2.19.3 ansible-playbook -i "$HERE/inventory.yml" "$HERE/site.yml" "$@"
+uv run --with ansible-core==2.19.3 ansible-playbook -i "$HERE/inventory.yml" "$HERE/$PLAYBOOK" "$@"

@@ -193,6 +193,17 @@
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Recreated' in compose_up.stderr"
 
+    - name: Install containment verification
+      ansible.builtin.copy:
+        src: verify-containment.py
+        dest: /usr/local/sbin/whatnow-verify-containment
+        mode: '0755'
+
+    - name: Verify live containment and required network access
+      ansible.builtin.command: /usr/local/sbin/whatnow-verify-containment
+      changed_when: false
+      when: not ansible_check_mode
+
     - name: Verify direct origin ports are inaccessible from the deployment host
       ansible.builtin.wait_for:
         host: '{{ origin_ipv4 }}'

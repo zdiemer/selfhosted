@@ -28,3 +28,13 @@ cloudflare_ipv6:
   - 2405:8100::/32
   - 2a06:98c0::/29
   - 2c0f:f248::/32
+
+# Leave RAM and CPU headroom for the kernel, SSH and Docker on the 1 GiB host.
+app_memory: 512m
+app_cpus: '0.75'
+app_pids: 128
+caddy_memory: 96m
+caddy_cpus: '0.25'
+caddy_pids: 64
+private_ipv4: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4]
+private_ipv6: ['::1/128', 'fc00::/7', 'fe80::/10', 'ff00::/8']

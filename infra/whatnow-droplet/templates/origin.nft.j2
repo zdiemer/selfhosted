@@ -11,4 +11,25 @@ table inet whatnow_origin {
         iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } tcp dport { 80, 443 } counter drop
         iifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } udp dport 443 counter drop
     }
+    set private4 { type ipv4_addr; flags interval; elements = { {{ private_ipv4 | join(', ') }} } }
+    set private6 { type ipv6_addr; flags interval; elements = { {{ private_ipv6 | join(', ') }} } }
+    chain container_egress {
+        type filter hook forward priority -10; policy accept;
+        # Before Docker's accepts, including existing metadata connections.
+{% for bridge in ['br-*', 'docker0'] %}
+        iifname "{{ bridge }}" ip daddr 169.254.0.0/16 counter drop
+        iifname "{{ bridge }}" ip6 daddr fd00:ec2::254 counter drop
+        # Keep same-bridge app/Caddy traffic; prohibit private-network exits.
+        iifname "{{ bridge }}" oifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } ip daddr @private4 counter drop
+        iifname "{{ bridge }}" oifname { {% for iface in origin_interfaces %}"{{ iface }}"{{ ', ' if not loop.last else '' }}{% endfor %} } ip6 daddr @private6 counter drop
+{% endfor %}
+    }
+    chain container_to_host {
+        type filter hook input priority -10; policy accept;
+        # Containers need no host services. Keep replies to host-initiated traffic.
+        iifname "br-*" ct state established,related accept
+        iifname "br-*" counter drop
+        iifname "docker0" ct state established,related accept
+        iifname "docker0" counter drop
+    }
 }

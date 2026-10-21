@@ -1,0 +1,26 @@
+# Explicit maintenance action; normal apply never reboots the droplet.
+- name: Reboot Whatnow into the installed kernel
+  hosts: whatnow
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Reboot and wait for SSH recovery
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 15
+        test_command: systemctl is-active docker whatnow-origin-firewall
+    - name: Verify service recovery and containment before reconciliation
+      ansible.builtin.command: /usr/local/sbin/whatnow-verify-containment
+      register: boot_check
+      retries: 12
+      delay: 5
+      until: boot_check.rc == 0
+      changed_when: false
+    - name: Verify reboot requirement is cleared
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_marker
+    - name: Require completed reboot maintenance
+      ansible.builtin.assert:
+        that: not reboot_marker.stat.exists
+- ansible.builtin.import_playbook: site.yml
