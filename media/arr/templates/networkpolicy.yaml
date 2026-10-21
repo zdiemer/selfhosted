@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arr.fullname" . }}-qbittorrent
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "arr.appSelectorLabels" (dict "root" . "app" "qbittorrent") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [sonarr, radarr, decluttarr]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: {{ .Values.qbittorrent.port }}
+          protocol: TCP
+    {{- if .Values.gluetun.httpProxy.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "arr.appSelectorLabels" (dict "root" . "app" "prowlarr") | nindent 14 }}
+      ports:
+        - port: {{ .Values.gluetun.httpProxy.port }}
+          protocol: TCP
+    {{- end }}

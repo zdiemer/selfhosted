@@ -78,7 +78,11 @@ def main():
     prefs = api.call('/api/v2/app/preferences')
     existing = prefs.get('excluded_file_names', '').splitlines()
     merged = list(dict.fromkeys(existing + ['*.' + ext for ext in EXTENSIONS]))
-    patch = {'excluded_file_names_enabled': True, 'excluded_file_names': '\n'.join(merged)}
+    patch = {'excluded_file_names_enabled': True, 'excluded_file_names': '\n'.join(merged),
+             'bypass_auth_subnet_whitelist_enabled': False,
+             'bypass_auth_subnet_whitelist': '',
+             'autorun_enabled': False, 'autorun_on_torrent_added_enabled': False}
+    # Loopback bypass remains for Gluetun's port-forward reconciliation only.
     changed = any(prefs.get(k) != v for k, v in patch.items())
     if changed and args.apply:
         api.call('/api/v2/app/setPreferences', 'POST', {'json': json.dumps(patch)}, form=True)

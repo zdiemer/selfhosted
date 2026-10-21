@@ -127,3 +127,12 @@ Prowlarr, Radarr, and Sonarr all returned empty health-check lists afterward.
 Executable rejection and qBittorrent's 25 exclusion patterns remained intact.
 These warnings became visible after the Grafana Arr alert's severity-label
 collision was fixed; the notification was reporting existing source failures.
+
+### Download API isolation
+
+The qBittorrent API admits only Traefik and this release's Sonarr, Radarr and
+Decluttarr pods. The PIA HTTP proxy admits only Prowlarr. `upgrade.sh` reconciles
+qBittorrent's pod-subnet authentication bypass to disabled and disables external
+program hooks. Sonarr/Radarr must retain their configured download-client login.
+Loopback authentication bypass remains solely for Gluetun's port updates and
+local administrative reconciliation.
