@@ -1,6 +1,6 @@
-# Repository baseline; MUST be reconciled with the live host before adoption.
-live_configuration_reviewed: false
-public_ipv4: ''
+# Reviewed against homelab-sfo3 live services, addresses and backends on 2026-10-21.
+live_configuration_reviewed: true
+public_ipv4: 147.182.206.23
 proxy_port: 3129
 proxy_user: homecluster
 turn_user: cloudgame

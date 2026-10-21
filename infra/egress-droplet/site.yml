@@ -40,17 +40,31 @@
       loop: '{{ egress_secrets | dict2items }}'
       no_log: true
 
-    - name: Require existing service package repositories and packages
-      ansible.builtin.apt:
-        name: [squid-openssl, caddy, haproxy, coturn, crowdsec, crowdsec-firewall-bouncer-nftables, nftables, unattended-upgrades]
-        state: present
+    - name: Require installed service packages without loading the APT cache
+      ansible.builtin.command:
+        argv:
+          - dpkg-query
+          - -W
+          - '-f=${db:Status-Status}\n'
+          - squid-openssl
+          - caddy
+          - haproxy
+          - coturn
+          - crowdsec
+          - crowdsec-firewall-bouncer-nftables
+          - nftables
+          - unattended-upgrades
+      register: installed_packages
+      changed_when: false
+      check_mode: false
+      failed_when: installed_packages.rc != 0 or installed_packages.stdout_lines | reject('equalto', 'installed') | list | length > 0
 
     - name: Create service unit override directories
       ansible.builtin.file:
         path: '/etc/systemd/system/{{ item }}.service.d'
         state: directory
         mode: '0755'
-      loop: [nftables, squid, caddy, haproxy, coturn]
+      loop: [nftables, squid, caddy, haproxy, coturn, crowdsec-firewall-bouncer]
 
     - name: Prevent the nftables unit from flushing other security controls
       ansible.builtin.copy:
@@ -64,6 +78,12 @@
         dest: '/etc/systemd/system/{{ item }}.service.d/firewall.conf'
         mode: '0644'
       loop: [squid, caddy, haproxy, coturn]
+
+    - name: Order CrowdSec enforcement independently of firewall restarts
+      ansible.builtin.copy:
+        src: bouncer-firewall-order.conf
+        dest: /etc/systemd/system/crowdsec-firewall-bouncer.service.d/firewall.conf
+        mode: '0644'
 
     - name: Restore credentials with existing ownership and permissions
       ansible.builtin.copy:
@@ -133,6 +153,36 @@
         state: started
         daemon_reload: true
       loop: [nftables, squid, caddy, haproxy, coturn, crowdsec, crowdsec-firewall-bouncer]
+
+    - name: Check CrowdSec enforcement tables, not just daemon health
+      ansible.builtin.command:
+        argv: [nft, list, chain, '{{ item.family }}', '{{ item.name }}', '{{ item.name }}-chain-input']
+      loop:
+        - {family: ip, name: crowdsec}
+        - {family: ip6, name: crowdsec6}
+      register: crowdsec_tables
+      failed_when: false
+      changed_when: false
+      check_mode: false
+
+    - name: Rebuild missing CrowdSec enforcement tables
+      ansible.builtin.systemd_service:
+        name: crowdsec-firewall-bouncer
+        state: restarted
+      when: crowdsec_tables.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: Require CrowdSec enforcement hooks
+      ansible.builtin.command:
+        argv: [nft, list, chain, '{{ item.family }}', '{{ item.name }}', '{{ item.name }}-chain-input']
+      loop:
+        - {family: ip, name: crowdsec}
+        - {family: ip6, name: crowdsec6}
+      register: crowdsec_hook
+      retries: 5
+      delay: 2
+      until: crowdsec_hook.rc == 0
+      changed_when: false
+      when: not ansible_check_mode
 
     - name: Retire unused public-proxy DDNS refresh timer
       ansible.builtin.systemd_service:

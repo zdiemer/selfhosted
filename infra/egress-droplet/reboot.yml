@@ -1,0 +1,33 @@
+# Explicit maintenance; ordinary apply never reboots.
+- name: Reboot egress into the installed kernel
+  hosts: egress_sfo3
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Reboot and wait for relay and security service recovery
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 20
+        test_command: systemctl is-active nftables tailscaled squid caddy haproxy coturn crowdsec crowdsec-firewall-bouncer
+    - name: Verify boot-time isolation before any reconciliation
+      ansible.builtin.command: /usr/local/sbin/egress-verify
+      register: boot_verification
+      retries: 6
+      delay: 5
+      until: boot_verification.rc == 0
+      changed_when: false
+    - name: Verify CrowdSec enforcement recovered at boot
+      ansible.builtin.command:
+        argv: [nft, list, chain, '{{ item.family }}', '{{ item.name }}', '{{ item.name }}-chain-input']
+      loop:
+        - {family: ip, name: crowdsec}
+        - {family: ip6, name: crowdsec6}
+      changed_when: false
+    - name: Check remaining reboot requirement
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_marker
+    - name: Require completed reboot maintenance
+      ansible.builtin.assert:
+        that: not reboot_marker.stat.exists
+- ansible.builtin.import_playbook: site.yml

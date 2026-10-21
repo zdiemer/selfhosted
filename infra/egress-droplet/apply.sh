@@ -16,4 +16,9 @@ op read 'op://homelab/egress-sfo3-production/secrets.json' > "$SV_DIR/secrets.js
 chmod 600 "$SV_DIR/secrets.json"
 export ANSIBLE_LOCAL_TEMP="$SV_DIR/ansible"
 export ANSIBLE_PIPELINING=true
-uv run --with ansible-core==2.19.3 ansible-playbook -i "$HERE/inventory.yml" "$HERE/site.yml" "$@"
+PLAYBOOK=site.yml
+if [[ ${1:-} == --reboot ]]; then
+  PLAYBOOK=reboot.yml
+  shift
+fi
+uv run --with ansible-core==2.19.3 ansible-playbook -i "$HERE/inventory.yml" "$HERE/$PLAYBOOK" "$@"

@@ -1,6 +1,7 @@
-> The managed successor is [infra/egress-droplet](../../egress-droplet/README.md).
-> Its adoption is gated on live host review and vault migration; the instructions
-> below describe the existing bootstrap until that adoption is completed.
+> Production `egress-sfo3` is now managed by
+> [infra/egress-droplet](../../egress-droplet/README.md), including secrets,
+> service configuration and firewall rules. The bootstrap below is historical
+> for this host and refuses to run once it detects the managed-host marker.
 
 # The VPS exit
 

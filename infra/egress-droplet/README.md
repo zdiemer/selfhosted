@@ -1,10 +1,22 @@
-# Egress SFO3 managed configuration — adoption pending
+# Egress SFO3 managed configuration
 
-**Not deployed.** Tailscale SSH currently requires an authentication check, so the
-live host's configuration, credentials and service identities have not been
-reviewed. `live_configuration_reviewed: false` deliberately blocks apply. These
-files describe the repository baseline and proposed hardening, not verified live
-state. Do not flip that flag to skip review.
+Adopted from the live Ubuntu 24.04 droplet `homelab-sfo3` at `147.182.206.23`
+(Tailscale `100.121.204.109`). `config.yml` records the reviewed relay topology.
+Production credentials were migrated without rotation into 1Password's
+`homelab/egress-sfo3-production` item, field `secrets.json`.
+
+```sh
+infra/egress-droplet/apply.sh --check --diff
+infra/egress-droplet/apply.sh
+# Explicit disruptive maintenance, followed by automatic recovery checks:
+infra/egress-droplet/apply.sh --reboot
+```
+
+Edit non-secret configuration in Git and credentials in the vault, then apply.
+Do not edit runtime files over SSH. Tailscale SSH may require an identity check;
+complete that check rather than bypassing it. Package installation/upgrades are
+separate maintenance: the playbook checks installed packages with `dpkg-query`
+without loading the large APT cache on this 512 MiB host.
 
 This follows the Whatnow model: Ansible desired state in Git, credentials in
 1Password, tmpfs staging, hidden secret diffs, validated configurations and
@@ -12,33 +24,23 @@ runtime probes. It adopts an existing egress host with its package repositories,
 CrowdSec setup/collections, ACME state and Tailscale enrollment intact. It is not
 yet a bare-droplet provisioning recipe or a Tailscale account policy manager.
 
-## Complete adoption
+## Adoption and recovery
 
-1. Authenticate the Tailscale SSH check, then inspect running services, package
-   versions, addresses, listeners, Squid configuration, resolver configuration,
-   HAProxy/Caddy backends, TURN settings and nftables rules. Confirm the service
-   users (`proxy`, `caddy`, `haproxy`, `turnserver`) match the proposed rules.
-2. Authenticate `op` with the existing `scripts/op-session.sh` helper and run
-   `python3 infra/egress-droplet/import-existing.py`. It imports the current
-   Squid credentials, TURN password, existing Squid TLS material and CrowdSec
-   credentials into `homelab/egress-sfo3-production`, field `secrets.json`. It
-   preserves content, ownership and permissions, verifies the vault round trip,
-   prints no secrets and refuses to overwrite an existing item. Tailscale node
-   identity and Caddy certificate storage are not copied to the vault.
-3. Reconcile `config.yml` against the live host, including `public_ipv4`, backend
-   nodes and port/user settings. Review differences before setting
-   `live_configuration_reviewed: true`. Check that all four relays/services are
-   actually enabled; the baseline assumes Squid, media, Minecraft and TURN.
-4. Run `infra/egress-droplet/apply.sh --check --diff`, then `apply.sh`. The current
-   service package repositories must already exist, as established by the old
-   bootstrap. No credentials are generated or rotated during apply.
-5. Verify the runtime probes, media service, proxy access from the cluster, TURN
-   and CrowdSec enforcement. Verify HAProxy workers run as `haproxy`. Avoid
-   periodic Minecraft TCP probes: they wake the auto-paused server.
-6. Repeat apply and verify no configuration changes. Commit the reviewed
-   inventory and record deployment verification before calling adoption complete.
+The original adoption compared listeners, service users, package versions, DNS,
+Caddy/HAProxy backends, TURN settings and firewall rules with the live host before
+setting `live_configuration_reviewed: true`. The import helper reads current
+Squid/TURN credentials, legacy Squid TLS files and CrowdSec credentials directly
+into memory, preserves their ownership/modes, and verifies the vault round trip.
+It refuses to overwrite an existing item. Keep those credentials for recovery;
+changing the proxy or TURN password also requires updating cluster clients.
 
-## Proposed policy
+For a replacement host, restore the service/package repositories and relevant
+state first, re-enroll Tailscale, review addresses and UIDs, then apply. CrowdSec
+collections, ACME state and Tailscale identity remain host-managed. This is an
+adoption playbook, not a bare-droplet bootstrap. Minecraft relay workers run as
+`haproxy`; the master retains its normal service-management privileges.
+
+## Enforced policy
 
 - Squid denies private, loopback, link-local, tailnet, multicast and the droplet's
   own public address before the authenticated allow rule. Public HTTP/CONNECT
@@ -52,6 +54,9 @@ yet a bare-droplet provisioning recipe or a Tailscale account policy manager.
   peers on those ports are no longer allowed. ICMP diagnostics remain available.
 - Public listener ports and existing connection meters are preserved. The proxy
   has no public fallback. Unused DDNS proxy-allowlist refresh is retired.
+- CrowdSec enforcement hooks are checked directly, not inferred from daemon
+  status. Missing hooks trigger bouncer recovery. Its startup is ordered after
+  nftables without tying its lifetime to firewall restarts.
 - Firewall updates replace only `inet egress` atomically and preserve CrowdSec and
   Tailscale tables. The packaged nftables unit's potentially global-flush stop
   action is overridden. Public service units require the firewall before start.
@@ -61,8 +66,8 @@ yet a bare-droplet provisioning recipe or a Tailscale account policy manager.
 
 A root compromise can still change this host firewall. Independently enforced
 Tailscale grants/ACLs must also restrict the droplet to the exact backend nodes
-and ports. Tailnet policy access has not been established, so that protection is
-not claimed here. DNS/DO resources, backup policy and provider DDoS protection
+and ports. No tailnet policy API credential was available in the connected vault, so
+independent tailnet-policy enforcement is not claimed here. DNS/DO resources, backup policy and provider DDoS protection
 remain separate, as with the Whatnow host configuration.
 
 Existing bootstrap remains available for an unmanaged host, but refuses to run
@@ -71,3 +76,21 @@ Secrets are delivered as protected runtime files; host root and whole-disk backu
 can still read them. For replacement-host recovery, preserve the vault item and
 restore/re-enroll the relevant service state; do not clone a Tailscale identity
 onto two running machines.
+
+## Verification
+
+Every apply checks authenticated public CONNECT, unauthenticated rejection,
+metadata/private/own-address denial, direct kernel restrictions under the Squid
+worker UID, media reachability as Caddy, all service states, and CrowdSec input
+hooks for both address families. Probes never print credentials or response
+bodies. Do not add recurring Minecraft TCP health checks; they wake its paused JVM.
+
+With an authenticated `op` session, `python3 infra/egress-droplet/verify-turn.py`
+checks the public UDP path: authentication challenge, authenticated allocation,
+loopback-peer denial and explicit release. It sends no relayed traffic. The
+controller must have outbound UDP access for this optional test.
+
+Maintenance testing also inserts a short-lived decision for a reserved test IP,
+verifies it reaches nftables and survives a firewall-service restart, then deletes
+it. A successful reboot must pass runtime isolation checks BEFORE the playbook
+reconciles anything, so reconciliation cannot hide a failed boot configuration.
