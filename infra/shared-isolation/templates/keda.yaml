@@ -63,7 +63,7 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
-        {{- range $.Values.kedaControlPlaneSources }}
+        {{- range $.Values.controlPlaneSources }}
         - ipBlock: {cidr: {{ . | quote }}}
         {{- end }}
       ports:

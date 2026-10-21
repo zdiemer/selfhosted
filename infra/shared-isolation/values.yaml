@@ -161,7 +161,7 @@ alloyProbeTargets:
   - port: 80
     protocol: TCP
 # API server hosts and their Flannel host source addresses, never whole pod CIDRs.
-kedaControlPlaneSources:
+controlPlaneSources:
 - 192.168.4.21/32
 - 192.168.4.25/32
 - 192.168.4.26/32

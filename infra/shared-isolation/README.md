@@ -120,7 +120,7 @@ and the API VIP/backends. The operator additionally reaches only Talaria's
 Redis pods on TCP 6379; the metrics API server reaches only the operator on
 TCP 9666. Admission TCP 9443 and the metrics API TCP 6443 admit the three
 control-plane hosts and their exact Flannel host source addresses. Update
-`kedaControlPlaneSources` when replacing control planes. No general internet,
+`controlPlaneSources` when replacing control planes. No general internet,
 LAN, tailnet, metadata or other application access is granted. Future scaler
 backends require an explicit dependency rule. API/RBAC powers and Kubernetes'
 resident-node exceptions remain outside this boundary.
@@ -166,3 +166,44 @@ HTTPS, unrelated apps, tailnet SSH and NAS NFS/iSCSI ports were blocked.
 Metadata was unreachable, with the same control-test limitation noted above.
 The Windows VMI kept its original UID, Ready state and guest-agent connection;
 all 72 Alloy scrape targets remained healthy. No storage plugin was restarted.
+
+## CDI control components
+
+The `cdi` namespace permits only DNS and Kubernetes API egress by default.
+The admission/aggregated API accepts TCP 8443 from the exact control-plane host
+and Flannel source addresses. The upload proxy additionally reaches CDI upload
+server pods in `dev` on TCP 8443; clients continue to use authenticated
+`kubectl port-forward`, as documented in `dev/win11`. There is no general pod
+access to the upload proxy or general internet/LAN/NAS access from CDI.
+
+Import/upload workers run in the destination namespace, outside this control
+component boundary. Supporting another upload namespace requires an explicit
+rule. Worker isolation is part of the remaining VM networking review.
+The upload target label/port are from the deployed
+[CDI v1.66.0 source](https://github.com/kubevirt/containerized-data-importer/blob/v1.66.0/pkg/common/common.go).
+
+Validated 2026-10-21: all four control roles passed allowed/denied connection
+checks; the admission webhook rejected an invalid two-source DataVolume. A
+disposable archive DataVolume reached UploadReady, received a real API-issued
+upload token, accepted an authenticated upload through the proxy, and reached
+Succeeded. A separate read-only mount verified the exact uploaded payload.
+Temporary probes, DataVolume and test volumes were removed. All four CDI
+deployments, Windows and all 72 Alloy scrape targets remained healthy.
+
+## Remaining workstreams
+
+Planning inventory as of 2026-10-21, after CDI control-component isolation:
+
+1. KubeVirt and remaining shared/VM networking, including CDI workers.
+2. Trusted TLS verification for the TrueNAS API clients.
+3. Host-level containment for privileged/host-network infrastructure.
+4. Shared BuildKit process containment (the no-process-sandbox exception).
+5. Backup integrity and restore validation: finish Talaria and test other DB dumps.
+6. Backups outside the NAS failure domain.
+7. Clean-droplet recovery rehearsal.
+8. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+9. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+
+These are workstreams, not nine confirmed exploitable vulnerabilities or an
+exhaustive audit result. New dependency findings can change the list. Existing
+application exceptions, including Jellyfin media writes, remain intentional.
