@@ -55,3 +55,27 @@ whitelisting arbitrary malformed access logs, or raising the alert threshold.
 The limit is on the authentication server's **response**, not uploaded files
 or the upstream application's response. Authelia redirects still work.
 See [Traefik's ForwardAuth options](https://doc.traefik.io/traefik/v3.7/middlewares/http/forwardauth/).
+
+### Registry CA warning noise (2026-10-21)
+
+The parser alert recurred because the registry ServersTransport used deprecated
+`rootCAsSecrets`. Traefik emitted a warning on repeated configuration reloads
+(86 warnings in one observed ten-minute replica window). Those service messages
+share stdout/stderr acquisition with JSON access logs, so they counted as
+unparsed input while valid access logs continued to parse.
+
+The registry chart now uses `rootCAs: [{secret: registry-internal-tls}]`, keeping
+backend certificate verification enabled, following [Traefik’s CA-reference migration](https://doc.traefik.io/traefik/v3.5/migrate/v3/#serverstransport-ca-certificate-configuration). After deployment, all three Traefik
+replicas stopped emitting this warning and all three corresponding agents
+continued parsing requests with zero new failures in the measured interval.
+Registry anonymous/authenticated HTTPS checks returned 401/200 respectively.
+The Grafana query and threshold were preserved; its wording now reports reduced
+coverage as a possibility, rather than claiming detection has stopped. The
+15-minute query window can retain old failures after a fix.
+
+Agent and LAPI network policies are managed by `infra/shared-isolation`.
+Agents retain DNS, public HTTPS and LAPI access; LAPI retains DNS, public HTTPS
+and the SMS/ntfy relay API. Only Alloy collectors can read metrics. Traefik,
+agents and cluster-status can reach LAPI; credentials remain required for its
+protected endpoints. Backup and maintenance Jobs are not selected by these
+policies. File mounts and host-level privileges remain separate risks.

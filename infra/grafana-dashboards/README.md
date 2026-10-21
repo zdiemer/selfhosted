@@ -105,7 +105,7 @@ do not fall through to the default notification policy. See
 | CronJob overdue | a schedule stopped advancing (see below) |
 | Job failed | a run happened and failed |
 | CrowdSec overflow spike | >20 threshold crossings in 15m |
-| CrowdSec parser failing | detection has stopped and the dashboard looks reassuringly empty |
+| CrowdSec parser failing | elevated unparsed Traefik input; investigate access-log failures and mixed-in service warnings |
 | TLS certificate expiring | under 14 days |
 | Public hostname unreachable | a probe has failed for 5m |
 | Cloudflare Tunnel has no connections | every `diemer.codes` host is down while the cluster looks fine |

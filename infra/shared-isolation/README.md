@@ -29,7 +29,7 @@ negative controls passed; the live dashboard remained healthy without restart.
 Metadata timed out in the unrestricted control too: its exclusion is verified
 in the policy, but that timeout does not independently prove enforcement.
 
-CrowdSec, storage/VM operators, backups and remaining infra
+Storage/VM operators, backups and remaining infra
 services still need their own dependency review. This release intentionally
 started with Headlamp and Renovate; subsequent coverage is described below.
 
@@ -95,3 +95,17 @@ All ten kubelet certificates also passed cluster-CA and IP-SAN validation.
 scrapes remained healthy after reloading. Verification uses Alloy's
 [internal metrics](https://grafana.com/docs/alloy/latest/reference/http/) and
 component target health, not just pod readiness.
+
+## CrowdSec
+
+Agent and LAPI policies select only `k8s-app=crowdsec` pods of their respective
+type, preserving independent backup and maintenance Jobs. Agents can reach DNS,
+public HTTPS (hub downloads/enrichment) and LAPI TCP 8080. LAPI can reach DNS,
+public HTTPS (central API/console) and the notification relay TCP 8000. Neither
+gets Kubernetes API, LAN, tailnet or metadata access. Metrics TCP 6060 admit
+only Alloy collectors; LAPI TCP 8080 admits agents, Traefik and cluster-status.
+
+Live checks on 2026-10-21 verified the allowed/denied connection matrix, agent
+LAPI authentication, central API authentication and existing console enrollment,
+registry TLS/authentication, fresh Traefik bouncer polling, and continued parsing.
+Temporary test Jobs were removed. Notifications were not sent as tests.

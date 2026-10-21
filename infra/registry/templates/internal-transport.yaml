@@ -4,4 +4,5 @@ metadata:
   name: registry-internal
 spec:
   serverName: registry.zachd.duckdns.org
-  rootCAsSecrets: [registry-internal-tls]
+  rootCAs:
+    - secret: registry-internal-tls

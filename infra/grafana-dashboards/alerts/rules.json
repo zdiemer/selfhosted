@@ -488,7 +488,7 @@
       "cluster": "home-k3s"
     },
     "annotations": {
-      "summary": "CrowdSec is failing to parse the Traefik log. Detection has effectively stopped, and the security dashboard will look reassuringly empty."
+      "summary": "CrowdSec could not parse more than 10% of acquired Traefik log lines for 30 minutes. Detection coverage may be reduced. Check access-log parsing and mixed-in Traefik service warnings; this does not by itself mean detection has stopped."
     },
     "notification_settings": {
       "receiver": "unwired"
