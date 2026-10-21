@@ -71,7 +71,7 @@ cloudflared:
   enabled: false
   image:
     repository: cloudflare/cloudflared
-    tag: "2026.10.1"
+    tag: "2026.10.2"
     pullPolicy: IfNotPresent
   # REQUIRED when enabled — set in values.local.yaml. The connector token from
   # the Cloudflare dashboard (Zero Trust → Networks → Tunnels).
