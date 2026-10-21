@@ -1,3 +1,7 @@
+> The managed successor is [infra/egress-droplet](../../egress-droplet/README.md).
+> Its adoption is gated on live host review and vault migration; the instructions
+> below describe the existing bootstrap until that adoption is completed.
+
 # The VPS exit
 
 The far end of the `vps` lane. A ~$5/month box running squid, so that traffic

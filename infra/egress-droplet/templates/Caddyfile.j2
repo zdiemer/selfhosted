@@ -1,0 +1,42 @@
+{
+	# A real Let's Encrypt cert (this box is publicly reachable on 80/443, and
+	# jellyfin.diemer.codes is a DNS-only A record pointing here). ACME email:
+	email {{ acme_email }}
+}
+
+{{ media_host }} {
+	# Multiple node tailnet IPs for resilience: if one node is down, Caddy's
+	# passive health check (fail_duration) parks it and tries another. Jellyfin
+	# does not autopause, so unlike the Minecraft relay, health checking is safe.
+	reverse_proxy {% for node in media_nodes %}{{ node }}:30096 {% endfor %} {
+		lb_policy first
+		fail_duration 30s
+
+		# Jellyfin leans on websockets (playback state, syncplay); Caddy proxies
+		# them transparently. Pass the real client IP through so Jellyfin's logs
+		# and its "known proxies" handling see the viewer, not this box.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Streams are large and long; don't let Caddy buffer them.
+	encode zstd gzip
+
+	# Access log to a file, in JSON. Both halves are load-bearing for CrowdSec:
+	# its `caddy` parser expects JSON, and it acquires from a file path
+	# (crowdsec-acquis.yaml.template) rather than from journald, because Caddy's
+	# default is stderr-to-journal where the access lines are interleaved with
+	# everything else the process says.
+	#
+	# Change `format json` and CrowdSec silently stops matching — the lines are
+	# still read and still parsed by nothing, which looks exactly like a quiet
+	# week rather than a broken control. This is the single most breakable link
+	# between this file and the detection on this box.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+}

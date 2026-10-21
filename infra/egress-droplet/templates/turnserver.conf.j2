@@ -1,0 +1,31 @@
+# Managed by infra/egress-droplet; secret is supplied from 1Password.
+listening-ip={{ public_ipv4 }}
+relay-ip={{ public_ipv4 }}
+external-ip={{ public_ipv4 }}
+listening-port=3478
+min-port=49152
+max-port=49500
+lt-cred-mech
+realm={{ turn_realm }}
+user={{ turn_user }}:{{ egress_secrets['/etc/coturn/turn_password']['content'] | trim }}
+no-tls
+no-dtls
+fingerprint
+no-multicast-peers
+no-cli
+syslog
+no-stdout-log
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+max-bps=1000000
+user-quota=30
+total-quota=40
+stale-nonce=600

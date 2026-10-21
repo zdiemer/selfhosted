@@ -1,0 +1,7 @@
+all:
+  hosts:
+    egress_sfo3:
+      ansible_host: egress-sfo3
+      ansible_user: root
+      ansible_python_interpreter: /usr/bin/python3
+      ansible_remote_tmp: /run/egress-ansible

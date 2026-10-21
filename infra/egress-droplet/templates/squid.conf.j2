@@ -1,0 +1,55 @@
+# Managed by infra/egress-droplet. Plain HTTP is inside Tailscale encryption.
+http_port {{ proxy_port }}
+# ---------------------------------------------------------------------------
+# Authentication — this is what stops it being an open relay
+# ---------------------------------------------------------------------------
+# The firewall is defence in depth. THIS is the control. An open proxy on a
+# public IP is found by scanners in hours and will be used to attack other
+# people from an address that bills to you.
+auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/secret/passwd
+auth_param basic children 8 startup=2 idle=1
+auth_param basic realm egress
+auth_param basic credentialsttl 5 minutes
+acl authenticated proxy_auth REQUIRED
+
+# ---------------------------------------------------------------------------
+# Ports
+# ---------------------------------------------------------------------------
+acl CONNECT method CONNECT
+acl SSL_ports port 443 22 587
+acl Safe_ports port 80 443 22 587
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+# Public Internet only, independently of the cluster proxy's domain policy.
+acl private_targets dst {{ private_ipv4 | join(' ') }} {{ private_ipv6 | join(' ') }}
+acl own_host dst {{ public_ipv4 }}/32
+http_access deny private_targets
+http_access deny own_host
+http_access allow authenticated
+http_access deny all
+
+# ---------------------------------------------------------------------------
+# Hygiene — same posture as the cluster side
+# ---------------------------------------------------------------------------
+via off
+forwarded_for delete
+httpd_suppress_version_string on
+cache deny all
+cache_mem 16 MB
+pinger_enable off
+shutdown_lifetime 5 seconds
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Same logfmt shape as the cluster side, so the two are directly comparable when
+# a request is missing and you need to know which hop dropped it. Nothing is
+# shipped off this box; it is journald only.
+logformat egress ts=%ts.%03tu svc=%un src=%>a method=%rm url=%ru status=%>Hs bytes_in=%<st bytes_out=%>st dst=%<a duration=%tr
+access_log stdio:/var/log/squid/access.log egress
+cache_log /var/log/squid/cache.log
+

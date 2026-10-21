@@ -1,0 +1,25 @@
+# Repository baseline; MUST be reconciled with the live host before adoption.
+live_configuration_reviewed: false
+public_ipv4: ''
+proxy_port: 3129
+proxy_user: homecluster
+turn_user: cloudgame
+turn_realm: turn.diemer.codes
+media_host: jellyfin.diemer.codes
+acme_email: zach.diemer@gmail.com
+media_nodes:
+  - 100.121.136.39
+  - 100.84.179.82
+  - 100.118.242.89
+  - 100.124.40.81
+  - 100.122.194.1
+minecraft_nodes:
+  - 100.121.136.39
+  - 100.84.179.82
+  - 100.118.242.89
+  - 100.124.40.81
+  - 100.122.194.1
+  - 100.81.206.46
+  - 100.109.25.85
+private_ipv4: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
+private_ipv6: ['::/128', '::1/128', 'fc00::/7', 'fe80::/10', 'ff00::/8']

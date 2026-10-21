@@ -1,0 +1,193 @@
+- name: Manage adopted egress-sfo3 services
+  hosts: egress_sfo3
+  become: true
+  vars_files: [config.yml]
+  tasks:
+    - name: Require reviewed live topology and vault inputs
+      ansible.builtin.assert:
+        that:
+          - live_configuration_reviewed | bool
+          - public_ipv4 | length > 0
+          - media_nodes | length > 0
+          - minecraft_nodes | length > 0
+          - lookup('env', 'EGRESS_SECRET_DIR') | length > 0
+          - ansible_facts.os_family == 'Debian'
+
+    - name: Load preserved credentials without logging or fact caching
+      ansible.builtin.set_fact:
+        egress_secrets: "{{ lookup('file', lookup('env', 'EGRESS_SECRET_DIR') + '/secrets.json') | from_json }}"
+        cacheable: false
+      no_log: true
+
+    - name: Validate credentials and restrict managed secret destinations
+      ansible.builtin.assert:
+        that:
+          - egress_secrets['/etc/squid/secret/passwd']['content'] | length > 0
+          - egress_secrets['/etc/coturn/turn_password']['content'] | trim is match('^[a-zA-Z0-9]{20,80}$')
+          - item.key in allowed_secret_paths
+      vars:
+        allowed_secret_paths:
+          - /etc/squid/secret/passwd
+          - /etc/squid/secret/cluster_password
+          - /etc/coturn/turn_password
+          - /etc/squid/tls/proxy.key
+          - /etc/squid/tls/proxy.crt
+          - /etc/squid/tls/proxy.pem
+          - /etc/crowdsec/local_api_credentials.yaml
+          - /etc/crowdsec/online_api_credentials.yaml
+          - /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+          - /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml.local
+      loop: '{{ egress_secrets | dict2items }}'
+      no_log: true
+
+    - name: Require existing service package repositories and packages
+      ansible.builtin.apt:
+        name: [squid-openssl, caddy, haproxy, coturn, crowdsec, crowdsec-firewall-bouncer-nftables, nftables, unattended-upgrades]
+        state: present
+
+    - name: Create service unit override directories
+      ansible.builtin.file:
+        path: '/etc/systemd/system/{{ item }}.service.d'
+        state: directory
+        mode: '0755'
+      loop: [nftables, squid, caddy, haproxy, coturn]
+
+    - name: Prevent the nftables unit from flushing other security controls
+      ansible.builtin.copy:
+        src: nftables-safe-stop.conf
+        dest: /etc/systemd/system/nftables.service.d/safe-stop.conf
+        mode: '0644'
+
+    - name: Require firewall protection before public services start
+      ansible.builtin.copy:
+        src: require-firewall.conf
+        dest: '/etc/systemd/system/{{ item }}.service.d/firewall.conf'
+        mode: '0644'
+      loop: [squid, caddy, haproxy, coturn]
+
+    - name: Restore credentials with existing ownership and permissions
+      ansible.builtin.copy:
+        content: '{{ item.value.content }}'
+        dest: '{{ item.key }}'
+        owner: '{{ item.value.owner }}'
+        group: '{{ item.value.group }}'
+        mode: '{{ item.value.mode }}'
+      loop: '{{ egress_secrets | dict2items }}'
+      no_log: true
+      diff: false
+      notify: Restart credential consumers
+
+    - name: Configure Squid public destination policy
+      ansible.builtin.template:
+        src: squid.conf.j2
+        dest: /etc/squid/squid.conf
+        mode: '0644'
+        validate: /usr/sbin/squid -k parse -f %s
+      notify: Reload Squid
+
+    - name: Configure unprivileged Minecraft relay workers
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        mode: '0644'
+        validate: /usr/sbin/haproxy -c -f %s
+      notify: Restart HAProxy
+
+    - name: Configure media relay
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        mode: '0644'
+        validate: /usr/bin/caddy validate --adapter caddyfile --config %s
+      notify: Reload Caddy
+
+    - name: Configure TURN with preserved credentials and private peer restrictions
+      ansible.builtin.template:
+        src: turnserver.conf.j2
+        dest: /etc/turnserver.conf
+        owner: root
+        group: turnserver
+        mode: '0640'
+      no_log: true
+      diff: false
+      notify: Restart TURN
+
+    - name: Apply service identities before enforcing process-specific egress
+      ansible.builtin.meta: flush_handlers
+
+    - name: Render and validate scoped firewall
+      ansible.builtin.template:
+        src: nftables.conf.j2
+        dest: /etc/nftables.conf
+        mode: '0644'
+        validate: /usr/sbin/nft -c -f %s
+
+    - name: Load firewall without flushing Tailscale or CrowdSec tables
+      ansible.builtin.command: /usr/sbin/nft -f /etc/nftables.conf
+      changed_when: false
+
+    - name: Enable firewall and services at boot
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: [nftables, squid, caddy, haproxy, coturn, crowdsec, crowdsec-firewall-bouncer]
+
+    - name: Retire unused public-proxy DDNS refresh timer
+      ansible.builtin.systemd_service:
+        name: egress-allow-home.timer
+        enabled: false
+        state: stopped
+
+    - name: Mark this host as managed to prevent legacy bootstrap drift
+      ansible.builtin.copy:
+        content: "Managed by selfhosted/infra/egress-droplet. Use apply.sh.\n"
+        dest: /etc/egress-iac-managed
+        mode: '0644'
+
+    - name: Install non-secret verification inputs
+      ansible.builtin.copy:
+        content: '{{ {"proxy_user": proxy_user, "proxy_port": proxy_port, "public_ipv4": public_ipv4, "media_nodes": media_nodes} | to_nice_json }}'
+        dest: /etc/egress-iac-checks.json
+        mode: '0644'
+
+    - name: Install runtime security verification
+      ansible.builtin.copy:
+        src: verify-egress.py
+        dest: /usr/local/sbin/egress-verify
+        mode: '0755'
+
+    - name: Verify proxy policy and kernel isolation
+      ansible.builtin.command: /usr/local/sbin/egress-verify
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Require all security and relay services to be active
+      ansible.builtin.command: systemctl is-active nftables squid caddy haproxy coturn crowdsec crowdsec-firewall-bouncer
+      changed_when: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart credential consumers
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: restarted
+        daemon_reload: true
+      loop: [squid, coturn, crowdsec, crowdsec-firewall-bouncer]
+    - name: Reload Squid
+      ansible.builtin.systemd_service:
+        name: squid
+        state: reloaded
+    - name: Restart HAProxy
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: restarted
+    - name: Reload Caddy
+      ansible.builtin.systemd_service:
+        name: caddy
+        state: reloaded
+    - name: Restart TURN
+      ansible.builtin.systemd_service:
+        name: coturn
+        state: restarted

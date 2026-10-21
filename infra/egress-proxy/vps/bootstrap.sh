@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+if [[ -e /etc/egress-iac-managed ]]; then
+  echo "This host is managed by selfhosted/infra/egress-droplet; use its apply.sh." >&2
+  exit 1
+fi
+
 PROXY_PORT="${PROXY_PORT:-3129}"
 CLUSTER_USER="${CLUSTER_USER:-homecluster}"
 # The name the certificate is issued for, and the name the cluster verifies

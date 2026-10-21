@@ -1,0 +1,50 @@
+# Replace only our table atomically; preserve Tailscale and CrowdSec tables.
+table inet egress
+delete table inet egress
+table inet egress {
+    set private4 { type ipv4_addr; flags interval; elements = { {{ private_ipv4 | join(', ') }} } }
+    set private6 { type ipv6_addr; flags interval; elements = { {{ private_ipv6 | join(', ') }} } }
+    set media_nodes { type ipv4_addr; elements = { {{ media_nodes | join(', ') }} } }
+    set minecraft_nodes { type ipv4_addr; elements = { {{ minecraft_nodes | join(', ') }} } }
+    chain input {
+        type filter hook input priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iifname lo accept
+        ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded } accept
+        ip6 nexthdr icmpv6 accept
+        iifname "tailscale0" tcp dport { 22, {{ proxy_port }} } accept
+        tcp dport 22 ct state new meter ssh4 { ip saddr timeout 5m limit rate over 10/minute burst 5 packets } drop
+        tcp dport 22 ct state new meter ssh6 { ip6 saddr timeout 5m limit rate over 10/minute burst 5 packets } drop
+        tcp dport 22 accept
+        tcp dport 25565 ct state new meter mc4 { ip saddr timeout 5m limit rate over 30/minute burst 20 packets } drop
+        tcp dport 25565 ct state new meter mc6 { ip6 saddr timeout 5m limit rate over 30/minute burst 20 packets } drop
+        tcp dport 25565 accept
+        tcp dport { 80, 443 } ct state new meter web4 { ip saddr timeout 5m limit rate over 240/minute burst 120 packets } drop
+        tcp dport { 80, 443 } ct state new meter web6 { ip6 saddr timeout 5m limit rate over 240/minute burst 120 packets } drop
+        tcp dport { 80, 443 } accept
+        udp dport 3478 accept
+        udp dport 49152-49500 accept
+    }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+    chain output {
+        type filter hook output priority filter; policy accept;
+        # Incoming SSH/proxy/relay responses must survive private destination blocks.
+        ct direction reply ct state established,related accept
+        # Local DNS and Caddy's reload API are intentional host dependencies.
+        meta skuid { "proxy", "caddy", "haproxy", "turnserver" } ip daddr 127.0.0.53 udp dport 53 accept
+        meta skuid { "proxy", "caddy", "haproxy", "turnserver" } ip daddr 127.0.0.53 tcp dport 53 accept
+        meta skuid "caddy" ip daddr 127.0.0.1 tcp dport 2019 accept
+        # Explicit destination AND service identity, not these ports on any peer.
+        meta skuid "caddy" oifname "tailscale0" ip daddr @media_nodes tcp dport 30096 accept
+        meta skuid "haproxy" oifname "tailscale0" ip daddr @minecraft_nodes tcp dport 25565 accept
+        meta skuid { "proxy", "caddy", "haproxy", "turnserver" } ip daddr @private4 counter drop
+        meta skuid { "proxy", "caddy", "haproxy", "turnserver" } ip6 daddr @private6 counter drop
+        meta skuid { "proxy", "caddy", "haproxy", "turnserver" } fib daddr type local counter drop
+        oifname "tailscale0" ip protocol icmp accept
+        oifname "tailscale0" ip6 nexthdr ipv6-icmp accept
+        oifname "tailscale0" counter drop
+    }
+}
