@@ -36,6 +36,9 @@ spec:
         - name: guacd
           image: "{{ .Values.guacd.image.repository }}:{{ .Values.guacd.image.tag }}"
           imagePullPolicy: {{ .Values.guacd.image.pullPolicy }}
+          # guacd has no authentication; only the sibling web app may connect.
+          command: ["/opt/guacamole/sbin/guacd"]
+          args: ["-f", "-b", "127.0.0.1", "-L", "info"]
           ports:
             - name: guacd
               containerPort: 4822

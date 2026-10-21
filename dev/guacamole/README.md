@@ -105,3 +105,9 @@ over a single replica blocks node drains forever, which
 **`security: any`.** Stricter than `nla` would be better, but NLA needs the
 credentials up front — which defeats the empty-username default, since NLA has
 nowhere to prompt.
+
+## Internal access
+
+The unauthenticated guacd daemon binds only to `127.0.0.1:4822`; its sibling
+web application connects over loopback. An ingress NetworkPolicy admits only
+Traefik to the web port and exposes no daemon port to other pods.
