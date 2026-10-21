@@ -326,27 +326,27 @@ meant to be off is visible at deploy time.
 
 ## RBAC
 
-Read-only: `nodes` list, `nodes/proxy` + `nodes/stats` get, `pods` list,
-`events` list, `persistentvolumeclaims`/`persistentvolumes` list,
-`deployments`/`statefulsets`/`daemonsets` list, `jobs`/`cronjobs` list, and
-`ingresses` list.
+The collector may list nodes, pods, events, PVCs/PVs, workloads, jobs/CronJobs and
+Ingresses; it can get `nodes/stats` and the namespaced `versions-report` ConfigMap.
+It has no `nodes/proxy`, container exec, pod-log or Secret access.
 
-Still narrower than talaria's backend role this came from — but the gap has
-closed. That role also carried `pods/log`, `jobs` and `cronjobs`; the jobs lane
-now needs the last two, so **`pods/log` is what remains**, and it is the one that
-matters: log text is unbounded application output, a different class of
-disclosure from object metadata, and it is not going on a page.
+Node measurements come directly from `https://<InternalIP>:10250/stats/summary`
+using the rotating service-account token and the cluster CA, with certificate
+and IP verification enabled. All ten nodes were tested with a temporary
+`nodes/stats`-only identity; stats succeeded, while kubelet `/pods` and the
+API-server node proxy returned HTTP 403. No proxy or insecure-TLS fallback exists.
 
-Every rule is `list` or `get`, and the five added for the routing, storage and
-jobs panels are all plain object reads — none is a proxy or subresource verb, so
-none of them widens what this ServiceAccount can *reach*, only what it can
-enumerate.
+Pod-wide token automount is disabled. An explicit one-hour projected token and
+CA volume are mounted only in the collector. nginx has neither that mount nor
+the collector code mount; its shared data mount remains read-only. Each request
+rereads the token to handle rotation. Authenticated redirects are rejected so a
+server cannot redirect the bearer credential to another destination.
 
-`nodes/proxy` is still the powerful one — it's what reaches kubelet's
-`/stats/summary` for the CPU/RAM/disk/network numbers, and it's why no
-metrics-server is needed. It also means this ServiceAccount can proxy to
-kubelets, so nothing else should borrow it. That warning points at exactly one
-grant, and still does.
+`get nodes/proxy` is not a read-only permission: it can authorize kubelet
+container execution. Do not reintroduce it to solve a metrics connectivity issue.
+See [Kubernetes kubelet authorization](https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/).
+The collector still exposes cluster inventory on this tailnet-only dashboard;
+credential separation does not turn that inventory into public data.
 
 ## A bug fixed on the way over
 

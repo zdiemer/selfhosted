@@ -28,6 +28,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "cluster-status.fullname" . }}
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -62,6 +63,19 @@ spec:
             matchLabels:
               {{- include "cluster-status.selectorLabels" . | nindent 14 }}
       volumes:
+        # Explicit projection is mounted only by the collector, never nginx.
+        - name: collector-api
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         - name: data
           emptyDir: {}
         - name: collector
@@ -163,6 +177,9 @@ spec:
             - name: CATALOG
               value: {{ .Values.catalog.services | toJson | quote }}
           volumeMounts:
+            - name: collector-api
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
             - name: data
               mountPath: /data
             - name: collector
