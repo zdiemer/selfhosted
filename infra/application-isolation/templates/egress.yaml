@@ -1,16 +1,17 @@
 {{- range $namespace, $apps := .Values.applications }}
+{{- range $app := $apps }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: application-egress
+  name: {{ $app }}-application-egress
   namespace: {{ $namespace }}
 spec:
   podSelector:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: {{ toJson $apps }}
+        values: [{{ $app | quote }}]
       {{- if eq $namespace "docs" }}
       # Parsers have a stricter no-egress policy; never add grants to it.
       - key: app.kubernetes.io/component
@@ -31,10 +32,8 @@ spec:
         - {port: 53, protocol: TCP}
     - to:
         - podSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: NotIn
-                values: [steam-headless]
+            matchLabels:
+              app.kubernetes.io/name: {{ $app | quote }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -58,4 +57,9 @@ spec:
       ports:
         - {port: 3128, protocol: TCP}
         - {port: 3131, protocol: TCP}
+    {{- $deps := index ($.Values.dependencies | default dict) $namespace | default dict }}
+    {{- with index $deps $app }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
 {{- end }}

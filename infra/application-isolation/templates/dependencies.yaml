@@ -1,0 +1,36 @@
+{{- range .Values.extraEgress }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+spec:
+  podSelector: {{ toJson .podSelector }}
+  policyTypes: [Egress]
+  egress: {{ toJson .egress }}
+{{- end }}
+{{- range .Values.databases }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .app }}-database-ingress
+  namespace: {{ .namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .app }}
+      app.kubernetes.io/component: {{ .component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .app }}
+        - podSelector:
+            matchLabels:
+              k8up.io/backupCommandPod: 'true'
+      ports:
+        - {port: {{ .port }}, protocol: TCP}
+{{- end }}

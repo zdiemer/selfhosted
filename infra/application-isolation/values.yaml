@@ -1,9 +1,210 @@
-# Named applications only: backup/operator jobs retain their existing policies.
-# Host-network Steam needs its own listener controls and a VM isolation boundary.
+# Explicit applications and dependencies; backups and operators retain their own policies.
+# Steam has a dedicated policy in its chart. Public IPv4 is allowed; private ranges are denied.
 applications:
-  games: [cloud-game, ffxiv-1x, gamedex, ra2, romm, romm-webstation, ror2-server, smt-imagine]
-  media: [arr, bitmagnet, jellyfin, jellyseerr]
-  docs: [paperless-ngx, stirling-pdf]
-  web: [diemer-codes, kelsey-green, luke-birthday, old-diemer-codes]
-  rachel: [rachel-freeman]
-  discord: [smitele-bot, vocard]
+  games:
+  - cloud-game
+  - ffxiv-1x
+  - gamedex
+  - ra2
+  - romm
+  - romm-webstation
+  - ror2-server
+  - smt-imagine
+  media:
+  - arr
+  - bitmagnet
+  - jellyfin
+  - jellyseerr
+  docs:
+  - paperless-ngx
+  - stirling-pdf
+  web:
+  - diemer-codes
+  - kelsey-green
+  - luke-birthday
+  - old-diemer-codes
+  rachel:
+  - rachel-freeman
+  discord:
+  - smitele-bot
+  - vocard
+  talaria:
+  - talaria
+  whatnow:
+  - whatnowgg
+  minecraft:
+  - minecraft
+  auth:
+  - authelia
+  - keepass
+  ai:
+  - ollama
+dependencies:
+  games:
+    gamedex:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: games
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: romm
+      ports:
+      - port: 8080
+        protocol: TCP
+    romm:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: games
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: romm-webstation
+      ports:
+      - port: 3000
+        protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: auth
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: authelia
+      ports:
+      - port: 9091
+        protocol: TCP
+    romm-webstation:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: games
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: romm
+      ports:
+      - port: 8080
+        protocol: TCP
+  media:
+    jellyseerr:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: media
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: jellyfin
+      ports:
+      - port: 8096
+        protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: media
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: arr
+      ports:
+      - port: 7878
+        protocol: TCP
+      - port: 8989
+        protocol: TCP
+    arr:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: media
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: jellyfin
+      ports:
+      - port: 8096
+        protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: media
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: bitmagnet
+      ports:
+      - port: 3333
+        protocol: TCP
+  auth:
+    authelia:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: auth
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: authelia-redis
+      ports:
+      - port: 6379
+        protocol: TCP
+  talaria:
+    talaria:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: infra
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: sms-relay
+      ports:
+      - port: 8000
+        protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ai
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: ollama
+      ports:
+      - port: 11434
+        protocol: TCP
+extraEgress:
+- name: talaria-diagnostics-api
+  namespace: talaria
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: talaria
+    matchExpressions:
+    - key: app.kubernetes.io/component
+      operator: In
+      values:
+      - backend
+      - general-worker
+      - scraper-worker
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.43.0.1/32
+    - ipBlock:
+        cidr: 192.168.4.21/32
+    - ipBlock:
+        cidr: 192.168.4.25/32
+    - ipBlock:
+        cidr: 192.168.4.26/32
+    ports:
+    - port: 443
+      protocol: TCP
+    - port: 6443
+      protocol: TCP
+databases:
+- namespace: games
+  app: romm
+  component: db
+  port: 3306
+- namespace: media
+  app: bitmagnet
+  component: postgres
+  port: 5432
+- namespace: discord
+  app: vocard
+  component: mongo
+  port: 27017
+- namespace: rachel
+  app: rachel-freeman
+  component: postgres
+  port: 5432
