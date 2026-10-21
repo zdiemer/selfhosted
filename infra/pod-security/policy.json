@@ -1,7 +1,11 @@
 {
   "version": "v1.35",
   "default": "baseline",
-  "restricted": ["cdi", "fsu", "keda"],
+  "restricted": [
+    "cdi",
+    "fsu",
+    "keda"
+  ],
   "exceptions": {
     "crowdsec": "Agent reads host log files using hostPath mounts.",
     "democratic-csi": "Storage drivers require privileged containers, host networking and host device mounts.",
@@ -11,6 +15,6 @@
     "kubevirt": "Virtualization node handlers require privilege, host PID and device mounts.",
     "media": "Gluetun requires NET_ADMIN for the qBittorrent VPN. Jellyfin writable media is preserved.",
     "minecraft": "Claude bridge uses a hostPath mount.",
-    "talaria": "Elasticsearch uses IPC_LOCK; isolated restore init requires DAC_READ_SEARCH. Revisit after restore and capability removal."
+    "talaria": "In-progress isolated restore init requires DAC_READ_SEARCH; Elasticsearch IPC_LOCK removed. Application admission guard constrains this remaining capability."
   }
 }
