@@ -1,19 +1,25 @@
 {{- if .Values.cache.enabled }}
+{{- $root := . }}
+{{- range $name := list .Values.cache.claimName .Values.cache.legacyClaimName }}
+{{- if $name }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "buildkit.fullname" . }}-cache
+  name: {{ $name }}
   labels:
-    {{- include "buildkit.labels" . | nindent 4 }}
+    {{- include "buildkit.labels" $root | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.cache.size }}
-  {{- with .Values.cache.storageClass }}
+      storage: {{ $root.Values.cache.size }}
+  {{- with $root.Values.cache.storageClass }}
   # Only rendered when non-empty: an explicit `storageClassName: ""` disables
   # dynamic provisioning entirely and the PVC sits Pending forever.
   storageClassName: {{ . }}
   {{- end }}
+{{- end }}
+{{- end }}
 {{- end }}

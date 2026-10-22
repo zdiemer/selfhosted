@@ -14,6 +14,10 @@ service:
   port: 1234
 
 cache:
+  # Userns changes on-disk subordinate ownership. Start a clean cache and retain
+  # the old claim for rollback; never recursively chown an active snapshot store.
+  claimName: buildkit-userns-cache
+  legacyClaimName: buildkit-cache
   # Build cache (layers, snapshots). buildkitd's default GC keeps it bounded;
   # tune via a buildkitd.toml ConfigMap if this ever fills.
   # NOTE: local-path can't expand a bound PVC — changing size means deleting

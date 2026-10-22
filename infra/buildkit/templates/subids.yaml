@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkit-subids
+data:
+  # Kubernetes maps 65536 pod IDs onto a distinct high host range. RootlessKit
+  # maps build UID 0 to pod UID 1000, then all remaining IDs without overlap.
+  # Build UIDs 0..65535 are supported. These are POD IDs, not host subuids.
+  subuid: |
+    user:0:1000
+    user:1001:64535
+  subgid: |
+    user:0:1000
+    user:1001:64535

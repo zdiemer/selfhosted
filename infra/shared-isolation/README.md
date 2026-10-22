@@ -193,14 +193,18 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-22, after the host-containment baseline:
+Planning inventory as of 2026-10-22, after host containment and BuildKit process isolation:
 
-1. Shared BuildKit process containment (the no-process-sandbox exception).
-2. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
-3. Backups outside the NAS failure domain.
-4. Clean-droplet recovery rehearsal.
-5. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-6. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
+2. Backups outside the NAS failure domain.
+3. Clean-droplet recovery rehearsal.
+4. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+5. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+
+Shared [BuildKit process isolation](../buildkit/README.md) is complete: rootless
+BuildKit now uses pod user namespaces and per-RUN PID namespaces, with live
+remote builds, cache persistence and registry push/pull verified. The shared
+daemon/kernel/resource budget remains a trust boundary for approved repositories.
 
 The [host-containment baseline](../host-containment/README.md) now covers all ten
 nodes, CSI sidecars/mount exceptions, virt-handler permissions, host metrics
@@ -215,7 +219,7 @@ reports Ready, and the host guard service and nftables table remain active.
 primary host: private ntfy reminders at 7d, 3d, 2d, 1d and 12hr, plus expiry.
 They cover devices visible in that host's tailnet inventory.
 
-These are workstreams, not six confirmed exploitable vulnerabilities or an
+These are workstreams, not five confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
 
