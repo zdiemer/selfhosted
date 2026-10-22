@@ -76,7 +76,11 @@ On 2026-10-22 the owner declined offsite cluster backup storage given the cost.
 NAS/site loss can therefore lose both cluster data and its local backups.
 Do not treat offsite storage as a pending purchase or claim independent cluster
 recovery coverage. The owner reports droplet backups are enabled; validating
-their restore procedure remains outstanding.
+their restore procedure remains outstanding. The [droplet rehearsal
+runbook](../infra/droplet-recovery/README.md) covers first-boot quarantine,
+guarded database validation, runtime/reboot checks and cleanup. Preparation is
+complete; no provider backup has been restored yet because DigitalOcean access
+is unavailable in this workspace.
 
 ## Improvements to plan
 

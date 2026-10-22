@@ -195,7 +195,9 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 Planning inventory as of 2026-10-22, after host containment, BuildKit isolation and logical database restore drills:
 
-1. Clean-droplet recovery rehearsal (provider backups are enabled, per owner).
+1. [Droplet recovery rehearsal](../droplet-recovery/README.md): quarantine runbook
+   and clone database verifier prepared; actual provider-backup restore and
+   clean-host rebuild remain untested pending DigitalOcean access.
 2. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
 3. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
 
