@@ -287,7 +287,7 @@ serviceChecks:
 #                healthy replica count, which is the whole reason probes exist.
 #   hosts      — narrows an entry to some of its Service's hostnames. One
 #                Service can front two unrelated front doors: claude-workspace
-#                answers as both the terminal and the bakery, and merging them
+#                answers as both the terminal and the journal, and merging them
 #                into one tile loses whichever you were looking for.
 #   publicUrl  — a hostname published straight off a tunnel connector to a
 #                Service, with no Ingress rule of its own. kelsey.green is the
@@ -574,14 +574,6 @@ catalog:
       namespace: claude
       service: claude-workspace
       hosts: [claude.zachd.duckdns.org]
-    - name: Bakery
-      category: Dev
-      namespace: claude
-      service: claude-workspace
-      hosts: [bakery.zachd.duckdns.org]
-      # Same Service, same pod, different front door — so it needs its own icon
-      # slug or the two tiles would share one mark.
-      slug: bakery
     - name: Trading workspace
       category: Dev
       namespace: claude
@@ -592,11 +584,6 @@ catalog:
       category: Dev
       namespace: happy
       service: happy-server
-    - name: Rachel workspace
-      category: Dev
-      namespace: claude-rachel
-      service: rachel-workspace
-      note: no ingress
     - name: Windows 11
       category: Dev
       namespace: dev
@@ -673,14 +660,6 @@ catalog:
       namespace: infra
       service: cluster-status
       note: this page
-    - name: Headlamp
-      category: Infrastructure
-      namespace: headlamp
-      service: headlamp
-      # Deliberately unpublished — reachable by port-forward or NodePort only,
-      # so there is no Ingress to take an icon port from.
-      note: port-forward only
-      iconPort: 80
     - name: BuildKit
       category: Infrastructure
       namespace: buildkit

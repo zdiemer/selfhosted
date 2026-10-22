@@ -168,9 +168,7 @@ Parking it with the cluster would save those two rules, and it is the reasonable
 scope cut if inter-VLAN routing turns out to be friction. But L2 adjacency is
 not a rule you can narrow: it would put an unpatched consumer Android next to
 all cluster nodes and `192.168.4.36` — NFS exports, the iSCSI portal, SMB, the
-kubelets, etcd on the three control planes, and Headlamp on `:30100`, which
-answers on every node IP and whose token `infra/headlamp/README.md` describes
-as a full cluster credential. If this cut is ever taken, turn that NodePort off.
+kubelets and etcd on the three control planes.
 
 The traffic is also one-directional in intent: the cluster initiates, the phone
 initiates exactly one thing back. On its own VLAN that is two rules saying
@@ -209,7 +207,7 @@ single URL.
 | cluster → trusted | **deny** — the point of the exercise |
 | cluster → untrusted | `192.168.30.24:8080` only |
 | cluster → internet | allow (via `infra/egress-proxy` where opted in) |
-| trusted → cluster | 443, 30096 (Jellyfin), 30100 (Headlamp), 25565 (Minecraft) |
+| trusted → cluster | 443, 30096 (Jellyfin), 25565 (Minecraft) |
 | trusted → NAS | L2 on VLAN 20, no rule |
 | untrusted → cluster | `<node-ip>:3XXXX` only |
 | untrusted → trusted | deny |

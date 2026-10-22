@@ -1735,7 +1735,7 @@ data:
             matched = by_backend.get((ns, svc), [])
             # `hosts` narrows an entry to some of its Service's names. One
             # Service can front two unrelated front doors — claude-workspace
-            # answers as both the terminal and the bakery — and merging those
+            # answers as both the terminal and the journal — and merging those
             # into one tile would lose the one you were looking for.
             want = e.get("hosts")
             if want:

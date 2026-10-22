@@ -1,4 +1,4 @@
-{{- range $namespace := list "headlamp" "renovate" }}
+{{- range $namespace := list "renovate" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -25,15 +25,6 @@ spec:
       ports:
         - {port: 53, protocol: UDP}
         - {port: 53, protocol: TCP}
-    {{- if eq $namespace "headlamp" }}
-    - to:
-        {{- range $.Values.apiAddresses }}
-        - ipBlock: {cidr: {{ . | quote }}}
-        {{- end }}
-      ports:
-        - {port: 443, protocol: TCP}
-        - {port: 6443, protocol: TCP}
-    {{- else }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -41,5 +32,4 @@ spec:
       ports:
         - {port: 80, protocol: TCP}
         - {port: 443, protocol: TCP}
-    {{- end }}
 {{- end }}

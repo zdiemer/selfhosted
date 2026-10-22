@@ -14,13 +14,7 @@ NAMESPACE="${NAMESPACE:-claude}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
 
-# A second, delegated instance of this chart — same image, different scope.
-# PROFILE=rachel layers values.rachel.yaml over values.yaml and resolves
-# values.rachel.local.yaml (her phone numbers and Signal account) from its own
-# 1Password item instead of the main one. Unset, everything below behaves
-# exactly as it did before profiles existed.
-#
-#   PROFILE=rachel RELEASE=rachel-workspace NAMESPACE=claude-rachel ./upgrade.sh
+# Optional profiles layer values.<profile>.yaml and their own secrets.
 PROFILE="${PROFILE:-}"
 SECRET_STEM="values.local"
 if [[ -n "$PROFILE" ]]; then
@@ -61,7 +55,7 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 # Refuse to roll onto a tag that isn't in the registry (ported from
 # infra/sms-relay). strategy: Recreate tears the pod down *before* the
 # replacement pulls, so a missing tag doesn't fail safe — it takes every
-# surface (term, Happy, bakery, messaging) down until someone notices.
+# surface (term, Happy, messaging) down until someone notices.
 # Match Helm's base/profile/secret precedence when resolving the image. A
 # delegated profile may disable the catalog or override the image entirely.
 IMAGE_SETTINGS="$(sv_fd "$SECRET_STEM" | python3 -c '

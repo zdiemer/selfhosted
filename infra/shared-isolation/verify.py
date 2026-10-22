@@ -17,11 +17,11 @@ args = parser.parse_args()
 runner_namespaces = []
 if args.ci:
     runner_namespaces = [x['metadata']['name'] for x in json.loads(kubectl('get','ns','-l','actions-runner.zachd/repo','-o','json'))['items'] if x['status']['phase']=='Active']
-namespaces = ['infra','headlamp','renovate'] + (['arc-systems'] + runner_namespaces if args.ci else [])
+namespaces = ['infra','renovate'] + (['arc-systems'] + runner_namespaces if args.ci else [])
 name = 'isolation-check-' + uuid.uuid4().hex[:8]
 created = []
 probe = '''import socket,json,concurrent.futures,urllib.request
-checks={'api':('kubernetes.default.svc',443),'api-backend':('192.168.4.21',6443),'nas':('192.168.4.36',443),'authelia':('authelia.auth.svc',9091),'metadata':('169.254.169.254',80),'headlamp':('headlamp.headlamp.svc',80)}
+checks={'api':('kubernetes.default.svc',443),'api-backend':('192.168.4.21',6443),'nas':('192.168.4.36',443),'authelia':('authelia.auth.svc',9091),'metadata':('169.254.169.254',80)}
 def check(item):
  name,(host,port)=item
  try:
@@ -38,7 +38,7 @@ print(json.dumps(result))
 '''
 try:
     # The same worker avoids differences in node routing. Never use host networking.
-    node = json.loads(kubectl('get', 'pods', '-n', 'headlamp', '-l', 'app.kubernetes.io/name=headlamp', '-o', 'json'))['items'][0]['spec']['nodeName']
+    node = next(x['metadata']['name'] for x in json.loads(kubectl('get', 'nodes', '-o', 'json'))['items'] if not x['spec'].get('unschedulable') and any(c['type']=='Ready' and c['status']=='True' for c in x['status']['conditions']))
     for ns in namespaces:
         pod = {'apiVersion':'v1','kind':'Pod','metadata':{'name':name,'namespace':ns},'spec':{
             'nodeName':node,'automountServiceAccountToken':False,'restartPolicy':'Never',
@@ -57,14 +57,14 @@ try:
         ip = json.loads(kubectl('get','pod',name,'-n',ns,'-o','json'))['status']['podIP']
         code = "import socket\ntry:\n socket.create_connection((%r,9000),timeout=3).close(); print('allowed')\nexcept OSError: print('blocked')" % ip
         outcome = kubectl('exec','-n','infra',name,'--','python','-c',code).strip()
-        assert outcome == ('allowed' if ns=='headlamp' else 'blocked'), (ns,'ingress',outcome)
+        assert outcome == 'blocked', (ns,'ingress',outcome)
         print(ns+' ingress: '+outcome)
     print(json.dumps(results,indent=2))
     control = results['infra']
-    for target in ['api','api-backend','nas','authelia','headlamp','github','npm','dns']:
+    for target in ['api','api-backend','nas','authelia','github','npm','dns']:
         assert control[target], 'Control destination unavailable: '+target
     for ns in namespaces[1:]:
-        expected = {'dns','api','api-backend'} if ns=='headlamp' else {'dns','github','npm'}
+        expected = {'dns','github','npm'}
         if ns=='arc-systems':
             expected |= {'api','api-backend'}
         for target,allowed in results[ns].items():

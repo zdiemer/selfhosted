@@ -44,7 +44,7 @@ stay in the log line and are pulled out with `| json` or `| regexp` in the
 panels that need them, which costs nothing.
 
 **Both security-relevant dashboards state their own blind spots.** Minecraft
-`:25565`, Jellyfin via the VPS Caddy relay, and headlamp's NodePort never
+`:25565` and Jellyfin via the VPS Caddy relay never
 traverse Traefik, so no access-log panel can see them. A security dashboard that
 doesn't say what it misses invites being trusted past its edge.
 

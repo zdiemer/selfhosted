@@ -156,7 +156,7 @@ day. A cold grid fills over a couple of minutes.
 **When there is no icon**, the tile draws a monogram on a colour hashed from the
 service name — stable per service, distinguishable at a glance, and never a
 broken-image icon on a status page. That is the honest outcome for five of them:
-`claude-workspace`, `rachel-workspace` and `happy-server` carry NetworkPolicies
+`claude-workspace` and `happy-server` carry NetworkPolicies
 that refuse connections from anything but their own ingress (correct, and not
 being relaxed for a favicon), `keepass-keeweb` does not answer plain HTTP on its
 Service port, and `keepass-webdav` answers `401` to everything. Drop a file in

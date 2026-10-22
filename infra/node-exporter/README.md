@@ -25,7 +25,6 @@ of external *HTTP* by construction, but three things bypass it entirely:
 |---|---|
 | Minecraft `:25565` | LoadBalancer TCP, via the VPS haproxy relay |
 | Jellyfin `:30096` | NodePort, via the VPS Caddy relay |
-| headlamp `:30100` | NodePort |
 
 Those are plausibly the *largest* byte flows in and out of this cluster, and
 until now none of them were counted anywhere. `node_network_receive_bytes_total`

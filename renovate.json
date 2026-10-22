@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "selfhosted: helm-values covers image.repository/tag pairs in values.yaml; the custom managers cover everything the annotation comments mark \u2014 CHART_VERSION pins in upgrade.sh, ARG pins in Dockerfiles, combined repo:tag image strings in values/templates, and Chart.yaml appVersion (same depName as the values tag, so both land in one PR). Deliberately unmanaged: minecraft MODRINTH/MODS (unsortable IDs, moves with the client pack), claude-code@latest, OP_VERSION/BAKERY_REF, kelsey-green's git-sync deploy branch, and everything ghcr.io/zdiemer/*.",
+  "description": "selfhosted: helm-values covers image.repository/tag pairs in values.yaml; the custom managers cover everything the annotation comments mark \u2014 CHART_VERSION pins in upgrade.sh, ARG pins in Dockerfiles, combined repo:tag image strings in values/templates, and Chart.yaml appVersion (same depName as the values tag, so both land in one PR). Deliberately unmanaged: minecraft MODRINTH/MODS (unsortable IDs, moves with the client pack), claude-code@latest, OP_VERSION, kelsey-green's git-sync deploy branch, and everything ghcr.io/zdiemer/*.",
   "extends": [
     "local>zdiemer/selfhosted//renovate/default"
   ],

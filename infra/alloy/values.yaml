@@ -1,7 +1,7 @@
 # Grafana Alloy — ships logs and metrics for the cluster to Grafana Cloud.
 #
 # VALUES-ONLY. There is no chart here; this file is passed to the upstream
-# `grafana/alloy` chart, the same arrangement as infra/headlamp and minecraft/.
+# `grafana/alloy` chart, the same arrangement as minecraft/.
 # upgrade.sh does the `helm repo add` and creates the credentials Secret.
 #
 # It installs TWO releases from this one directory, the way infra/democratic-csi

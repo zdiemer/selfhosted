@@ -9,7 +9,7 @@
 # "GLIBC_2.39 not found", because bookworm has 2.36. Cheap to build — the crate's
 # [dependencies] is EMPTY ("the shipped binary remains dependency-free"), so this
 # stage compiles std-only Rust and pulls nothing from crates.io.
-# The pinned tag is the trust anchor, same as BAKERY_REF below.
+# The pinned tag is the trust anchor.
 # renovate: datasource=github-releases depName=BrokkAi/muse-acp extractVersion=^v(?<version>.+)$
 ARG MUSE_ACP_VERSION=0.14.0
 # renovate: datasource=docker depName=rust
@@ -55,16 +55,8 @@ ARG SOPS_VERSION=v3.13.3
 # the tailscale/docker/happy logins — no token is baked into the image.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
 ARG GH_VERSION=2.102.0
-# Bakery (github.com/seemethere/bakery, npm name pi-web-agent) — a web coding
-# harness served under /bakery's own subdomain (see README "Bakery surface").
-# It's a Bun monorepo (server + Vite web); there's no published image, so we
-# vendor the source at a pinned ref and `bun install` at build time. Bun is
-# exact-pinned for reproducible builds (Renovate bumps within 1.x; majors are
-# gated); BAKERY_REF is pinned to the commit the v3 image was built from
-# (upstream cuts no release tags) — bump deliberately, same as the claude CLI.
 # renovate: datasource=npm depName=bun
 ARG BUN_VERSION=1.4.3
-ARG BAKERY_REF=a666a6d2302a7db1d6649eae519dd44d407c069c
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
 # until the laptop published again. With op present, scripts/op-session.sh signs
@@ -208,7 +200,7 @@ COPY --from=muse-acp-build --chmod=0755 \
 # pinned — it must track the self-hosted relay (dev/happy-server, HAPPY_REF in
 # its build.sh), so upgrade the pair deliberately. Run `happy` instead of
 # `claude` in tmux to get phone remote control; plain `claude` still works.
-# Bun is the runtime bakery needs (its server + Vite web both run under `bun`).
+# Bun runs the messaging gateway and journal viewer.
 # codex and gemini-cli are pinned like every other tool here; they are agents in
 # their own right, not models, and both Happy and the messaging gateway select
 # between them at runtime (see the agent ARGs above).
@@ -221,21 +213,10 @@ RUN npm install -g @anthropic-ai/claude-code@latest happy@1.2.5 "bun@${BUN_VERSI
 COPY recovery /opt/workspace-recovery
 RUN python3 /opt/workspace-recovery/patch-happy.py /usr/local/lib/node_modules/happy
 
-# Vendor bakery at a pinned ref and install its deps at build time. The pod's
-# rootfs is read-only for the other surfaces, but the bakery containers run
-# with readOnlyRootFilesystem:false (bun/vite write transpile caches into the
-# tree), so /opt/bakery must be owned by uid 1000. bun install runs the repo's
-# postinstall hook; egress 80/443 is open on buildkitd (infra/buildkit).
-RUN git clone --filter=blob:none https://github.com/seemethere/bakery /opt/bakery \
- && git -C /opt/bakery checkout "${BAKERY_REF}" \
- && ( cd /opt/bakery && HOME=/root bun install ) \
- && chown -R 1000:1000 /opt/bakery \
- && rm -rf /root/.bun/install/cache
-
 # The messaging gateway (Signal/WhatsApp → headless claude, see gateway/ and
-# README "Messaging surface"). In-repo app baked into this image like bakery;
+# README "Messaging surface"). In-repo app baked into this image;
 # deps resolve at build time so the pod never runs a package install. Owned by
-# uid 1000 for symmetry with /opt/bakery, though it runs read-only.
+# uid 1000, and runs read-only.
 # The secrets CLI, generated into the context by build.sh. On PATH as `secrets`
 # so the pod can read and edit vault items with no checkout and no script path.
 COPY --chmod=0755 secrets-cli /usr/local/bin/secrets

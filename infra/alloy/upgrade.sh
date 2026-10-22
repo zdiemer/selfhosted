@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install/upgrade Grafana Alloy from the upstream chart, with our values.
 #
-# Values-only project (like infra/headlamp and minecraft/): there is no chart
+# Values-only project (like minecraft/): there is no chart
 # here, so this adds the upstream repo first. It also builds the Grafana Cloud
 # credentials Secret out of values.local.yaml, because the upstream chart has no
 # way to create one and the token must not end up in a ConfigMap.

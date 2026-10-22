@@ -13,7 +13,7 @@ metadata:
 {{- if .Values.rbac.clusterAdmin }}
 ---
 {{/*
-⚠️ cluster-admin, on purpose (same tradeoff as infra/headlamp): the workspace
+⚠️ cluster-admin, on purpose: the workspace
 deploys every chart in this repo — including cluster-scoped objects like
 PriorityClasses and other charts' ClusterRoles, and its own chart — and runs
 the scripts/k3s node maintenance (drain/uncordon). A curated ClusterRole would

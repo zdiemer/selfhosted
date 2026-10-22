@@ -16,7 +16,7 @@ These lived in the sibling talaria project's chart, which meant an app repo
 owned the default scheduling policy for the whole cluster. At the time of the
 move, **55 pods across 11 namespaces** ran under `platform-app` — only 15 of them
 talaria's. The other 40 were minecraft, web, docs, infra, discord, keda, games,
-auth, kube-system and headlamp.
+auth and kube-system.
 
 Most charts here inherit `platform-app` silently. Archive Team Warrior explicitly
 uses `spare-compute`. The defaults would otherwise have kept coming from a chart

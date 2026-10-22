@@ -69,7 +69,7 @@ service:
   port: 8096
   # LAN door for smart TVs: a second NodePort Service so TV apps can reach
   # http://<any-node-ip>:30096 without DNS, hairpin NAT, or TLS quirks.
-  # Same pattern as infra/headlamp's :30100. The DuckDNS ingress stays the
+  # The DuckDNS ingress stays the
   # primary (and remote) address.
   nodePort:
     enabled: true

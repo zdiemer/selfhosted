@@ -169,6 +169,6 @@ kubectl get validatingadmissionpolicybinding ingress-policy \
 - **Anything in `kube-system`.** Those objects are created by k3s itself and
   answer to upstream defaults, not ours.
 - **Non-HTTP ingress.** `mc-minecraft` (TCP 25565), `mc-minecraft-bluemap`
-  (:8100 on every node IP), and `headlamp` (NodePort 30100) are LoadBalancer and
+  (:8100 on every node IP) are LoadBalancer and
   NodePort services that bypass Traefik entirely. An Ingress policy cannot see
   them; they are listed in the repo README instead.

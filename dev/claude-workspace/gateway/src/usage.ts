@@ -12,7 +12,7 @@ import { config } from "./config.ts";
 // message carries the exact `usage` block the API returned. Summing those is
 // the same arithmetic ccusage does, with no network call and no extra auth.
 //
-// It counts THIS workspace only — tmux, Happy, bakery-less claude runs and chat
+// It counts THIS workspace only — tmux, Happy, standalone claude runs and chat
 // runs all share this $HOME, so it's the whole pod, but nothing you ran on the
 // laptop.
 

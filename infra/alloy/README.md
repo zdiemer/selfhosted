@@ -2,7 +2,7 @@
 
 Grafana Alloy shipping the cluster's logs and metrics to Grafana Cloud's free
 tier. Values-only against the upstream `grafana/alloy` chart, the same
-arrangement as [`infra/headlamp`](../headlamp) and [`minecraft/`](../../minecraft).
+arrangement as [`minecraft/`](../../minecraft).
 
 **Two releases from this one directory**, the way
 [`infra/democratic-csi`](../democratic-csi) does:
@@ -359,7 +359,6 @@ Requests that never reach Traefik have **no access log anywhere**:
 |---|---|---|
 | `mc-minecraft` — LoadBalancer TCP `:25565` | public, via the VPS haproxy relay | a `tcp_connect` probe (up/down only) and node NIC counters (bytes only) |
 | Jellyfin — NodePort `:30096` | public, via the VPS Caddy relay | an HTTP probe and node NIC counters |
-| `headlamp` — NodePort `:30100`, **cluster-admin** ServiceAccount | LAN/tailnet | nothing |
 
 Neither relay ships its own log: haproxy writes to VPS syslog and Caddy keeps
 its access log on the VPS. The haproxy relay also does not preserve source IP,

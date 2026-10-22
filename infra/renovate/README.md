@@ -26,7 +26,7 @@ repo that already has thirty of them.
 ## Deliberately unmanaged
 
 minecraft's MODRINTH/MODS block (unsortable IDs, moves with the client pack),
-`claude-code@latest`, `OP_VERSION`/`BAKERY_REF`, kelsey-green's git-sync
+`claude-code@latest`, `OP_VERSION`, kelsey-green's git-sync
 `deploy` branch, submodule pointers (`scripts/sync-submodules.sh` owns those),
 and every first-party `ghcr.io/zdiemer/*` image.
 

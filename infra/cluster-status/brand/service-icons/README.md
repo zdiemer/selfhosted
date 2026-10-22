@@ -10,8 +10,7 @@ the fallback and the override.
 
 Two reasons to put a file here.
 
-**The collector cannot reach the service.** `claude-workspace`, `rachel-workspace`
-and `happy-server` carry NetworkPolicies that refuse connections from anything
+**The collector cannot reach the service.** `claude-workspace` and `happy-server` carry NetworkPolicies that refuse connections from anything
 but their own ingress. That is correct and is not going to be relaxed so a
 status page can have a picture. `keepass-keeweb` does not answer plain HTTP on
 its Service port at all, and `keepass-webdav` answers `401` to everything —

@@ -22,11 +22,6 @@ in sharing that home:
   This replaced CloudCLI (claudecodeui), which drove claude through headless
   mode and lost most of the harness (plan mode, hooks, skills); nothing
   serves `/` anymore.
-- **`bakery.zachd.duckdns.org`** — [bakery](https://github.com/seemethere/bakery)
-  (npm `pi-web-agent`): a second web coding-agent harness, on its own
-  subdomain rather than a path (see [Bakery surface](#bakery-surface) for why).
-  It runs its own agent against the same `~/code` repos, with state on the
-  PVC, behind the same Authelia gate on its own duckdns host.
 - **Signal / WhatsApp** — text the bot and it drives headless `claude -p`
   in this same `$HOME`; permission prompts round-trip as "reply 1/2/3"
   messages. The low-bandwidth surface: airline free-messaging wifi and
@@ -64,12 +59,9 @@ helm install claude-workspace . -n claude -f values.yaml
 kubectl -n claude get pods -w
 
 # 3. Smoke test the ports
-kubectl -n claude port-forward svc/claude-workspace 7681:7681 5173:5173 3141:3141 8088:8088
+kubectl -n claude port-forward svc/claude-workspace 7681:7681 8088:8088
 #   http://localhost:7681/term → tmux prompt echoes keystrokes
-#   http://localhost:3141/healthz → bakery server "ok"
 #   http://localhost:8088/ → journal viewer's latest runs
-#   (bakery web on 5173 refuses a localhost Host header — allowedHosts is set
-#    to the ingress host — so verify it end-to-end after the ingress is up)
 
 # 4. Expose
 cp values.local.yaml.example values.local.yaml   # ingress.enabled: true
@@ -363,59 +355,6 @@ not; that one needs `claude --resume`.
 
 Image-only refresh (tag unchanged): `kubectl -n claude rollout restart
 deploy/claude-workspace` — same session-death caveat.
-
-## Bakery surface
-
-[Bakery](https://github.com/seemethere/bakery) is a second web coding-agent
-harness, vendored into the image (`image.tag` v3+) and served at
-`bakery.zachd.duckdns.org`. It's two processes — a Bun API/WebSocket **server**
-(`PI_WEB_PORT` 3141) and a **Vite web** UI (5173) — running as two containers
-that share the same `$HOME` PVC as everything else.
-
-**Why a subdomain, not `/bakery`.** Bakery's web client has no base-path
-support (Vite `base` is unset) and talks to its server at an *absolute* origin
-it computes from `window.location` (defaulting to `:3141`). The one override,
-`VITE_PI_WEB_API_BASE`, is baked at serve time. So bakery can only live at the
-root of a host, and only *one* host per build — which is why it's a subdomain
-and, unlike `/` and `/term`, is **not** published on the `diemer.codes`
-Cloudflare tunnel. A path mount or a second domain would each require patching
-and rebuilding bakery; the subdomain avoids that fork entirely.
-
-**How it's wired.** `bakery.apiBase` is baked into the web client as
-`https://bakery.zachd.duckdns.org`, so REST + WebSocket calls are *same-origin*.
-The ingress path-splits that one host: `/api` (including the
-`/api/sessions/<id>/ws` WebSocket) → the server, everything else → Vite. Because
-it's same-origin under `zachd.duckdns.org`, Authelia's SSO cookie
-(`auth/authelia` `sessionDomain`) and the server's CORS/WS origin check both
-line up with no extra config, and `default_policy: two_factor` gates it with no
-new access-control rule. The host rides the existing `*.zachd.duckdns.org`
-wildcard DNS + cert — nothing to add in DuckDNS or Cloudflare.
-
-**No bakery token by default.** `PI_WEB_AUTH_TOKEN` is left unset: Authelia
-forward-auth is the only gate, exactly like `/` and `/term`. Set
-`bakery.authToken` (values.local.yaml) only for defense-in-depth — it's passed
-to the server *and* baked into the client (`VITE_PI_WEB_AUTH_TOKEN`), so the
-browser authenticates with no Settings-dialog entry.
-
-**First use (one-time).** Bakery runs its own coding agent, which keeps
-credentials in `~/.pi` on the PVC (separate from `~/.claude`). After the pod is
-up, open `https://bakery.zachd.duckdns.org` through Authelia and complete
-bakery's in-app agent login; or run its CLI from `/term`
-(`cd /opt/bakery && bun run bakery` — the login persists in `~/.pi`). Sessions,
-artifacts, and metadata live under `bakery.dataDir`
-(`~/.pi-web-agent`), also on the PVC.
-
-**Caveats.**
-- It runs the Vite **dev** server as the permanent surface (HMR off) — that's
-  what upstream ships (`bun run dev:lan`); there is no production build path.
-- The two bakery containers run with `readOnlyRootFilesystem: false`
-  (`bakery.readOnlyRootFilesystem`) because bun/vite write transpile caches into
-  `/opt/bakery`. The other surfaces keep the read-only rootfs.
-- Upstream has no published image and no release tags, so the Dockerfile pins
-  `BAKERY_REF` to the exact commit the current image was built from. Bump it
-  deliberately (then `./build.sh`), same as the claude CLI.
-- Turn the whole surface off with `bakery.enabled: false` (drops both
-  containers, the two service ports, the ingress host, and the netpol rule).
 
 ## Journal surface
 
@@ -1160,12 +1099,7 @@ tracks `claude-code@latest` at build time):
 ## Delegated instances
 
 A second release of this chart, handed to someone who should reach exactly one
-project. The worked example is `values.rachel.yaml` — Rachel, rachelfreeman.art,
-nothing else.
-
-```bash
-PROFILE=rachel RELEASE=rachel-workspace NAMESPACE=claude-rachel ./upgrade.sh
-```
+project.
 
 `PROFILE=<name>` layers `values.<name>.yaml` over `values.yaml` and resolves
 `values.<name>.local.yaml` from its own 1Password item rather than the main
@@ -1220,14 +1154,8 @@ instance is scoped to.
   tag + `pullPolicy: Always`). Schedule around live claude sessions — a
   restart kills tmux. Keep the `happy` pin roughly in step with
   happy-server's `HAPPY_REF` (see that chart's README).
-- **Upgrading bakery**: bump `BAKERY_REF` in the `Dockerfile` (and bump
-  `image.tag`, since it's a static tag), `./build.sh`, then roll the pod.
-  Bakery deps are `bun install`ed at build time, so a rebuild is required for
-  any bakery change — a plain rollout restart re-pulls the same tag and won't
-  pick up a new ref unless the tag also moved.
 - **readOnlyRootFilesystem**: on by default; claude, happy, and tmux all
-  write under `$HOME`/`/tmp` only (the bakery containers opt out via
-  `bakery.readOnlyRootFilesystem` — bun/vite write caches into /opt/bakery).
+  write under `$HOME`/`/tmp` only.
   If a tool upgrade starts writing into its npm package dir, flip
   `security.readOnlyRootFilesystem: false` in
   values.local.yaml and note the version here.
