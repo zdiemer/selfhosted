@@ -199,7 +199,10 @@ Planning inventory as of 2026-10-22, after host containment, BuildKit isolation 
    Cloudflare DNS and Tailscale OpenTofu stacks prepared and locally validated.
    Live inventory/import, firewall apply and full-policy grant hardening remain
    pending provider credentials; no provider changes deployed yet.
-2. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+   [Completion checklist](../provider-iac/FINISH.md).
+2. [Stronger Cloudflare origin identity](../whatnow-droplet/ORIGIN-IDENTITY.md):
+   proposed zone-specific authenticated origin pulls; needs Cloudflare SSL API
+   access but can proceed independently of DO/Tailscale adoption.
 
 Deferred by owner on 2026-10-22: [droplet recovery rehearsal](../droplet-recovery/README.md).
 Quarantine runbook and clone database verifier are prepared; provider-backup restore

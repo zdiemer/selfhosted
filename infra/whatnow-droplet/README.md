@@ -91,6 +91,8 @@ HTTP ACME challenge must remain reachable through Cloudflare; do not add an edge
 rule that blocks `/.well-known/acme-challenge/`. Restricting source ranges does not
 prove a request belongs to your Cloudflare zone: authenticated origin pulls or a
 tunnel would be a separate, stronger identity control.
+See [the origin identity plan](ORIGIN-IDENTITY.md) for the proposed zone-specific
+client certificate, required Cloudflare access, staged enforcement and rollback.
 
 ## Recovery and scope
 
