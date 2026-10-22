@@ -41,6 +41,12 @@ of it survives pod deletes and reschedules, on any node (no hostPath, no
 nodeSelector; the subscription login lives on the PVC, which is what frees
 this chart from claude-bridge's node pin).
 
+`/tmp` is shared, disk-backed ephemeral storage with a 16 GiB usage limit
+(`tmp.sizeLimit`). It does not consume the home PVC or charge temporary file
+contents against container memory limits. Pod replacement clears it; kubelet
+enforces the usage limit through eviction, so `df /tmp` shows the node filesystem
+capacity rather than a dedicated 16 GiB filesystem.
+
 The tmux server itself is in-memory: a **pod restart drops tmux sessions and
 any live claude process**. Recovery is cheap — the conversation jsonl is on
 the PVC, so open `/term` and `claude --resume` (or `claude -c` for the most

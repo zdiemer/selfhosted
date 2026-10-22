@@ -856,13 +856,11 @@ spec:
         - name: home
           persistentVolumeClaim:
             claimName: {{ include "claude-workspace.fullname" . }}-home
-        # Shared tmpfs — tmux sockets (/tmp/tmux-1000), the tailscaled socket,
-        # npm/npx caches, git temp objects. Ephemeral by design; roomier than
-        # the bridge's since interactive dev leans on /tmp harder.
+        # Shared node-backed scratch space for sockets, caches and build files.
+        # Avoid charging large temporary files against container memory limits.
         - name: tmp
           emptyDir:
-            medium: Memory
-            sizeLimit: 512Mi
+            sizeLimit: {{ .Values.tmp.sizeLimit }}
         {{- if and .Values.happy.daemon.enabled .Values.happy.restartNotice.enabled }}
         - name: happy-notice
           configMap:

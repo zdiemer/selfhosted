@@ -238,6 +238,11 @@ persistence:
     storageClass: truenas-iscsi
     accessMode: ReadWriteOnce
 
+tmp:
+  # Disk-backed emptyDir; cleared on pod replacement. Kubelet enforces this
+  # usage limit through eviction, not a dedicated filesystem quota.
+  sizeLimit: 16Gi
+
 security:
   # Everything in the pod (claude, happy, tmux) writes under $HOME or /tmp.
   # Escape hatch: if a tool update insists on writing into its npm package
