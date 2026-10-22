@@ -1,0 +1,7 @@
+# Existing release, now managed explicitly. SMB mount helpers require host
+# networking and privileged mount propagation; sidecars do not.
+windows:
+  enabled: false
+securityContext:
+  seccompProfile:
+    type: RuntimeDefault

@@ -275,3 +275,28 @@ releases for verified TLS, matching public trust, unique CA environment settings
 and trust-driven rollout checksums. Run
 `python3 infra/democratic-csi/verify-api-tls.py` after rollout to require all driver
 pods ready and confirm each can authenticate to the NAS with verification on.
+
+## Host containment
+
+Node plugins no longer share host IPC. NFS also drops the whole-host-root
+mount at `/host`. iSCSI retains it: the image's `docker/iscsiadm` wrapper uses
+`chroot /host` to invoke the host storage client. Removing it passed pod
+readiness but failed the disposable NodeStageVolume test, so it was restored
+and a render regression test now requires it. Explicit kubelet, device, sysfs,
+udev and protocol-specific iSCSI mounts remain. Mount helpers
+retain privilege and host networking for kernel mounts/propagation; they are
+trusted node components and can still compromise the host if exploited.
+
+The post-renderer hardens every nonprivileged controller/sidecar with dropped
+capabilities, no privilege escalation and RuntimeDefault seccomp. Sidecars also
+use read-only root filesystems; the API controller driver retains a writable
+container filesystem. Registrar probe tuning, TLS trust and the raw-block
+identity fix remain in place. The workload checker is in
+[infra/host-containment](../host-containment/README.md).
+
+Validated 2026-10-22: both ten-node DaemonSets and both controllers rolled;
+NFS and corrected iSCSI configurations passed provision, write/fsync, snapshot,
+restore, byte comparison and expansion. All 22 driver pods verified NAS TLS.
+For future node-plugin changes, `TEST_NODE=<canary-node> verify.sh --class ...`
+can exercise a specific node before a fleet rollout. Pod readiness alone does
+not prove the mount-helper path works.

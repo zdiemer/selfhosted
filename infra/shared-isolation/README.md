@@ -193,19 +193,26 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-22, after VM isolation, NAS TLS verification and node-exporter containment:
+Planning inventory as of 2026-10-22, after the host-containment baseline:
 
-1. Host-level containment for privileged/host-network infrastructure: node-exporter
-   no longer uses host PID and drops capabilities; CSI and virt-handler review
-   and remaining host-network exposure are still pending.
-2. Shared BuildKit process containment (the no-process-sandbox exception).
-3. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
-4. Backups outside the NAS failure domain.
-5. Clean-droplet recovery rehearsal.
-6. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-7. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. Shared BuildKit process containment (the no-process-sandbox exception).
+2. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
+3. Backups outside the NAS failure domain.
+4. Clean-droplet recovery rehearsal.
+5. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+6. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
 
-These are workstreams, not seven confirmed exploitable vulnerabilities or an
+The [host-containment baseline](../host-containment/README.md) now covers all ten
+nodes, CSI sidecars/mount exceptions, virt-handler permissions, host metrics
+and infrastructure listeners. Required CSI/VM host privilege remains explicit;
+removing it would require architectural changes, not another security-context
+flag. The baseline is not a guarantee against compromise of these trusted agents.
+
+Separate access repair: renew the expired Tailscale node key for
+`zachd-ubuntu-laptop-6`. Its host guard was installed through a temporary admin
+Job; Kubernetes access works, but tailnet SSH does not until the identity renews.
+
+These are workstreams, not six confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
 

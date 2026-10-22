@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helm post-renderer: registrar probe budget and iSCSI block-publish identity fix.
+"""Helm post-renderer: host containment, registrar probes and block-publish fix.
 
 WHY THIS EXISTS. The chart hardcodes the driver-registrar liveness probe in
 templates/node.yaml with no timeoutSeconds and exposes no value to set one, so
@@ -36,8 +36,10 @@ The replacement checks that both mounted paths are block devices with identical
 rdev values. See patch-block-publish.js and test-block-publish.js. No host mount
 or volume contents are modified by this patch.
 
-Only DaemonSet documents are re-serialised; every other rendered document is
-passed through byte for byte.
+Node plugins retain mount privilege but not host IPC. NFS drops the whole-host
+root mount; iSCSI retains it for the iscsiadm chroot wrapper. Nonprivileged
+sidecars and API controllers get capability dropping,
+no-new-privileges and RuntimeDefault seccomp.
 """
 import sys
 from pathlib import Path
@@ -49,9 +51,13 @@ PROBE = {"timeoutSeconds": 15, "periodSeconds": 30}
 
 
 def patch(doc):
-    """Return True if this DaemonSet's registrar probe was changed."""
+    """Apply the reviewed controller/node transformations."""
     spec = doc.get("spec", {}).get("template", {}).get("spec", {})
     changed = False
+    if doc.get("kind") == "DaemonSet" and not any(
+            c.get("name") == CONTAINER and c.get("livenessProbe")
+            for c in spec.get("containers", [])):
+        raise ValueError("node registrar probe disappeared; review upstream chart")
     for container in spec.get("containers") or []:
         if container.get("name") != CONTAINER:
             continue
@@ -87,6 +93,24 @@ def patch(doc):
         mounts[:] = [entry for entry in mounts if entry["name"] != mount["name"]]
         mounts.append(mount)
         changed = True
+    # NFS does not need /host. iSCSI DOES: docker/iscsiadm runs the host
+    # iscsiadm binary through chroot. Keep it until that architecture changes.
+    if doc.get("kind") == "DaemonSet":
+        spec["hostIPC"] = False
+        if doc["metadata"]["name"].endswith("-nfs-node"):
+            spec["volumes"] = [v for v in spec.get("volumes", []) if v["name"] != "host-dir"]
+            for c in spec.get("containers", []):
+                c["volumeMounts"] = [v for v in c.get("volumeMounts", []) if v["name"] != "host-dir"]
+    for c in spec.get("containers", []) + spec.get("initContainers", []):
+        context = c.setdefault("securityContext", {})
+        if context.get("privileged"):
+            continue
+        context.update(allowPrivilegeEscalation=False,
+                       capabilities={"drop": ["ALL"]},
+                       seccompProfile={"type": "RuntimeDefault"})
+        if c["name"] != "csi-driver":
+            context["readOnlyRootFilesystem"] = True
+        changed = True
     return changed
 
 
@@ -105,9 +129,10 @@ def main():
             out.append(chunk)
             continue
 
-        if isinstance(doc, dict) and doc.get("kind") == "DaemonSet" and patch(doc):
+        if isinstance(doc, dict) and doc.get("kind") in ("DaemonSet", "Deployment") and patch(doc):
             out.append(yaml.safe_dump(doc, default_flow_style=False, sort_keys=False))
-            patched += 1
+            if doc["kind"] == "DaemonSet":
+                patched += 1
         else:
             out.append(chunk)
 

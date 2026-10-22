@@ -294,3 +294,12 @@ an explicit 24 GiB emptyDir cache and BuildKit GC (2.048 GB reserved,
 20.48 GB minimum node free space, 8.192 GB reclaimable-cache maximum).
 Active build data is not reclaimed by GC. The backend builder is updated live;
 other builders receive the same policy when setup runs next.
+
+## Host firewall prerequisite
+
+After a node joins, install the [host containment guard](../../infra/host-containment/README.md)
+before placing production workloads on it. Reapply across the fleet when node
+addresses or membership change. It persists independently of Kubernetes and
+Tailscale firewall tables and is required before k3s starts at subsequent boots.
+Use the installer or `systemctl reload selfhosted-host-guard`; restarting or
+stopping the guard propagates to its dependent k3s service.

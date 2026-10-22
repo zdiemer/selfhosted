@@ -165,3 +165,14 @@ Verified on 2026-10-19 with Helm revision 2: all nine handlers rolled to Ready,
 all four certificate managers in each handler loaded successfully, and no
 missing-certificate errors recurred. `verify.sh` passed; Windows remained
 Running/Ready with the same VMI UID throughout. Live migration was not invoked.
+
+## Host trust boundary
+
+`virt-handler` and its node-labeller init container remain privileged and share
+host PID by upstream design. They manage host processes, devices and mount
+namespaces; pod flags cannot turn them into untrusted application workloads.
+The [host containment baseline](../../infra/host-containment/README.md)
+documents this exception alongside the existing network isolation. Its
+`verify-handler.py` uses an actual bound handler token and server-side dry runs
+to verify own-node restrictions, forbidden node-spec changes and RBAC denials.
+These checks do not alter live nodes or restart VMs.

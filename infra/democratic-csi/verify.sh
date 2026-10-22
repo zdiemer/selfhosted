@@ -3,6 +3,7 @@
 #
 #   ./verify.sh                       both classes
 #   ./verify.sh --class truenas-nfs   one class
+#   TEST_NODE=zachd-ubuntu-5 ./verify.sh --class truenas-iscsi  # canary node
 #   ./verify.sh --keep                leave the smoke volumes behind to poke at
 #
 # Proves the whole round trip on throwaway volumes: provision, write, snapshot,
@@ -23,6 +24,12 @@ set -euo pipefail
 NS="${NS:-csi-smoke}"
 CLASSES=(truenas-iscsi truenas-nfs)
 KEEP=false
+NODE_SELECTOR=""
+if [[ -n "${TEST_NODE:-}" ]]; then
+    [[ "$TEST_NODE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid TEST_NODE"; exit 1; }
+    kubectl get node "$TEST_NODE" >/dev/null
+    NODE_SELECTOR="  nodeSelector: {kubernetes.io/hostname: $TEST_NODE}"
+fi
 
 while [[ "${1:-}" != "" ]]; do
     case "$1" in
@@ -93,6 +100,7 @@ apiVersion: v1
 kind: Pod
 metadata: { name: smoke-writer, namespace: $NS }
 spec:
+$NODE_SELECTOR
   restartPolicy: Never
   containers:
     - name: w
@@ -152,6 +160,7 @@ apiVersion: v1
 kind: Pod
 metadata: { name: smoke-reader, namespace: $NS }
 spec:
+$NODE_SELECTOR
   restartPolicy: Never
   containers:
     - name: r
@@ -181,6 +190,7 @@ apiVersion: v1
 kind: Pod
 metadata: { name: smoke-keeper, namespace: $NS }
 spec:
+$NODE_SELECTOR
   containers:
     - name: k
       image: busybox:1.37.0

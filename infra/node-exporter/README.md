@@ -34,7 +34,7 @@ is where they show up.
 ## Why its own chart rather than Alloy's built-in exporter
 
 Alloy ships `prometheus.exporter.unix`, which does the same job in-process and
-would save a release. It would also mean giving Alloy `hostNetwork`, `hostPID`
+would save a release. It would also mean giving Alloy `hostNetwork`
 and hostPath mounts of `/proc`, `/sys` and `/` — and Alloy is deliberately
 built the other way round, reading container logs through the Kubernetes API
 *specifically* so it has no host bindings at all. Host access lives here, in
@@ -47,10 +47,10 @@ process's network namespace, so a pod on the cluster network reports **its own
 veth** no matter how `/proc` is mounted — the netdev numbers would be real, and
 about the wrong interface.
 
-The cost: `:9100` is reachable unauthenticated from the LAN. That is accepted,
-not overlooked. The LAN/tailnet is already the trust boundary for every
-`*.zachd.duckdns.org` service, and what leaks is load averages and disk usage,
-not credentials. Nothing forwards this port from the internet.
+Port `:9100` is restricted by [the host guard](../host-containment/README.md)
+to loopback and the local node's pod network. External LAN/tailnet clients
+cannot reach it. Alloy scrapes from the local pod network; its own egress
+NetworkPolicy remains in force.
 
 If a node ever already has something on `:9100`, that pod CrashLoops with
 `address already in use` — `upgrade.sh` compares desired-vs-ready and says so,
@@ -123,9 +123,10 @@ host PID membership.
 Host networking remains necessary for node NIC counters. Read-only host
 `/proc`, `/sys` and `/` mounts also remain: this is still a trusted host reader,
 not an application-grade sandbox. Removing host PID membership does not hide
-host process information exposed by the procfs mount. Port 9100 remains
-unauthenticated on the LAN/tailnet; host-network traffic is not contained by
-ordinary pod NetworkPolicies.
+host process information exposed by the procfs mount. Port 9100 uses no application authentication, but the
+[host firewall](../host-containment/README.md) now restricts it to loopback and
+the local pod network. Ordinary pod NetworkPolicies do not contain host-network
+traffic; Alloy egress restrictions remain an additional layer.
 
 Validated 2026-10-22 using a separate Job-owned canary on port 19101, followed
 by the DaemonSet rollout: all ten collectors succeeded and CPU, physical NIC,

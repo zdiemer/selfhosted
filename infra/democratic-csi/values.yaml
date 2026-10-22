@@ -97,6 +97,8 @@ democratic-csi:
         tag: v1.9.5
 
   node:
+    # Mount helpers need host networking, but no host IPC objects.
+    hostIPC: false
     extraVolumes: []
     # DaemonSet — this lands on every node, including the 3.7GiB laptop, so
     # the footprint matters more here than anywhere else in this chart.

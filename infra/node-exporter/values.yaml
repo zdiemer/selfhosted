@@ -21,11 +21,10 @@
 # Minecraft (:25565 LoadBalancer) and Jellyfin (:30096 NodePort) never traverse
 # Traefik, so node NIC counters are the ONLY place that traffic is visible.
 #
-# The cost is that :9100 is then reachable unauthenticated from the LAN. That
-# is an accepted exposure here, not an oversight: the LAN/tailnet is already
-# the trust boundary for every *.zachd.duckdns.org service, and node-exporter
-# publishes load averages and disk usage, not credentials. No firewall rule
-# opens it to the internet.
+# Port 9100 is protected by infra/host-containment: only loopback and this
+# node's pod network may reach it. Alloy remains a normal pod and scrapes its
+# local node. The host guard rejects external LAN/tailnet access over IPv4/IPv6.
+# Install that guard on every new node before enabling infrastructure services.
 #
 # NOT a violation of the no-node-binding rule: a DaemonSet runs on every node
 # by definition. Nothing here pins a workload to one machine.

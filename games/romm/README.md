@@ -36,15 +36,12 @@ RWO PVC).
 
 ### 1. Install the SMB CSI driver (cluster-wide)
 
-Lets any namespace mount an SMB share as a PV. Install once, reuse forever.
+Lets any namespace mount an SMB share as a PV. The shared driver is managed in
+[infra/csi-smb](../../infra/csi-smb/README.md), including containment settings.
+Run from the repository root:
 
 ```bash
-helm repo add csi-driver-smb \
-  https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
-helm repo update
-helm upgrade --install csi-driver-smb csi-driver-smb/csi-driver-smb \
-  --namespace kube-system \
-  --version v1.15.0
+./infra/csi-smb/upgrade.sh
 ```
 
 Verify:
