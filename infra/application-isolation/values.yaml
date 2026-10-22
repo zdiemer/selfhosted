@@ -146,6 +146,17 @@ dependencies:
     - to:
       - namespaceSelector:
           matchLabels:
+            kubernetes.io/metadata.name: media
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: arr
+            app.kubernetes.io/component: flaresolverr
+      ports:
+      - port: 8191
+        protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
             kubernetes.io/metadata.name: infra
         podSelector:
           matchLabels:

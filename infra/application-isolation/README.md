@@ -9,7 +9,9 @@ Reply traffic and node-managed storage mounts are unaffected. No IPv6 egress is
 granted. Jellyfin's writable media mount is unchanged.
 
 Dependencies include Gamedex/RomM, RomM/Webstation, Seerr/Arr/Jellyfin,
-Arr/Bitmagnet, Authelia/Redis, and Talaria/SMS-relay/Ollama. Talaria's diagnostic
+Arr/Bitmagnet, Authelia/Redis, and Talaria/SMS-relay/Ollama/FlareSolverr. Talaria
+reaches only Arr's FlareSolverr component on TCP 8191 for Mercari scraping and
+listing refreshes. Talaria's diagnostic
 workers additionally reach the Kubernetes API on the three declared servers;
 update those endpoint addresses when replacing control-plane nodes. RBAC limits
 those service accounts to Talaria's namespace. Ollama's ingress still selects
