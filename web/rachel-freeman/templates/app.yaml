@@ -102,7 +102,7 @@ spec:
         runAsGroup: 1001
         fsGroup: 1001
       initContainers:
-        # Payload creates its own schema on boot (postgresAdapter push), and
+        # Payload applies its bundled production migrations on boot, and
         # doing that against a database that is not up yet leaves the pod in a
         # crash loop until it happens to line up. Wait instead.
         - name: wait-for-postgres
@@ -163,7 +163,7 @@ spec:
             # database and does throw away a warm Next.js process.
             initialDelaySeconds: 30
             periodSeconds: 30
-          # Payload runs its schema push on first boot, which on a cold database
+          # Payload runs its migrations on first boot, which on a cold database
           # takes longer than the liveness probe's patience would allow.
           startupProbe:
             httpGet:

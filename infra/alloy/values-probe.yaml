@@ -87,6 +87,16 @@ alloy:
             valid_status_codes: [200]
             follow_redirects: false
             preferred_ip_protocol: ip4
+        http_payload_login:
+          prober: http
+          timeout: 8s
+          http:
+            valid_status_codes: [200]
+            follow_redirects: true
+            preferred_ip_protocol: ip4
+            # Next can stream an error page with HTTP 200. Require the actual
+            # Payload login component, which also exercises the users schema.
+            fail_if_body_not_matches_regexp: ['LoginForm']
         tcp_connect:
           prober: tcp
           timeout: 8s
@@ -185,6 +195,11 @@ alloy:
           name    = "rachelfreeman"
           address = "https://rachelfreeman.art"
           module  = "http_edge"
+        }
+        target {
+          name    = "rachelfreeman-admin"
+          address = "https://rachelfreeman.art/admin/login"
+          module  = "http_payload_login"
         }
 
         // ---- Paths that BYPASS Traefik entirely ----------------------------

@@ -23,7 +23,7 @@
 
 image:
   repository: registry.zachd.duckdns.org/zdiemer/rachelfreeman
-  tag: "renovate-20261019"
+  tag: "sha-bfbe7c3"
   pullPolicy: IfNotPresent
 
 # The GHCR package is PRIVATE here, unlike the rest of this repo — see the note
