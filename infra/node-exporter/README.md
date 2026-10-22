@@ -111,3 +111,23 @@ rate(node_network_receive_bytes_total{cluster="home-k3s"}[5m]) # the Minecraft/J
 
 If `node_network_*` shows interfaces named `veth…`, `hostNetwork` is off and
 the numbers are the pod's, not the node's.
+
+## Container containment
+
+The exporter runs as UID/GID 65534 with a read-only container filesystem,
+all Linux capabilities dropped, privilege escalation disabled, and
+`RuntimeDefault` seccomp. It does not join the host PID namespace. The ten
+explicitly enabled collectors read the mounted host procfs without needing
+host PID membership.
+
+Host networking remains necessary for node NIC counters. Read-only host
+`/proc`, `/sys` and `/` mounts also remain: this is still a trusted host reader,
+not an application-grade sandbox. Removing host PID membership does not hide
+host process information exposed by the procfs mount. Port 9100 remains
+unauthenticated on the LAN/tailnet; host-network traffic is not contained by
+ordinary pod NetworkPolicies.
+
+Validated 2026-10-22 using a separate Job-owned canary on port 19101, followed
+by the DaemonSet rollout: all ten collectors succeeded and CPU, physical NIC,
+filesystem, disk and temperature metric identities matched the pre-change
+baseline on every node. Recheck these when changing collectors or confinement.

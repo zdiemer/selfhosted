@@ -39,7 +39,7 @@ kubectl -n "$NAMESPACE" rollout status daemonset/"${RELEASE}-prometheus-node-exp
 # rather than trusting the rollout, which has already returned success.
 echo "==> node coverage"
 read -r DESIRED READY < <(kubectl -n "$NAMESPACE" get daemonset "${RELEASE}-prometheus-node-exporter" \
-  -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady}')
+  -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady}{"\n"}')
 NODES="$(kubectl get nodes --no-headers | wc -l)"
 echo "    nodes=${NODES} desired=${DESIRED} ready=${READY}"
 if [[ "$READY" != "$DESIRED" ]]; then

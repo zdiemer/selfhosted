@@ -7,7 +7,7 @@
 # WHY THIS EXISTS AS ITS OWN CHART, AND NOT AS AN ALLOY COMPONENT.
 # Alloy ships a built-in `prometheus.exporter.unix` that does the same job, and
 # folding it in would mean one less release. It would also mean giving Alloy
-# hostPath mounts of /proc, /sys and /, plus hostNetwork and hostPID — and
+# hostPath mounts of /proc, /sys and /, plus hostNetwork — and
 # infra/alloy is deliberately built the other way round: it reads container
 # logs through the Kubernetes API precisely so it has NO host bindings at all
 # (see that chart's README). Quietly abandoning that to save a release is a bad
@@ -29,6 +29,23 @@
 #
 # NOT a violation of the no-node-binding rule: a DaemonSet runs on every node
 # by definition. Nothing here pins a workload to one machine.
+
+# The enabled collectors read host procfs through /host/proc; they do not
+# require joining the host PID namespace. Keep host networking for NIC metrics.
+hostNetwork: true
+hostPID: false
+securityContext:
+  fsGroup: 65534
+  runAsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
 
 # ---------------------------------------------------------------------------
 # Collectors

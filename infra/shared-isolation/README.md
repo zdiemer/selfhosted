@@ -193,9 +193,11 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-22, after VM isolation and NAS TLS verification:
+Planning inventory as of 2026-10-22, after VM isolation, NAS TLS verification and node-exporter containment:
 
-1. Host-level containment for privileged/host-network infrastructure.
+1. Host-level containment for privileged/host-network infrastructure: node-exporter
+   no longer uses host PID and drops capabilities; CSI and virt-handler review
+   and remaining host-network exposure are still pending.
 2. Shared BuildKit process containment (the no-process-sandbox exception).
 3. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
 4. Backups outside the NAS failure domain.
