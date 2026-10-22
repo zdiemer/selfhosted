@@ -21,7 +21,41 @@
 #   - open-iscsi + nfs-common on every node (scripts/k3s/iscsi-prereq.sh)
 
 democratic-csi:
+  extraCaCerts: |
+    -----BEGIN CERTIFICATE-----
+    MIIFejCCA2KgAwIBAgIUSBpnDWoeVSkh1OTMKY1HeRVwc4owDQYJKoZIhvcNAQEL
+    BQAwLTEWMBQGA1UEAwwNdHJ1ZW5hcy5sb2NhbDETMBEGA1UECgwKU2VsZmhvc3Rl
+    ZDAeFw0yNjEwMjEyMzUyMzBaFw0yNzExMjIyMzUyMzBaMC0xFjAUBgNVBAMMDXRy
+    dWVuYXMubG9jYWwxEzARBgNVBAoMClNlbGZob3N0ZWQwggIiMA0GCSqGSIb3DQEB
+    AQUAA4ICDwAwggIKAoICAQCxcoplBdrFh8Im7s+jQRkDnMqgLK7ztZH47YxGw4si
+    RoCQjVIeGJfurBLpIqQLy1Rqd3z+98zW5YLUcQgzcBf2HkNS7pMsyjDMCJ6ZE9dk
+    8Hc30AXT0IxeUy46pEY+72kSJulKEstf7bNfDGRQh3WxDUbWrw4xwDXt7GBRWpoV
+    MB6dQglbiuKLzP59dr4gRDBYWeYIBhGLOhJY/j0WdxrXEuPayPFzoLRPyLfZqkX8
+    0I5cmP9JfzpLZsXvwT6MVpSbUxysmN5iQZ/kAL3+KMTbMmoulO/I0jU9/ajNxBYQ
+    MBGPled/YqOQpYx4ayI1cYAjzRtQTe6FIN9ysnxS0RdDBoaKCIuqWRgXXphpfrME
+    DNDYndNnj2AcP7DX2Rc5p2XOB/bFXQ/q5cLQ+rfck5k+hgUvBgPGdZMhNsW9Tfjp
+    KzgGo9SD1AFnbaibz7WtyUoo6irvlS6B26b1Xbsn/hfHyyBpZRn+7yG/w/qfHzsH
+    AIbUNGpjgb+b03a8VWdEb91y/KX6xOfteV/3mRejjZSEq5759GFSy8SQjFE7wTtC
+    1gWSgiVFxVK8IXeCi1SOcm2RmnoGUphZKTgkytbvYIylbi9R65qrGO4ODXzaWeOf
+    iCrsPQTaYT/MBBFkSYwG9Fvbovb6njj/N0Sge4lzTPViAfv7co/laJBGmqySTlXU
+    oQIDAQABo4GRMIGOMB0GA1UdDgQWBBTi2EB24CWEVSegHw5F/knAn/lNjjAfBgNV
+    HSMEGDAWgBTi2EB24CWEVSegHw5F/knAn/lNjjApBgNVHREEIjAghwTAqAQkgg10
+    cnVlbmFzLmxvY2Fsgglsb2NhbGhvc3QwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDAYD
+    VR0TAQH/BAIwADANBgkqhkiG9w0BAQsFAAOCAgEAAImUVG+IxIFjfAuhGuOIyGyG
+    OI7aqnwp8AoDL1GvOSH22r7qrb+egWrKYN4K1k6Elm1+8ZOGkA33OZZC5lYO6Rsa
+    j9Mg9I96wFDA5X+2W9i+x/9NX2U6jzLDhRuQYHm8ecckwnnT2tdy/bQzLrGmlQbr
+    k/2Dp33rj+vTB3uepMTtazwY/KQWEc6r5b8OFbYDD9lsekimnp6RvCYZRK+tX6+h
+    4NrCmjtfHSeB8H3lHL/K3rXLU7fx0rEd5uM5ANPI7GHQ679MvPOBwJyUxeC5QB7C
+    f5ReGPyDctqKsHybx6st+D0YCPV3RIeqfeDUFuI5wkzixqgYeNW9pnHRhBbOBwGp
+    Vf4L8hZ4PdbVoVHYQFj0OCv27uUDyQ5pp2fahkx8okn2gQt48EAVIaJjKdWgRdPC
+    1/zs8iAXs7JMJXaMvwXDumDmRp5a9udJG62x+NxmIvgqxYprLSJy34exTzJv9zzu
+    s1GLUOd5Y/GxlKcqQkNbfkytamqKgDtCHtuSV4p4znGbCIsKxKR9UBEAwvK0sPKl
+    o9ajwlY9AQsSL2pPhvW1dFs/GNMCRzaLCxBrbbRNimas9Vy9CmamIzmku9MAuVXT
+    3gOM/zATq8m/WIcfb66KNupf2xDwsl28xwkkb85YB2+/JDewQVP1GqQoSUE0ef49
+    znW7h3z1kxXVM1NdqzA=
+    -----END CERTIFICATE-----
   controller:
+    extraVolumes: []
     # Leader-elected; a second replica is availability, not throughput. A
     # controller outage stalls provisioning, it never touches volume data.
     replicaCount: 1
@@ -32,6 +66,8 @@ democratic-csi:
     affinity: {}
 
     driver:
+      extraEnv: []
+      extraVolumeMounts: []
       logLevel: info
 
       # PIN THE DRIVER IMAGE. Every other image this chart deploys — attacher,
@@ -61,6 +97,7 @@ democratic-csi:
         tag: v1.9.5
 
   node:
+    extraVolumes: []
     # DaemonSet — this lands on every node, including the 3.7GiB laptop, so
     # the footprint matters more here than anywhere else in this chart.
     nodeSelector: {}
@@ -79,6 +116,8 @@ democratic-csi:
       - operator: Exists
 
     driver:
+      extraEnv: []
+      extraVolumeMounts: []
       logLevel: info
 
       # Same pin as the controller above — same image, same reasoning. Both

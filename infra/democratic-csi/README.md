@@ -223,3 +223,55 @@ Verified rollout result: all ten patched iSCSI plugins Ready, no new node1
 and guest-agent connectivity retained. Historical warning events remain until
 Kubernetes expires them; their count stopped increasing. Helm release revision
 8 contains the patched template, so pod recreation retains the fix.
+
+## NAS API TLS trust
+
+Both drivers now set `allowInsecure: false`. The NAS serves an explicitly
+trusted self-signed certificate with IP SAN `192.168.4.36` (also DNS
+`truenas.local` and `localhost`), replacing the default localhost-only leaf.
+The public certificate is in `trust/truenas-api.crt` and the subchart's
+`extraCaCerts` value. The subchart mounts its trust bundle and sets
+`NODE_EXTRA_CA_CERTS` for controller and node drivers; its ConfigMap checksum
+rolls them when the bundle changes. Do not override that environment variable
+using extraEnv: duplicate names can retain the chart's original value.
+The deploy preflight uses the same certificate with curl, checks both copies
+match, and refuses a certificate expiring within 30 days.
+
+Certificate SHA-256:
+`EB:CD:05:22:20:C7:CC:A2:54:2C:01:2D:F8:D2:37:1F:34:F6:B9:F0:1C:5D:C3:84:C6:D1:72:60:85:ED:93:15`.
+It expires **2027-11-22 23:52 UTC**. The private key was generated in memory and
+imported into TrueNAS's certificate store; it is not in Git or local key files.
+The old NAS certificate (ID 1) is retained for rollback; the active one is ID 2,
+`selfhosted_api_20261021`. Only the API/UI listener was restarted, not storage
+services or the NAS. See the
+[TrueNAS UI configuration API](https://api.truenas.com/v25.10.0/api_methods_system.general.update.html).
+
+Bootstrap limitation: the old certificate was obtained from the existing LAN
+endpoint and pinned for the import/update requests, checking its `localhost`
+identity. This was trust on first use, not independent out-of-band identity
+verification. Subsequent calls verify the new IP identity and explicit trust.
+Other NAS clients do not automatically inherit this trust; browser trust and
+TLS protection for NFS/iSCSI data are separate concerns.
+
+For renewal, generate/import a replacement with the same SANs. Add its public
+certificate to **both** trust copies alongside the old one and deploy before
+switching the NAS listener. Use `system.general.update` with `ui_certificate`,
+`ui_restart_delay` and `rollback_timeout`; verify the new TLS endpoint, then
+check in to cancel rollback (the legacy REST endpoint is GET
+`/api/v2.0/system/general/checkin`). Remove the old trust certificate and deploy
+again after verifying storage. Keep the old server certificate until the new
+path is proven. Renewal is manual; the NAS's certificate alerts and deploy
+expiry gate do not automatically renew it.
+
+Validation: both controller clients returned HTTP 200 with TLS checking enabled,
+rejected a deliberately wrong hostname, and rejected an unrelated trust anchor.
+Both storage classes passed provisioning, write/fsync, snapshot, restore,
+content comparison and expansion from 1 GiB to 2 GiB. Test resources were
+removed. The first NFS rollout rejected the certificate because of a duplicate
+CA environment setting; using the chart's built-in bundle restored readiness.
+
+Run `python3 infra/democratic-csi/test-tls-config.py` to check both rendered
+releases for verified TLS, matching public trust, unique CA environment settings
+and trust-driven rollout checksums. Run
+`python3 infra/democratic-csi/verify-api-tls.py` after rollout to require all driver
+pods ready and confirm each can authenticate to the NAS with verification on.

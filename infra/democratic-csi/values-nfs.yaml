@@ -63,8 +63,9 @@ democratic-csi:
         protocol: https
         host: 192.168.4.36
         port: 443
-        # TrueNAS ships a self-signed certificate. LAN-local call to a fixed IP.
-        allowInsecure: true
+        # Public trust certificate is mounted through NODE_EXTRA_CA_CERTS.
+        # The leaf includes the NAS IP SAN; never disable hostname verification.
+        allowInsecure: false
 
       zfs:
         # Must already exist — democratic-csi creates children, not parents.

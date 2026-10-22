@@ -151,8 +151,9 @@ iSCSI mounts do not need controller pod access to ports 2049 or 3260.
 
 This does not contain the privileged, host-network node plugins, reduce the
 controller's Kubernetes permissions, or restrict what its NAS credential can
-do through the allowed API. The current NAS client also disables certificate
-verification; trusted NAS TLS and host-level containment remain separate work.
+do through the allowed API. NAS API clients now verify the explicitly trusted certificate and IP identity;
+see [NAS TLS trust](../democratic-csi/README.md#nas-api-tls-trust). Host-level
+containment remains separate work.
 
 Use `infra/democratic-csi/verify.sh --class <class>` with a fresh `NS` per class
 for live validation: it provisions a disposable volume, writes/fsyncs a payload,
@@ -192,18 +193,17 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-21, after CDI/KubeVirt control and data-worker isolation:
+Planning inventory as of 2026-10-22, after VM isolation and NAS TLS verification:
 
-1. Trusted TLS verification for the TrueNAS API clients.
-2. Host-level containment for privileged/host-network infrastructure.
-3. Shared BuildKit process containment (the no-process-sandbox exception).
-4. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
-5. Backups outside the NAS failure domain.
-6. Clean-droplet recovery rehearsal.
-7. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-8. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. Host-level containment for privileged/host-network infrastructure.
+2. Shared BuildKit process containment (the no-process-sandbox exception).
+3. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
+4. Backups outside the NAS failure domain.
+5. Clean-droplet recovery rehearsal.
+6. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+7. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
 
-These are workstreams, not eight confirmed exploitable vulnerabilities or an
+These are workstreams, not seven confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
 

@@ -110,6 +110,17 @@ fi
 # parents. A missing parent shows up as a PVC that stays Pending with the real
 # reason buried in the controller log.
 API_KEY="$(sv_fd | awk '/apiKey:/ {gsub(/"/,"",$2); print $2; exit}' 2>/dev/null || true)"
+echo "==> Pre-flight: NAS trust certificate"
+python3 - "$HERE" <<'PYTHON'
+import pathlib, sys, yaml
+root = pathlib.Path(sys.argv[1])
+values = yaml.safe_load((root / 'values.yaml').read_text())
+assert values['democratic-csi']['extraCaCerts'].strip() == (root / 'trust/truenas-api.crt').read_text().strip(), 'NAS trust bundle differs from preflight certificate'
+PYTHON
+openssl x509 -in "${HERE}/trust/truenas-api.crt" -checkend 2592000 -noout || {
+  echo "FAIL: NAS trust certificate expires within 30 days; rotate it before deployment."
+  exit 1
+}
 echo "==> Pre-flight: parent datasets"
 if [[ -z "$API_KEY" ]]; then
   echo "    SKIP: could not read apiKey from values.local.yaml"
@@ -118,7 +129,7 @@ else
   for f in values-iscsi.yaml values-nfs.yaml; do
     while read -r ds; do
       [[ -z "$ds" ]] && continue
-      code="$(curl -sk -o /dev/null -w '%{http_code}' \
+      code="$(curl -sS --cacert "${HERE}/trust/truenas-api.crt" -o /dev/null -w '%{http_code}' \
         -H "Authorization: Bearer ${API_KEY}" \
         "https://${NAS_HOST}/api/v2.0/pool/dataset/id/$(printf '%s' "$ds" | sed 's|/|%2F|g')" \
         2>/dev/null || echo 000)"
