@@ -1,3 +1,4 @@
+#!/bin/sh
 set -eu
 # A syntactically valid prefix of a truncated SQL stream can import successfully.
 # Require mariadb-dump's completion footer as well as a successful replay.

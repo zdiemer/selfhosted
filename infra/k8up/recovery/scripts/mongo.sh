@@ -1,3 +1,4 @@
+#!/bin/sh
 set -eu
 mkdir -p /work/data
 mongod --dbpath=/work/data --bind_ip=127.0.0.1 --port=27017 --logpath=/tmp/mongo.log --pidfilepath=/tmp/mongo.pid --fork

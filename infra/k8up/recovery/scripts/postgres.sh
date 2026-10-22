@@ -1,3 +1,4 @@
+#!/bin/sh
 set -eu
 export PGDATA=/work/pgdata PGHOST=/tmp PGUSER=postgres
 initdb -U postgres --auth-local=trust --auth-host=reject >/tmp/init.log
