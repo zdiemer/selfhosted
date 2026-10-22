@@ -77,5 +77,7 @@ offline/disabled expiry, unhealthy inventories, atomic persistence, and retry
 following failed publication. The live sandboxed service saw 26 devices,
 published one combined alert for six already-expired devices, then an immediate
 second run reported `due=0`. The timer is enabled; the credential and state
-files are mode 0600. Laptop `zachd-ubuntu-laptop-6` renewal remains pending the
-interactive Tailscale sign-in; this monitor does not complete that login.
+files are mode 0600. After the user completed sign-in, laptop
+`zachd-ubuntu-laptop-6` was verified online with working Tailscale SSH and a new
+expiry of 2027-04-20 01:16:18 UTC. A successful live monitor run recorded that
+expiry with stage `-1`, confirming reminders reset for the renewed key.

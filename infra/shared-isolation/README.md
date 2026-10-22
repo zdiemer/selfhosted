@@ -208,9 +208,9 @@ and infrastructure listeners. Required CSI/VM host privilege remains explicit;
 removing it would require architectural changes, not another security-context
 flag. The baseline is not a guarantee against compromise of these trusted agents.
 
-Separate access repair: renew the expired Tailscale node key for
-`zachd-ubuntu-laptop-6`. Its host guard was installed through a temporary admin
-Job; Kubernetes access works, but tailnet SSH does not until the identity renews.
+Access repair completed 2026-10-22: `zachd-ubuntu-laptop-6` was reauthenticated.
+Its key now expires 2027-04-20 01:16:18 UTC. Tailnet SSH works, Kubernetes
+reports Ready, and the host guard service and nftables table remain active.
 [Expiry notifications](../tailscale-expiry/README.md) are now deployed on the
 primary host: private ntfy reminders at 7d, 3d, 2d, 1d and 12hr, plus expiry.
 They cover devices visible in that host's tailnet inventory.
