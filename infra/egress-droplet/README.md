@@ -138,6 +138,8 @@ A clean-host recovery still needs a rehearsal on a replacement droplet. Syntax
 checks and live convergence do not establish that the entire recovery works.
 DigitalOcean resource creation, provider backups and tailnet grants remain
 outside this playbook; credentials for those APIs are not available here.
+The separate [provider IaC stacks](../provider-iac/README.md) now provide the
+import/plan workflow; live adoption and tailnet policy hardening remain pending.
 
 On October 21, the initial prerequisite run triggered severe memory pressure on
 the 458 MiB host with no swap. The kernel killed CrowdSec at 16:24 UTC; SSH and

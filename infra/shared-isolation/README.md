@@ -195,11 +195,15 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 Planning inventory as of 2026-10-22, after host containment, BuildKit isolation and logical database restore drills:
 
-1. [Droplet recovery rehearsal](../droplet-recovery/README.md): quarantine runbook
-   and clone database verifier prepared; actual provider-backup restore and
-   clean-host rebuild remain untested pending DigitalOcean access.
-2. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-3. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. [Provider IaC](../provider-iac/README.md): independent DigitalOcean,
+   Cloudflare DNS and Tailscale OpenTofu stacks prepared and locally validated.
+   Live inventory/import, firewall apply and full-policy grant hardening remain
+   pending provider credentials; no provider changes deployed yet.
+2. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+
+Deferred by owner on 2026-10-22: [droplet recovery rehearsal](../droplet-recovery/README.md).
+Quarantine runbook and clone database verifier are prepared; provider-backup restore
+and clean-host rebuild remain untested. Deferred does not mean verified.
 
 Logical database restore validation is complete for the selected latest stored
 dumps: Paperless, Rachel, RomM and Vōcard passed isolated full restores and

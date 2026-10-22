@@ -1,5 +1,8 @@
 # DigitalOcean backup recovery rehearsal
 
+Deferred by owner on 2026-10-22 in favor of [provider IaC](../provider-iac/README.md).
+The prepared procedure below has not been exercised against a provider backup.
+
 Status 2026-10-22: **prepared, not executed against a provider backup**. No
 DigitalOcean API credential is present in the workspace environment or the
 accessible vault items inspected. The mounted 1Password credentials provide

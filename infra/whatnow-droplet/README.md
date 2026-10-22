@@ -101,7 +101,9 @@ origin. The initial apply needs SSH and Python; an initial `--check` cannot full
 simulate services/directories that do not exist yet.
 
 Droplet creation, DigitalOcean backup scheduling, DNS and Cloudflare account
-settings are not managed by this host playbook. No provider API credentials were
+settings are not managed by this host playbook. The separate
+[provider IaC stacks](../provider-iac/README.md) are prepared for import but not
+yet deployed. No provider API credentials were
 needed for adoption. This does not claim a whole-account Terraform migration.
 
 For recovery from a bad CIDR change, SSH remains available: correct `config.yml`

@@ -80,7 +80,8 @@ their restore procedure remains outstanding. The [droplet rehearsal
 runbook](../infra/droplet-recovery/README.md) covers first-boot quarantine,
 guarded database validation, runtime/reboot checks and cleanup. Preparation is
 complete; no provider backup has been restored yet because DigitalOcean access
-is unavailable in this workspace.
+is unavailable in this workspace. The owner subsequently deferred the rehearsal
+in favor of [provider IaC](../infra/provider-iac/README.md); recovery remains unverified.
 
 ## Improvements to plan
 
