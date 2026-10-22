@@ -2166,7 +2166,7 @@
         "datasourceUid": "__USAGE_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum by (reason) (grafanacloud_instance_samples_discarded_per_second)",
+          "expr": "sum by (reason) (grafanacloud_instance_samples_discarded_per_second) or on() (0 * sum(grafanacloud_instance_samples_per_second))",
           "instant": true,
           "range": false,
           "editorMode": "code",
