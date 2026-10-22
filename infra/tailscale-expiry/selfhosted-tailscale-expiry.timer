@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Tailscale device key expiration every five minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=yes
+RandomizedDelaySec=15
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

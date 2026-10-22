@@ -211,6 +211,9 @@ flag. The baseline is not a guarantee against compromise of these trusted agents
 Separate access repair: renew the expired Tailscale node key for
 `zachd-ubuntu-laptop-6`. Its host guard was installed through a temporary admin
 Job; Kubernetes access works, but tailnet SSH does not until the identity renews.
+[Expiry notifications](../tailscale-expiry/README.md) are now deployed on the
+primary host: private ntfy reminders at 7d, 3d, 2d, 1d and 12hr, plus expiry.
+They cover devices visible in that host's tailnet inventory.
 
 These are workstreams, not six confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing

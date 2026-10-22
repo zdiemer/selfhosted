@@ -1,0 +1,31 @@
+[Unit]
+Description=Notify ntfy before visible Tailscale device keys expire
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=selfhosted-tailscale-expiry
+StateDirectoryMode=0700
+LoadCredential=ntfy-password:/etc/selfhosted/tailscale-expiry/ntfy-password
+Environment=NTFY_URL=https://ntfy.zachd.duckdns.org/alerts
+ExecStart=/usr/bin/python3 /usr/local/lib/selfhosted-tailscale-expiry/monitor.py
+TimeoutStartSec=90
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LimitCORE=0

@@ -15,6 +15,10 @@ All fail loudly: `OnFailure=selfhosted-alert@%n.service` texts through
 `infra/sms-relay` (now ntfy `alerts` first, SMS fallback on publish failure). A scheduled job that fails silently is worse than no job,
 because you stop checking.
 
+The separate system-level [Tailscale expiry timer](../../infra/tailscale-expiry/README.md)
+runs on `zachd-ubuntu` every five minutes and sends private ntfy reminders before
+visible device keys expire. Its installer and hardened units live with that IaC.
+
 ## Why these exist
 
 The 1Password migration fixed the real problem — there was no second copy of
