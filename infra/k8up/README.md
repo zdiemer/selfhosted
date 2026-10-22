@@ -14,12 +14,15 @@ Three layers, different failure modes, none replacing another:
 | Layer | Where | Protects against | Useless against |
 |---|---|---|---|
 | ZFS snapshots (`infra/democratic-csi`) | same pool | a mistake, minutes ago | pool loss |
-| **restic (here)** | different dataset, same NAS | pool corruption, deletion, a bad upgrade | the NAS burning down |
-| *(not built)* offsite | — | — | — |
+| **restic (here)** | different dataset, same NAS | logical corruption, deletion, a bad upgrade | loss of the NAS/pool/site |
+| Offsite cluster backup (not enabled) | — | — | NAS/site loss remains an accepted risk |
 
-The obvious gap is offsite. `vault/k8s/restic` is on the same box as the data it
-protects. A `restic copy` or `zfs send` to a second target is the next thing
-worth doing.
+Owner decision, 2026-10-22: do not add paid offsite storage for cluster data.
+`vault/k8s/restic` shares the NAS failure domain with the source volumes; loss
+of the NAS/pool/site can lose both. That risk is accepted given the cost, so
+offsite cluster backup is not an outstanding implementation task. The owner
+reports droplet backups are enabled; those do not cover cluster data, and a
+droplet recovery rehearsal remains a separate task.
 
 ## The repository
 
@@ -64,14 +67,18 @@ usually restores — which is worse than never restoring, because you find out
 during a recovery.
 
 Four `PreBackupPod`s run a real dump first; k8up captures stdout as a file in
-the repository alongside the volumes:
+the repository alongside the volumes. Talaria uses the separate atomic backup
+Job described below. The selected latest dumps for all five databases have now
+passed full isolated restores; [results](recovery/README.md) cover the four
+smaller databases and the Talaria section records its earlier drill:
 
 | Namespace | Database | Command | File | Working |
 |---|---|---|---|---|
 | `docs` | Postgres 16 | `pg_dump -F c` | `docs-dump.pgdump` | yes |
 | `games` | MariaDB | `mariadb-dump --single-transaction` | `games-dump.sql` | yes |
 | `discord` | MongoDB | `mongodump --archive --gzip` | `discord-dump.archive.gz` | yes |
-| `default` | Postgres 15 | `pg_dump -F c` | `default-dump.pgdump` | **no — see TODO** |
+| `rachel` | Postgres 17 | `pg_dump -F c` | `rachel-dump.pgdump` | yes |
+| `talaria` | Postgres 15 | staged and validated `pg_dump -F c` | `/dump/talaria-dump.pgdump` | yes — separate atomic Job |
 
 For the RWO databases the dump is not a supplement, it IS the backup: their
 volume snapshots come out 0 B whenever the backup pod lands on a node that
@@ -282,4 +289,6 @@ also print the PostgreSQL log. Six guard/regression tests pass.
 
 The scratch Jobs, network policies and 400 GiB claim are cleaned up after
 recording the result. The restic snapshot and backup staging volume remain.
-Other database dumps and off-NAS recovery still need their own validation.
+The other four logical database dumps have their own
+[isolated restore drill](recovery/README.md) in `recovery/database.py`. Offsite cluster storage is an
+accepted risk rather than a planned purchase; see the decision above.

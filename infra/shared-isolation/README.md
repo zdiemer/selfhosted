@@ -193,13 +193,23 @@ deployments, Windows and all 72 Alloy scrape targets remained healthy.
 
 ## Remaining workstreams
 
-Planning inventory as of 2026-10-22, after host containment and BuildKit process isolation:
+Planning inventory as of 2026-10-22, after host containment, BuildKit isolation and logical database restore drills:
 
-1. Backup integrity and restore validation: test other DB dumps (Talaria restore verified).
-2. Backups outside the NAS failure domain.
-3. Clean-droplet recovery rehearsal.
-4. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
-5. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+1. Clean-droplet recovery rehearsal (provider backups are enabled, per owner).
+2. Provider IaC: DigitalOcean firewalls/backups, DNS and tailnet grants.
+3. Stronger Cloudflare origin identity (authenticated origin pulls or a tunnel).
+
+Logical database restore validation is complete for the selected latest stored
+dumps: Paperless, Rachel, RomM and Vōcard passed isolated full restores and
+engine checks; Talaria was verified previously. [Results and limits](../k8up/recovery/README.md)
+distinguish these logical dumps from SQLite copies, application files and
+full application recovery.
+
+Owner decision (2026-10-22): offsite cluster backups are not planned because
+of cost. The owner accepts that cluster data and NAS-hosted backups share a
+failure domain. Droplet backups are already enabled; testing their recovery
+remains on the list. This decision removes offsite storage from the backlog,
+not from the residual-risk description.
 
 Shared [BuildKit process isolation](../buildkit/README.md) is complete: rootless
 BuildKit now uses pod user namespaces and per-RUN PID namespaces, with live
@@ -219,7 +229,7 @@ reports Ready, and the host guard service and nftables table remain active.
 primary host: private ntfy reminders at 7d, 3d, 2d, 1d and 12hr, plus expiry.
 They cover devices visible in that host's tailnet inventory.
 
-These are workstreams, not five confirmed exploitable vulnerabilities or an
+These are workstreams, not three confirmed exploitable vulnerabilities or an
 exhaustive audit result. New dependency findings can change the list. Existing
 application exceptions, including Jellyfin media writes, remain intentional.
 

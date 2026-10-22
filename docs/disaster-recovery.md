@@ -70,9 +70,16 @@ application proves all required data is recoverable.
 8. Test actual reads/writes, authentication, ingress, image pulls, volume
    reattachment, and notifications. Resume schedules and writers in stages.
 
+## Accepted backup scope
+
+On 2026-10-22 the owner declined offsite cluster backup storage given the cost.
+NAS/site loss can therefore lose both cluster data and its local backups.
+Do not treat offsite storage as a pending purchase or claim independent cluster
+recovery coverage. The owner reports droplet backups are enabled; validating
+their restore procedure remains outstanding.
+
 ## Improvements to plan
 
-- Independent/offsite copies of etcd, application, and secrets backups.
 - A tested first-server bootstrap procedure and stable API entry point.
 - Recovery tests for an application backup and an etcd snapshot in isolation.
 - Enough schedulable headroom and redundant placement for critical services.

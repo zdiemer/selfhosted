@@ -1,0 +1,47 @@
+[
+  {
+    "target": "paperless",
+    "engine": "PostgreSQL 16",
+    "snapshot": "187a660b7107c0b183fe5699808a88e3322f9bef182a7eab955d8c85c5f6ce09",
+    "snapshot_time": "2026-10-19T02:17:51.431123977Z",
+    "archive": "/docs-dump.pgdump",
+    "restored_tables_or_collections": 72,
+    "restored_records": 2520,
+    "record_type": "rows",
+    "verified_at": "2026-10-22"
+  },
+  {
+    "target": "rachel",
+    "engine": "PostgreSQL 17",
+    "snapshot": "b683e1ba3ab47e6d805befd151a3e0da019ef5b6af264cebb9ad3331e142f4c0",
+    "snapshot_time": "2026-10-18T04:43:35.232450686Z",
+    "archive": "/rachel-dump.pgdump",
+    "restored_tables_or_collections": 13,
+    "restored_records": 91,
+    "record_type": "rows",
+    "verified_at": "2026-10-22"
+  },
+  {
+    "target": "romm",
+    "engine": "MariaDB 11.4",
+    "snapshot": "d4fa6d18bc81514a91ffeeb379e0cbb1e1fe42b2820b9f1551b0e9aeb20c0b66",
+    "snapshot_time": "2026-10-20T08:01:02.753170426Z",
+    "archive": "/games-dump.sql",
+    "restored_tables_or_collections": 40,
+    "restored_records": 4209379,
+    "record_type": "rows",
+    "verified_at": "2026-10-22",
+    "clean_restart_verified": true
+  },
+  {
+    "target": "vocard",
+    "engine": "MongoDB 8",
+    "snapshot": "f7bf08b1b9b35005dd58560f4c1b9cc12fd785670150f7dd2838badc7cc76f96",
+    "snapshot_time": "2026-10-16T08:00:51.892435953Z",
+    "archive": "/discord-dump.archive.gz",
+    "restored_tables_or_collections": 2,
+    "restored_records": 3,
+    "record_type": "documents",
+    "verified_at": "2026-10-22"
+  }
+]
