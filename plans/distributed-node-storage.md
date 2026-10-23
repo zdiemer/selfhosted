@@ -143,6 +143,80 @@ not select a provider on the basis of aggregate free capacity alone. Pure
 replication does not satisfy the general capacity requirement; an archival
 parity layer does not establish safe live database failover.
 
+## Capacity comparison: failure policy still undecided
+
+These are planning calculations from the inventory, not provisionable capacity
+or a selected provider configuration. In particular, surviving failures without
+data loss and continuing writes during those failures are different promises.
+
+| Policy illustration | Bulk raw per 1 TiB logical | Database raw per 250 GiB logical | Failure behavior |
+|---|---:|---:|---|
+| One-failure data protection: 4+1 bulk, 3 DB copies | 1.25 TiB | 750 GiB | DB can retain two copies after one host loss; EC writes may pause |
+| Two-failure data protection: 4+2 bulk, 3 DB copies | 1.50 TiB | 750 GiB | Two lost fragments are reconstructable; DB may have only one copy and stop writes |
+| Two-failure DB write availability: 4+2 bulk, 4 DB copies | 1.50 TiB | 1,000 GiB | DB retains two copies; bulk write availability is still a separate gate |
+
+For the illustrative replicated pools, min_size=2 preserves a two-copy write
+floor. Four replicas alone do not prove end-to-end application availability:
+monitor quorum, fencing, client recovery and application placement also matter.
+A two-failure control-plane target would normally need five suitably placed
+quorum members rather than three. EC min_size and recovery behavior must be
+verified for the chosen release: 4+2 with a five-shard write floor pauses after
+two losses. Do not lower safety thresholds just to label the design available.
+Ceph explicitly discourages single-parity production pools. See
+[Ceph EC guidance](https://docs.ceph.com/en/squid/rados/operations/erasure-code/)
+and [pool configuration](https://docs.ceph.com/en/latest/rados/operations/pools/).
+
+### Applying a provisional reserve to measured free space
+
+For a comparable conservative starting point, exclude laptop-6 (Wi-Fi/stability)
+and laptop (only 22 GiB free). On the other eight wired hosts, leave an additional
+32 GiB of currently free space per host outside the pool, then hold back 20% of
+the remainder. These are proposed modeling allowances, not accepted reserve
+settings or a complete rebuild guarantee. Do not reclaim existing data in this
+calculation; migration source copies remain present.
+
+Result: 1,498.8 GiB of modeled raw allocation budget, before provider metadata.
+With a hypothetical 250 GiB logical database tier:
+
+| Illustration | Aggregate-only bulk ceiling after DB copies | DB + bulk logical ceiling |
+|---|---:|---:|
+| 4+1 bulk, three DB copies | 599 GiB | 849 GiB |
+| 4+2 bulk, three DB copies | 499 GiB | 749 GiB |
+| 4+2 bulk, four DB copies | 333 GiB | 583 GiB |
+
+These are upper bounds, not promised quotas. Metadata, snapshots, allocation
+imbalance and host-separated placement reduce them further. The database budget
+is illustrative: the measured PostgreSQL directory alone is about 196 GiB;
+Elasticsearch and growth must be classified before accepting 250 GiB.
+
+The uneven disks matter substantially. With these reserves, node2 contributes
+only 6.4 GiB. Restricting a 4+2 pool to nodes1–6 forces every stripe onto all six
+hosts, limiting bulk logical capacity to 4 * 6.4 = 25.6 GiB even before databases.
+Across all eight candidate hosts, the idealized parity-only 4+2 ceiling rises to
+492 GiB, still before placing database replicas in the same capacity. Actual
+joint placement needs a provider-specific model, not subtraction alone.
+
+The parity-only bound uses per-host budgets c_i and stripe width n=k+m:
+maximum stripe-unit bytes are at most sum(min(c_i, S))/n, with each host storing
+at most one fragment per stripe. Equivalently, sort capacities ascending and
+bound S by the sum of the smallest H-j capacities divided by n-j for each
+j from 0 through n-1; logical capacity is k*S. This assumes perfect divisible
+placement, so real placement groups can do worse.
+
+### Rebuilding without replacement is stricter still
+
+The 20% allowance does not guarantee full redundancy can be restored while a
+large host remains absent. Losing node6 removes 471.84 GiB from the modeled
+allocation budget. Losing both nodes6 and4 leaves only 690.72 GiB, less than the
+750 GiB needed to restore three copies of the example DB tier alone. This uses
+the same conservative reserve policy; spending the held-back space changes the
+model and reduces growth/operational margin.
+
+Therefore choose explicitly between temporary degraded operation until a node
+returns, versus full re-protection on surviving nodes without replacement.
+The latter requires a materially lower data cap and a placement-aware recovery
+model. No node or disk changes follow from this comparison.
+
 ## Design gates and next steps
 
 1. Planned downtime and offline repartitioning are accepted. Prepare a per-node
