@@ -10,7 +10,9 @@ Use both spare OS filesystem capacity and dedicated disks where feasible. Avoid
 losing half the aggregate capacity to replication: investigate parity, with
 separate workload policies permitted. Prefer fast, unconstrained storage at
 allocation and retain database locality where possible. Automatic relocation is
-a bonus, not a prerequisite. No new hardware is in scope.
+a bonus, not a prerequisite. No new hardware is in scope. Planned downtime and offline repartitioning are
+acceptable for the eventual migration. This is a design constraint, not an
+instruction to repartition nodes during planning.
 
 ## Measured inventory
 
@@ -141,9 +143,12 @@ parity layer does not establish safe live database failover.
 
 ## Design gates and next steps
 
-1. Decide whether planned downtime and offline filesystem shrinking/repartitioning
-   are allowed. If only existing directories are acceptable, Ceph's standard
-   deployment is blocked; do not disguise loopback files as a production design.
+1. Planned downtime and offline repartitioning are accepted. Prepare a per-node
+   evacuation, verified backup/restore and rollback procedure before assigning
+   raw partitions to a provider. Ext4 shrinking requires the filesystem to be
+   unmounted; root partitions therefore need a tested rescue/alternate-boot
+   path. Preserve boot and OS capacity, and migrate one failure domain at a
+   time. Do not use production loopback files as a substitute for this layout.
 2. Decide whether a bounded replicated tier for hot databases is acceptable while
    bulk data uses parity. Otherwise the winning provider must pass direct EC
    database benchmarks and recovery tests. Small replicated metadata still needs
