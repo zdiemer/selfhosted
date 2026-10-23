@@ -30,6 +30,8 @@ a stale plan, and will be read as a live one.
 | [`steam-moonlight-completion.md`](steam-moonlight-completion.md) | Complete Steam login, Moonlight pairing and real game/input/persistence validation. | Infrastructure deployed — real client session unverified |
 | [`bakery-deprecation.md`](bakery-deprecation.md) | Roll out the committed harness removal and verify retained workspace workflows. | Source cleanup committed — Bakery containers still deployed |
 
+| [`ios-device-gateway.md`](ios-device-gateway.md) | Dedicated iOS device for iMessage gateway and low-latency browser gaming, with app/file management and battery monitoring. | Design agreed — hardware selection and same-device feasibility tests first |
+
 ## Other open work
 
 - [Droplet recovery rehearsal](../infra/droplet-recovery/README.md): procedure
