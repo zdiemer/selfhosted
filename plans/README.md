@@ -29,8 +29,8 @@ a stale plan, and will be read as a live one.
 | [`keepass-completion.md`](keepass-completion.md) | Finish vault/client adoption, conflict testing and recovery validation. | Services deployed — owner workflow unfinished |
 | [`steam-moonlight-completion.md`](steam-moonlight-completion.md) | Complete Steam login, Moonlight pairing and real game/input/persistence validation. | Infrastructure deployed — real client session unverified |
 | [`bakery-deprecation.md`](bakery-deprecation.md) | Roll out the committed harness removal and verify retained workspace workflows. | Source cleanup committed — Bakery containers still deployed |
-
 | [`ios-device-gateway.md`](ios-device-gateway.md) | Dedicated iOS device for iMessage gateway and low-latency browser gaming, with app/file management and battery monitoring. | Design agreed — hardware selection and same-device feasibility tests first |
+| [`mac-mini-ci.md`](mac-mini-ci.md) | Used 16 GB Apple Silicon Mini for private macOS CI, development VM, Rosetta compatibility tests and tailnet browser access. | Planned — hardware purchase and access/VM validation pending |
 
 ## Other open work
 
