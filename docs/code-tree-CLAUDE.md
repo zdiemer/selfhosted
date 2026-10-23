@@ -1,10 +1,11 @@
 # Working in ~/Code
 
-Source of truth: `~/Code/selfhosted/docs/code-tree-CLAUDE.md`, symlinked to
-`~/Code/CLAUDE.md`. Claude Code reads `CLAUDE.md` from the working directory and
-every parent, so one file there is inherited by every repo in this tree without
-any of them tracking a copy. Edit it here, in git — not through the symlink's
-directory listing.
+Source of truth: `selfhosted/docs/code-tree-CLAUDE.md` under the shared code
+root (`~/Code` on the host, `/home/node/code` in the workspace). Publish it as
+both `CLAUDE.md` and `AGENTS.md` at that root so Claude and other coding agents
+inherit the same conventions across sibling repositories. Edit this tracked
+source, then refresh the shared copies; do not let them diverge. The workspace
+init container refreshes both copies from this checkout when it is present.
 
 It exists because the repos under `~/Code` are siblings that share one
 deployment convention, and an agent that only sees `~/Code/gamedex` cannot infer

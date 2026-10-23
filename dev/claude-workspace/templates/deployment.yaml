@@ -72,6 +72,13 @@ spec:
             - |
               set -eu
               mkdir -p /home/node/.claude /home/node/.happy /home/node/code
+              # Shared instructions for Claude and AGENTS.md-aware harnesses.
+              # A fresh PVC may not have the selfhosted checkout yet.
+              instructions=/home/node/code/selfhosted/docs/code-tree-CLAUDE.md
+              if [ -f "$instructions" ]; then
+                cp "$instructions" /home/node/code/CLAUDE.md
+                cp "$instructions" /home/node/code/AGENTS.md
+              fi
               mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
               mkdir -p /home/node/.local/share/tailscale
               chmod 700 /home/node/.local/share/tailscale
