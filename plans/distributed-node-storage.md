@@ -218,10 +218,20 @@ allocation budget. Losing both nodes6 and4 leaves only 690.72 GiB, less than the
 the same conservative reserve policy; spending the held-back space changes the
 model and reduces growth/operational margin.
 
-Therefore choose explicitly between temporary degraded operation until a node
-returns, versus full re-protection on surviving nodes without replacement.
-The latter requires a materially lower data cap and a placement-aware recovery
-model. No node or disk changes follow from this comparison.
+Full redundancy is allowed to wait until failed nodes return or are repaired.
+The design does not need enough spare capacity to restore every replica and
+parity fragment on surviving nodes while failed hosts remain absent. Continue
+safe partial repairs where possible, but preserve write safety thresholds and
+accept pauses when necessary. The two-failure protection target describes a
+healthy, fully protected starting state; it is not a renewed guarantee against
+two additional failures while degraded.
+
+Retain operating, growth and recovery-workspace headroom; this decision does
+not authorize filling disks or removing backups. Alert promptly on degraded
+redundancy and escalate for physical repair when automated recovery cannot
+restore it. After repair, validate resynchronization, scrubbing and full
+protection before declaring recovery complete. No node or disk changes follow
+from this comparison.
 
 ## Design gates and next steps
 
@@ -242,10 +252,11 @@ model. No node or disk changes follow from this comparison.
    pauses are accepted. Use 4+2 as the working bulk layout (66.7% coding
    efficiency before other overhead), with fragments on distinct hosts. Verify
    provider metadata protection and degraded-write thresholds too. Minimum free
-   headroom and the full-rebuild-without-replacement requirement remain open.
+   headroom remains to be sized; full redundancy may wait for node repair.
 4. Produce a per-host allocation model with hard OS reserves, future workload
-   growth, one- and two-host-loss recovery capacity and actual failure-domain
-   placement.
+   growth, degraded-operation capacity and recovery after repaired nodes return.
+   Validate actual failure-domain placement; full rebuilding on survivors alone
+   is not required.
    Choose a repair bandwidth budget and acceptable application downtime.
 5. Qualify disks and network without production write stress; obtain a baseline
    of existing DB latency and node pressure before a disposable-volume pilot.
