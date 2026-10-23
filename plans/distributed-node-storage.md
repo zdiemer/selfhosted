@@ -143,11 +143,17 @@ not select a provider on the basis of aggregate free capacity alone. Pure
 replication does not satisfy the general capacity requirement; an archival
 parity layer does not establish safe live database failover.
 
-## Capacity comparison: failure policy still undecided
+## Capacity comparison: two-failure data protection selected
 
-These are planning calculations from the inventory, not provisionable capacity
-or a selected provider configuration. In particular, surviving failures without
-data loss and continuing writes during those failures are different promises.
+The accepted target is protection against two overlapping host failures, with
+temporary write pauses permitted. The working layout is 4+2 bulk parity and
+three database copies on distinct hosts, with a two-copy database write floor.
+This selects a design direction, not a provider or deployment configuration.
+Metadata must also survive two host losses; quorum loss may pause service.
+Validate recovery after hosts return, not just survival of data fragments.
+
+The following alternatives are retained to explain the capacity tradeoff. They
+are planning calculations, not provisionable capacity guarantees.
 
 | Policy illustration | Bulk raw per 1 TiB logical | Database raw per 250 GiB logical | Failure behavior |
 |---|---:|---:|---|
@@ -227,18 +233,19 @@ model. No node or disk changes follow from this comparison.
    time. Do not use production loopback files as a substitute for this layout.
 2. A bounded replicated tier for hot databases is accepted; bulk data uses
    parity. Define eligible PVCs and a hard logical-capacity budget before
-   deployment, accounting for growth, snapshots and migration overlap. Choose
-   replica count and degraded-write policy with the failure-tolerance decision;
-   acceptance of this tier does not select either setting. For illustration,
-   200 GiB of database data uses 400 GiB with two copies or 600 GiB with three,
+   deployment, accounting for growth, snapshots and migration overlap. The working
+   design uses three host-separated copies and pauses writes below two copies.
+   For illustration, 200 GiB of database data uses 600 GiB with three copies,
    before metadata and reserves. Budget replicated provider metadata separately.
    Do not silently place general-purpose volumes in this exception tier.
-3. Select host failure tolerance and minimum free headroom. For illustration,
-   4+1 gives 80% coding efficiency and 4+2 gives 66.7%, before metadata, reserves,
-   unequal-host placement limits and migration overlap. Parity fragments should
-   be distributed across hosts, not placed on designated single parity disks.
+3. Two overlapping host failures must not lose protected data; temporary write
+   pauses are accepted. Use 4+2 as the working bulk layout (66.7% coding
+   efficiency before other overhead), with fragments on distinct hosts. Verify
+   provider metadata protection and degraded-write thresholds too. Minimum free
+   headroom and the full-rebuild-without-replacement requirement remain open.
 4. Produce a per-host allocation model with hard OS reserves, future workload
-   growth, one-host-loss rebuild capacity and actual failure-domain placement.
+   growth, one- and two-host-loss recovery capacity and actual failure-domain
+   placement.
    Choose a repair bandwidth budget and acceptable application downtime.
 5. Qualify disks and network without production write stress; obtain a baseline
    of existing DB latency and node pressure before a disposable-volume pilot.
