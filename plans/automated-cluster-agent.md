@@ -139,7 +139,7 @@ repair. Record incomplete evidence and escalate when verification is impossible.
 
 ## Notifications and independent failure detection
 
-Use the existing [notification routing](notification-routing.md): ntfy first,
+Use the existing [notification routing](../docs/notification-routing.md): ntfy first,
 SMS on publish failure, and Grafana Cloud email only when ntfy is explicitly
 unavailable. Critical severity or missing telemetry alone must not trigger email.
 SMS availability must be verified before treating it as a working fallback.
@@ -223,7 +223,7 @@ These paths are proposed; no implementation is created by this plan.
 ## References
 
 - [Codex noninteractive execution and structured results](https://learn.chatgpt.com/docs/non-interactive-mode)
-- [Notification routing](notification-routing.md)
+- [Notification routing](../docs/notification-routing.md)
 - [Application health coverage](../infra/health-exporter/README.md)
 - [Grafana alert rules](../infra/grafana-dashboards/alerts/rules.json)
 - [Alloy ingestion limits and recovery](../infra/alloy/README.md)

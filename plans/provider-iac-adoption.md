@@ -29,7 +29,8 @@ Retain provider console access before changing SSH ingress.
 
 ## 2. Agent: prepare the existing workspace
 
-Use OpenTofu **1.13.2**, the committed provider locks, and the scripts here.
+Use OpenTofu **1.13.2**, the committed provider locks, and the scripts in
+[`infra/provider-iac/`](../infra/provider-iac/). Run commands from the repository root.
 Do not create a second independent state for the same resources. Check for
 existing encrypted state under `~/.local/state/selfhosted-provider-iac/` before
 initializing a new operator workspace. Keep keys, state and plans outside Git.
@@ -65,7 +66,8 @@ do not invent a replacement record. For other zones, discover separately, select
 only the intended records, and merge their `records` maps into one desired file.
 
 Review these facts before promoting the generated files into tracked nonsecret
-JSON (for example `digitalocean/production.json` and `cloudflare/production.json`):
+JSON under `infra/provider-iac/` (for example `digitalocean/production.json` and
+`cloudflare/production.json`):
 
 - Droplet IDs/public IPs, current sizes, VPCs, tags and volume attachments match
   production. Backups are actually enabled, with the current plan/day/hour retained.
@@ -104,7 +106,7 @@ with raw OpenTofu, target flags or a fresh state. Provider authentication failur
 means fix the credential/scope, not that a resource should be recreated.
 
 After unchanged tailnet import, narrow the egress device's effective permissions
-to the backend nodes/ports documented in [the README](README.md#tailnet-hardening-after-no-change-import).
+to the backend nodes/ports documented in [the README](../infra/provider-iac/README.md#tailnet-hardening-after-no-change-import).
 Inspect every broader matching rule: adding a narrow grant does not subtract
 permissions. Add allowed/denied policy tests, preserve operator access, then use
 the same `plan --vars ...` / `apply` workflow for the Tailscale stack. Do not
@@ -134,7 +136,7 @@ remains outside the accepted scope.
 
 ## Stronger origin identity can proceed separately
 
-See [the Whatnow origin identity plan](../whatnow-droplet/ORIGIN-IDENTITY.md).
+See [the Whatnow origin identity plan](whatnow-origin-identity.md).
 Only Cloudflare access is missing for that work; DigitalOcean/Tailscale tokens
 and provider adoption are not prerequisites. For the proposed zone-specific
 client certificate, also grant **SSL and Certificates Edit** on `whatnow.gg`

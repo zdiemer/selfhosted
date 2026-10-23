@@ -6,7 +6,7 @@ found in the accessible homelab/Personal vault item inventories. Tunnel connecto
 tokens, Tailscale device sign-in and mounted 1Password credentials do not grant
 these provider permissions. No live provider plan or inventory is claimed.
 
-Start with [the completion checklist](FINISH.md) for the owner's one-time
+Start with [the completion checklist](../../plans/provider-iac-adoption.md) for the owner's one-time
 credential setup and the agent's inventory, deployment and verification steps.
 
 The recovery rehearsal is deferred at the owner's request. Provider adoption

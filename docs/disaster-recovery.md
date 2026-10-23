@@ -88,7 +88,7 @@ in favor of [provider IaC](../infra/provider-iac/README.md); recovery remains un
 - A tested first-server bootstrap procedure and stable API entry point.
 - Recovery tests for an application backup and an etcd snapshot in isolation.
 - Enough schedulable headroom and redundant placement for critical services.
-- [Node3 storage separation](node3-postgres-storage-separation.md); this reduces
+- [Node3 storage separation](../plans/node3-postgres-storage-separation.md); this reduces
   disk contention but does not provide PostgreSQL high availability.
 
 Use [K8up's documentation](../infra/k8up/README.md) for backup/restore tooling and

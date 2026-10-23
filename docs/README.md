@@ -1,6 +1,7 @@
-# Operations and plans
+# Operations
 
-Keep reusable procedures, architecture, and outstanding plans here. Deployment
+Keep reusable procedures and architecture here. Outstanding designs and
+implementation checklists live in [plans](../plans/README.md). Deployment
 values and scripts own version pins; Git history owns completed changes. Do not
 add incident timelines, rollout transcripts, or point-in-time health inventories.
 Put service-specific operating guidance beside that service's chart.
@@ -11,8 +12,6 @@ Put service-specific operating guidance beside that service's chart.
 | [K3s upgrades](k3s-upgrade.md) | One-node upgrade procedure and failure recovery |
 | [Notification routing](notification-routing.md) | Topics, fallback policy, and public webhook configuration |
 | [SMS gateway recovery](sms-gateway-recovery.md) | Handset checks and delivery verification |
-| [PostgreSQL storage separation](node3-postgres-storage-separation.md) | Outstanding node3 SSD migration plan |
-| [Automated cluster agent](automated-cluster-agent.md) | Proposed bounded repair and deployment architecture |
 | [Shared repository instructions](code-tree-CLAUDE.md) | Source for the parent code-tree CLAUDE.md |
 
 [Paperless](paperless-ngx/) and [Stirling PDF](stirling-pdf/) are application

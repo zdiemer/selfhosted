@@ -149,7 +149,89 @@ for recovery. Retire the original copy only after validation and explicit cleanu
 
 ## Outstanding decisions
 
-- SSD model, capacity, thermal hardware, and physical maintenance window.
-- Exact mount, PV/PVC names, and Helm support for an explicitly selected claim.
+- Purchased SSD: GUDGA 1 TB M.2 NVMe PCIe 3.0, P/N `GVY-1TB-2280`.
+  Awaiting installation; owner available on 2026-10-22. Verify physical fit,
+  serial number, health, actual capacity, and thermal hardware after installation.
+- Proposed mount `/var/lib/talaria-postgres-ssd`, PV `talaria-postgres-ssd-node3`,
+  PVC `talaria/talaria-postgres-ssd`; finalize after measuring usable space.
 - Temporary standby memory budget, replication access, and WAL retention bound.
 - Confirmed downtime window and measured copy rate.
+
+## Execution checkpoint — 2026-10-22
+
+Preparation is in progress. Node3 remains online and the database still uses the
+original SSD. No storage migration, cordon, drain, or shutdown has occurred.
+
+Live inventory:
+
+- All ten Kubernetes nodes are Ready. All three control-plane members' local
+  etcd health checks pass. API readiness checks pass directly at the two
+  surviving addresses, `192.168.4.26:6443` and `192.168.4.21:6443`.
+- Source claim `talaria/data-talaria-postgres-0` binds to
+  `pvc-95514cfa-26e7-46ab-910b-bc7263dcd983`, a `Retain` local PV at
+  `/var/lib/rancher/k3s/storage/pvc-95514cfa-26e7-46ab-910b-bc7263dcd983_talaria_pgdata-migrate3`.
+  The claim declares 200 GiB; the StatefulSet template still declares 100 GiB.
+- `auction_watcher` uses 200,990,915,943 bytes (about 187.2 GiB). There are no
+  external tablespaces; WAL resolves within `/var/lib/postgresql/data`.
+- PostgreSQL is 15.19, image digest
+  `sha256:f7d23353e1b15400d22ebe31189f4d314b87a4c129cc400c8c2d8d4ca127bf81`.
+  Preserve the live settings, including 18 GB shared buffers and 20/28 GiB
+  requested/limited memory. The chart defaults differ substantially.
+- Original disk: Kioxia `KBG40ZNS512G`, serial `511PG3R1QXD3`, root filesystem
+  UUID `0f605f83-546e-4ff7-9860-bd2249ce3506`. PostgreSQL and etcd both resolve
+  to this disk. SMART passes with zero media/data-integrity errors, but the
+  measured temperature is 71°C and thermal throttling has occurred historically.
+  Recheck cooling before adding sustained migration I/O.
+- Drain preflight identifies PostgreSQL as pinned to node3. Authelia Redis,
+  Paperless PostgreSQL, ntfy, Jellyseerr, and virt-exportproxy are singleton
+  workloads that can experience gaps; three have iSCSI volume handoffs.
+
+Fresh backup Job `talaria-postgres-pre-ssd-20261022` was created from the existing
+`talaria-postgres-backup` CronJob. It is still running at this checkpoint. Require
+successful completion, record the resulting full Restic snapshot ID, and perform
+the isolated restore before proceeding. The previous backup took 43 minutes;
+restore time is additional. Do not overlap a migration seed with this backup.
+An active workstation process waits for this exact Job to complete, records its
+full snapshot ID, then invokes the existing isolated restore workflow as
+`talaria-postgres-pre-ssd-restore-20261022`. This creates a separate 400 GiB NAS
+scratch claim, with no production data-volume mount. It requires Job completion
+and `RESTORE_VERIFIED`, and records success privately. A failure stops preparation;
+it never shuts down node3 or performs a cutover. Progress is in
+`secrets/node3-postgres-20261022/preparation.log` (Git-ignored).
+
+The Talaria submodule has an **undeployed** chart change adding
+`postgres.existingClaim` and `postgres.expectedVolumeId`. Existing defaults retain
+their current claim-template behavior. Setting the identity requires an explicit
+claim; every container start checks the volume-root `.talaria-volume-id`, existing
+`PG_VERSION` and `global/pg_control`, and matching PostgreSQL major version before
+calling the normal image entrypoint. Lint, both rendered claim modes, invalid
+configuration rejection, and startup failure cases pass with synthetic values.
+
+At cutover, populate the marker only on the verified mounted SSD, using its
+filesystem UUID as the expected value. Never create the marker on the underlying
+root-filesystem directory. Also verify the host mount's UUID and missing-mount
+behavior; the marker does not replace that check. Copy data into the volume's
+`pgdata/` subdirectory to preserve the existing chart mount layout. Recreate the
+stopped StatefulSet to remove its immutable claim template, then deploy using
+captured live values, the explicit claim, and the expected identity. Keep the
+original PV/PVC intact. Do not run the normal whole-application upgrade script
+with chart defaults for this cutover.
+
+Live Helm values/manifests and workload bindings are captured privately in
+`secrets/node3-postgres-20261022/`. After explicit owner approval, a fresh etcd
+snapshot and matching server token/configuration were copied off node3 into this
+directory with owner-only access. The archive checksum and required contents were
+verified. Do not commit or disclose these credentials. The private migration
+override also corrects saved Helm resource values to the actual live 20/28 GiB
+memory and 1/3 CPU request/limit, and pins the running image digest. Its expected
+volume identity is deliberately a placeholder until the new filesystem exists.
+
+All seven agents can establish TCP connections to both surviving API servers.
+Six bootstrap through node0's LAN or Tailscale address. Node4 bootstraps through
+node3, but its saved K3s agent load-balancer configuration includes both surviving
+servers (`192.168.4.26:6443`, `192.168.4.21:6443`). Avoid restarting agents during
+the window; verify continued API connectivity once node3 is offline.
+
+Remaining pre-shutdown gates: finish the backup and isolated restore, recheck
+health, then pause writers and movable dependencies before cleanly stopping
+PostgreSQL and shutting down node3. The physical installation remains outstanding.

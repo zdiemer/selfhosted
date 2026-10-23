@@ -195,8 +195,8 @@ Planning inventory as of 2026-10-22, after host containment, BuildKit isolation 
    Cloudflare DNS and Tailscale OpenTofu stacks prepared and locally validated.
    Live inventory/import, firewall apply and full-policy grant hardening remain
    pending provider credentials; no provider changes deployed yet.
-   [Completion checklist](../provider-iac/FINISH.md).
-2. [Stronger Cloudflare origin identity](../whatnow-droplet/ORIGIN-IDENTITY.md):
+   [Completion checklist](../../plans/provider-iac-adoption.md).
+2. [Stronger Cloudflare origin identity](../../plans/whatnow-origin-identity.md):
    proposed zone-specific authenticated origin pulls; needs Cloudflare SSL API
    access but can proceed independently of DO/Tailscale adoption.
 
