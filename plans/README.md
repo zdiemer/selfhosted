@@ -31,7 +31,7 @@ a stale plan, and will be read as a live one.
 | [`bakery-deprecation.md`](bakery-deprecation.md) | Roll out the committed harness removal and verify retained workspace workflows. | Source cleanup committed — Bakery containers still deployed |
 | [`ios-device-gateway.md`](ios-device-gateway.md) | Dedicated iOS device for iMessage gateway and low-latency browser gaming, with app/file management and battery monitoring. | Design agreed — hardware selection and same-device feasibility tests first |
 | [`mac-mini-ci.md`](mac-mini-ci.md) | Used 16 GB Apple Silicon Mini for private macOS CI, development VM, Rosetta compatibility tests and tailnet browser access. | Planned — hardware purchase and access/VM validation pending |
-| [`distributed-node-storage.md`](distributed-node-storage.md) | Unequal node-disk inventory, parity storage shortlist and migration feasibility gates; preserve NAS. | Inventoried — repartitioning accepted; provider and tier policies pending |
+| [`distributed-node-storage.md`](distributed-node-storage.md) | Unequal node-disk inventory, parity storage shortlist and migration feasibility gates; preserve NAS. | Inventoried — repartitioning and bounded DB replication accepted; failure policy pending |
 
 ## Other open work
 

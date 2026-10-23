@@ -8,9 +8,11 @@ Replace all local-path use with portable storage using existing node disks of
 unequal sizes. Preserve NAS-backed storage and keep the NAS out of this pool.
 Use both spare OS filesystem capacity and dedicated disks where feasible. Avoid
 losing half the aggregate capacity to replication: investigate parity, with
-separate workload policies permitted. Prefer fast, unconstrained storage at
+a bounded replicated tier explicitly accepted for hot databases and parity for
+bulk storage. Prefer fast, unconstrained storage at
 allocation and retain database locality where possible. Automatic relocation is
-a bonus, not a prerequisite. No new hardware is in scope. Planned downtime and offline repartitioning are
+a bonus, not a prerequisite. No new hardware is in scope. Planned downtime and
+offline repartitioning are
 acceptable for the eventual migration. This is a design constraint, not an
 instruction to repartition nodes during planning.
 
@@ -149,10 +151,14 @@ parity layer does not establish safe live database failover.
    unmounted; root partitions therefore need a tested rescue/alternate-boot
    path. Preserve boot and OS capacity, and migrate one failure domain at a
    time. Do not use production loopback files as a substitute for this layout.
-2. Decide whether a bounded replicated tier for hot databases is acceptable while
-   bulk data uses parity. Otherwise the winning provider must pass direct EC
-   database benchmarks and recovery tests. Small replicated metadata still needs
-   a budget even when application data is parity protected.
+2. A bounded replicated tier for hot databases is accepted; bulk data uses
+   parity. Define eligible PVCs and a hard logical-capacity budget before
+   deployment, accounting for growth, snapshots and migration overlap. Choose
+   replica count and degraded-write policy with the failure-tolerance decision;
+   acceptance of this tier does not select either setting. For illustration,
+   200 GiB of database data uses 400 GiB with two copies or 600 GiB with three,
+   before metadata and reserves. Budget replicated provider metadata separately.
+   Do not silently place general-purpose volumes in this exception tier.
 3. Select host failure tolerance and minimum free headroom. For illustration,
    4+1 gives 80% coding efficiency and 4+2 gives 66.7%, before metadata, reserves,
    unequal-host placement limits and migration overlap. Parity fragments should
