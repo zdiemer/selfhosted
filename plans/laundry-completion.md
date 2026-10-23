@@ -1,6 +1,7 @@
 # Finish Laundry setup
 
-Status: backend deployed; physical sensor commissioning and end-to-end validation remain unfinished.
+Status: backend deployed; the owner confirms the sensor has not been wired yet.
+Wiring, firmware setup, mounting, calibration and end-to-end validation remain.
 
 ## Existing work
 
@@ -9,12 +10,14 @@ ESP32/MPU-6050 sampling, authenticated LAN ingest, persisted cycle detection,
 the dashboard and notification delivery through sms-relay. The live backend
 has one configured washer, an offline sensor whose last sample is over 53 days
 old, and no recorded cycles at this review. A healthy Deployment is not a
-working appliance monitor.
+working appliance monitor. The old sample is not evidence of a previously
+commissioned physical sensor.
 
 ## Remaining work
 
-- [ ] Confirm the available board/sensor hardware and its current wiring and firmware.
-- [ ] Flash or reconnect the washer sensor using the existing guide. Keep Wi-Fi
+- [ ] Confirm the available board/sensor hardware, then wire the MPU-6050 to the
+  ESP32 following the existing guide. The physical wiring has not been done.
+- [ ] Configure and flash the washer sensor using the existing guide. Keep Wi-Fi
   credentials and the ingest token out of Git; use the node LAN ingest endpoint.
 - [ ] Mount and strain-relieve the sensor; verify fresh samples and sensible idle readings.
 - [ ] Record a full real washer cycle, including its longest quiet pause. Tune
