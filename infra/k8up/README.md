@@ -186,9 +186,16 @@ kubectl -n talaria logs -f job/postgres-drill-YYYYMMDD -c postgres
 Use `--archive /talaria-dump.pgdump` only for the older streamed snapshots.
 The drill mounts the repository read-only, has no network access or production
 credentials, starts PostgreSQL on a Unix socket only, and requires `pg_restore
---exit-on-error` followed by table/index checks. It uses a new 400 GiB scratch
-PVC and refuses to overwrite an existing drill. Allow up to six hours. Read-only
+--exit-on-error` followed by valid indexes/constraints and nonempty auction data.
+It uses a new 400 GiB scratch PVC, excludes it from raw K8up backups, and refuses
+to overwrite an existing drill. Allow up to six hours. Read-only
 Restic uses `--no-lock`; schedule outside the Sunday 06:00 UTC repository prune.
+
+For a large drill, `--storage-class local-path --node zachd-ubuntu-6` selects
+local scratch storage instead of NAS random I/O. Check that node's actual free
+space and memory first; a local-path claim's requested capacity is not a quota.
+The drill still mounts only scratch storage and the read-only repository, with
+network access denied.
 
 After recording the result, delete only that drill's Job, NetworkPolicy and PVC.
 Never substitute the production database PVC. The repository and primary database
@@ -260,7 +267,7 @@ verified the exact restored payload. The small snapshot is retained with tag
 `network-policy-verification`; all temporary test resources were removed.
 This smoke test does not replace full database-restore verification.
 
-## Continuing the in-flight Talaria drill
+## Rechecking an existing Talaria drill
 
 The 2026-10-21 drill was launched before the final SQL quoting fix. Its running
 Job cannot be edited. `recovery/verify-existing-restore.py JOB --name NAME`
@@ -292,3 +299,12 @@ recording the result. The restic snapshot and backup staging volume remain.
 The other four logical database dumps have their own
 [isolated restore drill](recovery/README.md) in `recovery/database.py`. Offsite cluster storage is an
 accepted risk rather than a planned purchase; see the decision above.
+
+
+The 2026-10-23 validation after Talaria moved to node3's dedicated SSD restored
+snapshot `d0565a4a5b23a4a2ea191ae4959f3dff93d601b7be46159e02efd39c44864660`
+on an isolated local node6 claim: 50 tables, 38,233,165 auction items, 123 GiB,
+valid indexes/constraints, and a clean fsync-enabled restart. The backup completed
+in 41 minutes. Schedules were restored and only the owned scratch drills were
+removed after proof capture. See [the storage runbook](../postgres-storage/README.md)
+for placement, recovery material, and retained-source safeguards.

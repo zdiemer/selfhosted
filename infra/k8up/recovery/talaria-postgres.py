@@ -9,6 +9,8 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('snapshot', help='full restic snapshot ID from talaria-dump.pgdump')
 p.add_argument('--archive', choices=['/talaria-dump.pgdump', '/dump/talaria-dump.pgdump'], default='/dump/talaria-dump.pgdump')
 p.add_argument('--name', default='talaria-postgres-recovery')
+p.add_argument('--storage-class', default='truenas-iscsi', help='scratch storage class')
+p.add_argument('--node', help='optional scratch node hostname, useful with local-path storage')
 p.add_argument('--apply', action='store_true')
 a = p.parse_args()
 if not re.fullmatch('[a-f0-9]{64}', a.snapshot) or not re.fullmatch('[a-z][a-z0-9-]{0,45}', a.name):
@@ -28,7 +30,9 @@ pg_restore --exit-on-error --no-owner --no-acl --jobs=4 -d recovery /work/talari
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT count(*) AS restored_tables FROM pg_tables WHERE schemaname='public';"
 # Refresh table statistics and check restored index validity.
 psql -X -v ON_ERROR_STOP=1 -d recovery -c 'ANALYZE;'
-psql -X -v ON_ERROR_STOP=1 -d recovery -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_index WHERE NOT indisvalid) THEN RAISE EXCEPTION 'invalid restored indexes'; END IF; END \$\$;"
+psql -X -v ON_ERROR_STOP=1 -d recovery -c 'SELECT 1 / CASE WHEN EXISTS (SELECT 1 FROM pg_index WHERE NOT indisvalid OR NOT indisready) THEN 0 ELSE 1 END AS valid_restored_indexes;'
+psql -X -v ON_ERROR_STOP=1 -d recovery -c 'SELECT 1 / CASE WHEN EXISTS (SELECT 1 FROM pg_constraint WHERE NOT convalidated) THEN 0 ELSE 1 END AS valid_restored_constraints;'
+psql -X -v ON_ERROR_STOP=1 -d recovery -c 'SELECT 1 / CASE WHEN EXISTS (SELECT 1 FROM auction_items) THEN 1 ELSE 0 END AS auction_items_present;'
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT count(*) AS restored_auction_items FROM auction_items;"
 psql -X -v ON_ERROR_STOP=1 -d recovery -c "SELECT pg_size_pretty(pg_database_size('recovery')) AS restored_size;"
 echo RESTORE_VERIFIED
@@ -36,7 +40,7 @@ echo RESTORE_VERIFIED
 archive_local = '/work' + a.archive
 script = script.replace('/work/talaria-dump.pgdump', archive_local)
 objects = [
-    {'apiVersion':'v1','kind':'PersistentVolumeClaim','metadata':meta,'spec':{'accessModes':['ReadWriteOnce'],'storageClassName':'truenas-iscsi','resources':{'requests':{'storage':'400Gi'}}}},
+    {'apiVersion':'v1','kind':'PersistentVolumeClaim','metadata':{**meta,'annotations':{'k8up.io/backup':'false'}},'spec':{'accessModes':['ReadWriteOnce'],'storageClassName':a.storage_class,'resources':{'requests':{'storage':'400Gi'}}}},
     {'apiVersion':'networking.k8s.io/v1','kind':'NetworkPolicy','metadata':meta,'spec':{'podSelector':{'matchLabels':labels},'policyTypes':['Ingress','Egress'],'ingress':[],'egress':[]}},
     {'apiVersion':'batch/v1','kind':'Job','metadata':meta,'spec':{'backoffLimit':0,'activeDeadlineSeconds':21600,'template':{'metadata':{'labels':labels},'spec':{
         'automountServiceAccountToken':False,'restartPolicy':'Never',
@@ -57,6 +61,8 @@ objects = [
                    {'name':'tmp','emptyDir':{}}]
     }}}}
 ]
+if a.node:
+    objects[-1]['spec']['template']['spec']['nodeSelector'] = {'kubernetes.io/hostname': a.node}
 if a.apply:
     # Never reset/reuse a drill's database volume; a second run needs a new name.
     found = subprocess.run(['kubectl','get','pvc',a.name,'-n','talaria','--ignore-not-found','-o','name'],check=True,capture_output=True,text=True)

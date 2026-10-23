@@ -1,0 +1,36 @@
+# Apply with --reuse-values only after the source is stopped and the target promoted.
+# Preserve the measured PostgreSQL settings; credentials and application values stay in Helm.
+postgres:
+  existingClaim: talaria-postgres-ssd
+  expectedVolumeId: d072873b-9827-4091-9b3a-c741cd29a24a
+  image: postgres@sha256:f7d23353e1b15400d22ebe31189f4d314b87a4c129cc400c8c2d8d4ca127bf81
+  pgdata: /var/lib/postgresql/data
+  nodeSelector:
+    kubernetes.io/hostname: zachd-ubuntu-3
+  resources:
+    limits:
+      cpu: '3'
+      memory: 28Gi
+    requests:
+      cpu: '1'
+      memory: 20Gi
+  config:
+    bgwriterDelay: 100ms
+    bgwriterLruMaxpages: '1000'
+    checkpointTimeout: 30min
+    effectiveCacheSize: 20GB
+    idleInTransactionTimeout: 30s
+    logMinDurationStatement: '500'
+    maintenanceWorkMem: 1GB
+    maxConnections: '250'
+    maxParallelWorkersPerGather: '4'
+    maxWalSize: 16GB
+    randomPageCost: '1.1'
+    sharedBuffers: 18GB
+    sharedPreloadLibraries: pg_stat_statements
+    shmSize: 20Gi
+    statementTimeout: 60s
+    synchronousCommit: 'off'
+    walBuffers: 64MB
+    walCompression: lz4
+    workMem: 64MB

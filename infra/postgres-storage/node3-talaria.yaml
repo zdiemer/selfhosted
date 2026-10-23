@@ -1,0 +1,47 @@
+# Dedicated GUDGA SSD, filesystem UUID d072873b-9827-4091-9b3a-c741cd29a24a.
+# Capacity is an advertisement, not a filesystem quota. Keep the source PV.
+# Backups use the existing atomic logical-dump CronJob through talaria-postgres.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: talaria-postgres-ssd-node3
+  labels:
+    app.kubernetes.io/part-of: talaria
+    storage.selfhosted/serial: 9P51118008271
+spec:
+  capacity:
+    storage: 937Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ''
+  local:
+    path: /var/lib/talaria-postgres-ssd/postgres
+  claimRef:
+    namespace: talaria
+    name: talaria-postgres-ssd
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - zachd-ubuntu-3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: talaria-postgres-ssd
+  namespace: talaria
+  annotations:
+    k8up.io/backup: 'false'
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: ''
+  volumeName: talaria-postgres-ssd-node3
+  resources:
+    requests:
+      storage: 937Gi

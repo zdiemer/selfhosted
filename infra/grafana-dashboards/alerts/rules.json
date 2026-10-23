@@ -2296,5 +2296,163 @@
         }
       }
     ]
+  },
+  {
+    "uid": "sh-postgres-ssd-disk",
+    "title": "PostgreSQL dedicated SSD above 80%",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "10m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "Talaria PostgreSQL SSD has less than 20% free space. Check database, WAL retention, and maintenance headroom before reclaiming data."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{cluster=\"home-k3s\",mountpoint=\"/var/lib/talaria-postgres-ssd\"} / node_filesystem_size_bytes{cluster=\"home-k3s\",mountpoint=\"/var/lib/talaria-postgres-ssd\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  80
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "sh-node-nvme-temperature",
+    "title": "NVMe temperature above 75 Celsius",
+    "condition": "C",
+    "ruleGroup": "selfhosted",
+    "for": "5m",
+    "isPaused": false,
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning",
+      "cluster": "home-k3s"
+    },
+    "annotations": {
+      "summary": "NVMe {{ $labels.chip }} on {{ $labels.node }} is hot. Check airflow and overlapping database maintenance; device numbering may change at boot."
+    },
+    "notification_settings": {
+      "receiver": "unwired"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROM_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "max by (node, chip) (node_hwmon_temp_celsius{cluster=\"home-k3s\",chip=~\"nvme_.*\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 60000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  75
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

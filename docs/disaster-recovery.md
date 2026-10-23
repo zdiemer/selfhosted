@@ -52,6 +52,12 @@ crash-consistent rather than application-consistent. Check which PVCs are
 explicitly excluded from backup; neither a successful backup Job nor a Ready
 application proves all required data is recoverable.
 
+Talaria's post-storage-migration backup passed a full isolated restore on
+2026-10-23, including 50 tables, 38,233,165 auction items, valid indexes and
+constraints, and a clean restart with fsync enabled. See the
+[node3 storage runbook](../infra/postgres-storage/README.md) for the snapshot ID,
+private recovery material, and retained-copy precautions.
+
 ## Rebuild order
 
 1. Recover NAS datasets, exports, API credentials, and independent backup access.
@@ -86,9 +92,9 @@ in favor of [provider IaC](../infra/provider-iac/README.md); recovery remains un
 ## Improvements to plan
 
 - A tested first-server bootstrap procedure and stable API entry point.
-- Recovery tests for an application backup and an etcd snapshot in isolation.
+- An isolated etcd snapshot restore test.
 - Enough schedulable headroom and redundant placement for critical services.
-- [Node3 storage separation](../plans/node3-postgres-storage-separation.md); this reduces
+- Implemented: [Node3 PostgreSQL storage](../infra/postgres-storage/README.md) reduces
   disk contention but does not provide PostgreSQL high availability.
 
 Use [K8up's documentation](../infra/k8up/README.md) for backup/restore tooling and
