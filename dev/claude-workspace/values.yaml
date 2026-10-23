@@ -203,7 +203,7 @@ image:
   # v42: durable jobs, task tracking, and gateway/Happy restart recovery.
   # Requires a full image build (includes the pinned Happy recovery hook).
   # v43: resolve Happy transcript metadata from server and await Codex resume.
-  tag: "v43"
+  tag: "v44"
   # Static tag, so always re-pull on pod (re)start to pick up rebuilds.
   pullPolicy: Always
 
