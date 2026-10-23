@@ -28,7 +28,6 @@ a stale plan, and will be read as a live one.
 | [`laundry-completion.md`](laundry-completion.md) | Commission sensors, calibrate real appliance cycles and verify received notifications. | Backend deployed — sensor not yet wired |
 | [`keepass-completion.md`](keepass-completion.md) | Finish vault/client adoption, conflict testing and recovery validation. | Services deployed — owner workflow unfinished |
 | [`steam-moonlight-completion.md`](steam-moonlight-completion.md) | Complete Steam login, Moonlight pairing and real game/input/persistence validation. | Infrastructure deployed — real client session unverified |
-| [`bakery-deprecation.md`](bakery-deprecation.md) | Roll out the committed harness removal and verify retained workspace workflows. | Source cleanup committed — Bakery containers still deployed |
 | [`ios-device-gateway.md`](ios-device-gateway.md) | Dedicated iOS device for iMessage gateway and low-latency browser gaming, with app/file management and battery monitoring. | Design agreed — hardware selection and same-device feasibility tests first |
 | [`mac-mini-ci.md`](mac-mini-ci.md) | Used 16 GB Apple Silicon Mini for private macOS CI, development VM, Rosetta compatibility tests and tailnet browser access. | Planned — hardware purchase and access/VM validation pending |
 | [`distributed-node-storage.md`](distributed-node-storage.md) | Unequal node-disk inventory, parity storage shortlist and migration feasibility gates; preserve NAS. | Inventoried — two-host protection; full redundancy may wait for repair; provider and sizing pending |

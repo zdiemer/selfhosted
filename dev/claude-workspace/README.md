@@ -30,6 +30,10 @@ in sharing that home:
 
 ## What persists, what doesn't
 
+Bakery is retired: the workspace image, containers and routes no longer include
+it. Any historical Bakery data on the home PVC is retained; removing the
+harness does not authorize deleting its session history.
+
 The home PVC holds `~/.claude` (OAuth credentials + conversation history),
 `~/.happy` (Happy pairing keys), `~/.ssh`, and repos under `~/code` — all
 of it survives pod deletes and reschedules, on any node (no hostPath, no
