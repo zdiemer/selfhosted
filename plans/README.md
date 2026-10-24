@@ -37,10 +37,13 @@ a stale plan, and will be read as a live one.
 - [Droplet recovery rehearsal](../infra/droplet-recovery/README.md): procedure
   prepared, actual provider-backup restore and clean-host rebuild untested.
   Explicitly deferred by the owner; do not silently reactivate it.
-- Laptop-6 stability: observe the existing kernel under normal workloads before
-  deciding on a kernel comparison or offline memory test. The recent reboot did
-  not update its BIOS or establish the crash cause. This is ongoing diagnosis,
-  not an approved firmware or kernel rollout.
+- Laptop-6 stability: cordoned for an authorized one-boot comparison on
+  `6.17.0-22-generic`; normal GRUB default remains `6.17.0-29-generic`.
+  Remote access and K3s returned successfully, but boot success under light
+  infrastructure load does not establish that application crashes are fixed.
+  Next step is a bounded reproduction of the affected workloads before deciding
+  whether to uncordon or retain this kernel. BIOS remains unchanged and the
+  crash cause is unproven. No permanent kernel downgrade is selected.
 
 Offsite cluster backups were explicitly declined on cost grounds; they are not
 an unfinished implementation to restart. Application feature backlogs in sibling
