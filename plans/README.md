@@ -41,9 +41,11 @@ a stale plan, and will be read as a live one.
   `6.17.0-22-generic`; normal GRUB default remains `6.17.0-29-generic`.
   Remote access and K3s returned successfully, but boot success under light
   infrastructure load does not establish that application crashes are fixed.
-  Next step is a bounded reproduction of the affected workloads before deciding
-  whether to uncordon or retain this kernel. BIOS remains unchanged and the
-  crash cause is unproven. No permanent kernel downgrade is selected.
+  A three-minute, two-worker synthetic pandas/Arrow/Parquet and crypto check
+  using the failed Smite image passed without kernel faults or OOMs. Production
+  workload stability and a matched comparison on the prior kernel remain
+  unproven; decide on a controlled workload canary before uncordoning broadly.
+  BIOS remains unchanged. No permanent kernel downgrade is selected.
 
 Offsite cluster backups were explicitly declined on cost grounds; they are not
 an unfinished implementation to restart. Application feature backlogs in sibling
