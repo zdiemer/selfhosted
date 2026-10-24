@@ -1,5 +1,5 @@
 # Production desired state. Change the release here, commit, then apply.
-whatnow_tag: v1.0.144
+whatnow_tag: v1.0.145
 caddy_tag: 2.11.4
 origin_ipv4: 64.227.0.147
 origin_interfaces: [eth0, eth1]
