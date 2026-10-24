@@ -37,14 +37,14 @@ a stale plan, and will be read as a live one.
 - [Droplet recovery rehearsal](../infra/droplet-recovery/README.md): procedure
   prepared, actual provider-backup restore and clean-host rebuild untested.
   Explicitly deferred by the owner; do not silently reactivate it.
-- Laptop-6 stability: cordoned for an authorized one-boot comparison on
+- Laptop-6 stability: uncordoned at the owner’s request for observation on
   `6.17.0-22-generic`; normal GRUB default remains `6.17.0-29-generic`.
   Remote access and K3s returned successfully, but boot success under light
   infrastructure load does not establish that application crashes are fixed.
   A three-minute, two-worker synthetic pandas/Arrow/Parquet and crypto check
   using the failed Smite image passed without kernel faults or OOMs. Production
   workload stability and a matched comparison on the prior kernel remain
-  unproven; decide on a controlled workload canary before uncordoning broadly.
+  unproven; observe returning workloads for recurring crashes.
   BIOS remains unchanged. No permanent kernel downgrade is selected.
 
 Offsite cluster backups were explicitly declined on cost grounds; they are not
