@@ -43,7 +43,8 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "
 
 echo "==> helm upgrade --install ${RELEASE} crowdsec/crowdsec@${CHART_VERSION} -n ${NAMESPACE}"
 helm upgrade --install "$RELEASE" crowdsec/crowdsec --cleanup-on-fail \
-  --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd)
+  --version "$CHART_VERSION" -n "$NAMESPACE" "${VALUE_ARGS[@]}" -f <(sv_fd) \
+  --post-renderer "$HERE/post-render.py"
 
 echo "==> waiting for the LAPI"
 kubectl -n "$NAMESPACE" rollout status deployment/crowdsec-lapi --timeout=180s

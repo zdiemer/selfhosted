@@ -1,57 +1,24 @@
-# crowdsec-machine-prune — stop dead agent pods from wedging live ones
+# CrowdSec machine registration cleanup
 
-A daily CronJob that runs `cscli machines prune` inside the CrowdSec LAPI pod.
+A daily CronJob runs `cscli machines prune --duration 24h --force` inside the
+LAPI pod to remove abandoned agent identities. Healthy agents heartbeat
+regularly; the age threshold protects active registrations.
 
 ```bash
 ./upgrade.sh              # install / update
-./upgrade.sh --run-now    # install, then run it once and show the result
+./upgrade.sh --run-now    # install, then run once
 ```
 
-## Why
+The main CrowdSec release's `post-render.py` gives each password-registration
+attempt a pod-name prefix plus a random UUID. Rebooting a node or losing local
+credentials therefore does not collide with the previous identity. This job
+bounds the retained identity count; agents no longer wait for its daily run to
+recover from a name collision. The registration token and validation policy are
+unchanged. Do not identify a current machine by exact pod name alone.
 
-The upstream agent DaemonSet registers with the LAPI under its **pod name**
-(`USERNAME` is a downward-API `fieldRef` on `metadata.name`). Pod names are
-per-pod, not per-node, so every rollout, eviction and reboot burns one and
-leaves the old registration behind forever. On 2026-08-21 the LAPI held 27
-machines for a 7-node cluster — 21 of them tombstones.
-
-An unreadable `cscli machines list` is the harmless half. The real problem is
-that a stale registration **wedges the pod that owns it**. If an agent container
-dies without its pod being replaced, the init container re-runs and tries to
-claim the same name:
-
-```
-Error: cscli lapi register: api register http 403 Forbidden:
-       API error: user 'crowdsec-agent-5q4sf': user already exist
-```
-
-There is no way out of that from inside the pod. The name is held by its own
-dead predecessor, so the init container `CrashLoopBackOff`s forever and that
-node quietly stops parsing Traefik logs. Nothing surfaces it: the DaemonSet
-reports the pod as scheduled, and `cscli metrics` cannot show a gap for an agent
-that never started. Two nodes sat in exactly this state before anyone noticed.
-
-Pruning the tombstone frees the name, and the wedged init container's next
-backoff retry succeeds. **This job is the self-heal path**, not just tidying.
-
-## What it does not fix
-
-The registration scheme itself. The durable answer is TLS agent authentication,
-which uses certificates instead of a name-and-token and so cannot collide at
-all. That is a larger change to how `infra/crowdsec` is configured; this makes
-the current arrangement survivable until then.
-
-## Safety
-
-`--duration 24h` decides what counts as dead. Healthy agents heartbeat every few
-seconds — the whole fleet was inside 20s when this was written — so the
-threshold cannot be tripped by a busy node or a slow rollout. A node genuinely
-offline for a day does get pruned, which is correct: its agent re-registers when
-it returns, by the same mechanism described above.
-
-`cscli machines prune` exits 0 and prints `No machines to prune.` when there is
-nothing to do (verified against cscli v1.7.8), so the steady state is a job that
-succeeds quietly rather than one that fails nightly once it has caught up.
+An agent offline for more than 24 hours can be pruned. If it returns with stale
+credentials, replacing its pod establishes a fresh identity. This cleanup does
+not implement certificate authentication or repair arbitrary LAPI outages.
 
 ## Where the privilege is
 

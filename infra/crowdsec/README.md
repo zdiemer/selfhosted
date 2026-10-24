@@ -79,3 +79,15 @@ and the SMS/ntfy relay API. Only Alloy collectors can read metrics. Traefik,
 agents and cluster-status can reach LAPI; credentials remain required for its
 protected endpoints. Backup and maintenance Jobs are not selected by these
 policies. File mounts and host-level privileges remain separate risks.
+
+## Agent restart registration
+
+Deploy through `upgrade.sh`, which applies `post-render.py` to the pinned
+upstream chart. Each init registration uses the pod name plus a fresh UUID,
+so a reboot that preserves the pod name but loses credentials cannot collide
+with the old LAPI machine. The existing registration token remains mandatory;
+no live machine is deleted to recover. Daily machine-prune removes abandoned
+identities after 24 hours. The renderer fails closed if the upstream command
+or authentication mode changes, and preserves all other chart resources.
+
+Validation: `python3 -m unittest discover -s infra/crowdsec/tests -v`.
