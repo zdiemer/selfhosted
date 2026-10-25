@@ -167,13 +167,14 @@
 
     - name: Install cache maintenance
       ansible.builtin.copy:
-        src: art-evict.sh
-        dest: /opt/whatnowgg/art-evict.sh
+        src: '{{ item }}'
+        dest: '/opt/whatnowgg/{{ item }}'
         mode: '0755'
+      loop: [art-evict.sh, art-evict.py]
 
     - name: Schedule cache maintenance
       ansible.builtin.copy:
-        content: "17 4 * * * root nice -n19 ionice -c3 /opt/whatnowgg/art-evict.sh >> /var/log/whatnow-art-evict.log 2>&1\n"
+        content: "*/5 * * * * root nice -n19 ionice -c3 /opt/whatnowgg/art-evict.sh >> /var/log/whatnow-art-evict.log 2>&1\n"
         dest: /etc/cron.d/whatnow-art-evict
         mode: '0644'
 

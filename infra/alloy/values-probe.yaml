@@ -113,6 +113,14 @@ alloy:
           module  = "http_dependency"
         }
 
+        // Production runs on its own droplet, outside the cluster's ingress.
+        // Require a healthy app through Cloudflare/Caddy, not an auth/error page.
+        target {
+          name    = "whatnow"
+          address = "https://whatnow.gg/healthz"
+          module  = "http_dependency"
+        }
+
         // ---- Cloudflare Tunnel hostnames -----------------------------------
         // Taken from the live tunnel config (cloudflared logs its ingress rules
         // on every config push). The hostname -> service map lives in the

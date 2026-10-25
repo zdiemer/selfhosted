@@ -31,6 +31,18 @@ Container health and public HTTPS must pass before an apply succeeds. A second
 unchanged apply should report zero changes. Package upgrades and host reboots are
 separate maintenance operations.
 
+Artwork maintenance runs every five minutes under a nonblocking lock. It caps
+the entire `data/art` tree at 8 GiB and evicts oldest files until the filesystem
+also has 3 GiB available. All artwork can be fetched again; databases and other
+files outside `data/art` are untouched. The old screenshot-only 6 GiB daily
+limit missed growth in headers, covers and achievement images, causing the
+2026-10-25 disk-full outage. Run `/opt/whatnowgg/art-evict.sh` for immediate cleanup.
+
+Alloy probes `https://whatnow.gg/healthz` through Cloudflare and Caddy using a
+strict HTTP 200 check (`instance="whatnow"`). The Grafana public-hostname rule
+routes failures through `ntfy-primary`. With the shared four-minute probe
+interval and five-minute pending period, notification is not instantaneous.
+
 ## Secrets
 
 The **1Password `homelab/whatnow-production` item** is the source of truth:
