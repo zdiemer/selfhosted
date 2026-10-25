@@ -9,4 +9,8 @@ def notification_settings(rule, config):
     if rule['uid'] == 'sh-ntfy-unreachable':
         settings['receiver'] = 'notification-path-email'
         return settings
+    settings['group_by'] = ['grafana_folder', 'alertname']
+    if rule['uid'] == 'sh-arr-health':
+        settings['group_wait'] = '5m'
+        settings['group_interval'] = '15m'
     return settings

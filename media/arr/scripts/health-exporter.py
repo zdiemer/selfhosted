@@ -1,6 +1,7 @@
-"""Read local arr health with its on-disk API key; expose only aggregate counts."""
+"""Read local arr health with its on-disk API key; expose counts and bounded health-check identifiers."""
 import json
 import os
+import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,14 @@ def collect():
         checks = json.load(response)
     if not isinstance(checks, list):
         raise ValueError('Unexpected health response')
-    return '\n'.join(f'home_arr_health_issues{{app="{app}",severity="{severity}"}} {sum(c.get("type", "").lower()==severity for c in checks)}' for severity in ['warning','error']) + '\n'
+    rows = []
+    for severity in ['warning', 'error']:
+        issues = [c for c in checks if c.get('type', '').lower() == severity]
+        # Only class identifiers, never messages, URLs or user configuration.
+        names = sorted({re.sub(r'[^A-Za-z0-9_]', '', str(c.get('source', 'Unknown')))[:80] or 'Unknown' for c in issues})
+        identifiers = ','.join(names[:8])
+        rows.append(f'home_arr_health_issues{{app="{app}",severity="{severity}",checks="{identifiers}"}} {len(issues)}')
+    return '\n'.join(rows) + '\n'
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):

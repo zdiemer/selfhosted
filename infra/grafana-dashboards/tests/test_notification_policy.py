@@ -23,6 +23,13 @@ class RoutingTest(unittest.TestCase):
                         expected = 'notification-path-email'
                     self.assertEqual(result['receiver'], expected)
                     self.assertEqual(result['repeat_interval'], '4h')
+                    if rule['uid'] == 'sh-arr-health':
+                        self.assertEqual(result['group_wait'], '5m')
+                        self.assertEqual(result['group_interval'], '15m')
+                    elif rule['uid'] != 'sh-sms-gateway-down':
+                        self.assertEqual(result['group_wait'], '30s')
+                    if rule['uid'] != 'sh-ntfy-unreachable':
+                        self.assertEqual(result['group_by'], ['grafana_folder', 'alertname'])
                 self.assertEqual(notification_settings(rule, cfg | {'enabled': False}), {'receiver': 'unwired'})
 
 

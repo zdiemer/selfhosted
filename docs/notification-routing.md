@@ -12,13 +12,14 @@ Subscribe on `https://ntfy.zachd.duckdns.org`.
 |---|---|---|
 | Systemd checks, backups, sync, watchdog, version report | `alerts` | Local sender and relay |
 | CrowdSec non-routine remediation | `security` | Aggregate for five minutes or 20 alerts; routine scanners stay silent |
-| Owner's Talaria new/ending listings | `talaria` | Relay; configured recipient/templates only |
+| Talaria scraper health | `talaria` | Talaria monitor; queue hysteresis and four-hour reminders |
+| Talaria customer listings and verification | SMS only | SMS relay; no ntfy route |
 | SMS handset outage/recovery | `alerts` | `cluster-status-sms-monitor` CronJob |
 | Node outage/recovery (two minutes, per node, including cordoned nodes) | `alerts` | Grafana `sh-node-notready`; replaces Talaria SMS task |
 | Grafana application and infrastructure rules | `alerts` | `ntfy-primary` webhook to relay |
 | ntfy explicitly unavailable for five minutes | Email | Grafana Cloud `notification-path-email` |
 
-Verification codes, admin messages, and other users' Talaria messages retain
+All Talaria listing notifications, verification codes, and admin messages retain
 SMS behavior. Routine downloads do not notify. See
 [health alert coverage](../infra/health-exporter/README.md) for workload, backup,
 connection, and delivery checks.
@@ -73,7 +74,23 @@ delivery. The generic probe rule excludes `sms-gateway` to avoid duplicate alert
 ## Grouping and email fallback
 
 Grafana waits 30 seconds for grouping, groups changes for five minutes, repeats
-ongoing incidents every four hours, and sends recovery notifications. It sees
+ongoing incidents every four hours, and sends recovery notifications. Related
+instances group by rule rather than pod. Arr warnings wait five minutes and
+collect changes for fifteen minutes; errors keep the normal timing. Arr messages
+include app and bounded health-check identifiers, never raw API messages.
+
+The relay sends one notification per Grafana group, with order-independent
+idempotency. Warning recoveries use ntfy minimum priority; critical recoveries
+remain normal priority. Mixed groups retain the highest member priority. Priority
+is persisted with queued messages and survives retries. Phone notification
+settings can override how priorities are presented.
+
+Talaria queue recovery requires fifteen continuously observed healthy minutes.
+Firing cooldowns survive recovery, and reminders occur at most every four hours.
+Routine OfferUp queue waits use low priority. Expired work and repeatedly missing
+responding consumers use high priority with a separate escalation cooldown.
+An unavailable consumer-inspection response is unknown, not proof of no consumers.
+Existing stale-source checks and critical Grafana thresholds remain unchanged. It sees
 the relay's queue acknowledgement, not eventual ntfy delivery.
 
 Only `sh-ntfy-unreachable` uses `notification-path-email`. Missing metrics or a
