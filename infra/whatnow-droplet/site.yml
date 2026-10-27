@@ -127,6 +127,27 @@
         group: '1000'
         mode: '0755'
 
+    - name: Install emergency swap setup
+      ansible.builtin.copy:
+        src: files/ensure-swap.sh
+        dest: /opt/whatnowgg/ensure-swap.sh
+        mode: '0700'
+
+    - name: Configure persistent emergency swap
+      ansible.builtin.command: /opt/whatnowgg/ensure-swap.sh
+      register: swap_setup
+      changed_when: "'changed:' in swap_setup.stdout"
+
+    - name: Prefer RAM and use swap for pressure relief
+      ansible.builtin.copy:
+        content: "vm.swappiness = 10\n"
+        dest: /etc/sysctl.d/90-whatnow-memory.conf
+        mode: '0644'
+
+    - name: Apply swap policy
+      ansible.builtin.command: sysctl -w vm.swappiness=10
+      changed_when: false
+
     - name: Install registry authentication from vault
       ansible.builtin.copy:
         src: "{{ lookup('env', 'WHATNOW_SECRET_DIR') }}/docker.json"

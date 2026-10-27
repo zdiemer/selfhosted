@@ -14,7 +14,7 @@ def available_bytes(path):
     return fs.f_bavail * fs.f_frsize
 
 
-def evict(root, ceiling=8 * GIB, reserve=3 * GIB, batch=100000):
+def evict(root, ceiling=8 * GIB, reserve=3 * GIB, batch=10000):
     root = Path(root)
     if not root.is_dir() or root.is_symlink():
         return 0

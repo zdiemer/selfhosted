@@ -147,3 +147,18 @@ must be updated if moving this deployment to a different droplet/VPC.
 # and reapply/check desired state. Normal apply never reboots automatically.
 infra/whatnow-droplet/apply.sh --reboot
 ```
+
+### Memory headroom
+
+The 1 GiB host has a dedicated 1 GiB `/swapfile-whatnow`, persisted in fstab,
+with swappiness 10. Provisioning preserves an existing swap file and requires
+4 GiB free before creating one, leaving the artwork guard's 3 GiB disk reserve.
+Application and proxy limits remain 512 MiB and 96 MiB. Swap is an emergency
+buffer, not additional application capacity.
+
+Artwork cleanup retains at most 10,000 candidates per scan and has a two-minute
+runtime limit (ten-second forced-stop grace). Its nonblocking file lock prevents
+overlapping scans. A timeout leaves remaining work for the next five-minute run.
+The application admits at most four artwork downloads and one cover conversion,
+streams downloads with an 8 MiB cap, and rejects cover decodes above 12 million
+pixels. Busy artwork returns retryable HTTP 503 rather than queuing more work.
