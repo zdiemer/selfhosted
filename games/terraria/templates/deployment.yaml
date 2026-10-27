@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: terraria
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: terraria
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: terraria-claude
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 180
+      nodeSelector: {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.tolerations | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: init-state
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: [python3, -c, "from pathlib import Path; [Path('/state', d).mkdir(exist_ok=True) for d in ['server', 'claude']]"]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: data, mountPath: /state}
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          lifecycle:
+            preStop:
+              sleep: {seconds: 3}
+          env:
+            - {name: BRIDGE_DIR, value: /bridge}
+            {{- if .Values.passwordSecret }}
+            - name: SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.passwordSecret }}, key: password}
+            {{- end }}
+          ports:
+            - {name: game, containerPort: 7777, protocol: TCP}
+          startupProbe:
+            tcpSocket: {port: game}
+            periodSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            tcpSocket: {port: game}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: data, mountPath: /data, subPath: server}
+            - {name: ipc, mountPath: /bridge}
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: server-tmp, mountPath: /tmp}
+            - {name: logs, mountPath: /opt/tml/tModLoader-Logs}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.bridge.enabled }}
+        - name: claude
+          image: {{ .Values.bridge.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          env:
+            - {name: BRIDGE_DIR, value: /bridge}
+            - {name: CLAUDE_MODEL, value: {{ .Values.bridge.model | quote }}}
+          volumeMounts:
+            - {name: data, mountPath: /state, subPath: claude}
+            - {name: ipc, mountPath: /bridge}
+            - {name: credentials, mountPath: /host-claude}
+            - {name: bridge-tmp, mountPath: /tmp}
+          resources: {{- toYaml .Values.bridge.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ .Release.Name }}-data}
+        - name: ipc
+          emptyDir: {medium: Memory, sizeLimit: 32Mi}
+        - name: server-tmp
+          emptyDir: {sizeLimit: 256Mi}
+        - name: bridge-tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: logs
+          emptyDir: {sizeLimit: 128Mi}
+        - name: config
+          configMap: {name: {{ .Release.Name }}-config}
+        {{- if .Values.bridge.enabled }}
+        - name: credentials
+          hostPath: {path: {{ .Values.bridge.credentialsHostPath }}, type: Directory}
+        {{- end }}

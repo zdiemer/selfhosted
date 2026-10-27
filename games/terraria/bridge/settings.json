@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "deny": ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "NotebookEdit", "Task", "Agent"],
+    "allow": ["WebSearch", "WebFetch", "mcp__terraria__get_context", "mcp__terraria__find_recipes", "mcp__terraria__teleport_to_player", "mcp__terraria__teleport_home", "mcp__terraria__teleport_back"]
+  },
+  "includeCoAuthoredBy": false
+}

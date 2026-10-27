@@ -28,6 +28,7 @@ def documents(profile, namespace=None, name=None):
     vpn = '(' + label('app.kubernetes.io/instance', 'arr') + ' && ' + label('app.kubernetes.io/component', 'qbittorrent') + ')'
     recovery = '(' + label('app.kubernetes.io/name', 'postgres-recovery') + ')'
     bridge = '(' + label('app.kubernetes.io/name', 'claude-bridge') + ' && object.spec.serviceAccountName == "claude-bridge")'
+    terraria = '(' + label('app.kubernetes.io/name', 'terraria') + ' && object.spec.serviceAccountName == "terraria-claude")'
     cap_exception = 'false'
     if profile == 'media': cap_exception = f'({vpn} && c.name == "gluetun" && cap == "NET_ADMIN")'
     if profile == 'talaria':
@@ -38,6 +39,7 @@ def documents(profile, namespace=None, name=None):
         hostpath = f'({bridge} && v.name == "claude-creds" && v.hostPath.path == "/home/zachd/.claude" && v.hostPath.type == "Directory")'
     hostport = 'false'
     if profile == 'games':
+        hostpath = f'({terraria} && v.name == "credentials" && v.hostPath.path == "/home/zachd/.claude" && v.hostPath.type == "Directory" && variables.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m, m.name != "credentials" || (c.name == "claude" && m.mountPath == "/host-claude"))))'
         hostport = f'({steam} && c.name == "steam-headless" && p.containerPort == p.hostPort && ((p.protocol == "TCP" && p.hostPort in [47984,47989,48010]) || (p.protocol == "UDP" && p.hostPort in [47998,47999,48000,48002,48010])))'
     checks = [
         ('(!has(object.spec.hostPID) || !object.spec.hostPID) && (!has(object.spec.hostIPC) || !object.spec.hostIPC) && (!has(object.spec.hostNetwork) || !object.spec.hostNetwork)', 'Host namespaces are forbidden.'),
@@ -82,8 +84,8 @@ def apply(objects):
 
 def dryrun(template, namespace):
     pod=psa.audit_pod(template,namespace)
-    if template['spec'].get('serviceAccountName') == 'claude-bridge':
-        pod['spec']['serviceAccountName']='claude-bridge'
+    if template['spec'].get('serviceAccountName') in ('claude-bridge', 'terraria-claude'):
+        pod['spec']['serviceAccountName']=template['spec']['serviceAccountName']
     return psa.kubectl('create','--dry-run=server','-f','-',body=pod)
 
 
@@ -143,6 +145,9 @@ def main():
         try:
             if profile=='minecraft':
                 result=psa.kubectl('create','serviceaccount','claude-bridge','-n',namespace)
+                if result.returncode:raise RuntimeError(result.stderr)
+            if profile=='games':
+                result=psa.kubectl('create','serviceaccount','terraria-claude','-n',namespace)
                 if result.returncode:raise RuntimeError(result.stderr)
             apply(docs)
             count=0

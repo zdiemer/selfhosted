@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  serverconfig.txt: |
+    world=/data/Worlds/{{ .Values.world.name }}.wld
+    worldname={{ .Values.world.name }}
+    autocreate={{ .Values.world.size }}
+    difficulty={{ .Values.world.difficulty }}
+    evil={{ .Values.world.evil }}
+    maxplayers={{ .Values.world.maxPlayers }}
+    port=7777
+    motd=Calamity adventure — /claude <question> for your companion
+    secure=1
+    upnp=0
+    language=en-US

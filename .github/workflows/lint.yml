@@ -23,6 +23,8 @@ jobs:
       - run: python3 -m unittest discover -s infra/cluster-status/tests -v
       - run: python3 -m unittest discover -s infra/traefik/tests -v
       - run: python3 -m unittest discover -s media/arr/tests -v
+      - run: python3 -m unittest discover -s games/terraria/tests -v
+      - run: python3 -m unittest discover -s infra/pod-security/tests -v
       - run: python3 -m unittest discover -s dev/claude-workspace/tests -v
       # The availability conventions (root README) fail silently by nature — a
       # `preferred` spread the scheduler declines and a PDB that permanently

@@ -1,0 +1,47 @@
+image:
+  repository: registry.zachd.duckdns.org/zdiemer/terraria-server
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+bridge:
+  enabled: true
+  image: registry.zachd.duckdns.org/zdiemer/terraria-claude:0.1.0
+  model: sonnet
+  credentialsHostPath: /home/zachd/.claude
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "2", memory: 2Gi}
+# Credentials live on this node, like the Minecraft bridge.
+nodeSelector:
+  kubernetes.io/hostname: zachd-ubuntu
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+world:
+  name: Calamity
+  size: 3  # large: enough room for Calamity biomes
+  difficulty: 0  # Classic; no Revengeance, Death or Infernum
+  evil: 1  # corruption
+  maxPlayers: 8
+# Optional existing Secret with a `password` key; no password on trusted tailnet.
+passwordSecret: ""
+service:
+  type: LoadBalancer
+  port: 7777
+  externalTrafficPolicy: Cluster
+  # CNI host-port forwarding translates tailnet traffic to the entry node's
+  # bridge gateway before klipper-lb evaluates source ranges. Primary node
+  # and the wildcard-DNS node only; retain explicit /32s, not the pod CIDR.
+  translatedClientSources:
+    - 10.42.0.1/32
+    - 10.42.9.1/32
+persistence:
+  storageClass: truenas-iscsi
+  size: 16Gi
+resources:
+  requests: {cpu: 500m, memory: 2Gi}
+  limits: {cpu: "4", memory: 8Gi}
+network:
+  trustedClients:
+    - 192.168.4.0/24
+    - 100.64.0.0/10

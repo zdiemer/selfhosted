@@ -1,0 +1,6 @@
+tests
+templates
+README.md
+*.sh
+__pycache__
+**/__pycache__

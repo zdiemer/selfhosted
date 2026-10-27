@@ -1,0 +1,4 @@
+displayName = Claude Companion
+author = zachd
+version = 0.1
+side = Server

@@ -1,0 +1,44 @@
+[
+  {
+    "name": "CalamityMod",
+    "workshop": "2824688072",
+    "source": "2026.6/CalamityMod.tmod",
+    "sha256": "1ec82bf05229f20dbc26b598c40c2b429d329533a8cba5e0c6b554e458ecd79f"
+  },
+  {
+    "name": "CalamityModMusic",
+    "workshop": "2824688266",
+    "source": "2025.12/CalamityModMusic.tmod",
+    "sha256": "ca202bc18ae690d5ea7267b42c9ec8162241a19aafc9efdf40eff0a59eada9e5"
+  },
+  {
+    "name": "MagicStorage",
+    "workshop": "2563309347",
+    "source": "2025.7/MagicStorage.tmod",
+    "sha256": "58b382ec0f9845f5430e5f4746642cb938a482dfacb3b62eac79b932fb6b959f"
+  },
+  {
+    "name": "SerousCommonLib",
+    "workshop": "2908170107",
+    "source": "2025.6/SerousCommonLib.tmod",
+    "sha256": "3a55aeef1828cc369e8a4d3c087562d815e664c7e88e40cd5fe42c1c073d3a26"
+  },
+  {
+    "name": "RecipeBrowser",
+    "workshop": "2619954303",
+    "source": "2026.7/RecipeBrowser.tmod",
+    "sha256": "efc90e330ae365244ca8f024904351e6a97668ffd4fac7cd5d936d857eb6958b"
+  },
+  {
+    "name": "BossChecklist",
+    "workshop": "2669644269",
+    "source": "2026.3/BossChecklist.tmod",
+    "sha256": "2fa4bb4240c969b5bb3d8e8354e0ce27e5595c2401e8008f4c6152dbac07b92d"
+  },
+  {
+    "name": "OreExcavator",
+    "workshop": "2565639705",
+    "source": "2024.6/OreExcavator.tmod",
+    "sha256": "64d439086be53f53659ae7d4f11db55b3c9966a0b99075c71c8d95b114125489"
+  }
+]

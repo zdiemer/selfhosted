@@ -78,6 +78,9 @@ changes. The allowed deviations are:
 - The bridge's exact `/home/zachd/.claude` Directory mount under its application
   label and service account. Its shared credential directory remains writable
   for token refresh; eliminating that dependency is separate work.
+- Terraria's companion uses that same exact directory in `games`, under the
+  `terraria` application label and `terraria-claude` service account. Only its
+  `claude` container may mount the credential volume, at `/host-claude`.
 - `DAC_READ_SEARCH` on the isolated PostgreSQL recovery init container. The
   current restore must finish before retiring its old immutable Job template.
 
