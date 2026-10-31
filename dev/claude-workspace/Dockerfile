@@ -11,7 +11,7 @@
 # stage compiles std-only Rust and pulls nothing from crates.io.
 # The pinned tag is the trust anchor.
 # renovate: datasource=github-releases depName=BrokkAi/muse-acp extractVersion=^v(?<version>.+)$
-ARG MUSE_ACP_VERSION=0.14.0
+ARG MUSE_ACP_VERSION=0.20.0
 # renovate: datasource=docker depName=rust
 ARG RUST_VERSION=1.99.1
 FROM rust:${RUST_VERSION}-slim-bookworm AS muse-acp-build
@@ -33,13 +33,13 @@ ARG TTYD_VERSION=1.7.7
 # Cluster tooling, all pinned static binaries:
 # kubectl tracks the cluster minor (v1.35.x) — bump after scripts/k3s/k3s-upgrade.sh.
 # renovate: datasource=github-tags depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=v1.35.9
+ARG KUBECTL_VERSION=v1.35.10
 # renovate: datasource=github-releases depName=helm/helm
 ARG HELM_VERSION=v3.22.1
 # tailscaled runs in-pod with userspace networking (no TUN, no root) so the
 # scripts/k3s maintenance scripts can `tailscale ssh root@<node>`.
 # renovate: datasource=github-releases depName=tailscale/tailscale extractVersion=^v(?<version>.+)$
-ARG TAILSCALE_VERSION=1.104.1
+ARG TAILSCALE_VERSION=1.104.4
 # buildctl client only — builds run on the in-cluster buildkitd from
 # infra/buildkit. MUST stay in lockstep with that chart's image tag.
 # renovate: datasource=github-releases depName=moby/buildkit
@@ -54,9 +54,9 @@ ARG SOPS_VERSION=v3.13.3
 # the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
 # the tailscale/docker/happy logins — no token is baked into the image.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.102.0
+ARG GH_VERSION=2.103.3
 # renovate: datasource=npm depName=bun
-ARG BUN_VERSION=1.4.3
+ARG BUN_VERSION=1.4.4
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
 # until the laptop published again. With op present, scripts/op-session.sh signs
@@ -116,12 +116,12 @@ ARG SIGNAL_CLI_VERSION=0.14.9
 # `codex` has no acp subcommand (it has `app-server`, its own JSON-RPC), and
 # `muse` has `serve`, which is Meta's MSP rather than ACP.
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.163.0
+ARG CODEX_VERSION=0.166.0
 # ACP server for codex, from the agentclientprotocol org (the protocol's own).
 # renovate: datasource=npm depName=@agentclientprotocol/codex-acp
-ARG CODEX_ACP_VERSION=2.2.2
+ARG CODEX_ACP_VERSION=2.5.0
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.64.0
+ARG GEMINI_CLI_VERSION=0.66.0
 # Muse Code (Meta). Upstream only documents `curl https://dev.meta.ai/install.sh
 # | bash`, which drops a SELF-UPDATING launcher in ~/.local/bin — useless under a
 # read-only rootfs and unpinnable besides. But the channel endpoint
