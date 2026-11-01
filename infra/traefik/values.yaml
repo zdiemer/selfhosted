@@ -218,16 +218,19 @@ forwardedHeaders:
 # the cluster gets it without per-chart edits (templates/middleware.yaml has
 # the full design notes, including why buckets key on CF-Connecting-IP).
 #
-# Sizing: per-source req/s sustained (average) with a burst allowance. 25/100
-# is deliberately generous — a Jellyfin seek storm, a busy SPA, or the Happy
-# websocket handshake sit far below it, while a scanner walking the URL space
-# at hundreds of req/s hits 429s quickly. All direct-path (non-Cloudflare)
+# Sizing: 25 req/s sustained, with a 400-request burst for page startup and
+# service-worker installation. Gamedex loads over 100 scripts and installs a
+# 145-file offline shell; the former 100-request burst rejected these downloads
+# with 429s, aborting the atomic install and stranding clients on old releases.
+# The allowance covers both startup bursts plus API/image requests, while a
+# sustained scanner still drains the bucket at the same 25 req/s refill rate.
+# All direct-path (non-Cloudflare)
 # traffic shares ONE bucket, so don't tighten this without remembering that
 # bucket covers every tailnet/LAN client combined.
 rateLimit:
   enabled: true
   average: 25
-  burst: 100
+  burst: 400
 
 # ---------------------------------------------------------------------------
 # CrowdSec bouncer — the enforcement point

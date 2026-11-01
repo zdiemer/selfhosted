@@ -200,6 +200,16 @@ kubectl -n kube-system logs deploy/traefik --tail=50 \
   | jq 'keys' | grep -iE 'cookie|authorization|remote-' && echo LEAK || echo clean
 ```
 
+## Startup request bursts
+
+The edge rate limiter allows 25 requests per second sustained and a burst of
+400. The burst must cover a page load together with its service-worker install:
+Gamedex alone fetches over 100 scripts and then caches a 145-file offline shell.
+A burst of 100 returned HTTP 429 for normal startup and aborted atomic offline
+updates, leaving existing browsers on old releases. Check both a fresh browser
+and an existing cached release through the public ingress when changing this
+limit; direct service checks do not exercise it.
+
 ## Deliberately not configured here
 
 - **The dashboard.** `--api.dashboard=true` is on, but the `traefik` entrypoint
