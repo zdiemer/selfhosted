@@ -597,8 +597,9 @@ nothing here can, because nothing here runs but nginx.)
 
 `cluster-status-sms-monitor` is a separate once-per-minute CronJob, so losing
 both the SMS relay and the status collector still leaves a notifier. It checks
-`/api/health/gateway`, notifies after five minutes down, repeats every four
-hours, and sends recovery once. It uses the write-only `alerts` password from
+`/api/health/gateway`, notifies after 15 minutes down, and repeats every 24
+hours. Recovery is silent and requires 15 minutes of sampled health before a
+new incident can notify; brief reconnects preserve the cooldown. It uses the write-only `alerts` password from
 `ntfy-seed` and publishes to the internal ntfy Service's `alerts` topic; no
 phone credentials or SMS contents are read. ntfy's external hostname resolves
 to Tailscale, so this path works without a Grafana Cloud webhook or new ingress.

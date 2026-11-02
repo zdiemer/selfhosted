@@ -86,12 +86,13 @@ and the presence of a uid.
 
 ## Alert delivery
 
-Twenty-six rules evaluate in Grafana. Public notification delivery is active through
-Cloudflare; critical infrastructure rules also send independent cloud email.
-Then infrastructure rules use `ntfy-primary`; the dedicated SMS gateway rule
-remains non-notifying because its local monitor already delivers those events.
+Rules evaluate in Grafana. Actionable alerts use `ntfy-primary` through the
+public Cloudflare webhook. Arr warnings and CrowdSec overflow spikes remain
+dashboard-only. The dedicated SMS gateway rule remains non-notifying because
+its local monitor already delivers those events. Only confirmed ntfy
+unavailability uses the independent cloud email fallback.
 
-The `unwired` receiver is retained for staged and locally owned rules so they
+The `unwired` receiver is retained for informational, staged, and locally owned rules so they
 do not fall through to the default notification policy. See
 [the Cloudflare handoff](../../docs/notification-routing.md) for activation.
 
@@ -197,11 +198,11 @@ PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_job_alert
 
 ### Arr health persistence
 
-`sh-arr-health` requires warnings to persist for one hour, allowing ordinary
-indexer timeout/backoff cycles to recover silently. `sh-arr-health-error` retains
-fifteen-minute notification for health errors. Each selects its source severity
-and removes that label with `sum without (severity)` before assigning routing
-severity. Querying
+`sh-arr-health` requires warnings to persist for one hour and remains
+dashboard-only. `sh-arr-health-error` retains fifteen-minute notification for
+health errors. Each selects its source severity and aggregates with
+`max by (cluster, namespace, app)` before assigning routing severity. This also
+removes changing check names and exporter identities from the alert identity. Querying
 both source severities directly collapses them into one alert identity when the
 rule overrides `severity`, causing contradictory transitions and duplicate
 `GRAFANA_ALERTS` timestamps. Inspect `grafanacloud-alert-state-history` for
@@ -217,7 +218,7 @@ PROMTOOL=/path/to/promtool python3 infra/grafana-dashboards/tests/test_arr_healt
 `sh-sms-gateway-down` evaluates the authenticated phone connectivity probe in
 Grafana and keeps the existing non-notifying `unwired` receiver. ntfy resolves
 to Tailscale in public DNS, so Grafana Cloud cannot deliver a webhook directly.
-The independent `cluster-status-sms-monitor` CronJob sends outage and recovery
+The independent `cluster-status-sms-monitor` CronJob sends sustained outage
 notifications from inside the cluster to ntfy's `alerts` topic. See
 [SMS recovery](../../docs/sms-gateway-recovery.md) for probe semantics and timing.
 
@@ -233,13 +234,28 @@ that dependency. Dashboard upgrades honor this setting.
 
 ### Conditional email fallback (2026-10-20)
 
-All application and infrastructure alerts use `ntfy-primary`, including critical,
+Actionable application and infrastructure alerts use `ntfy-primary`, including critical,
 telemetry and ingestion-rejection alerts. Only `sh-ntfy-unreachable` routes to
 `notification-path-email`, after a direct unhealthy ntfy check persists for five
-minutes. Missing telemetry and query errors do not trigger email. Recovery
-notifications remain enabled. The former parallel critical email integration is
+minutes. Missing telemetry and query errors do not trigger email. Email recovery
+notifications remain enabled; ntfy recovery-only pushes are disabled. The former parallel critical email integration is
 removed. See [notification-routing.md](../../docs/notification-routing.md).
 
 The CronJob overdue rule accounts for subsequent successful catch-up runs.
 Recurring OOM detection uses observed counter differences, avoiding fractional
 extrapolation that incorrectly classified one restart as more than one.
+
+### Actionable-only notifications (2026-11-01)
+
+`sh-arr-health` warnings and `sh-crowdsec-spike` activity remain evaluated but
+route to `unwired`. Arr health errors, recurring OOMs, outages, and delivery
+failures retain firing notifications. Arr queries use
+`max by (cluster, namespace, app)` after selecting severity, so changing check
+identifiers or exporter pods cannot reset an incident or report false recovery.
+Check identifiers remain available in source metrics.
+
+As of 2026-11-02, webhook contact points suppress recovery-only messages and
+ongoing incidents repeat every 24 hours. Delivery checks aggregate by cluster,
+preserving all failure signals without creating separate incidents when the
+failure type changes. The local handset monitor debounces outages for 15 minutes,
+reminds daily, and silently rearms after 15 minutes of sampled health.

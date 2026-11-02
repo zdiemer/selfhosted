@@ -14,9 +14,9 @@ Subscribe on `https://ntfy.zachd.duckdns.org`.
 | CrowdSec non-routine remediation | `security` | Aggregate for five minutes or 20 alerts; routine scanners stay silent |
 | Talaria scraper health | `talaria` | Talaria monitor; queue hysteresis and four-hour reminders |
 | Talaria customer listings and verification | SMS only | SMS relay; no ntfy route |
-| SMS handset outage/recovery | `alerts` | `cluster-status-sms-monitor` CronJob |
-| Node outage/recovery (two minutes, per node, including cordoned nodes) | `alerts` | Grafana `sh-node-notready`; replaces Talaria SMS task |
-| Grafana application and infrastructure rules | `alerts` | `ntfy-primary` webhook to relay |
+| SMS handset outage | `alerts` | `cluster-status-sms-monitor` CronJob; 15-minute debounce, daily reminders, silent recovery |
+| Node outage (two minutes, per node, including cordoned nodes) | `alerts` | Grafana `sh-node-notready`; replaces Talaria SMS task |
+| Grafana actionable application and infrastructure rules | `alerts` | `ntfy-primary` webhook to relay; Arr warnings and CrowdSec overflow spikes remain dashboard-only |
 | ntfy explicitly unavailable for five minutes | Email | Grafana Cloud `notification-path-email` |
 
 All Talaria listing notifications, verification codes, and admin messages retain
@@ -74,14 +74,30 @@ delivery. The generic probe rule excludes `sms-gateway` to avoid duplicate alert
 ## Grouping and email fallback
 
 Grafana waits 30 seconds for grouping, groups changes for five minutes, repeats
-ongoing incidents every four hours, and sends recovery notifications. Related
-instances group by rule rather than pod. Arr warnings wait five minutes and
-collect changes for fifteen minutes; errors keep the normal timing. Arr messages
-include app and bounded health-check identifiers, never raw API messages.
+ongoing incidents every 24 hours, and suppresses recovery-only ntfy notifications.
+The dedicated ntfy-unavailable email receiver retains recovery messages. Related
+instances group by rule rather than pod. Arr warnings and CrowdSec overflow
+spikes evaluate in Grafana but use the non-notifying `unwired` receiver. Arr
+errors retain fifteen-minute detection and normal notification timing. Arr alert
+identities use cluster, namespace, and app; changing check names or exporter pods
+cannot create a new incident. Bounded check identifiers remain in the source
+metrics for diagnosis. OOMs, outages, delivery failures, and other actionable
+rules retain firing notifications. Delivery checks aggregate into one incident per
+cluster, so changing failure types do not create new alert instances. A failed
+delivery aging out of the one-hour metric window does not prove the gateway is
+healthy; the independent handset monitor tracks connectivity. It waits 15 minutes
+before notifying, reminds daily, and requires 15 minutes of sampled health before
+silently rearming. Brief reconnects preserve the existing incident cooldown.
+
+CrowdSec also bans path-traversal probing, CVE probing, and generic HTTP 403
+brute-force scans silently, alongside the existing routine scanner list. Other
+scenarios still notify. `infra/crowdsec/values.yaml` owns the list, applied after
+vault overrides by the post-renderer; enforcement decisions are unchanged.
 
 The relay sends one notification per Grafana group, with order-independent
-idempotency. Warning recoveries use ntfy minimum priority; critical recoveries
-remain normal priority. Mixed groups retain the highest member priority. Priority
+idempotency. Grafana webhook contact points disable resolved messages through
+`send_resolved: false` in `notifications.json`; mixed firing/resolved groups can
+still include resolved members. Mixed groups retain the highest member priority. Priority
 is persisted with queued messages and survives retries. Phone notification
 settings can override how priorities are presented.
 

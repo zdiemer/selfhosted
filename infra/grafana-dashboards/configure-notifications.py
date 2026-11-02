@@ -66,7 +66,9 @@ def main():
     desired.append({'uid':'notification-path-email', 'name':'notification-path-email',
                     'type':'email', 'settings':{'addresses':admins[0], 'singleEmail':True}})
     for point in desired:
-        point['disableResolveMessage'] = False
+        point['disableResolveMessage'] = (
+            not cfg['send_resolved'] if point['type'] == 'webhook' else False
+        )
         exists = point['uid'] in existing
         api('/api/v1/provisioning/contact-points'+('/'+point['uid'] if exists else ''),
             point, 'PUT' if exists else 'POST')
@@ -85,7 +87,7 @@ def main():
             rule['notification_settings'] = notification_settings(rule, cfg)
             api('/api/v1/provisioning/alert-rules/'+rule['uid'],rule,'PUT')
         (HERE / 'notifications.json').write_text(json.dumps(cfg, indent=2)+'\n')
-        print('Grafana routing active: all application alerts via relay; email only for confirmed ntfy unavailability')
+        print('Grafana routing active: actionable alerts via relay; Arr warnings and CrowdSec spikes dashboard-only; email only for confirmed ntfy unavailability')
     else:
         print('STAGED: Cloudflare route and --activate are still required')
 

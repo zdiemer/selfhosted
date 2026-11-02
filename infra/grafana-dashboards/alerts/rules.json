@@ -1217,7 +1217,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "label_replace((home_relay_oldest_pending_seconds{cluster=\"home-k3s\"} > bool 600), \"check\", \"queue\", \"\", \"\") or label_replace((home_relay_failed_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"failed\", \"\", \"\") or label_replace((home_relay_fallback_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"fallback\", \"\", \"\") or label_replace((home_ntfy_healthy{cluster=\"home-k3s\"} < bool 1), \"check\", \"ntfy\", \"\", \"\")",
+          "expr": "max by (cluster) (label_replace((home_relay_oldest_pending_seconds{cluster=\"home-k3s\"} > bool 600), \"check\", \"queue\", \"\", \"\") or label_replace((home_relay_failed_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"failed\", \"\", \"\") or label_replace((home_relay_fallback_last_hour{cluster=\"home-k3s\"} > bool 0), \"check\", \"fallback\", \"\", \"\") or label_replace((home_ntfy_healthy{cluster=\"home-k3s\"} < bool 1), \"check\", \"ntfy\", \"\", \"\"))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -2007,7 +2007,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"warning\"})",
+          "expr": "max by (cluster, namespace, app) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"warning\"})",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -2086,7 +2086,7 @@
         "datasourceUid": "__PROM_UID__",
         "model": {
           "refId": "A",
-          "expr": "sum without (severity) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"error\"})",
+          "expr": "max by (cluster, namespace, app) (home_arr_health_issues{cluster=\"home-k3s\",severity=\"error\"})",
           "instant": true,
           "range": false,
           "editorMode": "code",

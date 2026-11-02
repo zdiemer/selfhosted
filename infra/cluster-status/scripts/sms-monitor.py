@@ -1,4 +1,4 @@
-"""Probe the SMS dependency and publish transitions to private ntfy.
+"""Probe the SMS dependency and publish actionable outages to private ntfy.
 
 Runs once per minute as a Forbid-concurrency CronJob. State survives Job/pod
 replacement in one ConfigMap. No phone credentials or message bodies are read.
@@ -16,11 +16,16 @@ from pathlib import Path
 def transition(state, healthy, now):
     state = dict(state)
     if healthy:
-        notification = 'recovered' if state.get('notified') else None
-        return {}, notification
+        if not state.get('notified'):
+            return {}, None
+        state.setdefault('healthy_since', now)
+        # Recover silently, and require sustained health before a new incident
+        # can page again. Brief phone reconnects must not reset the cooldown.
+        return ({}, None) if now - state['healthy_since'] >= 900 else (state, None)
+    state.pop('healthy_since', None)
     state.setdefault('failed_since', now)
-    due = now - state['failed_since'] >= 300
-    repeat_due = now - state.get('last_notification', 0) >= 14400
+    due = now - state['failed_since'] >= 900
+    repeat_due = now - state.get('last_notification', 0) >= 86400
     if due and (not state.get('notified') or repeat_due):
         state.update(notified=True, last_notification=now)
         return state, 'down'
@@ -51,18 +56,15 @@ def main():
         healthy = False
     state, notification = transition(previous, healthy, time.time())
     if notification:
-        recovered = notification == 'recovered'
-        body = ('SMS phone gateway connection restored. This confirms API connectivity, '
-                'not carrier delivery; failed messages were not replayed.' if recovered else
-                'SMS phone gateway has been unavailable for at least 5 minutes. '
+        body = ('SMS phone gateway has been unavailable for at least 15 minutes. '
                 'Check the Android gateway app, Wi-Fi address, and local server. '
                 'See docs/sms-gateway-recovery.md.')
         auth = base64.b64encode(('alerts:' + os.environ['NTFY_PASSWORD']).encode()).decode()
         req = urllib.request.Request(os.environ['NTFY_URL'], data=body.encode(), headers={
             'Authorization': 'Basic ' + auth,
-            'Title': 'SMS gateway recovered' if recovered else 'SMS gateway unavailable',
-            'Priority': 'default' if recovered else 'high',
-            'Tags': 'white_check_mark' if recovered else 'warning',
+            'Title': 'SMS gateway unavailable',
+            'Priority': 'high',
+            'Tags': 'warning',
         })
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
@@ -74,7 +76,7 @@ def main():
                 raise
             # Central relay retries ntfy once, then selects durable SMS fallback.
             # Preserve this event's identity across failed monitor Job retries.
-            key = f"sms-monitor-{previous.get('failed_since', 0)}-{notification}-{int(time.time() // 14400)}"
+            key = f"sms-monitor-{previous.get('failed_since', 0)}-{notification}-{int(time.time() // 86400)}"
             fallback = urllib.request.Request(os.environ['SMS_RELAY_URL'] + '/api/v1/messages',
                 data=json.dumps({'to':os.environ['ALERT_TO'], 'body':body,
                                  'idempotency_key':key}).encode(),

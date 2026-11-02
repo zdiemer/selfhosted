@@ -43,6 +43,24 @@ for name, warning_values, error_values, at, firing in [
                             [{'exp_labels': {'app': 'radarr', **rule['labels']}}]
                             if rule['uid'] == firing else []} for rule in selected]})
 
+# Changing checks and exporter pods must neither recover nor restart a pending
+# incident while the same app remains unhealthy. Duplicate scrapes count once.
+for rule in selected:
+    severity = 'warning' if rule['uid'] == 'sh-arr-health' else 'error'
+    labels = f'cluster="home-k3s",namespace="media",app="radarr",severity="{severity}"'
+    tests.append({'name': rule['uid'] + ' stable across changing checks and pods',
+        'interval': '1m', 'input_series': [
+            {'series': 'home_arr_health_issues{' + labels + ',checks="IndexerStatusCheck",pod="old"}',
+             'values': '1+0x29 stale'},
+            {'series': 'home_arr_health_issues{' + labels + ',checks="IndexerLongTermStatusCheck",pod="new"}',
+             'values': '_x30 2+0x40'},
+            {'series': 'home_arr_health_issues{' + labels + ',checks="IndexerLongTermStatusCheck",pod="new",instance="duplicate"}',
+             'values': '_x30 2+0x40'}],
+        'promql_expr_test': [{'expr': rule['data'][0]['model']['expr'], 'eval_time': '61m',
+            'exp_samples': [{'labels': '{app="radarr",cluster="home-k3s",namespace="media"}', 'value': 2}]}],
+        'alert_rule_test': [{'eval_time': '61m', 'alertname': rule['uid'],
+            'exp_alerts': [{'exp_labels': {'app': 'radarr', 'namespace': 'media', **rule['labels']}}]}]})
+
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     alert_file = tmp / 'rules.yaml'

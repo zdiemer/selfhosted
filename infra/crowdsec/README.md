@@ -38,9 +38,13 @@ Non-routine remediation notifications still call the durable relay with the
 existing `crowdsec` API key; its recipient-scoped policy now publishes to ntfy's
 `security` topic first and selects SMS only after publish failure. The HTTP
 plugin aggregates for five minutes or 20 alerts; the existing summary format
-reports the first event and additional count. Routine scanner suppressions are
-unchanged. Configuration remains in the `infra-crowdsec` vault item; no second
-SMS notifier was added. See [routing](../../docs/notification-routing.md).
+reports the first event and additional count. `profiles.routineScenarios` in
+`values.yaml` is authoritative: the post-renderer applies it over the vault's
+older list and rolls the profile consumer when it changes. Path-traversal and
+CVE probing, plus generic HTTP 403 brute-force scans, are banned silently.
+Other scenarios retain notifications. Ban decisions, durations, and notifier
+credentials remain intact. Credentials stay in the `infra-crowdsec` vault item.
+See [routing](../../docs/notification-routing.md).
 
 ### ForwardAuth warning noise (2026-10-19)
 

@@ -30,9 +30,10 @@ with 503. It sends no SMS and does not establish carrier delivery.
 
 Alloy probes it every four minutes. The dedicated Grafana rule detects sustained
 failure, but its non-notifying receiver avoids duplicating the local monitor.
-The `cluster-status-sms-monitor` CronJob checks every minute, publishes outage
-and recovery notifications to ntfy `alerts`, and keeps durable state to deduplicate
-repeats. The status page uses the handset check too. Kubernetes probes stay on
+The `cluster-status-sms-monitor` CronJob checks every minute, publishes to ntfy
+`alerts` after 15 minutes down, and repeats daily. Recovery is silent; 15 minutes
+of sampled health rearms the monitor, while brief reconnects preserve the incident
+cooldown. Durable state deduplicates repeats. The status page uses the handset check too. Kubernetes probes stay on
 the relay's own health endpoint because restarting it cannot repair the phone.
 
 SMS fallback is unavailable while the handset is down. See

@@ -33,13 +33,14 @@ image:
 # the URL space. A text per ban is five texts a day of "the internet is still
 # the internet", which is how a notification channel gets muted and then
 # ignored. So profiles.yaml below splits them: routine web scanners are banned
-# SILENTLY, and anything else — an ssh brute force, a CVE exploit attempt, a
+# SILENTLY, and anything else — an ssh brute force or a
 # scenario nobody has seen before — sends a message. The signal is "something
 # unusual", not "something happened".
 profiles:
   # The scenarios considered routine. Every one of these has actually fired here
   # and every one was a scanner. Adding to this list makes things quieter;
-  # removing from it makes them louder, and both are one deploy.
+  # removing from it makes them louder, and both are one deploy. The post-renderer
+  # applies this list to profiles.yaml after vault overrides are merged.
   routineScenarios:
     - crowdsecurity/http-probing
     - crowdsecurity/http-sensitive-files
@@ -48,6 +49,9 @@ profiles:
     - crowdsecurity/http-technology-probing
     - crowdsecurity/http-crawl-non_statics
     - crowdsecurity/http-bad-user-agent
+    - crowdsecurity/http-path-traversal-probing
+    - crowdsecurity/http-cve-probing
+    - LePresidente/http-generic-403-bf
 
 # NOTIFICATIONS LIVE IN values.local.yaml, both halves of them, and the reason
 # is a failure mode rather than tidiness.

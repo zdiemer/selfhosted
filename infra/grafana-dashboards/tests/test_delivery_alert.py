@@ -15,7 +15,14 @@ for failed in ['home_relay_failed_last_hour', 'home_relay_fallback_last_hour']:
         {'series': 'home_relay_oldest_pending_seconds{cluster="home-k3s"}', 'values': '0+0x5'},
         {'series': failed + '{cluster="home-k3s"}', 'values': '1+0x5'}],
         'promql_expr_test': [{'expr': '(' + expr + ') > 0', 'eval_time': '1m',
-                             'exp_samples': [{'labels': '{check="' + check + '",cluster="home-k3s"}', 'value': 1}]}]})
+                             'exp_samples': [{'labels': '{cluster="home-k3s"}', 'value': 1}]}]})
+tests.append({'name': 'overlapping failures share one incident identity', 'input_series': [
+    {'series': 'home_relay_oldest_pending_seconds{cluster="home-k3s"}', 'values': '700+0x5'},
+    {'series': 'home_relay_failed_last_hour{cluster="home-k3s"}', 'values': '1+0x5'},
+    {'series': 'home_relay_fallback_last_hour{cluster="home-k3s"}', 'values': '1+0x5'},
+    {'series': 'home_ntfy_healthy{cluster="home-k3s"}', 'values': '0+0x5'}],
+    'promql_expr_test': [{'expr': '(' + expr + ') > 0', 'eval_time': '1m',
+                         'exp_samples': [{'labels': '{cluster="home-k3s"}', 'value': 1}]}]})
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'test.yaml'
     path.write_text(yaml.safe_dump({'rule_files': [], 'evaluation_interval': '1m', 'tests': tests}))
