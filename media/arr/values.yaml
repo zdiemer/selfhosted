@@ -140,6 +140,24 @@ recyclarr:
     - d1d67249d3890e49bc12e275d989a7e9
     # [Anime] Remux-1080p — same caveat as above.
     - 722b624f9af1e492284c4bc842153a38
+  # Per-quality size overrides on top of the guide's quality definitions, in MB
+  # per minute of runtime; anything not listed keeps the guide value.
+  #
+  # The guide floors Bluray-1080p at ~50 MB/min, which rejects every efficient
+  # x265 encode: a 10-episode Yellowstone season from Vyndros (13 GB, 139
+  # seeders) was refused as "smaller than minimum allowed 21.0 GB", so Sonarr
+  # settled for a 58 GB x264 pack with 4 seeders and a two-week ETA. Seasons 1-2
+  # came from those same groups before recyclarr existed. Dropping the floor to
+  # the WEBDL-1080p minimum lets them back in; an x265 Bluray encode sits at
+  # WEB-DL bitrates, and fakes and microscopic re-encodes are still rejected.
+  # Once the size gate is out of the way, the seeder comparison outranks file
+  # size, so well-seeded packs win.
+  sonarrQualities:
+    - name: Bluray-1080p
+      min: 15
+  radarrQualities:
+    - name: Bluray-1080p
+      min: 12.5
 
 qbittorrent:
   image: lscr.io/linuxserver/qbittorrent

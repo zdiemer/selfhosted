@@ -31,6 +31,10 @@ stringData:
         delete_old_custom_formats: true
         quality_definition:
           type: series
+          {{- with .Values.recyclarr.sonarrQualities }}
+          qualities:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         quality_profiles:
           {{- range .Values.recyclarr.sonarrProfiles }}
           - trash_id: {{ . }}
@@ -42,6 +46,10 @@ stringData:
         delete_old_custom_formats: true
         quality_definition:
           type: movie
+          {{- with .Values.recyclarr.radarrQualities }}
+          qualities:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         quality_profiles:
           {{- range .Values.recyclarr.radarrProfiles }}
           - trash_id: {{ . }}
