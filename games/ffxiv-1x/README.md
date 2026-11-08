@@ -47,6 +47,11 @@ binaries share `garlemald.db` and talk on `127.0.0.1`. The world server dials
 the map server, and relays zone traffic to the client, so the map port is
 never exposed.
 
+The map binds `127.0.0.1:1989`, matching the seeded database's zone assignments.
+Upstream uses the bind address to select zones, so binding `0.0.0.0` loads none
+and leaves characters stuck at the first loading screen. Its readiness probe
+checks localhost from inside the container.
+
 **Three LoadBalancer ports, no Ingress.** The launcher's login WebView posts
 to the web port over plain HTTP and the lobby hands the client the world's
 *IP* in a packet; neither can ride Traefik. So the three client-facing ports

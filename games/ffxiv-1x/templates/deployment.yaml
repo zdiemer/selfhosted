@@ -97,7 +97,13 @@ spec:
             - name: map
               containerPort: {{ .Values.ports.map }}
           readinessProbe:
-            tcpSocket: { port: map }
+            # The map binds localhost to match its database zone assignments.
+            # Run the TCP check inside the container rather than on the pod IP.
+            exec:
+              command:
+                - /bin/bash
+                - -ec
+                - {{ printf "exec 3<>/dev/tcp/127.0.0.1/%v" .Values.ports.map | quote }}
             # Loads 1,142 Lua scripts and every zone first.
             initialDelaySeconds: 10
             periodSeconds: 10

@@ -1,7 +1,7 @@
 {{/*
 The five TOML files upstream keeps under configs/, rendered from values. Every
-binary binds 0.0.0.0 inside the pod (the Service decides what is reachable);
-they find each other on 127.0.0.1 exactly as upstream's one-box default.
+client-facing binary binds 0.0.0.0 inside the pod; the map server binds
+127.0.0.1 to match its database zone assignments. They communicate locally.
 */}}
 {{- $v := .Values }}
 apiVersion: v1
@@ -41,10 +41,9 @@ data:
     path = "/srv/garlemald/configs/servers.toml"
   map.toml: |
     [server]
-    # 0.0.0.0 rather than upstream's 127.0.0.1 so kubelet's readiness probe
-    # (which dials the pod IP) can see it. The Service does not publish this
-    # port, so nothing outside the pod can.
-    bind_ip = "0.0.0.0"
+    # Upstream also uses bind_ip to select server_zones from the database.
+    # Seeded zones belong to 127.0.0.1:1989; a wildcard bind loads no zones.
+    bind_ip = "127.0.0.1"
     port = {{ $v.ports.map }}
     show_timestamp = true
     world_id = 1
