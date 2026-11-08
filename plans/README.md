@@ -24,7 +24,7 @@ a stale plan, and will be read as a live one.
 | [`automated-cluster-agent.md`](automated-cluster-agent.md) | Bounded cluster repairs, independent verification, automatic tested merges/deployments, and escalation policy. | Planned — implementation not started |
 | [`provider-iac-adoption.md`](provider-iac-adoption.md) | Complete live adoption of DigitalOcean, Cloudflare DNS, and Tailscale resources with the prepared OpenTofu tooling. | Code prepared — blocked on provider credentials and live inventory/import |
 | [`whatnow-origin-identity.md`](whatnow-origin-identity.md) | Add zone-specific authenticated origin pulls for Whatnow, with a dedicated tunnel as an alternative. | Planned — blocked on Cloudflare SSL API access |
-| [`laundry-completion.md`](laundry-completion.md) | Commission sensors, calibrate real appliance cycles and verify received notifications. | Backend deployed — sensor not yet wired |
+| [`laundry-completion.md`](laundry-completion.md) | Commission sensors, calibrate real appliance cycles and verify received notifications. | Sensor wired, firmware builds — blocked on soldering the header, then flash |
 | [`keepass-completion.md`](keepass-completion.md) | Finish vault/client adoption, conflict testing and recovery validation. | Services deployed — owner workflow unfinished |
 | [`steam-moonlight-completion.md`](steam-moonlight-completion.md) | Complete Steam login, Moonlight pairing and real game/input/persistence validation. | Infrastructure deployed — real client session unverified |
 | [`legacy-mmo-completion.md`](legacy-mmo-completion.md) | Finish FFXIV 1.0 and SMT IMAGINE client testing and set up both games through the private `romnas` repo. | Testing unfinished — Romnas setup pending |
