@@ -36,6 +36,23 @@ assert int(subprocess.check_output(['sysctl', '-n', 'vm.max_map_count'])) >= 262
 print('host prerequisites verified')
 '''
 
+# Nodes must never resolve through the tailnet's DNS. A cluster-hosted resolver
+# (infra/adguard) set as Tailscale's global nameserver would otherwise become
+# the nodes' own resolver: containerd can't pull the image that resolver needs,
+# and k3s-resolv-conf.py hands 100.100.100.100 to CoreDNS as a pod upstream. On
+# 2026-11-08 that loop black-holed DNS for the whole tailnet. `tailscale set`
+# persists in tailscaled's state, so a reboot keeps it.
+TAILSCALE_CODE = '''
+import json, shutil, subprocess
+if not shutil.which('tailscale'):
+    print('tailscale dns: not installed')
+    raise SystemExit
+subprocess.run(['tailscale', 'set', '--accept-dns=false'], check=True)
+prefs = json.loads(subprocess.check_output(['tailscale', 'debug', 'prefs']))
+assert prefs.get('CorpDNS') is False, prefs.get('CorpDNS')
+print('tailscale dns: off')
+'''
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -45,12 +62,16 @@ def main():
     for node in nodes:
         name = node['metadata']['name']
         tier = 'low' if memory_bytes(node['status']['capacity']['memory']) < THRESHOLD else 'standard'
-        print(f'{name}: {LABEL}={tier}; vm.max_map_count >= 262144', flush=True)
+        print(f'{name}: {LABEL}={tier}; vm.max_map_count >= 262144; tailscale accept-dns=false', flush=True)
         if args.apply:
             with node_session(name) as execute:
                 result = execute(['python3', '-c', HOST_CODE]).decode().strip()
                 if result != 'host prerequisites verified':
                     raise RuntimeError(f'{name}: host verification failed')
+                result = execute(['python3', '-c', TAILSCALE_CODE]).decode().strip()
+                if not result.startswith('tailscale dns: '):
+                    raise RuntimeError(f'{name}: tailscale DNS verification failed')
+                print(f'  {result}', flush=True)
             subprocess.run(['kubectl', 'label', 'node', name, f'{LABEL}={tier}', '--overwrite'], check=True)
 
 

@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adguard.fullname" . }}
+  labels:
+    {{- include "adguard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # Never drop below the full count during a rollout. Every tailnet device's
+  # DNS goes through this.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "adguard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "adguard.selectorLabels" . | nindent 8 }}
+      annotations:
+        # The config is copied in at start, so a values change must restart pods.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      # Spread, don't pin: one node going down should leave a replica alive.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "adguard.selectorLabels" . | nindent 14 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # AdGuard rewrites its config file at runtime (it saves UI changes and
+        # schema migrations back into it), so it needs a writable copy. A
+        # ConfigMap mount is read-only.
+        - name: seed-config
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c", "cp /seed/AdGuardHome.yaml /opt/adguardhome/conf/AdGuardHome.yaml"]
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              # The image setcaps the binary for NET_BIND_SERVICE. Without it in
+              # the bounding set, exec can fail even though :5353 needs no
+              # privilege. Restricted PSS allows exactly this one.
+              add: [NET_BIND_SERVICE]
+          volumeMounts:
+            - { name: seed, mountPath: /seed, readOnly: true }
+            - { name: conf, mountPath: /opt/adguardhome/conf }
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: adguard
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --no-check-update
+            - -c
+            - /opt/adguardhome/conf/AdGuardHome.yaml
+            - -w
+            - /opt/adguardhome/work
+          securityContext: *containerSecurity
+          ports:
+            - { name: dns-udp, containerPort: {{ .Values.dns.containerPort }}, protocol: UDP }
+            - { name: dns-tcp, containerPort: {{ .Values.dns.containerPort }}, protocol: TCP }
+            - { name: http, containerPort: {{ .Values.web.containerPort }}, protocol: TCP }
+          # /control/status answers without a login because users is empty.
+          readinessProbe:
+            httpGet: { path: /control/status, port: http }
+            # Filter lists download ~5s after start; until then the pod
+            # resolves names but blocks nothing.
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: dns-tcp }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - { name: conf, mountPath: /opt/adguardhome/conf }
+            - { name: work, mountPath: /opt/adguardhome/work }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: seed
+          configMap:
+            name: {{ include "adguard.fullname" . }}-config
+        - name: conf
+          emptyDir: { sizeLimit: 1Mi }
+        - name: work
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "adguard.fullname" . }}
+  labels:
+    {{- include "adguard.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "adguard.selectorLabels" . | nindent 6 }}

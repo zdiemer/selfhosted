@@ -1,0 +1,109 @@
+# adguard — DNS ad/tracker blocking for every device on the tailnet.
+#
+# HOW CLIENTS GET HERE
+# Tailscale admin console -> DNS -> Global nameservers: two node 100.x
+# addresses, with "Override local DNS" on (see README). klipper-lb exposes :53
+# on every node, so any node address reaches whichever replica is up. Two are
+# listed so one node being down doesn't stop DNS for the whole tailnet.
+#
+# This takes ALL of the tailnet's non-MagicDNS lookups, so it's built to stay
+# up, not to keep state: two replicas, nothing persisted, and a config that
+# is re-rendered from this file on every start.
+
+image:
+  repository: docker.io/adguard/adguardhome
+  # renovate: image=docker.io/adguard/adguardhome
+  tag: "v0.107.79"
+  pullPolicy: IfNotPresent
+
+replicas: 2
+
+dns:
+  # The DNS Service. LoadBalancer for the same reason as games/ffxiv-1x and
+  # life/laundry: a client points at an IP, not a hostname, and klipper-lb
+  # answers on every node's LAN *and* tailnet address.
+  #
+  # No loadBalancerSourceRanges, on purpose. CNI host-port forwarding rewrites
+  # tailnet traffic to the entry node's 10.42.x.1 bridge gateway before
+  # klipper-lb checks source ranges (games/terraria hit this), so
+  # 100.64.0.0/10 would match nothing. The result is that LAN hosts can use
+  # this resolver too. That's fine: the router doesn't forward :53, so it is
+  # not open to the internet.
+  #
+  # The same rewrite means AdGuard sees every query as coming from one svclb
+  # address. That's why ratelimit is 0 below (one shared client would hit a
+  # per-client limit immediately), and why per-client stats in the UI show
+  # nothing useful.
+  servicePort: 53
+  # Whether the :53 LoadBalancer exists at all. upgrade.sh installs with this
+  # false, waits for the pods to be Ready, and only then turns it on. The
+  # moment the Service exists, klipper-lb claims :53 on every node, and
+  # pointing that at pods that aren't up yet black-holes DNS (2026-11-08).
+  loadBalancer: true
+  # The container listens unprivileged; the Service maps 53 -> this.
+  containerPort: 5353
+
+web:
+  containerPort: 3000
+
+# Upstreams are DNS-over-HTTPS, so the ISP never sees tailnet lookups.
+# load_balance spreads queries across them and stops using one that's failing.
+upstreams:
+  - https://dns.quad9.net/dns-query
+  - https://cloudflare-dns.com/dns-query
+# Plain-DNS IPs used only to resolve the DoH hostnames above.
+bootstrap:
+  - 9.9.9.9
+  - 1.1.1.1
+
+# Lists are downloaded on start and every filtersUpdateHours after that. They
+# live in an emptyDir, so a restarted pod spends ~5s re-fetching them.
+# readinessProbe.initialDelaySeconds covers that window so a fresh pod isn't
+# given traffic while it still blocks nothing.
+filtersUpdateHours: 24
+filters:
+  - id: 1
+    name: AdGuard DNS filter
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+    enabled: true
+  - id: 2
+    name: AdAway Default Blocklist
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt
+    enabled: true
+
+# Custom rules in AdGuard syntax, e.g. "@@||example.com^" to unblock a domain
+# a list broke. Put them here, not in the UI. The UI edits only the running
+# pod's copy, and the next restart throws it away.
+userRules: []
+
+# In memory only and per-replica, so the UI shows whichever replica served
+# that page load. Fine for "is it blocking"; not a lasting record.
+querylog:
+  interval: 24h
+  sizeMemory: 1000
+statistics:
+  interval: 24h
+
+ingress:
+  enabled: true
+  className: traefik
+  host: adguard.zachd.duckdns.org
+
+auth:
+  # The UI runs with `users: []` (AdGuard's own login turned off), so this
+  # middleware is the only gate on it. Do not turn it off. The NetworkPolicy
+  # allows the UI port from Traefik only, so the gate can't be bypassed by
+  # calling the pod directly.
+  forwardAuth:
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 96Mi
+  limits:
+    # Two filter lists (~200k rules) settle at ~60-80Mi.
+    memory: 256Mi

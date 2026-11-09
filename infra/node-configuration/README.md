@@ -11,6 +11,14 @@ The script labels nodes below 6 GiB `infra.zachd.dev/memory-tier=low`, and other
 an existing larger value. Host changes use short-lived, token-free maintenance
 Jobs, removed after verification. No reboot is required.
 
+It also sets `tailscale set --accept-dns=false` on every node and verifies
+`CorpDNS` is off. Nodes keep their DHCP/ISP resolvers and never resolve through
+the tailnet's DNS. If the tailnet's global nameserver is a resolver running in
+this cluster (infra/adguard), the nodes would otherwise depend on it to pull its
+own image. The setting persists in tailscaled's state across reboots. The cost:
+nodes can't resolve `*.ts.net` names (tailnet IPs and `tailscale ssh` still
+work).
+
 This replaces Talaria's node-labeler CronJob and privileged Elasticsearch init
 container. Provision these prerequisites before deploying Talaria on new nodes.
 Legacy `talaria.io/memory-tier` labels can remain during migration; consumers now

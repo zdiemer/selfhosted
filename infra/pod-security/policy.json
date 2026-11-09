@@ -3,6 +3,7 @@
   "default": "baseline",
   "restricted": [
     "cdi",
+    "dns",
     "fsu",
     "keda"
   ],

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: adguard
+description: AdGuard Home — ad/tracker-blocking DNS for the tailnet. Two stateless replicas behind a klipper-lb LoadBalancer on :53, set as Tailscale's global nameserver; the admin UI sits behind Authelia at adguard.zachd.duckdns.org.
+type: application
+version: 0.1.0
+# appVersion tracks image.tag in values.yaml.
+# renovate: image=docker.io/adguard/adguardhome
+appVersion: "v0.107.79"
+home: https://adguard.com/adguard-home/overview.html
+sources:
+  - https://github.com/AdguardTeam/AdGuardHome
+maintainers:
+  - name: zachd

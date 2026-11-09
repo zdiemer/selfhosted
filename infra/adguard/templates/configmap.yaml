@@ -1,0 +1,64 @@
+{{/*
+The whole AdGuardHome.yaml. AdGuard fills any key left out with its own
+default, so only settings that differ from the default (or that matter
+enough to pin) are written here. schema_version must equal the binary's
+configmigrate.LastSchemaVersion (34 for v0.107.79). A lower number makes it
+run migrations on every start. A higher one makes it refuse to start.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "adguard.fullname" . }}-config
+  labels:
+    {{- include "adguard.labels" . | nindent 4 }}
+data:
+  AdGuardHome.yaml: |
+    http:
+      address: 0.0.0.0:{{ .Values.web.containerPort }}
+      session_ttl: 720h
+    # No users: Authelia forward-auth is the login (see values.yaml auth).
+    users: []
+    dns:
+      bind_hosts: [0.0.0.0]
+      port: {{ .Values.dns.containerPort }}
+      upstream_dns:
+        {{- toYaml .Values.upstreams | nindent 8 }}
+      bootstrap_dns:
+        {{- toYaml .Values.bootstrap | nindent 8 }}
+      upstream_mode: load_balance
+      ratelimit: 0
+      cache_enabled: true
+      cache_size: 4194304
+      enable_dnssec: true
+      refuse_any: true
+      # No LAN PTR resolver exists from inside the cluster.
+      use_private_ptr_resolvers: false
+    filtering:
+      protection_enabled: true
+      filtering_enabled: true
+      filters_update_interval: {{ .Values.filtersUpdateHours }}
+      blocking_mode: default
+    filters:
+      {{- range .Values.filters }}
+      - id: {{ .id }}
+        name: {{ .name | quote }}
+        url: {{ .url | quote }}
+        enabled: {{ .enabled }}
+      {{- end }}
+    whitelist_filters: []
+    user_rules:
+      {{- if .Values.userRules }}
+      {{- toYaml .Values.userRules | nindent 6 }}
+      {{- else }} []
+      {{- end }}
+    querylog:
+      enabled: true
+      file_enabled: false
+      interval: {{ .Values.querylog.interval }}
+      size_memory: {{ .Values.querylog.sizeMemory }}
+    statistics:
+      enabled: true
+      interval: {{ .Values.statistics.interval }}
+    dhcp:
+      enabled: false
+    schema_version: 34
