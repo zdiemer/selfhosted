@@ -21,6 +21,8 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
+      # Longer than the preStop sleep, plus time for in-flight streams to end.
+      terminationGracePeriodSeconds: 30
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -36,6 +38,11 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+          # Endpoint removal races SIGTERM; let Traefik stop routing here first.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

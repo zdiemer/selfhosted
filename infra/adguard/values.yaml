@@ -74,7 +74,10 @@ filters:
 # Custom rules in AdGuard syntax, e.g. "@@||example.com^" to unblock a domain
 # a list broke. Put them here, not in the UI. The UI edits only the running
 # pod's copy, and the next restart throws it away.
-userRules: []
+userRules:
+  # CNN's own script loader. The AdGuard DNS filter blocks it as an ad host, and
+  # cnn.com then fails to load in Safari (found 2026-11-08, first real test).
+  - "@@||lightning.cnn.com^"
 
 # In memory only and per-replica, so the UI shows whichever replica served
 # that page load. Fine for "is it blocking"; not a lasting record.

@@ -25,6 +25,8 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
+      # Longer than the preStop sleep, so the kubelet doesn't hard-kill mid-sleep.
+      terminationGracePeriodSeconds: 15
       # Spread, don't pin: one node going down should leave a replica alive.
       topologySpreadConstraints:
         - maxSkew: 1
@@ -74,6 +76,12 @@ spec:
             - -w
             - /opt/adguardhome/work
           securityContext: *containerSecurity
+          # Endpoint removal races SIGTERM. Keep answering for a few seconds so
+          # a query routed here during a rollout isn't dropped.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - { name: dns-udp, containerPort: {{ .Values.dns.containerPort }}, protocol: UDP }
             - { name: dns-tcp, containerPort: {{ .Values.dns.containerPort }}, protocol: TCP }
