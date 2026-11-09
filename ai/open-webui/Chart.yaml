@@ -1,0 +1,13 @@
+apiVersion: v2
+name: open-webui
+description: Open WebUI — a chat UI for the cluster's Ollama. Authelia forward-auth is the login (trusted-header SSO, no second password), served on chat.zachd.duckdns.org and talking to ollama.ai.svc in-cluster, bypassing Ollama's public basic-auth gate.
+type: application
+version: 0.1.0
+# appVersion tracks image.tag in values.yaml.
+# renovate: image=ghcr.io/open-webui/open-webui
+appVersion: "v0.12.3"
+home: https://openwebui.com
+sources:
+  - https://github.com/open-webui/open-webui
+maintainers:
+  - name: zachd

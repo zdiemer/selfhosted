@@ -1,0 +1,9 @@
+# Shape of op://homelab/ai-open-webui/values.local.yaml. Never write this file
+# for real (see ~/Code/CLAUDE.md). Create the vault item with:
+#
+#   printf 'secretKey: "%s"\n' "$(openssl rand -hex 32)" \
+#     | secrets edit ai-open-webui --from-stdin
+#
+# secretKey: random 64-hex string. Signs session JWTs; rotating it is harmless
+# (everyone gets logged out and Authelia logs them back in).
+secretKey: ""

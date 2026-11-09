@@ -16,12 +16,19 @@ ollama:
   # long — the memory is reserved for us either way (see resources below).
   keepAlive: "1h"
 
-  # One model in memory, one request at a time. The node has ~16Gi to give
-  # this pod; two resident models or parallel decodes would blow through that,
-  # and CPU inference gains nothing from concurrency — the cores are already
-  # saturated by a single decode.
+  # One model in memory, TWO request slots. CPU throughput doesn't improve
+  # with concurrency (one decode already saturates the cores), but latency
+  # does. Talaria's workers send back-to-back /api/chat calls around the clock,
+  # and with one slot an Open WebUI message queued behind them: 1m07s and
+  # 7m11s on 2026-11-08. A second slot lets interactive chat start right away,
+  # at the cost of both streams running slower while they overlap.
+  #
+  # Memory: the KV cache is allocated per slot, so 2 x 16k context for an 8B
+  # Q4 model is roughly +2-3Gi over the ~8.7Gi observed at one slot. That
+  # still fits the 16Gi limit, but a 14B model would not; drop back to 1 if
+  # you move to one.
   maxLoadedModels: 1
-  numParallel: 1
+  numParallel: 2
 
   # Default context window. Ollama's own default is small (4k); 16k is a
   # usable middle ground that an 8B Q4 model plus KV cache still fits inside

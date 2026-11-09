@@ -19,6 +19,8 @@ LINT_SKIP=(
 
 # `required` secrets in values.local.yaml block a default render.
 TEMPLATE_SKIP=(
+  # secretKey is `required` (op://homelab/ai-open-webui).
+  ai/open-webui
   auth/authelia
   # auth.password is `required` (op://homelab/dev-guacamole).
   dev/guacamole

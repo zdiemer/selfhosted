@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "open-webui.fullname" . }}
+  labels:
+    {{- include "open-webui.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # One RWO volume holding a SQLite file, so the old pod must stop before the
+  # new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "open-webui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "open-webui.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: open-webui
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Runs as the image's root user: the image writes under /app at
+          # start and doesn't support an arbitrary UID. All capabilities are
+          # dropped, so this is root inside the container only, with no
+          # privileges to use against the node.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.port | quote }}
+            - name: WEBUI_URL
+              value: {{ .Values.publicUrl | quote }}
+            - name: OLLAMA_BASE_URL
+              value: {{ .Values.ollamaBaseUrl | quote }}
+            - name: WEBUI_AUTH_TRUSTED_EMAIL_HEADER
+              value: {{ .Values.auth.trustedEmailHeader | quote }}
+            - name: WEBUI_AUTH_TRUSTED_NAME_HEADER
+              value: {{ .Values.auth.trustedNameHeader | quote }}
+            - name: DEFAULT_USER_ROLE
+              value: {{ .Values.auth.defaultUserRole | quote }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: WEBUI_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "open-webui.fullname" . }}
+                  key: WEBUI_SECRET_KEY
+          # First start runs DB migrations and downloads the embedding model,
+          # which takes a minute or two. Later starts take a few seconds.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            failureThreshold: 5
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "open-webui.fullname" . }}-data

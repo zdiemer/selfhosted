@@ -1,0 +1,78 @@
+image:
+  repository: ghcr.io/open-webui/open-webui
+  # renovate: image=ghcr.io/open-webui/open-webui
+  tag: "v0.12.3"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+
+# Ollama's in-cluster address. This skips the basic-auth gate on
+# ollama.zachd.duckdns.org (that gate exists for the public host only). Ollama's
+# own NetworkPolicy has to allow this pod, and ai/ollama's networkpolicy.yaml
+# carries that rule.
+ollamaBaseUrl: http://ollama.ai.svc.cluster.local:11434
+
+# Must match ingress.host. Open WebUI uses it to build links and its OAuth/
+# websocket origin.
+publicUrl: https://chat.zachd.duckdns.org
+
+auth:
+  # SSO through Authelia's forward-auth headers, no OIDC client. Traefik
+  # replaces Remote-Email/Remote-Name with Authelia's answer on every request,
+  # so a browser can't forge them. A pod-to-pod caller could, which is why the
+  # NetworkPolicy allows ingress from Traefik ONLY. Those two rules together
+  # are the whole login. Relaxing either one lets anyone claim any account.
+  #
+  # The first account Open WebUI ever creates becomes admin. Every account
+  # after that is `defaultUserRole` until the admin approves it.
+  trustedEmailHeader: Remote-Email
+  trustedNameHeader: Remote-Name
+  defaultUserRole: pending
+  forwardAuth:
+    autheliaService: authelia
+    autheliaNamespace: auth
+    autheliaPort: 9091
+    autheliaPath: /api/authz/forward-auth
+
+# Signs Open WebUI's session JWTs. EMPTY here; the value comes from the vault
+# (values.local.tpl.yaml -> op://homelab/ai-open-webui). Rotating it logs
+# everyone out and nothing else, since Authelia logs them straight back in.
+secretKey: ""
+
+# Settings Open WebUI would otherwise default "on" and that reach out of the
+# cluster.
+env:
+  # No OpenAI-compatible upstream is configured. With this on, it calls
+  # api.openai.com on every model-list refresh.
+  ENABLE_OPENAI_API: "false"
+  ANONYMIZED_TELEMETRY: "false"
+  DO_NOT_TRACK: "true"
+  SCARF_NO_ANALYTICS: "true"
+  # Ollama holds one model at a time (ai/ollama maxLoadedModels: 1). Title,
+  # tag and follow-up generation then reuse the chat model instead of
+  # requesting a different one and evicting it mid-conversation.
+  ENABLE_TAGS_GENERATION: "false"
+  ENABLE_FOLLOW_UP_GENERATION: "false"
+
+ingress:
+  enabled: true
+  className: traefik
+  host: chat.zachd.duckdns.org
+
+persistence:
+  # SQLite database (chats, users, settings), uploaded files, and the RAG
+  # vector store. This is real data, unlike Ollama's model cache, so
+  # infra/k8up backs up the `ai` namespace.
+  size: 10Gi
+  storageClass: truenas-iscsi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 768Mi
+  limits:
+    # The bundled sentence-transformers embedding model (used for document
+    # RAG) loads into this process, which puts idle usage near 600-900Mi.
+    memory: 2Gi

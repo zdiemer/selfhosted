@@ -1,0 +1,29 @@
+{{/*
+Ingress only. Egress is owned by infra/application-isolation, which grants
+public HTTPS (embedding-model download) plus the ai/open-webui -> ollama
+dependency.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "open-webui.fullname" . }}
+  labels:
+    {{- include "open-webui.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "open-webui.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    # Traefik only. Anything else that could reach :8080 could send its own
+    # Remote-Email header and log in as anyone.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: http
+          protocol: TCP

@@ -39,6 +39,7 @@ applications:
   - keepass
   ai:
   - ollama
+  - open-webui
 dependencies:
   games:
     gamedex:
@@ -140,6 +141,18 @@ dependencies:
             app.kubernetes.io/name: authelia-redis
       ports:
       - port: 6379
+        protocol: TCP
+  ai:
+    open-webui:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ai
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: ollama
+      ports:
+      - port: 11434
         protocol: TCP
   talaria:
     talaria:

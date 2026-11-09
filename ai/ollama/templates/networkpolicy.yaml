@@ -20,6 +20,15 @@ spec:
       ports:
         - port: http
           protocol: TCP
+    # The chat UI (ai/open-webui). In-cluster, so it skips the public host's
+    # basic-auth gate. Open WebUI has its own Authelia-backed login.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: open-webui
+      ports:
+        - port: http
+          protocol: TCP
     # These two workers are the configured internal inference clients.
     - from:
         - namespaceSelector:

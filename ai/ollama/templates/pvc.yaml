@@ -3,6 +3,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "ollama.fullname" . }}-data
+  annotations:
+    # Model blobs: a cache, re-pullable at any time (values.yaml persistence).
+    # The `ai` namespace is backed up for Open WebUI's chats, and without this
+    # infra/k8up would also copy ~60Gi of models every week.
+    k8up.io/backup: "false"
   labels:
     {{- include "ollama.labels" . | nindent 4 }}
 spec:

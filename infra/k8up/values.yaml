@@ -154,6 +154,11 @@ schedules:
   - name: finance
     namespace: finance
     schedule: "30 2 * * 5"
+  # Open WebUI's chats/users (SQLite). Ollama's model cache opts out with
+  # k8up.io/backup=false on its PVC.
+  - name: ai
+    namespace: ai
+    schedule: "0 3 * * 5"
 
   # --- Saturday ------------------------------------------------------------
   - name: web
