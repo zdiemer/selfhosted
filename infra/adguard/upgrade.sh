@@ -64,16 +64,16 @@ fail=0
 for ip in $CHECK_NODES; do
   echo "==> DNS via ${ip}"
   real="$(dig +short +time=3 +tries=2 @"$ip" example.com A | head -1 || true)"
-  ad="$(dig +time=3 +tries=2 @"$ip" ad.doubleclick.net A | grep -o 'status: [A-Z]*' | cut -d' ' -f2 || true)"
+  ad="$(dig +time=3 +tries=2 @"$ip" pagead2.googlesyndication.com A | grep -o 'status: [A-Z]*' | cut -d' ' -f2 || true)"
   if [[ -z "$real" || "$real" == "0.0.0.0" ]]; then
     echo "    !! example.com -> '${real}' (expected a real address)"; fail=1
   else
     echo "    example.com -> ${real}"
   fi
   if [[ "$ad" == "NXDOMAIN" ]]; then
-    echo "    ad.doubleclick.net -> NXDOMAIN (blocked)"
+    echo "    pagead2.googlesyndication.com -> NXDOMAIN (blocked)"
   else
-    echo "    !! ad.doubleclick.net -> '${ad}' (expected NXDOMAIN; filters may still be loading)"; fail=1
+    echo "    !! pagead2.googlesyndication.com -> '${ad}' (expected NXDOMAIN; filters may still be loading)"; fail=1
   fi
 done
 

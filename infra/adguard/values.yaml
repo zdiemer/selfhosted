@@ -69,20 +69,22 @@ filtersUpdateHours: 24
 # makes the browser give up on a blocked host immediately.
 blockingMode: nxdomain
 filters:
+  # ONE list, chosen for low breakage. The AdGuard DNS filter + AdAway pair this
+  # replaced also blocked A/B-testing, feature-flag and consent hosts that pages
+  # wait on, and ad-heavy sites stalled (CNN, AP News, 2026-11-08). The owner
+  # does not want to debug sites one by one, so the trade is deliberate: less
+  # blocking in exchange for pages that load. Don't add a second aggressive
+  # list on top without revisiting that.
   - id: 1
-    name: AdGuard DNS filter
-    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
-    enabled: true
-  - id: 2
-    name: AdAway Default Blocklist
-    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt
+    name: HaGeZi Multi Light
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/light.txt
     enabled: true
 
 # Custom rules in AdGuard syntax, e.g. "@@||example.com^" to unblock a domain
 # a list broke. Put them here, not in the UI. The UI edits only the running
 # pod's copy, and the next restart throws it away.
 userRules:
-  # CNN's own script loader. The AdGuard DNS filter blocks it as an ad host, and
+  # CNN's own script loader. HaGeZi Light still blocks it as an ad host, and
   # cnn.com then fails to load in Safari (found 2026-11-08, first real test).
   - "@@||lightning.cnn.com^"
 

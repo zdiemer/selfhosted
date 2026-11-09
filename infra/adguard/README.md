@@ -52,6 +52,13 @@ built to survive a node loss rather than to keep history:
 - `maxUnavailable: 0`, a PDB with `minAvailable: 1`, and a topology spread
   across nodes (not pinned to any node)
 
+**One low-breakage list (HaGeZi Multi Light), on purpose.** The first
+deploy used the AdGuard DNS filter + AdAway. They blocked hosts that pages
+wait on (A/B testing, feature flags, consent tools), and ad-heavy sites stalled.
+The rule now: pages must load without debugging each site. Blocked lookups get
+NXDOMAIN (`blockingMode`), not `0.0.0.0`, which Safari tried to connect to.
+For blocking ads inside pages, use a browser content blocker, not more DNS lists.
+
 **The UI is not the source of truth.** Settings changed in the UI only last
 until that pod restarts, and only on the replica that served the page. Put
 upstreams, lists and allowlist rules (`userRules`) in `values.yaml` and run
@@ -97,6 +104,6 @@ waits for Ready. Phase 2 adds the LoadBalancer. If phase 1 fails, nothing has
 claimed :53 on any node. Upgrading a running release keeps its LoadBalancer
 throughout.
 
-It checks that `example.com` resolves and `ad.doubleclick.net` returns
+It checks that `example.com` resolves and `pagead2.googlesyndication.com` returns
 NXDOMAIN via both nameserver nodes, and that the UI rejects anonymous
 requests.
