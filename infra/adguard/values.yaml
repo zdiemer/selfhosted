@@ -61,6 +61,13 @@ bootstrap:
 # readinessProbe.initialDelaySeconds covers that window so a fresh pod isn't
 # given traffic while it still blocks nothing.
 filtersUpdateHours: 24
+
+# What a blocked lookup returns. NOT AdGuard's "default" (0.0.0.0 / ::): Safari
+# treats that as a real address and tries to connect, and ad-heavy pages (CNN,
+# AP News) then stalled for a long time on every blocked script. Confirmed
+# 2026-11-08: the same pages loaded fast with protection paused. NXDOMAIN
+# makes the browser give up on a blocked host immediately.
+blockingMode: nxdomain
 filters:
   - id: 1
     name: AdGuard DNS filter

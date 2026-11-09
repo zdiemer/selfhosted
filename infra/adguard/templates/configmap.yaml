@@ -37,7 +37,7 @@ data:
       protection_enabled: true
       filtering_enabled: true
       filters_update_interval: {{ .Values.filtersUpdateHours }}
-      blocking_mode: default
+      blocking_mode: {{ .Values.blockingMode }}
     filters:
       {{- range .Values.filters }}
       - id: {{ .id }}

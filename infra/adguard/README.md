@@ -98,5 +98,5 @@ claimed :53 on any node. Upgrading a running release keeps its LoadBalancer
 throughout.
 
 It checks that `example.com` resolves and `ad.doubleclick.net` returns
-`0.0.0.0` via both nameserver nodes, and that the UI rejects anonymous
+NXDOMAIN via both nameserver nodes, and that the UI rejects anonymous
 requests.
