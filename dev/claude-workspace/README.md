@@ -1243,6 +1243,48 @@ potentially stale mutable tag.
 
 Validation: `python3 -m unittest discover -s dev/claude-workspace/tests -v`.
 
+### Login expiry alerts
+
+The access token in `~/.claude/.credentials.json` lapses every few hours and the
+CLI exchanges the refresh token for a new one unattended. The refresh token is
+the one that ends in a human: when it expires, `/term`, the Happy app, the
+messaging gateway and every scheduled agent are signed out at the same moment,
+and the only repair is the interactive login under
+[First use](#first-use-all-from-the-phone-in-browser).
+
+`tokenExpiry` watches that date. A CronJob (daily, `tokenExpiry.schedule`) reads
+the credentials file from the home PVC read-only and publishes to the private
+ntfy `alerts` topic once a run falls inside `tokenExpiry.warnDays` — so the
+daily schedule *is* the reminder interval, and the check keeps no state to
+reconcile. Priority rises on the last day and again once the token has expired.
+A missing or unparseable credentials file reports the pod as signed out; a
+credentials format without `refreshTokenExpiresAt` reports that the check has
+gone blind rather than staying quiet about it.
+
+It is a CronJob and not a container in the Deployment on purpose: `strategy:
+Recreate` means a sidecar could not be upgraded without tearing down whatever
+is live in `/term`. Job pods fall outside this chart's NetworkPolicy (which
+selects the Deployment's pods), so they need no ntfy egress exception.
+
+One out-of-band step, once per cluster and again after rotating ntfy's publisher
+password:
+
+```sh
+python3 dev/claude-workspace/scripts/provision-ntfy-secret.py
+```
+
+That copies the write-only `alerts` password from `infra/ntfy`'s seed Secret
+into `claude/claude-workspace-ntfy` without decoding it. It is not resolved from
+this chart's vault item deliberately — the credential belongs to
+`op://homelab/infra-ntfy`, and a second copy would drift on the next rotation.
+Without the Secret the CronJob pods stay `CreateContainerConfigError`; the
+workspace itself is unaffected.
+
+Validation: `python3 -m unittest discover -s dev/claude-workspace/tests -v`, and
+`kubectl -n claude create job --from=cronjob/claude-workspace-token-expiry
+token-expiry-probe` for a live run (it publishes only inside the window; add
+`--dry-run=client -o yaml` and raise `WARN_DAYS` to force a test notification).
+
 ### Messaging health metrics
 
 The gateway exports aggregate enabled-transport connection state at private

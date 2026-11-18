@@ -17,6 +17,7 @@ Subscribe on `https://ntfy.zachd.duckdns.org`.
 | SMS handset outage | `alerts` | `cluster-status-sms-monitor` CronJob; 15-minute debounce, daily reminders, silent recovery |
 | Node outage (two minutes, per node, including cordoned nodes) | `alerts` | Grafana `sh-node-notready`; replaces Talaria SMS task |
 | Grafana actionable application and infrastructure rules | `alerts` | `ntfy-primary` webhook to relay; Arr warnings and CrowdSec overflow spikes remain dashboard-only |
+| Claude workspace login expiry (refresh token, seven-day window) | `alerts` | `claude-workspace-token-expiry` CronJob; daily, stateless, silent outside the window |
 | ntfy explicitly unavailable for five minutes | Email | Grafana Cloud `notification-path-email` |
 
 All Talaria listing notifications, verification codes, and admin messages retain

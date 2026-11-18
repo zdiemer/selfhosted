@@ -937,6 +937,31 @@ secrets:
     secretKey: ""
     password: ""
 
+# Warn before the Claude login on this pod needs a human. The access token in
+# ~/.claude/.credentials.json rotates on its own; its refresh token does not,
+# and when that one lapses the shell, the Happy app, the messaging gateway and
+# every scheduled agent are signed out at the same moment. See
+# token-expiry/monitor.py and docs/notification-routing.md.
+tokenExpiry:
+  enabled: true
+  # Daily, mid-morning local: late enough that a warning is read the same day,
+  # and the once-a-day cadence IS the reminder interval — the check keeps no
+  # state, so each run inside the window publishes one notification.
+  schedule: "0 16 * * *"
+  # Days of remaining refresh-token life that start the warnings. Renewal is a
+  # two-minute interactive login, so a week of nagging is plenty.
+  warnDays: 7
+  ntfy:
+    # Cluster-local, so no DuckDNS round trip and no TLS to verify.
+    url: "http://ntfy.infra.svc.cluster.local/alerts"
+    # The write-only `alerts` publisher, copied out of infra/ntfy's seed Secret
+    # into this namespace by scripts/provision-ntfy-secret.py. Deliberately not
+    # a value resolved from this chart's vault item: the credential belongs to
+    # op://homelab/infra-ntfy, and a second copy there would drift the day it is
+    # rotated. Same arrangement as talaria, for the same reason.
+    existingSecret: claude-workspace-ntfy
+    passwordKey: NTFY_PASSWORD
+
 resources:
   # tmux spawns `claude` (and `happy`, which wraps another claude) — hungry
   # Node processes, so a roomy memory ceiling.
