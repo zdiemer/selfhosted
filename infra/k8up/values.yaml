@@ -299,7 +299,9 @@ k8up:
 talariaAtomicBackup:
   enabled: true
   schedule: '0 7 * * 1'
-  scratchSize: 50Gi
+  # The dump outgrew 50Gi on 2026-11-16 (database at 353GB; weekly
+  # auction_item_logs partitions run 17-40GB). truenas-iscsi expands online.
+  scratchSize: 200Gi
   postgresImage: postgres:15.19-alpine
   resticImage: restic/restic:0.19.1
 
