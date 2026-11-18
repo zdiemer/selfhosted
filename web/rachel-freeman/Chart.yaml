@@ -5,7 +5,7 @@ type: application
 version: 0.20.0
 # appVersion tracks image.tag in values.yaml. Both move together; build.sh warns
 # if they drift.
-appVersion: "sha-bfbe7c3"
+appVersion: "sha-6db115f"
 sources:
   - https://github.com/zdiemer/rachelfreeman
 maintainers:
