@@ -35,6 +35,16 @@
       "enabled": false
     },
     {
+      "description": "rangeStrategy pin also pins pep621 requires-python to an exact patch, which contradicts each repo's .python-version and CI matrix (talaria #10/#39, romnas). Moving the interpreter is a deliberate change, not a Renovate PR.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchDepTypes": [
+        "requires-python"
+      ],
+      "enabled": false
+    },
+    {
       "description": "DB engines under live data: two-week soak before a PR appears",
       "matchPackageNames": [
         "/(^|/)postgres$/",
