@@ -26,6 +26,6 @@ RUN mkdir -p /output/game /output/gamemd && \
 # LGPL corresponding decoder source; generated retail code stays private.
 RUN git -C .deps/ffmpeg archive --format=tar.gz HEAD > /output/ffmpeg-source.tar.gz
 
-FROM nginxinc/nginx-unprivileged:1.31-alpine
+FROM nginx/nginx-unprivileged:1.31.9-alpine
 COPY --from=build /output/ /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/conf.d/default.conf

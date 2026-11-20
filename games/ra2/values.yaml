@@ -1,6 +1,6 @@
 image:
   repository: registry.zachd.duckdns.org/zdiemer/redalert2-recomp
-  tag: d37b81ae-2
+  tag: d37b81ae-3
 source:
   repository: https://github.com/zdiemer/redalert2-recomp.git
   commit: d37b81ae60faaf8131557468c6f5de43dd3cbafc

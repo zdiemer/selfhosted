@@ -63,8 +63,8 @@ collector:
       memory: 192Mi
 
 web:
-  # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
-  image: nginxinc/nginx-unprivileged:1.31.5-alpine
+  # renovate: datasource=docker depName=nginx/nginx-unprivileged
+  image: nginx/nginx-unprivileged:1.31.9-alpine
   # The unprivileged image listens high and runs as non-root out of the box,
   # which is what we want for anything serving HTTP, tailnet or not.
   port: 8080

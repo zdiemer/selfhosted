@@ -202,8 +202,8 @@ RUN set -eux; \
     grep -qx 'The winners are \[\]!' /captures/imgur.txt
 
 # ------------------------------------------------------------------- runtime
-# renovate: datasource=docker depName=nginxinc/nginx-unprivileged
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+# renovate: datasource=docker depName=nginx/nginx-unprivileged
+FROM nginx/nginx-unprivileged:1.31.9-alpine
 
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 # Root-owned on purpose: nginx runs as uid 101 and only ever reads.

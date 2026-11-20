@@ -40,13 +40,13 @@ images:
   # the drift check without saying so.
   web:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-web
-    tag: "1.1.0"
+    tag: "1.1.1"
   terminal:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-terminal
-    tag: "1.1.0"
+    tag: "1.1.1"
   pybank:
     repository: registry.zachd.duckdns.org/zdiemer/fsu-pybank
-    tag: "1.1.0"
+    tag: "1.1.1"
   # IfNotPresent — so NEVER reuse a tag. A rebuilt tag is not re-pulled by any
   # node that already holds it, and the cluster keeps serving the old bytes.
   # build.sh refuses to push over an existing tag for exactly this reason.

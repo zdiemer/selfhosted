@@ -2,8 +2,8 @@ apiVersion: v2
 name: luke-birthday
 description: luke.diemer.codes — a one-off GeoCities-style 30th birthday page for Luke, baked into nginx
 type: application
-version: 1.5.2
+version: 1.5.3
 # appVersion tracks the image tag in values.yaml (image.tag).
-appVersion: "1.5.2"
+appVersion: "1.5.3"
 maintainers:
   - name: zachd
