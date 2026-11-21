@@ -268,7 +268,7 @@ crowdsec:
   # version means the code running in the ingress path can change under you on
   # an unrelated restart. Bump deliberately.
   # renovate: datasource=github-releases depName=maxlerebourg/crowdsec-bouncer-traefik-plugin
-  version: "v1.7.1"
+  version: "v1.8.2"
   moduleName: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
 
   # The name Traefik's static config registers the plugin under. The Middleware
