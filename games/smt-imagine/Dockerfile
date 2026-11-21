@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.29
 # COMP_hack 4.12.2 "Wyrd" — the SMT: IMAGINE server emulator — built from the
 # Launchpad PPA source tarball. That tarball is the only surviving COPY of the
 # full tree: github.com/comphack is an empty org, the HyperChiicken/SMT fork has
@@ -18,6 +18,11 @@ FROM debian:bullseye-slim AS build
 ARG SRC_URL
 ARG SRC_SHA256
 ENV DEBIAN_FRONTEND=noninteractive
+# Debian 11 LTS ended 2026-08-31. bullseye-security's index on deb.debian.org
+# is frozen (2026-09-12) while its pool has moved to archive.debian.org, so
+# apt 404s on any package that got a security update (libmariadb3 first).
+# archive.debian.org is bullseye's permanent home; point every suite there.
+RUN sed -i 's#http://deb.debian.org#http://archive.debian.org#g' /etc/apt/sources.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake git ca-certificates xz-utils unzip \
       qtbase5-dev libqt5webkit5-dev \
@@ -46,6 +51,8 @@ RUN make install DESTDIR=/out && ls -la /out/usr/bin
 
 FROM debian:bullseye-slim
 ENV DEBIAN_FRONTEND=noninteractive
+# Same archive.debian.org switch as the build stage.
+RUN sed -i 's#http://deb.debian.org#http://archive.debian.org#g' /etc/apt/sources.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl1.1 libphysfs1 zlib1g libmariadb3 libsystemd0 tini \
     && rm -rf /var/lib/apt/lists/* \
