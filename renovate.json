@@ -201,6 +201,16 @@
         "docker.io/josh5/steam-headless"
       ],
       "versioning": "regex:^debian-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "description": "provider-iac runs OpenTofu, pinned to 1.13.2 (run.py refuses anything else, and the state encryption block is OpenTofu-only). Renovate reads required_version as hashicorp/terraform and proposes Terraform releases, which are not OpenTofu versions; move it by hand with the binary.",
+      "matchFileNames": [
+        "infra/provider-iac/**"
+      ],
+      "matchDepTypes": [
+        "required_version"
+      ],
+      "enabled": false
     }
   ]
 }
