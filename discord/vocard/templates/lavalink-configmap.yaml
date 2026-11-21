@@ -29,7 +29,10 @@ data:
           - ANDROID_MUSIC
           - WEB
           - WEBEMBEDDED
-          - TVHTML5EMBEDDED
+          # youtube-source 1.18.0 removed TVHTML5EMBEDDED (end of life; it logged
+          # "Failed to resolve ... into a Client" and was skipped). TVHTML5_SIMPLY
+          # is upstream's replacement; it has no playlist support since 1.18.1.
+          - TVHTML5_SIMPLY
         clientOptions:
           WEB:
             playback: false

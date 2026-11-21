@@ -50,8 +50,15 @@ images:
   mongo:
     repository: mongo
     # Exact version, for the same reason as the bot: a bare "8" with
-    # IfNotPresent froze whichever 8.x each node pulled first. 8.2.12 is what
-    # was running when this was pinned (2026-11-21).
+    # IfNotPresent froze whichever 8.x each node pulled first (8.2.12 was
+    # running when this was pinned, 2026-11-21; mongo:8 now means 8.3).
+    #
+    # NOT 8.3 yet. 8.3.17 exits at startup on these nodes: "Linux kernel
+    # versions 6.19.0 through 7.0.13 have a known incompatibility with this
+    # version of MongoDB" (SERVER-121912), and the cluster runs 7.0.0. Tried
+    # 2026-11-21; it failed before opening the data files. Revisit when the
+    # nodes are past 7.0.13 or MongoDB lifts the check. renovate.json holds
+    # this dep below 8.3 until then.
     # renovate: datasource=docker depName=mongo
     tag: "8.2.12"
     pullPolicy: IfNotPresent
