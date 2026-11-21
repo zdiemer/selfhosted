@@ -148,6 +148,16 @@
       ]
     },
     {
+      "description": "Jellyfin stays on 12.2 until Intro Skipper ships a stable build against 12.4 (12.0.6.0 targets 12.2.0.0); raise this bound with the plugin (media/jellyfin/values.yaml)",
+      "matchFileNames": [
+        "media/jellyfin/**"
+      ],
+      "matchPackageNames": [
+        "docker.io/jellyfin/jellyfin"
+      ],
+      "allowedVersions": "<12.3"
+    },
+    {
       "description": "romm targets the mariadb 11.4 LTS series (prebackuppod dump image tracks it) \u2014 offer patches, not the next minor series",
       "matchPackageNames": [
         "mariadb"

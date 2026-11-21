@@ -376,8 +376,11 @@ a manual install:
 
 1. Pick the release for the server's line from
    [GitHub releases](https://github.com/intro-skipper/intro-skipper/releases) —
-   tags are `<server line>/v<version>`, e.g. `12.0/v12.0.4.0` for this server,
-   `10.11/v1.10.11.x` for the old one.
+   tags are `<server line>/v<version>`, e.g. `12.0/v12.0.6.0` (targetAbi
+   12.2.0.0) for this 12.2 server, `10.11/v1.10.11.x` for the old one. Within
+   the 12 line each plugin release targets one server minor; check
+   `targetAbi` in the 12 manifest
+   (`intro-skipper/manifest@main/12/manifest.json`) before moving the server.
 2. Unzip `IntroSkipper.dll` into `/config/plugins/Intro Skipper_<version>/` in
    the config PVC, alongside a `meta.json` carrying the plugin's stable guid
    `c83d86bb-a1e0-4c35-a113-e2101cf4ee6b` and a `targetAbi` the server

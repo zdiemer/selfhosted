@@ -5,10 +5,15 @@ image:
   # path, only a restore of the jellyfin-config PVC from restic. See
   # README.md#upgrading-to-120.
   #
-  # Floating minor tag on purpose: upstream published no 12.0.0, only `12.0`
-  # and a build-stamped `12.0.20260908-012347`. Pin the exact patch again as
-  # soon as 12.0.1 ships.
-  tag: "12.0"
+  # Floating minor tag on purpose: upstream publishes only `12.N` and
+  # build-stamped tags, no patch versions.
+  #
+  # 12.2, not 12.4: the newest stable Intro Skipper (12.0.6.0, 2026-10-23)
+  # is built against Jellyfin 12.2 (targetAbi 12.2.0.0), and a build for a
+  # different server version can fail to load. 12.3/12.4 are dependency and
+  # .NET bumps only. renovate.json holds this below 12.3 until Intro Skipper
+  # ships a stable 12.4 build (README.md#skip-intro--recap--credits).
+  tag: "12.2"
   pullPolicy: IfNotPresent
 
 # The media library, mounted straight off the NAS's NFS export (created for
