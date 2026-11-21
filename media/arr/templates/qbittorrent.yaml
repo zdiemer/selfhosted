@@ -37,6 +37,30 @@ spec:
       # come back needing a full recheck of data already on disk — hours of
       # disk I/O to recover from a shutdown that had 30 more seconds to spare.
       terminationGracePeriodSeconds: 60
+      # gluetun keeps no state between restarts, so every pod start used to
+      # fall back to the server list compiled into the image. That list ages:
+      # by 2026-11-20 PIA had moved ca_vancouver from 181.214/181.41/212.56 to
+      # 107.182, every hardcoded address timed out at the TLS handshake, and
+      # the killswitch held qBittorrent offline (no leak, just no tunnel).
+      # This fetches PIA's current list into the emptyDir gluetun reads on
+      # start. It runs before gluetun's firewall exists, so it goes out from
+      # the house IP; what it asks for is PIA's public server list, nothing
+      # the tunnel itself does not already reveal. A failed fetch is not
+      # fatal: gluetun then starts on the built-in list, as before.
+      initContainers:
+        - name: gluetun-servers
+          image: "{{ .Values.gluetun.image }}:{{ .Values.gluetun.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              /gluetun-entrypoint update -enduser -providers {{ .Values.gluetun.provider | quote }}
+              || echo "server list update failed; gluetun will use its built-in list"
+          volumeMounts:
+            - name: gluetun
+              mountPath: /gluetun
+          resources:
+            {{- toYaml .Values.resources.gluetun | nindent 12 }}
       containers:
         - name: gluetun
           image: "{{ .Values.gluetun.image }}:{{ .Values.gluetun.tag }}"
@@ -114,6 +138,9 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 30
             failureThreshold: 3
+          volumeMounts:
+            - name: gluetun
+              mountPath: /gluetun
           resources:
             {{- toYaml .Values.resources.gluetun | nindent 12 }}
         - name: qbittorrent
@@ -157,6 +184,8 @@ spec:
           resources:
             {{- toYaml .Values.resources.qbittorrent | nindent 12 }}
       volumes:
+        - name: gluetun
+          emptyDir: {}
         - name: config
           persistentVolumeClaim:
             claimName: {{ include "arr.fullname" . }}-qbittorrent-config
