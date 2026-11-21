@@ -1,6 +1,6 @@
 # Modded Terraria
 
-Calamity on **tModLoader 2026.08.3.0 / Terraria 1.4.4.9**, with a large
+Calamity on **tModLoader 2026.09.3.1 / Terraria 1.4.4.9**, with a large
 Corruption world in Classic difficulty, eight player slots, and a Claude
 companion. No Revengeance, Death or Infernum mode. The server is a separate
 release in `games`; it does not modify Minecraft.
@@ -110,7 +110,7 @@ kubectl -n games logs deployment/terraria -c claude -f
 
 Builds compile the custom server mod using the pinned official tModLoader
 release (SHA-256 checked), fetch Workshop mods, choose the newest compatible
-build for tModLoader 2026.08, and bake that set into the image. Pod restarts
+build for tModLoader 2026.09, and bake that set into the image. Pod restarts
 never update mods. [`mods.lock.json`](mods.lock.json) records the Workshop
 builds and checksums used for this release. `build.sh` compares the built
 image's `/opt/mods/lock.json` with this record and refuses to push if Workshop
@@ -153,6 +153,6 @@ chat replies, persisted conversations and reset against simulated game IPC.
 A real-player join, live inventory query and teleport check still require an
 in-game client; the simulated IPC test does not establish those behaviors.
 
-Upstream: [pinned tModLoader release](https://github.com/tModLoader/tModLoader/releases/tag/v2026.08.3.0),
+Upstream: [pinned tModLoader release](https://github.com/tModLoader/tModLoader/releases/tag/v2026.09.3.1),
 [official dedicated server utilities](https://github.com/tModLoader/tModLoader/tree/stable/patches/tModLoader/Terraria/release_extras/DedicatedServerUtils),
 [official Calamity wiki](https://calamitymod.wiki.gg/wiki/Main_Page).

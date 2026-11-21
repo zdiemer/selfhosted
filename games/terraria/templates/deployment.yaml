@@ -33,7 +33,7 @@ spec:
       initContainers:
         - name: init-state
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          command: [python3, -c, "from pathlib import Path; [Path('/state', d).mkdir(exist_ok=True) for d in ['server', 'claude']]"]
+          command: [python3, -c, "from pathlib import Path; [Path('/state', d).mkdir(exist_ok=True) for d in ['server', 'claude', 'calamity']]"]
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           volumeMounts:
             - {name: data, mountPath: /state}
@@ -67,6 +67,10 @@ spec:
             - {name: config, mountPath: /config, readOnly: true}
             - {name: server-tmp, mountPath: /tmp}
             - {name: logs, mountPath: /opt/tml/tModLoader-Logs}
+            # Calamity's GlobalSaveDataSystem creates a literal "~" directory relative
+            # to the working directory; without a writable mount here the mod fails
+            # OnModLoad and tModLoader silently disables it.
+            - {name: data, mountPath: "/opt/tml/~", subPath: calamity}
           resources: {{- toYaml .Values.resources | nindent 12 }}
         {{- if .Values.bridge.enabled }}
         - name: claude
