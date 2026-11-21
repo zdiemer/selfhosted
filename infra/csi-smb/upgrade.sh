@@ -2,7 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # renovate: datasource=helm depName=csi-driver-smb registryUrl=https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
-CHART_VERSION=1.19.0
+CHART_VERSION="${CHART_VERSION:-1.19.0}"
 helm repo add csi-driver-smb https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts --force-update >/dev/null
 helm repo update csi-driver-smb >/dev/null
 helm upgrade --install csi-driver-smb csi-driver-smb/csi-driver-smb \

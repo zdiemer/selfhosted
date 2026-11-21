@@ -7,24 +7,13 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "CHART_VERSION pins in values-only upgrade.sh scripts",
+      "description": "*_VERSION pins in upgrade.sh: CHART_VERSION helm charts, ARC_VERSION (OCI chart via the docker datasource), and the github-releases pins for KubeVirt/CDI, which ship operator YAML rather than a chart. The annotation names the datasource; there is deliberately no datasourceTemplate.",
       "managerFilePatterns": [
         "/(^|/)upgrade\\.sh$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s*\\nCHART_VERSION=\"\\$\\{CHART_VERSION:-(?<currentValue>[^}\"]+)\\}\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s*\\n[A-Z_]*VERSION=\"\\$\\{[A-Z_]*VERSION:-(?<currentValue>[^}\"]+)\\}\""
       ]
-    },
-    {
-      "customType": "regex",
-      "description": "github-release *_VERSION pins in upgrade.sh (KubeVirt/CDI ship operator YAML, not a helm chart)",
-      "managerFilePatterns": [
-        "/(^|/)upgrade\\.sh$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=github-releases depName=(?<depName>\\S+)\\s*\\n[A-Z_]+_VERSION=\"\\$\\{[A-Z_]+:-(?<currentValue>[^}\"]+)\\}\""
-      ],
-      "datasourceTemplate": "github-releases"
     },
     {
       "customType": "regex",
@@ -71,12 +60,12 @@
     },
     {
       "customType": "regex",
-      "description": "Annotated standalone tag shared by image strings (vmlab)",
+      "description": "Annotated standalone scalars in values files: a tag shared by image strings (vmlab), a tag split from a repository under a key helm-values ignores because it does not end in 'image' (vocard's images.*), with an optional @sha256 digest, and non-image versions such as Lavalink's Maven plugin coordinates (registryUrl). The value must end the line (optionally quoted, optionally followed by a comment), which is what keeps annotated combined image strings like image: repo:tag out of this manager; RE2 has no lookarounds, so the terminator is consumed rather than asserted.",
       "managerFilePatterns": [
         "/(^|/)values[^/]*\\.ya?ml$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n[ \\t]*tag:[ \\t]*[\"\\']?(?<currentValue>[A-Za-z0-9][A-Za-z0-9_.-]*)[\"\\']?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s*\\n[ \\t]*[A-Za-z0-9_]+:[ \\t]*[\"\\']?(?<currentValue>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?[\"\\']?[ \\t]*(?:#[^\\r\\n]*)?\\r?\\n"
       ]
     }
   ],
@@ -105,6 +94,13 @@
         "media/arr/**"
       ],
       "groupName": "arr stack"
+    },
+    {
+      "description": "vocard stack moves together: a bot bump usually needs a matching Lavalink minor, and the plugins track Lavalink (discord/vocard/values.yaml)",
+      "matchFileNames": [
+        "discord/vocard/**"
+      ],
+      "groupName": "vocard stack"
     },
     {
       "description": "buildkit lockstep: infra/buildkit image tag + claude-workspace buildctl ARG must match",
@@ -188,6 +184,13 @@
         "web/apartment-watch/**"
       ],
       "enabled": false
+    },
+    {
+      "description": "steam-headless's Debian line is tagged debian-X.Y.Z, which docker versioning cannot parse, so it never offered an update. The 2.44.*/stable tags on the same repo are a different image (games/steam-headless/values.yaml) and the regex excludes them.",
+      "matchPackageNames": [
+        "docker.io/josh5/steam-headless"
+      ],
+      "versioning": "regex:^debian-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     }
   ]
 }

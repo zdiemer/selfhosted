@@ -1,4 +1,7 @@
 FROM mcr.microsoft.com/dotnet/runtime:8.0-bookworm-slim AS runtime
+# Renovate bumps the version only: TML_SHA256 has to be updated by hand, and
+# the build fails at sha256sum until it is.
+# renovate: datasource=github-releases depName=tModLoader/tModLoader versioning=loose
 ARG TML_VERSION=v2026.08.3.0
 ARG TML_SHA256=61e865f3702b12ce4a26c5a90b9de99a12c65ffc228455eb3390ce54af1eab15
 RUN apt-get update && apt-get install -y --no-install-recommends \

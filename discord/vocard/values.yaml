@@ -32,6 +32,7 @@ images:
     # Genuinely pinned as of v2.7.3. This was previously "latest" +
     # IfNotPresent, which froze a *different* "latest" on each node — the bot
     # version silently changed whenever the pod rescheduled. Don't go back.
+    # renovate: datasource=docker depName=ghcr.io/chocomeow/vocard
     tag: "v2.7.3"
     pullPolicy: IfNotPresent
   lavalink:
@@ -43,16 +44,22 @@ images:
     # `channelId` field to the voice-state PATCH — Vocard ≥2.7.3 sends it
     # natively (2.7.2 needed a startup patch in vocard-deployment.yaml,
     # removed when we pinned the bot to v2.7.3).
+    # renovate: datasource=docker depName=ghcr.io/lavalink-devs/lavalink
     tag: "4.2.2"
     pullPolicy: IfNotPresent
   mongo:
     repository: mongo
-    tag: "8"
+    # Exact version, for the same reason as the bot: a bare "8" with
+    # IfNotPresent froze whichever 8.x each node pulled first. 8.2.12 is what
+    # was running when this was pinned (2026-11-21).
+    # renovate: datasource=docker depName=mongo
+    tag: "8.2.12"
     pullPolicy: IfNotPresent
   spotifyTokener:
     # Upstream publishes no version tags, only the master branch tag. Pinning
     # the digest keeps restarts deterministic; Renovate refreshes the digest.
     repository: ghcr.io/topi314/spotify-tokener
+    # renovate: datasource=docker depName=ghcr.io/topi314/spotify-tokener
     tag: "master@sha256:7841fa6144bd27b75b3ffc5d89c8201f833e0b9e2d3e8b4d5af8371504fd43f8"
     pullPolicy: IfNotPresent
 
@@ -74,8 +81,10 @@ bot:
 # ----------------------------------------------------------------------------
 lavalink:
   plugins:
-    youtube: "1.18.0"     # dev.lavalink.youtube:youtube-plugin
-    lavasrc: "4.7.3"      # com.github.topi314.lavasrc:lavasrc-plugin
+    # renovate: datasource=maven depName=dev.lavalink.youtube:youtube-plugin registryUrl=https://maven.lavalink.dev/releases
+    youtube: "1.18.0"
+    # renovate: datasource=maven depName=com.github.topi314.lavasrc:lavasrc-plugin registryUrl=https://maven.lavalink.dev/releases
+    lavasrc: "4.7.3"
   resources:
     requests:
       memory: 512Mi
