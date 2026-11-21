@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUE_ARGS=(-f "${HERE}/values.yaml")
 
 # renovate: datasource=github-releases depName=kubevirt/kubevirt
-KUBEVIRT_VERSION="${KUBEVIRT_VERSION:-v1.9.1}"
+KUBEVIRT_VERSION="${KUBEVIRT_VERSION:-v1.10.0}"
 # renovate: datasource=github-releases depName=kubevirt/containerized-data-importer
 CDI_VERSION="${CDI_VERSION:-v1.66.1}"
 
@@ -66,11 +66,16 @@ fi
 # ------------------------------------------------------------------------------
 # Stage 1 — upstream operators
 # ------------------------------------------------------------------------------
+# Server-side apply. KubeVirt 1.10's kubevirts.kubevirt.io CRD is ~328 KB,
+# past the 256 KiB limit on the last-applied-configuration annotation a
+# client-side apply writes, so a plain `kubectl apply` fails partway: the
+# operator Deployment updates and the CRD does not (kubevirt#19980).
+# --force-conflicts takes over the fields earlier client-side applies owned.
 echo "==> Applying KubeVirt operator ${KUBEVIRT_VERSION}"
-kubectl apply -f "${KV_BASE}/kubevirt-operator.yaml"
+kubectl apply --server-side --force-conflicts -f "${KV_BASE}/kubevirt-operator.yaml"
 
 echo "==> Applying CDI operator ${CDI_VERSION}"
-kubectl apply -f "${CDI_BASE}/cdi-operator.yaml"
+kubectl apply --server-side --force-conflicts -f "${CDI_BASE}/cdi-operator.yaml"
 
 echo "==> Waiting for operators"
 kubectl -n kubevirt rollout status deployment/virt-operator --timeout=300s
