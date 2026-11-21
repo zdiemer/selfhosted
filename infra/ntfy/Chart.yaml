@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the ntfy image tag in values.yaml (image.tag).
 # renovate: image=docker.io/binwiederhier/ntfy
-appVersion: "v2.27.0"
+appVersion: "v2.38.1"
 home: https://docs.ntfy.sh
 sources:
   - https://github.com/binwiederhier/ntfy

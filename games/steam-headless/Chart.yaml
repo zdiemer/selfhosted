@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the image tag in values.yaml (image.tag).
 # renovate: image=docker.io/josh5/steam-headless
-appVersion: "debian-1.0.2"
+appVersion: "debian-1.0.3"
 home: https://github.com/Steam-Headless/docker-steam-headless
 sources:
   - https://github.com/Steam-Headless/docker-steam-headless

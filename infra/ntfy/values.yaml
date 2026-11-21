@@ -1,7 +1,7 @@
 image:
   repository: docker.io/binwiederhier/ntfy
   # renovate: image=docker.io/binwiederhier/ntfy
-  tag: "v2.27.0"
+  tag: "v2.38.1"
   pullPolicy: IfNotPresent
 
 service:

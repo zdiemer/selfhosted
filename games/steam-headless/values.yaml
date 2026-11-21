@@ -1,7 +1,9 @@
 image:
   repository: docker.io/josh5/steam-headless
-  # debian-1.0.2 (2026-09-14), built from the public repo's master (7206296).
-  # Includes the fix that installs the AMD userspace drivers for APUs (lspci
+  # debian-1.0.3 (2026-09-25), the last build of the Debian line; upstream's
+  # master moved on to v2 and this build adds a banner saying so. Like
+  # debian-1.0.2 (2026-09-14, master 7206296) it
+  # includes the fix that installs the AMD userspace drivers for APUs (lspci
   # lists them as "Display", not "VGA", and older builds skipped them —
   # upstream issues #22/#145/#163).
   #
@@ -10,7 +12,7 @@ image:
   # cverna) with no public source or docs yet. Tried on 2026-09-22; it ignores
   # this chart's env vars and runs systemd as PID 1 on the host network.
   # Revisit when it ships with a repo.
-  tag: "debian-1.0.2"
+  tag: "debian-1.0.3"
   pullPolicy: IfNotPresent
 
 # Pinned by hostname, not by the media.zachd/vaapi label: the games PVC is

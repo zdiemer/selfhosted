@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the seerr image tag in values.yaml (image.tag).
 # renovate: image=docker.io/fallenbagel/jellyseerr
-appVersion: "v3.4.1"
+appVersion: "v3.5.2"
 home: https://docs.jellyseerr.dev
 sources:
   - https://github.com/fallenbagel/jellyseerr

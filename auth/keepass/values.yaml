@@ -18,7 +18,7 @@ webdav:
     # templates/webdav-config.yaml.
     # renovate: datasource=docker depName=ghcr.io/hacdias/webdav
     repository: ghcr.io/hacdias/webdav
-    tag: "v5.14.2"
+    tag: "v5.17.3"
     pullPolicy: IfNotPresent
   # hacdias' default. bytemark served on 80; the Service still publishes
   # service.port, so nothing outside this chart needs to know.
