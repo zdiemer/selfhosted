@@ -1,6 +1,6 @@
 # Pinned, and manylinux wheels only — the image carries no build toolchain.
-fastapi==0.118.0
-uvicorn==0.37.0
+fastapi==0.165.0
+uvicorn==0.54.0
 httpx==0.28.1
 # The console proxy's upstream leg. Starlette gives us the server side of a
 # websocket; this is the client side.

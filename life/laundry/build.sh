@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Build the laundry image and push it to GHCR.
+# Build the laundry image and push it to the in-cluster registry.
 #
-# We ship via ghcr.io (public package) rather than side-loading into containerd:
-# the cluster is multi-node, so a side-loaded image only exists on one node and
-# every other node ImagePullBackOffs.
+# Pushes to the in-cluster registry (infra/registry); every node pulls it
+# through the registries.yaml mirror, so nothing is side-loaded into containerd.
 #
 # Re-run after editing anything under src/, then run upgrade.sh. Nothing here
 # touches the ESP32 — the firmware is flashed with `pio run -t upload` from
 # firmware/, and is deliberately not part of any cluster rollout.
 #
-# Requires: docker login ghcr.io (PAT with write:packages) on a laptop, or —
-# inside the claude-workspace pod, where there is no docker — buildctl + the
-# in-cluster buildkitd (infra/buildkit) + a GHCR PAT in ~/.docker/config.json
-# (see dev/claude-workspace/README.md, "Cluster powers").
+# Requires: buildctl + the in-cluster buildkitd (infra/buildkit) and registry
+# credentials in ~/.docker/config.json (op://homelab/infra-registry), or docker logged in to
+# registry.zachd.duckdns.org.
 
 set -euo pipefail
 
@@ -37,8 +35,8 @@ if command -v docker >/dev/null; then
   docker push "${IMAGE}"
 elif command -v buildctl >/dev/null; then
   [[ -f "${HOME}/.docker/config.json" ]] || {
-    echo "missing ~/.docker/config.json — create the GHCR PAT file first"
-    echo "(see dev/claude-workspace/README.md, Cluster powers)"; exit 1; }
+    echo "missing ~/.docker/config.json — add the registry credential first"
+    echo "(see infra/registry/README.md)"; exit 1; }
 
   echo "==> Building + pushing ${IMAGE} (buildctl → ${BUILDKIT_HOST:-unset})"
   buildctl build \
@@ -51,5 +49,3 @@ else
 fi
 
 echo "==> Done. Run upgrade.sh to roll the Deployment onto it."
-echo "    (First push only: set the ghcr.io/zdiemer/laundry package visibility"
-echo "     to Public so every node can pull it anonymously.)"

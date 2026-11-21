@@ -259,7 +259,7 @@ Either way the cluster side is identical — a second entry in `machines:`.
 
 ```bash
 kubectl create namespace life          # if it doesn't exist
-./build.sh                             # → ghcr.io/zdiemer/laundry:vN
+./build.sh                             # → registry.zachd.duckdns.org/zdiemer/laundry:vN
 ./upgrade.sh
 ```
 

@@ -3,16 +3,20 @@
 # sensors. See README.md for the wiring and the mounting.
 
 image:
-  repository: ghcr.io/zdiemer/laundry
+  # The in-cluster registry (infra/registry), like every first-party image
+  # except infra/hatch and the two GitHub-Actions-built sites. Moved off GHCR
+  # 2026-11-21: nothing here needs to be public, and the build pod has no GHCR
+  # write token.
+  repository: registry.zachd.duckdns.org/zdiemer/laundry
   tag: "v1"
   # Static tags, so the node must re-pull to see a rebuilt v1. IfNotPresent
   # would serve a stale layer forever.
   pullPolicy: Always
 
-# Only needed if the GHCR package is private. The convention in this repo is a
-# public package — the cluster is multi-node and every node pulls anonymously.
+# Unused: every node pulls from the in-cluster registry through its
+# registries.yaml mirror (infra/registry). Kept for the chart's shape.
 imageCredentials:
-  registry: ghcr.io
+  registry: registry.zachd.duckdns.org
   username: zdiemer
   pat: ""
 
