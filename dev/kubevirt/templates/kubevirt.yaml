@@ -15,14 +15,12 @@ metadata:
     {{- include "kubevirt.protect" . | nindent 4 }}
 spec:
   certificateRotateStrategy: {}
-  # v1.9 still starts the legacy migration certificate manager, but no longer
-  # mounts its old API-client Secret. Reuse the restricted migration identity.
+  # No customizeComponents: the 1.9 client-cert-file/client-key-file
+  # workaround is gone because 1.10 removed the legacy client certificate
+  # manager and its flags (virt-handler 1.10 exits on "unknown flag:
+  # --client-cert-file"). See README.md, "Handler certificate compatibility".
   # Do not restore kubevirt-virt-handler-certs to handlers (CVE-2025-64434).
-  customizeComponents:
-    flags:
-      handler:
-        client-cert-file: /etc/virt-handler/migrationservercertificates/tls.crt
-        client-key-file: /etc/virt-handler/migrationservercertificates/tls.key
+  customizeComponents: {}
   imagePullPolicy: IfNotPresent
 
   {{- /*

@@ -134,7 +134,15 @@ managing it.
 To actually remove it: delete the VMs, then the CRs, then the operator
 manifests, in that order.
 
-## Handler certificate compatibility workaround (KubeVirt 1.9)
+## Handler certificate compatibility workaround (KubeVirt 1.9) — removed in 1.10
+
+**Removed 2026-11-21 with the v1.10.0 upgrade.** 1.10 deleted the legacy
+client certificate manager and its `--client-cert-file`/`--client-key-file`
+flags from virt-handler (compare `cmd/virt-handler/virt-handler.go` at v1.9.0
+and v1.10.0), so the first 1.10 handler crash-looped on "unknown flag:
+--client-cert-file" until the customization was dropped. The history below is
+kept for context.
+
 
 KubeVirt 1.9 still starts a legacy migration client certificate manager at
 `/etc/virt-handler/clientcertificates`, although the operator no longer mounts
