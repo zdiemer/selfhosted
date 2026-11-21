@@ -9,10 +9,13 @@
 # under the `snapshot-controller:` key below.
 
 snapshot-controller:
-  # The CRDs are the whole reason this chart exists. Note that helm will NOT
-  # remove them on uninstall (by design — deleting a CRD deletes every snapshot
-  # object with it), so removing this release leaves the types behind.
+  # The CRDs are the whole reason this chart exists. This chart renders them
+  # from templates/, not crds/, so helm owns them and an uninstall WOULD delete
+  # them, and with them every snapshot object. keepCRDs (chart 5.3.0+) adds
+  # helm.sh/resource-policy: keep so removing this release leaves the types
+  # behind.
   installCRDs: true
+  keepCRDs: true
 
   controller:
     enabled: true

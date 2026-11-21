@@ -4,10 +4,10 @@ description: CSI snapshot controller + VolumeSnapshot CRDs — k3s ships neither
 type: application
 version: 1.0.0
 # Tracks the external-snapshotter release the upstream chart deploys.
-appVersion: "v8.6.0"
+appVersion: "v8.7.0"
 maintainers:
   - name: zachd
 dependencies:
   - name: snapshot-controller
-    version: 5.2.0
+    version: 5.4.0
     repository: https://piraeus.io/helm-charts/
