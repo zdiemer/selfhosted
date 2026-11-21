@@ -26,7 +26,7 @@ CHART="${CHART:-grafana/alloy}"
 # Pin the chart — a surprise bump to the cluster-wide log shipper is an outage,
 # not an upgrade. Bump deliberately, reading the chart changelog.
 # renovate: datasource=helm depName=alloy registryUrl=https://grafana.github.io/helm-charts
-CHART_VERSION="${CHART_VERSION:-1.11.1}"
+CHART_VERSION="${CHART_VERSION:-1.16.0}"
 SECRET="alloy-grafana-cloud"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VALUES="${HERE}/values.yaml"
@@ -252,14 +252,21 @@ echo "==> verifying delivery (Alloy's own counters, 30s)"
 sleep 30
 IPS="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="$RELEASE" \
        -o jsonpath='{range .items[*]}{.status.podIP} {end}' 2>/dev/null)"
+# The sleep is for k3s's network-policy controller: a brand-new pod is not in
+# monitoring-boundary's allow set for its first second or two, so an
+# immediate curl is REJECTed (connection refused in 0ms) and the check
+# reported "0 of N pods have shipped" while delivery was fine.
 M="$(kubectl run "alloy-verify-$$" -n "$NAMESPACE" --rm -i --restart=Never --quiet \
       --image=curlimages/curl:8.11.1 --command -- \
-      sh -c "for ip in ${IPS}; do curl -s --max-time 10 http://\$ip:12345/metrics; done" 2>/dev/null || true)"
+      sh -c "sleep 5; for ip in ${IPS}; do curl -s --max-time 10 http://\$ip:12345/metrics; done" 2>/dev/null || true)"
 
 SENT="$(  awk -F' ' '/^loki_write_sent_bytes_total/{s+=$2} END{print s+0}'    <<<"$M")"
 DROPPED="$(awk -F' ' '/^loki_write_dropped_entries_total/{s+=$2} END{print s+0}' <<<"$M")"
 SHIPPERS="$(awk -F' ' '/^loki_write_sent_bytes_total/{if ($2+0 > 0) n++} END{print n+0}' <<<"$M")"
-CODES="$(grep -o 'status_code="[0-9]*"' <<<"$M" | sort -u | tr '\n' ' ')"
+# Alloy 1.22 dropped the status_code label from loki_write_request_duration_*,
+# so this can legitimately match nothing. Under pipefail an empty grep used
+# to exit the script right here, before the delivery verdict was printed.
+CODES="$( { grep -o 'status_code="[0-9]*"' <<<"$M" || true; } | sort -u | tr '\n' ' ')"
 echo "    ${SHIPPERS} of ${SCHED} pods have shipped something"
 
 echo "    loki sent_bytes=${SENT}  dropped_entries=${DROPPED}"
