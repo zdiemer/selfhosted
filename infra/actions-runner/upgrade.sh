@@ -14,7 +14,7 @@ OCI="oci://ghcr.io/actions/actions-runner-controller-charts"
 # Both upstream charts ship in lock-step under one version. Pinned: a listener
 # and a controller from different releases refuse to talk to each other.
 # renovate: datasource=docker depName=ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-ARC_VERSION="${ARC_VERSION:-0.14.2}"
+ARC_VERSION="${ARC_VERSION:-0.15.1}"
 
 command -v helm    >/dev/null || { echo "helm required"; exit 1; }
 command -v kubectl >/dev/null || { echo "kubectl required"; exit 1; }
@@ -26,6 +26,37 @@ sv_load "$HERE" || exit 1
 
 NS_CTRL="$(awk '/^  controller:/{print $2; exit}' "$VALUES")"
 NS_PREFIX="$(awk '/^  runnersPrefix:/{print $2; exit}' "$VALUES")"
+
+# ARC_REINSTALL=1: GitHub's documented upgrade for a release whose CRDs
+# changed (0.14.x -> 0.15.0 rewrote all four). Helm never upgrades CRDs, and a
+# 0.15 controller against 0.14 schemas has its status fields pruned. So:
+# uninstall every scale set (while the controller is still up to run their
+# finalizers), then the controller, delete the CRDs, and fall through to a
+# fresh install below, which recreates them from the new chart's crds/.
+# Costs a short runner outage; check `kubectl get ephemeralrunners -A` first.
+if [[ "${ARC_REINSTALL:-0}" == "1" ]]; then
+  echo "==> ARC_REINSTALL: removing scale sets, controller and CRDs"
+  for NS in $(kubectl get ns -l actions-runner.zachd/repo -o jsonpath='{.items[*].metadata.name}'); do
+    REPO="${NS#${NS_PREFIX}-}"
+    helm status "arc-${REPO}" -n "$NS" >/dev/null 2>&1 || continue
+    echo "    helm uninstall arc-${REPO} -n ${NS}"
+    helm uninstall "arc-${REPO}" -n "$NS" --wait --timeout 5m
+  done
+  echo "    waiting for runner resources to drain"
+  for _ in $(seq 60); do
+    left="$(kubectl get autoscalingrunnersets,autoscalinglisteners,ephemeralrunnersets,ephemeralrunners -A --no-headers 2>/dev/null | wc -l)"
+    [[ "$left" -eq 0 ]] && break
+    sleep 5
+  done
+  [[ "${left:-0}" -eq 0 ]] || { echo "FAIL: ${left} ARC resources still present; not deleting CRDs"; exit 1; }
+  if helm status arc -n "$NS_CTRL" >/dev/null 2>&1; then
+    echo "    helm uninstall arc -n ${NS_CTRL}"
+    helm uninstall arc -n "$NS_CTRL" --wait --timeout 5m
+  fi
+  kubectl delete crd --ignore-not-found \
+    autoscalinglisteners.actions.github.com autoscalingrunnersets.actions.github.com \
+    ephemeralrunners.actions.github.com ephemeralrunnersets.actions.github.com
+fi
 
 echo "==> 1/3 controller: gha-runner-scale-set-controller@${ARC_VERSION} -n ${NS_CTRL}"
 helm upgrade --install arc "${OCI}/gha-runner-scale-set-controller" --version "$ARC_VERSION" \
