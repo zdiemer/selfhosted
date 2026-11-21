@@ -131,6 +131,12 @@ spec:
             # should still crashloop instead of retrying quietly forever.
             - --max-failures={{ .Values.gitSync.maxFailures }}
             - --root=/git
+            # /git is the emptyDir mount, owned by root (group 65533 via
+            # fsGroup), not by git-sync's uid. git-sync up to 4.7 set
+            # safe.directory=* itself; 4.8.0 stopped, and git then refuses the
+            # repo as "dubious ownership" and the pod never syncs. Scoped to
+            # the one directory rather than restoring the old wildcard.
+            - --git-config=safe.directory:/git
             # nginx serves /var/www/current; git-sync checks out into hashed
             # dirs and repoints this symlink atomically when a checkout is
             # complete, so a partially-synced tree is never served.
