@@ -7,11 +7,12 @@
 # k3s runs containerd — the raw-log parser needs to know (docker vs cri format).
 container_runtime: containerd
 
-# Upstream #4678 fixes lost/truncated lines at EOF; not yet in a stable release.
-# Same v1.7.8 base, only the crowdsec binary receives that one-line backport.
+# Upstream, pinned. v1.8.2 is the first stable release with #4678 (no
+# lost/truncated lines at EOF), which retired the v1.7.8-complete-lines1
+# backport image (README.md, "Partial-line backport").
 image:
-  repository: registry.zachd.duckdns.org/zdiemer/crowdsec
-  tag: v1.7.8-complete-lines1
+  repository: crowdsecurity/crowdsec
+  tag: v1.8.2
 
 # ---------------------------------------------------------------------------
 # Where decisions go
