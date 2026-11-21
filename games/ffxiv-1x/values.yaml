@@ -20,7 +20,7 @@ image:
   # Upstream ships no image; build.sh compiles the repo at upstreamRef with the
   # Dockerfile here. Tag is "main-<short sha>". Bump both together.
   repository: registry.zachd.duckdns.org/zdiemer/ffxiv-1x
-  tag: "main-70e54f3"
+  tag: "main-70e54f3-2"
   upstreamRef: "70e54f33fc4ea2473d6d82b46b6d0a4567fb2986"
   pullPolicy: IfNotPresent
 

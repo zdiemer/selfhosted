@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.29
 # Garlemald Server — a FINAL FANTASY XIV 1.23b (the original 2010 game)
 # server emulator: the Rust port of Project Meteor, four binaries
 # (web / lobby / world / map) sharing one SQLite file and driving Meteor's
@@ -10,7 +10,7 @@
 # Lua are vendored by their crates; only a C toolchain is needed, which the
 # rust image has.
 
-FROM rust:1.95-bookworm AS build
+FROM rust:1.100-bookworm AS build
 WORKDIR /src
 COPY . .
 # --locked: the lockfile is the build's pin; a resolver drift is an error.
