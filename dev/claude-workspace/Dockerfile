@@ -11,7 +11,7 @@
 # stage compiles std-only Rust and pulls nothing from crates.io.
 # The pinned tag is the trust anchor.
 # renovate: datasource=github-releases depName=BrokkAi/muse-acp extractVersion=^v(?<version>.+)$
-ARG MUSE_ACP_VERSION=0.23.1
+ARG MUSE_ACP_VERSION=0.25.0
 # renovate: datasource=docker depName=rust
 ARG RUST_VERSION=1.100.0
 FROM rust:${RUST_VERSION}-slim-bookworm AS muse-acp-build
@@ -54,9 +54,9 @@ ARG SOPS_VERSION=v3.13.3
 # the home PVC under ~/.config/gh (see README "Cluster powers"), same shape as
 # the tailscale/docker/happy logins — no token is baked into the image.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.104.0
+ARG GH_VERSION=2.105.0
 # renovate: datasource=npm depName=bun
-ARG BUN_VERSION=1.4.4
+ARG BUN_VERSION=1.4.5
 # 1Password CLI. The pod used to have no path to the vault at all — secrets
 # arrived only in the cluster relay bundle, so an edit made HERE was stranded
 # until the laptop published again. With op present, scripts/op-session.sh signs
@@ -116,12 +116,12 @@ ARG SIGNAL_CLI_VERSION=0.14.10
 # `codex` has no acp subcommand (it has `app-server`, its own JSON-RPC), and
 # `muse` has `serve`, which is Meta's MSP rather than ACP.
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.169.0
+ARG CODEX_VERSION=0.171.0
 # ACP server for codex, from the agentclientprotocol org (the protocol's own).
 # renovate: datasource=npm depName=@agentclientprotocol/codex-acp
-ARG CODEX_ACP_VERSION=2.6.0
+ARG CODEX_ACP_VERSION=2.8.0
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.68.0
+ARG GEMINI_CLI_VERSION=0.70.0
 # Muse Code (Meta). Upstream only documents `curl https://dev.meta.ai/install.sh
 # | bash`, which drops a SELF-UPDATING launcher in ~/.local/bin — useless under a
 # read-only rootfs and unpinnable besides. But the channel endpoint
