@@ -57,7 +57,7 @@ catalogCopy:
   image:
     repository: busybox
     # renovate: datasource=docker depName=busybox
-    tag: "1.37.0"
+    tag: "1.38.0"
     pullPolicy: IfNotPresent
   resources:
     requests:

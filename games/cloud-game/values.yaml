@@ -271,7 +271,7 @@ library:
 # Utility image for the library staging init container. Needs sh, find, cp and
 # unzip; the cloud-game image has none of those.
 # renovate: datasource=docker depName=busybox
-stagerImage: busybox:1.37.0
+stagerImage: busybox:1.38.0
 
 persistence:
   data:

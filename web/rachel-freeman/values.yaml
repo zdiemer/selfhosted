@@ -113,7 +113,7 @@ postgres:
   image:
     repository: postgres
     # renovate: datasource=docker depName=postgres
-    tag: "17.6-alpine"
+    tag: "17.12-alpine"
     pullPolicy: IfNotPresent
   user: payload
   database: rachelfreeman

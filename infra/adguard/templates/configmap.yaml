@@ -2,7 +2,7 @@
 The whole AdGuardHome.yaml. AdGuard fills any key left out with its own
 default, so only settings that differ from the default (or that matter
 enough to pin) are written here. schema_version must equal the binary's
-configmigrate.LastSchemaVersion (34 for v0.107.79). A lower number makes it
+configmigrate.LastSchemaVersion (34 for v0.107.80). A lower number makes it
 run migrations on every start. A higher one makes it refuse to start.
 */}}
 apiVersion: v1

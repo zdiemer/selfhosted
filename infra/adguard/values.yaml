@@ -13,7 +13,7 @@
 image:
   repository: docker.io/adguard/adguardhome
   # renovate: image=docker.io/adguard/adguardhome
-  tag: "v0.107.79"
+  tag: "v0.107.80"
   pullPolicy: IfNotPresent
 
 replicas: 2

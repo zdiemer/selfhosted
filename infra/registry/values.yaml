@@ -1,7 +1,7 @@
 image:
   repository: docker.io/library/registry
   # renovate: image=docker.io/library/registry
-  tag: "3.1.1"
+  tag: "3.1.2"
   pullPolicy: IfNotPresent
 
 service:

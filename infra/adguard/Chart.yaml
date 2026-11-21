@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks image.tag in values.yaml.
 # renovate: image=docker.io/adguard/adguardhome
-appVersion: "v0.107.79"
+appVersion: "v0.107.80"
 home: https://adguard.com/adguard-home/overview.html
 sources:
   - https://github.com/AdguardTeam/AdGuardHome

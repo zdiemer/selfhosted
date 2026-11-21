@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the distribution image tag in values.yaml (image.tag).
 # renovate: image=docker.io/library/registry
-appVersion: "3.1.1"
+appVersion: "3.1.2"
 home: https://distribution.github.io/distribution/
 sources:
   - https://github.com/distribution/distribution

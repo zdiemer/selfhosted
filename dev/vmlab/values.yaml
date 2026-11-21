@@ -135,7 +135,7 @@ isos:
   size: 60Gi
   storageClass: truenas-nfs
   # Plain alpine + curl. Nothing here needs a first-party image.
-  fetchImage: alpine:3.22
+  fetchImage: alpine:3.24
   # A fetch that hangs on a dead mirror should die, not occupy the namespace
   # quota forever. Four hours rather than one because the ceiling has to fit
   # the worst legitimate case, not the typical one: Bazzite is 7.9GB, and its
