@@ -66,3 +66,7 @@
 	path = web/fsu/projects/python-homework4
 	url = git@github.com:zdiemer/python-homework4.git
 	branch = master
+[submodule "games/dmgss"]
+	path = games/dmgss
+	url = git@github.com:zdiemer/DMGSS.git
+	branch = main

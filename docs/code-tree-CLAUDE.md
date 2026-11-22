@@ -76,7 +76,7 @@ not enabled (`git config core.hooksPath .githooks`).
 ## Work in `~/Code/<repo>`, never in the submodule checkout
 
 `gamedex`, `money`, `sms-relay`, `smitele-bot`, `whatnowgg`, `talaria`,
-`diemer-codes` and `old-diemer-codes/site` exist **twice**: as a standalone
+`diemer-codes`, `DMGSS` and `old-diemer-codes/site` exist **twice**: as a standalone
 clone here, and as a submodule inside `~/Code/selfhosted`. The submodule pins
 record *what the cluster is running*.
 
