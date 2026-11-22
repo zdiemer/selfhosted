@@ -31,6 +31,7 @@
 # Each entry is  <submodule path>:<chart dir within the repo>:<strategy>.
 SUBMODULES=(
   "games/gamedex:.:cluster"
+  "games/dmgss:.:cluster"
   "finance/money:.:cluster"
   "discord/smitele-bot:.:cluster"
   "infra/sms-relay:.:cluster"
@@ -57,17 +58,20 @@ cd "$ROOT"
 
 DO_COMMIT=0
 FORCE=0
+ONLY=""
 for arg in "$@"; do
   case "$arg" in
     --commit) DO_COMMIT=1 ;;
     --force)  FORCE=1 ;;
+    --only=*) ONLY="${arg#--only=}"; [[ -n "$ONLY" ]] || { echo "--only requires a submodule path" >&2; exit 1; } ;;
     -h|--help)
       cat <<'EOF'
-Usage: scripts/sync-submodules.sh [--commit] [--force]
+Usage: scripts/sync-submodules.sh [--commit] [--force] [--only=path]
 
   (no flags)  report what would move, change nothing
   --commit    move the verified pins and make a local commit (never pushes)
   --force     move a pin even when the cluster does not confirm it
+  --only=path inspect/update one registered submodule, leaving other pins alone
 
 A pin only moves when the chart's image tag at the candidate commit matches the
 image actually running in the cluster, so the pin keeps meaning "what shipped".
@@ -145,7 +149,8 @@ sync_one() {
   # then the older of the two. Reading HEAD there let a stale checkout defeat
   # the never-travel-backwards guard below and re-pin an already-recorded
   # commit. scripts/submodules-refresh.sh keeps them equal; this is the belt.
-  current="$(git rev-parse "HEAD:${path}" 2>/dev/null || git -C "$path" rev-parse HEAD)"
+  current="$(git ls-files --stage -- "$path" | awk '$1 == "160000" { print $2; exit }')"
+  [[ -n "$current" ]] || current="$(git -C "$path" rev-parse HEAD)"
 
   git -C "$path" fetch --quiet --tags origin "$branch" 2>/dev/null \
     || { REPORT+=("$(printf '%-28s %s' "$path" 'fetch failed')"); return 0; }
@@ -212,6 +217,15 @@ sync_one() {
     REPORT+=("$(printf '%-28s %s -> %s  %s' "$path" "$(short "$path" "$current")" "$(short "$path" "$target")" "$desc")")
   fi
 }
+
+if [[ -n "$ONLY" ]]; then
+  selected=()
+  for entry in "${SUBMODULES[@]}"; do
+    [[ "${entry%%:*}" == "$ONLY" ]] && selected+=("$entry")
+  done
+  [[ ${#selected[@]} -eq 1 ]] || die "unknown submodule: $ONLY"
+  SUBMODULES=("${selected[@]}")
+fi
 
 load_live_images
 
