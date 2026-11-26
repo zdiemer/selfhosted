@@ -71,6 +71,12 @@ retention:
   keepWeekly: 6
   keepMonthly: 3
 
+# Hosts with snapshots in the repo but no schedule any more. The prune's host
+# list is otherwise derived from `schedules`; `default` holds August 2026
+# snapshots from before namespaces were split out.
+retentionExtraHostnames:
+  - default
+
 # ------------------------------------------------------------------------------
 # Schedules
 # ------------------------------------------------------------------------------
