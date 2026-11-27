@@ -309,7 +309,13 @@ spec:
               python3 /opt/workspace-recovery/happy-recovery.py &
               recovery_pid=$!
               {{- end }}
-              trap '[ -z "$recovery_pid" ] || { kill -TERM "$recovery_pid" 2>/dev/null; wait "$recovery_pid"; }; [ -z "$daemon_pid" ] || kill -TERM "$daemon_pid" 2>/dev/null; exit 0' TERM INT
+              reaper_pid=""
+              {{- if .Values.happy.idleReaper.enabled }}
+              # Stops sessions idle for days so they stop holding memory here.
+              python3 /etc/claude-workspace-reaper/happy-idle-reaper.py &
+              reaper_pid=$!
+              {{- end }}
+              trap '[ -z "$reaper_pid" ] || kill -TERM "$reaper_pid" 2>/dev/null; [ -z "$recovery_pid" ] || { kill -TERM "$recovery_pid" 2>/dev/null; wait "$recovery_pid"; }; [ -z "$daemon_pid" ] || kill -TERM "$daemon_pid" 2>/dev/null; exit 0' TERM INT
               {{- if .Values.happy.restartNotice.enabled }}
               # Backgrounded: it retries against the relay for up to a minute
               # and must not hold up the daemon that phone sessions need.
@@ -355,6 +361,14 @@ spec:
               value: {{ .Values.happy.autoResume.maxAttempts | quote }}
             - name: HAPPY_AUTO_RESUME_MAX_AGE_HOURS
               value: {{ .Values.happy.autoResume.maxAgeHours | quote }}
+            {{- if .Values.happy.idleReaper.enabled }}
+            - name: HAPPY_IDLE_REAP_DAYS
+              value: {{ .Values.happy.idleReaper.idleDays | quote }}
+            - name: HAPPY_IDLE_REAP_INTERVAL_MINUTES
+              value: {{ .Values.happy.idleReaper.intervalMinutes | quote }}
+            - name: HAPPY_IDLE_REAP_DRY_RUN
+              value: {{ .Values.happy.idleReaper.dryRun | quote }}
+            {{- end }}
             {{- if .Values.secrets.onePassword.enabled }}
             # Phone-spawned seats are children of this container and run
             # `secrets` like the /term one — see the op-credentials note on
@@ -379,6 +393,11 @@ spec:
             {{- if .Values.happy.restartNotice.enabled }}
             - name: happy-notice
               mountPath: /etc/claude-workspace
+              readOnly: true
+            {{- end }}
+            {{- if .Values.happy.idleReaper.enabled }}
+            - name: happy-reaper
+              mountPath: /etc/claude-workspace-reaper
               readOnly: true
             {{- end }}
             {{- if .Values.secrets.onePassword.enabled }}
@@ -746,6 +765,12 @@ spec:
         - name: happy-notice
           configMap:
             name: {{ include "claude-workspace.fullname" . }}-happy-notice
+            defaultMode: 0555
+        {{- end }}
+        {{- if and .Values.happy.daemon.enabled .Values.happy.idleReaper.enabled }}
+        - name: happy-reaper
+          configMap:
+            name: {{ include "claude-workspace.fullname" . }}-happy-reaper
             defaultMode: 0555
         {{- end }}
         {{- if .Values.managedSettings.enabled }}
