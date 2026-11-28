@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the ollama image tag in values.yaml (image.tag).
 # renovate: image=docker.io/ollama/ollama
-appVersion: "0.40.16"
+appVersion: "0.40.19"
 home: https://ollama.com
 sources:
   - https://github.com/ollama/ollama
