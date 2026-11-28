@@ -9,5 +9,5 @@ maintainers:
   - name: zachd
 dependencies:
   - name: snapshot-controller
-    version: 5.4.0
+    version: 5.4.1
     repository: https://piraeus.io/helm-charts/
