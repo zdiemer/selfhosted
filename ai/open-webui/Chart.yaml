@@ -5,7 +5,7 @@ type: application
 version: 0.1.0
 # appVersion tracks image.tag in values.yaml.
 # renovate: image=ghcr.io/open-webui/open-webui
-appVersion: "v0.13.4"
+appVersion: "v0.13.5"
 home: https://openwebui.com
 sources:
   - https://github.com/open-webui/open-webui

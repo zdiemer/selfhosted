@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/open-webui/open-webui
   # renovate: image=ghcr.io/open-webui/open-webui
-  tag: "v0.13.4"
+  tag: "v0.13.5"
   pullPolicy: IfNotPresent
 
 service:
