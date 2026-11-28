@@ -161,7 +161,7 @@ recyclarr:
 
 qbittorrent:
   image: lscr.io/linuxserver/qbittorrent
-  tag: "5.3.0"
+  tag: "5.3.1"
   port: 8080
   host: qbit.zachd.duckdns.org
   configSize: 2Gi
