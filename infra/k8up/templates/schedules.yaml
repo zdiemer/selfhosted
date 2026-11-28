@@ -80,8 +80,18 @@ spec:
       runAsUser: 0
     volumes:
       {{- include "k8up-wrapper.repoVolume" . | nindent 6 }}
+    # restic snapshots carry the backed-up namespace as their host. Without an
+    # explicit list K8up passes --host=<this Prune's namespace>, i.e. k8up, and
+    # every real snapshot is ignored — which is how the repo went from August to
+    # 839 snapshots with nothing ever forgotten. Derive the list from the
+    # schedules so a new namespace cannot silently fall outside retention.
+    {{- $hosts := list }}
+    {{- range .Values.schedules }}{{ $hosts = append $hosts .namespace }}{{ end }}
+    {{- range .Values.retentionExtraHostnames }}{{ $hosts = append $hosts . }}{{ end }}
     retention:
       {{- toYaml .Values.retention | nindent 6 }}
+      hostnames:
+        {{- toYaml ($hosts | uniq | sortAlpha) | nindent 8 }}
     resources:
       requests:
         cpu: 100m
