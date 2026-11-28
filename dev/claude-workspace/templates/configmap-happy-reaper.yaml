@@ -1,0 +1,13 @@
+{{- if and .Values.happy.daemon.enabled .Values.happy.idleReaper.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "claude-workspace.fullname" . }}-happy-reaper
+  labels:
+    {{- include "claude-workspace.labels" . | nindent 4 }}
+data:
+  # Shipped from the chart (recovery/, covered by tests/) rather than baked into
+  # the image, so thresholds and fixes land with a helm upgrade, not a rebuild.
+  happy-idle-reaper.py: |
+    {{- .Files.Get "recovery/happy-idle-reaper.py" | nindent 4 }}
+{{- end }}

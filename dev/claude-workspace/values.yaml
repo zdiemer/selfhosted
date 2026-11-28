@@ -390,6 +390,19 @@ happy:
     enabled: true
     maxAttempts: 3
     maxAgeHours: 24
+  idleReaper:
+    # Every session the daemon hosts keeps ~150MB (Claude) to ~370MB (Codex)
+    # resident whether or not anyone returns to it, and auto-resume brings all
+    # of them back after a restart. On 2026-11-27 nineteen sessions idle 4-20
+    # days held 3.4GiB of the container's 8GiB and it was OOM-killed twice.
+    # Sessions whose transcript has not changed in `idleDays` are stopped via
+    # the daemon's /stop-session (as the app does); transcripts are kept and
+    # they resume from the app. Busy sessions are never touched.
+    enabled: true
+    idleDays: 3
+    intervalMinutes: 60
+    # Log what would be stopped without stopping anything.
+    dryRun: false
   restartNotice:
     # Push to the phone when a deploy takes the daemon down and when it comes
     # back, via `happy notify`. Because phone-spawned sessions are children of
