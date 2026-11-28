@@ -398,7 +398,7 @@ resources:
 # Native emulators share one GPU-backed desktop/session.
 streaming:
   enabled: true
-  image: lscr.io/linuxserver/webstation:romm@sha256:6805fb07fe776e27ad97f361d7d4da7e1748f15877c863cf6f4d1102456a4cae
+  image: lscr.io/linuxserver/webstation:romm@sha256:7c3d643d0e4ece2cd4a47ed41a91c8f46a949670937558045dfafcc0e1d3c639
   node: zachd-ubuntu-6
   brokerSecret: ''
   storageClass: truenas-iscsi
